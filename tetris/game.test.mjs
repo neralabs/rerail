@@ -394,7 +394,7 @@ test('source catalog exposes the running game and pinned .rr engine files only',
   assert.equal(await catalog.source('../../.env'), null);
 });
 
-test('dependency waves preserve recorded order and separate dependent evaluations', () => {
+test('change waves preserve recorded order and separate dependent accepted updates', () => {
   const rules = [
     { id: 0, head: 'a', reads: [{ relation: 'input', kind: 'positive' }] },
     { id: 1, head: 'b', reads: [{ relation: 'a', kind: 'negative' }] },
@@ -403,12 +403,14 @@ test('dependency waves preserve recorded order and separate dependent evaluation
   ];
   const events = rules.map(rule => ({ rule: rule.id, head: rule.head, changes: { added: [], removed: [] } }));
   events[0].changes.added = [[1]];
+  events[1].changes.removed = [[0]];
   events[2].changes.added = [[2]];
+  events[3].changes.added = [[3]];
   const waves = partitionWaves(rules, events);
   assert.deepEqual(events.map(event => event.rule), [0, 1, 2, 3]);
   assert.deepEqual(events.map(event => event.wave), [1, 2, 2, 3]);
   assert.deepEqual(waves.map(wave => [wave.start, wave.end]), [[0, 1], [1, 3], [3, 4]]);
-  assert.deepEqual(waves[1].updated, ['c']);
+  assert.deepEqual(waves[1].updated, ['b', 'c']);
   assert.equal(waveAtPosition(waves, 0).id, 1);
   assert.equal(waveAtPosition(waves, 2).id, 2);
   assert.equal(waveAtPosition(waves, 3).id, 3);
@@ -423,7 +425,7 @@ test('frontier states distinguish initial facts, current updates, and earlier up
   assert.equal(waveAtPosition([], 0), null);
 });
 
-test('native game waves cover every evaluation and contain no dependency on an earlier member', async () => {
+test('native change waves cover every evaluation without creating waves for unchanged checks', async () => {
   const game = new Game(engine);
   await game.dispatch('keypress', 'KeyR');
   await game.setTracing(true);
@@ -433,12 +435,44 @@ test('native game waves cover every evaluation and contain no dependency on an e
   assert.equal(evaluation.waves.at(-1).end, evaluation.events.length);
   for (const [index, wave] of evaluation.waves.entries()) {
     if (index) assert.equal(wave.start, evaluation.waves[index - 1].end);
-    const produced = new Set();
+    const changed = new Set();
     for (const event of evaluation.events.slice(wave.start, wave.end)) {
       const rule = evaluation.rules.find(rule => rule.id === event.rule);
       assert.equal(event.wave, wave.id);
-      assert.ok(rule.reads.every(read => !produced.has(read.relation)));
-      produced.add(event.head);
+      if (event.changes.added.length || event.changes.removed.length) {
+        assert.ok(rule.reads.every(read => !changed.has(read.relation)));
+        changed.add(event.head);
+      }
     }
+    assert.ok(wave.updated.length > 0);
   }
+});
+
+test('unchanged dependencies and cache hits do not create empty propagation waves', () => {
+  const rules = [
+    { id: 0, reads: [] },
+    { id: 1, reads: [{ relation: 'a' }] },
+    { id: 2, reads: [{ relation: 'b' }] },
+    { id: 3, reads: [{ relation: 'a' }] },
+    { id: 4, reads: [{ relation: 'd' }] },
+  ];
+  const events = ['a', 'b', 'c', 'd', 'e'].map((head, rule) => ({ head, rule, cache_hit: rule === 2 || rule === 4, changes: { added: [], removed: [] } }));
+  events[0].changes.added = [[1]];
+  events[3].changes.added = [[2]];
+  const waves = partitionWaves(rules, events);
+  assert.deepEqual(events.map(event => event.wave), [1, 1, 1, 2, 2]);
+  assert.ok(waves.every(wave => wave.updated.length));
+  assert.deepEqual(waves[0].checked, ['a', 'b', 'c']);
+  assert.equal(waves[0].cached, 1);
+  assert.deepEqual(waves.map(wave => [wave.start, wave.end]), [[0, 3], [3, 5]]);
+});
+
+test('a round with no accepted changes has one clearly unchanged span', () => {
+  const rules = [{ id: 0, reads: [] }, { id: 1, reads: [{ relation: 'a' }] }];
+  const events = ['a', 'b'].map((head, rule) => ({ head, rule, cache_hit: true, changes: { added: [], removed: [] } }));
+  const waves = partitionWaves(rules, events);
+  assert.equal(waves.length, 1);
+  assert.deepEqual(waves[0].updated, []);
+  assert.deepEqual(waves[0].checked, ['a', 'b']);
+  assert.equal(waves[0].cached, 2);
 });

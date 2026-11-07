@@ -44,8 +44,11 @@ The panel also has buttons to advance game time.
 - Drag the graph to pan. Use **+** and **−** to zoom. Use **Fit graph** to restore the view.
 - Use the expand button for a larger view.
 
-The slider band marks dependency waves in the recorded native execution order.
-A wave ends before a rule reads a fact set produced earlier in that wave.
+The slider band marks change-propagation waves in the recorded native execution order.
+A new wave begins when an accepted change reads a fact set changed earlier in that wave.
+Cache hits and empty checks remain in the trace without creating additional waves.
+Marker tooltips show changed sets, checked sets, additions, removals, and cache hits.
+If a whole round leaves every fact unchanged, the readout says **No fact changes**.
 Click a wave marker to stop just before its final evaluation.
 The wave label shows the current wave and the number of completed evaluations within it.
 
@@ -207,6 +210,8 @@ If the server is running and the source checkout has Playwright installed, run t
 ```sh
 npm --prefix tetris run test:browser
 ```
+
+To use an isolated test server, set `PORT` for the server and `TETRIS_URL` for the browser checks.
 
 Browser checks cover desktop and mobile layouts, keyboard and touch input, manual time, fact colors, graph playback, and offline assets.
 The checks observe an actual amber cache bounce, rule stepping, round history, and the expanded graph view.

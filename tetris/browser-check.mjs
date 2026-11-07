@@ -4,12 +4,13 @@ import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const source = resolve(process.env.RERAIL_SOURCE ?? fileURLToPath(new URL('../../wolfeel', import.meta.url)));
 const { chromium } = await import(pathToFileURL(resolve(source, 'node_modules/@playwright/test/index.mjs')));
+const baseURL = process.env.TETRIS_URL ?? 'http://127.0.0.1:4317';
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 const external = [];
-page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:4317')) external.push(request.url()); });
+page.on('request', request => { if (!request.url().startsWith(baseURL)) external.push(request.url()); });
 const text = name => page.locator(`[data-text="${name}"]`).first();
 async function key(code) {
   const request = page.waitForResponse(response => response.url().endsWith('/facts') && response.request().method() === 'POST' && JSON.parse(response.request().postData()).value === code);
@@ -17,7 +18,7 @@ async function key(code) {
   assert.equal((await request).status(), 200);
 }
 try {
-  await page.goto('http://127.0.0.1:4317/');
+  await page.goto(baseURL + '/');
   await page.waitForFunction(() => document.querySelectorAll('#board .cell').length === 200);
   assert.equal(await page.locator('#preview .cell').count(), 16);
   assert.equal(await text('title').textContent(), 'FALLING FACTS');
@@ -69,9 +70,9 @@ try {
   await page.locator('#manual-mode').click();
   await page.waitForFunction(() => document.getElementById('manual-mode').getAttribute('aria-pressed') === 'true');
   await key('KeyR');
-  const manual = await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json());
+  const manual = await page.request.get(baseURL + '/facts').then(response => response.json());
   await page.waitForTimeout(300);
-  const stationary = await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json());
+  const stationary = await page.request.get(baseURL + '/facts').then(response => response.json());
   assert.equal(stationary.sequence, manual.sequence, 'manual mode must not submit automatic timesteps');
   await key('KeyN');
   await page.waitForFunction(() => document.querySelector('[data-text="clock"]').textContent === '100');
@@ -82,7 +83,7 @@ try {
   assert.equal(await page.locator('#trace .unchanged').count(), 0);
   await page.locator('#changes-only').uncheck();
   await key('KeyG');
-  assert.equal((await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json())).trace.input, 'keypress("KeyG").');
+  assert.equal((await page.request.get(baseURL + '/facts').then(response => response.json())).trace.input, 'keypress("KeyG").');
 
   await page.setViewportSize({ width: 1560, height: 1150 });
   await page.locator('#watch-engine').click();
@@ -95,8 +96,8 @@ try {
   await page.locator('#expand-graph').click();
   assert.ok(await page.evaluate(() => document.body.classList.contains('graph-expanded')));
   await page.locator('#expand-graph').click();
-  const traced = await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json());
-  assert.ok(traced.trace.evaluation.waves.length > 1);
+  const traced = await page.request.get(baseURL + '/facts').then(response => response.json());
+  assert.ok(traced.trace.evaluation.waves.length >= 1);
   assert.equal(await page.locator('#wave-markers .wave-band').count(), traced.trace.evaluation.waves.length);
   assert.ok(traced.trace.evaluation.events.some(event => event.cache_hit));
   if ((await page.locator('#wave-play').textContent()).includes('Pause')) await page.locator('#wave-play').click();
@@ -163,7 +164,7 @@ try {
   await page.locator('.graph-time-steps [data-key="KeyN"]').click();
   assert.equal((await gameStep).status(), 200);
   await page.waitForFunction(() => document.querySelectorAll('#round-history option').length >= 2);
-  const updated = await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json());
+  const updated = await page.request.get(baseURL + '/facts').then(response => response.json());
   if ((await page.locator('#wave-play').textContent()).includes('Pause')) await page.locator('#wave-play').click();
   const accepted = updated.trace.evaluation.events.findIndex(event => event.display_outcome === 'changed');
   assert.ok(accepted >= 0);
@@ -175,6 +176,8 @@ try {
   });
   assert.ok(glow.width >= 3.5 && glow.filter.includes('drop-shadow'), 'accepted changes need a strong, visible glow');
   const recorded = updated.trace.evaluation;
+  assert.ok(recorded.waves.length < 10, 'a small time step must not inflate into dozens of unchanged waves');
+  assert.ok(recorded.waves.every(wave => wave.updated.length > 0), 'a changing round must not contain empty waves');
   const frontier = recorded.waves.find(wave => {
     const last = new Map();
     for (const event of recorded.events.slice(0, wave.end - 1)) {
@@ -221,7 +224,7 @@ try {
   await page.locator('#close-evaluation').click();
   await page.waitForFunction(() => document.getElementById('evaluation-panel').hidden);
   await key('KeyN');
-  assert.equal((await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json())).trace.evaluation, null);
+  assert.equal((await page.request.get(baseURL + '/facts').then(response => response.json())).trace.evaluation, null);
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log('Browser checks passed: gameplay, manual time, fact colors, receiver effects, source browsing, wave markers, frontier persistence and rewind, playback, history, desktop/mobile, offline assets.');

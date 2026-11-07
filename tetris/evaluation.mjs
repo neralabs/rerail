@@ -482,8 +482,9 @@ export class EvaluationView {
       button.style.width = `${width}%`;
       button.classList.toggle('compact-wave', width < 4);
       button.dataset.wave = wave.id; button.dataset.start = wave.start; button.dataset.end = wave.end;
-      button.textContent = wave.id;
-      button.title = `Wave ${wave.id} · evaluations ${wave.start + 1}–${wave.end} · ${wave.updated.length} fact sets updated. Click to inspect just before its last evaluation.`;
+      button.textContent = wave.updated.length ? wave.id : '—';
+      const summary = wave.updated.length ? `${wave.updated.length} fact set${wave.updated.length === 1 ? '' : 's'} changed · +${wave.added} / −${wave.removed}` : 'No fact changes';
+      button.title = `${summary} · ${wave.checked.length} fact sets checked · ${wave.cached} cache hits · evaluations ${wave.start + 1}–${wave.end}. Click to inspect just before the last evaluation.`;
       button.setAttribute('aria-label', `Inspect wave ${wave.id} before its last evaluation`);
       button.addEventListener('click', () => { this.pause(); this.seek(wave.end - 1); });
       markers.append(button); this.waveButtons.set(wave.id, button);
@@ -494,7 +495,9 @@ export class EvaluationView {
     const wave = this.currentWave;
     if (!wave) { byId('wave-label').textContent = 'No evaluation waves'; return; }
     const completed = Math.max(0, Math.min(wave.end - wave.start, this.position - wave.start));
-    byId('wave-label').textContent = `Wave ${wave.id} / ${this.waves.length} · ${completed} / ${wave.end - wave.start} evaluations complete`;
+    const unchanged = this.waves.every(wave => !wave.updated.length);
+    byId('wave-label').textContent = unchanged ? `No fact changes · ${completed} / ${wave.end - wave.start} checks complete` :
+      `Wave ${wave.id} / ${this.waves.length} · ${wave.updated.length} fact set${wave.updated.length === 1 ? '' : 's'} changed · ${completed} / ${wave.end - wave.start} evaluations complete`;
     byId('wave-label').title = this.evaluation.wave_basis ?? 'Dependency waves in recorded execution order';
     byId('evaluation-panel').dataset.currentWave = wave.id;
     byId('wave-position').setAttribute('aria-valuetext', `Wave ${wave.id} of ${this.waves.length}, evaluation ${this.position} of ${this.events.length}`);

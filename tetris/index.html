@@ -51,7 +51,7 @@
       <section class="firing-source" aria-label="Source of the firing rule"><div class="detail-heading"><span>FIRING RULE</span><span id="firing-rule-location"></span></div><code id="firing-rule-source">Start playback to follow the source.</code></section>
       <div class="event-detail"><div class="detail-heading"><span id="detail-title">Select a fact set</span><span id="detail-count"></span></div><code id="detail-rule"></code><div id="detail-visual" hidden></div><details id="raw-facts" open><summary>Fact tuples</summary><pre id="detail-facts"></pre></details></div>
       <section id="rule-source-view" class="rule-source-view" aria-label="Rule source code"><div class="detail-heading"><span id="source-location">game.rr</span><div class="source-view-actions"><button id="browse-current-source" type="button">Full source browser ↗</button><button id="follow-rule-source" type="button" aria-pressed="true">Following firing rule</button></div></div><p id="source-caption">Hover an edge to preview its rule. Click to pin its source here.</p><pre id="rule-source" tabindex="0" aria-label="Original rule source"></pre></section>
-      <p class="trace-note">Waves follow the recorded evaluation order, with a boundary before a rule reads a fact set produced in the same wave. Frontier colors persist while scrubbing. Amber returns show cache hits or duplicate results. Playback stretches recorded execution time.</p>
+      <p class="trace-note">Waves follow accepted fact changes. A new wave begins when a changed result depends on facts changed in the current wave. All cache checks remain in the trace. Frontier colors persist while scrubbing.</p>
     </section></div>
     <p id="error" role="alert" hidden></p>
   </main>

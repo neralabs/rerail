@@ -47,7 +47,7 @@ export function preparePlayback(evaluation) {
       event.cache_hit ? 'cached' : event.candidates.length ? 'unchanged' : 'no_match';
   }
   evaluation.waves = partitionWaves(evaluation.rules, evaluation.events);
-  evaluation.wave_basis = 'Dependency barriers in recorded native execution order';
+  evaluation.wave_basis = 'Accepted-change propagation in recorded native execution order';
   return evaluation;
 }
 
