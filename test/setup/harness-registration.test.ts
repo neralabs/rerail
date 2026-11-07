@@ -213,7 +213,7 @@ describe("Claude Code settings.json", () => {
     theme: "dark",
     hooks: {
       PreToolUse: [
-        { matcher: "", hooks: [{ type: "command", command: "/usr/bin/node /opt/nerling/dist/hooks/main.js" }] },
+        { matcher: "", hooks: [{ type: "command", command: "/usr/bin/node /opt/other-tool/dist/hooks/main.js" }] },
         { matcher: "*", hooks: [{ type: "command", command: "/opt/orca/hook.sh", timeout: 10 }] },
       ],
       Stop: [{ hooks: [{ type: "command", command: "/opt/orca/hook.sh", timeout: 10 }] }],
@@ -1345,7 +1345,7 @@ describe("Cursor hooks.json", () => {
       sessionStart: [{ command: "sh /opt/orca/hook.sh", timeout: 10 }],
       preToolUse: [
         { command: "python3 /opt/sidekick/hook.py" },
-        { command: "/usr/bin/node /opt/nerling/dist/hooks/main.js" },
+        { command: "/usr/bin/node /opt/other-tool/dist/hooks/main.js" },
       ],
       afterFileEdit: [{ command: "sh /opt/orca/hook.sh" }],
     },
