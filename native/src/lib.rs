@@ -1,3 +1,6 @@
+// A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
+// design: dead-code warnings there say nothing (the default build still warns).
+#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;

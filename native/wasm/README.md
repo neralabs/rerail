@@ -28,6 +28,15 @@ A page needs one language's engine, not the addon's whole API:
   its tables but has no grammar: no file is routed to it (`GrammarDialect::built`), nothing embeds it, and a
   family with none of its languages built dispatches to no adapter, so neither its grammar nor its adapter is
   linked. `logic` refuses a corpus of a language that is not built.
+- Also on by default, and off in the build above:
+  - `dump-cli`: the CLI's `dump`, which compiles rules in the earlier JSON/YAML form. Off, none of that compiler
+    is linked.
+  - `tape-cache`: the runner's persistent store (`RERAIL_TAPE_CACHE`), its per-file memo, run records, `gc`,
+    and the zstd frames they write. Off, every run parses every file.
+  - `python-syntax-error`: `syntax_error` on Python from Ruff's parser, which follows CPython's grammar. Off,
+    Python's verdict is tree-sitter's, as the other languages' are: it misses what tree-sitter accepts and
+    CPython does not (Python 2's `print "x"`). Ruff brings a 0.8 MB Unicode name table.
+- `env.sh` builds SQLite without FTS3 and R-tree, which the engine never uses.
 
 Sizes (release, `wasm32-wasip1`, unstripped):
 
@@ -35,9 +44,11 @@ Sizes (release, `wasm32-wasip1`, unstripped):
 |-----------------------------------------|---------|---------|
 | default features (addon API registered) | 44.5 MB |         |
 | `headless`, every language              | 29.4 MB |         |
-| `headless,lang-python`                  | 14.0 MB | 4.7 MB  |
+| `headless,lang-python` + the three above | 14.0 MB | 4.7 MB  |
+| `headless,lang-python` alone            |  9.5 MB | 3.1 MB  |
 
-The Python build is about 2.7 MB of data (the Python grammar's 0.44 MB among it) and 9.9 MB of code.
+The last is 6.6 MB of code and 1.6 MB of data (the Python grammar's 0.44 MB, Python's `\N{…}` name table's
+0.42 MB, regex's Unicode tables).
 
 ## Run
 
@@ -48,7 +59,8 @@ The Python build is about 2.7 MB of data (the Python grammar's 0.44 MB among it)
 The outputs land in `out` as for a native run (`<relation>.csv`, `store.sqlite`). `exceptions` is for libc++'s
 unwinding; `unknown-imports-trap` stubs the few `napi_*` imports still linked (napi types' drops), which a
 CLI run never calls.
-`RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory. A rule as written in the
+`RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory (`off` keeps none); a build
+without `tape-cache` has no store and needs neither. A rule as written in the
 library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and name it in `RERAIL_RR_LIB`
 (`--dir docs/rule-syntax/lib::/lib --env RERAIL_RR_LIB=/lib`); `logic` flattens its includes (`tools::flatten`).
 

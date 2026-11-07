@@ -553,14 +553,19 @@ thread_local! {
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
     static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
+    /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
+    /// any start allows.
+    static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
 /// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
 /// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
 type PlanKey = String;
 
-/// A kept plan: its order, its work per node when searched, and when profiling its EXPLAIN.
-type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>);
+/// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, and its work over its body's
+/// cheapest start (`SEED`) when searched.
+type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>, f64);
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
 pub(in crate::code_rule_dsl) struct KeepPlans;
@@ -637,7 +642,7 @@ impl Model {
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
             return self.plan_inner(prog, head, body, first, None, true);
         };
-        if let Some((order, per_node, searched)) = kept {
+        if let Some((order, per_node, searched, gap)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
@@ -647,7 +652,12 @@ impl Model {
                     (got, x)
                 })
             };
+            // A start much cheaper than when the order was searched (a text test that matched thousands of strings
+            // there and dozens here): the kept order may now scan what that start would look up, and pricing the
+            // kept order alone never shows it.
+            let cheaper_start = |work: f64| work / SEED.with(|c| c.get()).max(1.0) > REPLAN * gap.max(1.0) && work > REPLAN_ROWS;
             match priced {
+                Ok(got) if cheaper_start(got.0.1) => super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into()),
                 Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     return Ok(got);
@@ -664,7 +674,8 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone()));
+                let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
+                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap));
             }
         });
         Ok(got)
@@ -888,6 +899,7 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head}: no executor for {l} yet")));
         }
         let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
+        SEED.with(|c| c.set(joins.iter().filter_map(|&i| step(&body[i], 1.0, &BTreeSet::new()).map(|w| w.0)).fold(f64::INFINITY, f64::min).min(1e300)));
         if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
@@ -2172,10 +2184,13 @@ impl Run<'_> {
 
     /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
     fn native_relation(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
+        let reads: Vec<String> = native.reads().into_iter().map(str::to_owned).collect();
+        self.ensure(&reads)?;
+        self.materialize(&reads)?;
         use crate::code_rule_dsl::logic::front::Native;
         let (edge, target, roots) = match native {
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
-            Native::MatchAll { input, pattern, groups } => return self.match_all(rel, input, pattern, groups),
+            Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
@@ -2207,7 +2222,7 @@ impl Run<'_> {
 
     /// `match_all` over symbols (`front::Native::MatchAll`): each distinct text of `input`, and each match's groups.
     /// Symbols are atoms (interned by `sym_atom`) or text, as the run stores them.
-    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String]) -> Result<usize> {
+    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String], positions: bool) -> Result<usize> {
         let re = regex::Regex::new(pattern).map_err(|e| Error::Plan(format!("match_all: bad regex {pattern:?}: {e}")))?;
         let atoms = self.model.inputs.atoms.is_some();
         let c = self.model.col(input, 0);
@@ -2218,16 +2233,22 @@ impl Run<'_> {
             rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
         };
         let captures: Vec<_> = texts.iter().flat_map(|(v, t)| {
-            crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t).into_iter().map(move |row| (v, row))
+            use crate::code_rule_dsl::logic::native::match_all;
+            let rows: Vec<_> = if positions {
+                match_all::occurrences(&re, groups, t).into_iter().map(|(row, at)| (row, Some(at))).collect()
+            } else {
+                match_all::rows(&re, groups, t).into_iter().map(|row| (row, None)).collect()
+            };
+            rows.into_iter().map(move |(row, at)| (v, row, at))
         }).collect();
         let mut ids = if atoms {
-            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row)| row.iter().copied()))?.into_iter()
+            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row, _)| row.iter().copied()))?.into_iter()
         } else { Vec::new().into_iter() };
-        let rows = captures.into_iter().map(|(v, row)| {
+        let rows = captures.into_iter().map(|(v, row, at)| {
             std::iter::once(v.clone()).chain(row.into_iter().map(|g| {
                 if atoms { SqlValue::Integer(ids.next().expect("one atom per capture")) }
                 else { SqlValue::Text(g.to_owned()) }
-            })).collect()
+            })).chain(at.into_iter().flatten().map(SqlValue::Integer)).collect()
         }).collect();
         let before = self.db.total_changes();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
@@ -3435,7 +3456,9 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
+    let flush = super::profile::span(|| "flush symbols".into());
     super::native::flush_symbols(db)?;
+    drop(flush);
     out
 }
 
