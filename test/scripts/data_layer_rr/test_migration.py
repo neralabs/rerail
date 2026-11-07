@@ -16,6 +16,12 @@ def module():
 
 
 class MigrationTests(unittest.TestCase):
+    def test_fresh_arguments_keep_a_path_keyword_dictionary(self):
+        module()
+        from fresh import arguments
+        self.assertEqual(arguments({'path': {'path': 'impl/a.py'}}, Path('/fixture')),
+                         {'path': Path('/fixture/impl/a.py')})
+
     def test_reporter_file_groups_preserve_every_in_file_value_and_order(self):
         module()
         from reporting import reporter_file_groups

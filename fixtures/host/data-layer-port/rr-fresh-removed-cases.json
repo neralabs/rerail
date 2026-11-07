@@ -1,0 +1,868 @@
+{
+  "cases": [
+    {
+      "id": "removed-name-0",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "AdvisoryLockCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-1",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "ApplicationTickProvider\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-2",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "ApplyClaimedTimersConfig\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-3",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "ClaimDueTimersConfig\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-4",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "CypherLeaseCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-5",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "FileLockCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-6",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "LeaseDocumentCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-7",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "RowLockCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-8",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "SchedulerTick\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-9",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "SupersedeTimerConfig\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-10",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TickCoordinator\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-11",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-12",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerScanConfig\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-13",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_apply_claimed_timers_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-14",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_claim_due_timers_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-15",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_claimed_queue_prefix_rows_query_spec\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-16",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_claimed_queue_rows_query_spec\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-17",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_coalesce_branch_tip_materialization_alias\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-18",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_reconcile_due_timers_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-19",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_recover_abandoned_timer_claims_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-20",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_schedule_timer_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-21",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "_supersede_timer_runtime\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-22",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "apply_claimed_timers\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-23",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "apply_claimed_timers_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-24",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "apply_timer_driver_claims\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-25",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "apply_timer_driver_claims_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-26",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_due_timer\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-27",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_due_timer_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-28",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_due_timers\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-29",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_due_timers_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-30",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_local_timer_responsibilities\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-31",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "claim_local_timer_responsibilities_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-32",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dispatch_due_jobs\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-33",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dispatch_due_jobs_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-34",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "recover_abandoned_timer_claims\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-name-35",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "recover_abandoned_timer_claims_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-reversed",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dispatch_due_jobs; TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-duplicates",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim; obj.TimerClaim; TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-attribute-order",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim.dispatch_due_jobs\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-nfkc",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\uff34\uff49\uff4d\uff45\uff52\uff23\uff4c\uff41\uff49\uff4d\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-nfkc-attribute",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x.\uff34\uff49\uff4d\uff45\uff52\uff23\uff4c\uff41\uff49\uff4d\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-nfkc-def",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def \uff44\uff49\uff53\uff50\uff41\uff54\uff43\uff48\uff3f\uff44\uff55\uff45\uff3f\uff4a\uff4f\uff42\uff53(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-decorators",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "@TimerClaim\ndef dispatch_due_jobs(): return TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-keywords",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "call(TimerClaim=1)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-import",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "from x import TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-string",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = \"TimerClaim dispatch_due_jobs\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-stores",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim = 1\nobj.dispatch_due_jobs = 2\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-comments",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-invalid",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-python2",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "print \"TimerClaim\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-bom",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\ufeffTimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-function-params",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def f(TimerClaim): return TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-pattern",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "match x:\n    case TimerClaim: pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-non-py",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "misc/a.txt",
+          "source": "TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "misc/a.txt"
+        }
+      }
+    }
+  ]
+}
