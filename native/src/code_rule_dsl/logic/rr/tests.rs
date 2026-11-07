@@ -5,6 +5,30 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[test]
+fn workspace_root_is_run_metadata_without_filesystem_resolution() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("root-metadata");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("root.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl workspace_root(path: symbol)
+.input workspace_root
+.violation Root(at: span, root: symbol) code "ROOT" "{root}"
+Root(@place("metadata.py", 1), p) :- workspace_root(p), contains("/unresolved/", p).
+"#).unwrap();
+    // Neither spelling exists. An empty supplied corpus needs metadata, not a tree scan or canonicalisation.
+    for spelling in ["unresolved/api/../first", "unresolved/test_context/../second"] {
+        let root = dir.join(spelling);
+        let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &dir.join("out"), &serde_json::json!({"inputFiles": []})).unwrap();
+        let rows = report["diagnostics"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["message"], root.to_string_lossy().as_ref());
+        assert!(!root.exists());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();
