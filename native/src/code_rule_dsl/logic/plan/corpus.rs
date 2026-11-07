@@ -271,10 +271,12 @@ pub(crate) fn run_with_options(
     let mut prog = crate::code_rule_dsl::logic::rr::parse(program)?;
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
-    let program = &if bridged.is_empty() { program.to_owned() } else { format!("{program}\n{bridged}") };
-    if !bridged.is_empty() {
-        prog = crate::code_rule_dsl::logic::rr::parse(program)?;
-    }
+    let add_bridged = |prog: &mut front::Program| {
+        for (rel, rows) in &bridged {
+            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+        }
+    };
+    add_bridged(&mut prog);
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
@@ -302,6 +304,7 @@ pub(crate) fn run_with_options(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = crate::code_rule_dsl::logic::rr::parse(&format!("{program}\n{facts}"))?;
+            add_bridged(&mut prog);
         }
         declared = d;
     }
@@ -319,6 +322,9 @@ pub(crate) fn run_with_options(
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
+    // of it the rule uses, not all of it (T's front prunes the same way).
+    prog = front::prune(prog);
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).

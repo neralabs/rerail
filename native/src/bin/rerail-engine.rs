@@ -53,7 +53,7 @@ fn logic(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    rerail_engine::tools::logic(&read(program)?, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+    rerail_engine::tools::logic(&rerail_engine::tools::program_text(Path::new(program.as_str()))?, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

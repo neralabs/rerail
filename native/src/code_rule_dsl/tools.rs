@@ -28,6 +28,16 @@ pub fn assemble(text: &str) -> Result<String, String> {
     Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
 
+/// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
+pub fn program_text(path: &std::path::Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if !text.lines().any(|l| l.trim_start().starts_with("#include")) {
+        return Ok(text);
+    }
+    let program = super::logic::rr::parse_file(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
+}
+
 /// `program` (`.rr` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
 pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
@@ -37,6 +47,9 @@ pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::
     let mut text = format!("{} files, {} nodes in {} chunks, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.chunks, report.native);
     for (phase, user, sys, rss, statements) in &report.phases {
         text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n");
+    }
+    for (name, _) in &report.typing_runs {
+        text += &format!("  typing program {name} run first, for the relations it gives\n");
     }
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");
