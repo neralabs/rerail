@@ -947,6 +947,16 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
+/// Drops native relations `tables` of `conn`'s run: no later stratum reads them (`plan::last_reads`), so their rows
+/// and the indexes the waves kept are freed now, not when the run ends.
+pub fn release(conn: &Connection, tables: &[String]) {
+    let at = scope(conn);
+    let mut derived = DERIVED.lock().unwrap();
+    for t in tables {
+        derived.remove(&(at, t.clone()));
+    }
+}
+
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
@@ -1402,6 +1412,9 @@ enum Step {
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
+    /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
+    /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
+    Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
 }
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
@@ -1509,6 +1522,22 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 grow(&mut bound, o); bound[o] = true;
                 steps.push(Step::Func { name, kinds, args, out: o, bind });
             }
+            "test" => {
+                // `test <op> <s> <pattern> <0|1>`
+                use crate::code_rule_dsl::logic::strings;
+                let Some(&op) = strings::TESTS.iter().find(|&&t| t == toks[1]) else { return Err(err(format!("no text test {}", toks[1]))) };
+                let (Some(s), Some(p)) = (tok(toks[2], syms)?, tok(toks[3], syms)?) else { return Err(err("a text test of `_`")) };
+                if !is_bound(&bound, s) || !is_bound(&bound, p) { return Err(err(format!("{op} of an unbound slot"))); }
+                let matcher = match p {
+                    Key::Const(c) => {
+                        let patterns: Vec<String> = syms.name(c).split(strings::SET_SEP).map(str::to_owned).collect();
+                        // A pattern that does not compile matches nothing, as SQL's `str_test`: `strings::test` per row.
+                        strings::Matcher::new(op, &patterns).ok().map(Arc::new)
+                    }
+                    Key::Slot(_) => None,
+                };
+                steps.push(Step::Test { op, s, p, matcher, want: toks[4] == "1" });
+            }
             "deq" | "dne" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("a document comparison of an unbound slot")); }
@@ -1610,15 +1639,18 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (rows, cands) = candidates(src, store, &cx.key, keys);
+                // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
+                // the same bindings, so the rest of the body runs once if one does (a semi-join), not once per row.
+                let exists = *neg || binds.is_empty();
                 let found = cands.any(|id| {
                     let row = rows.row(id);
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
-                    if *neg { return true; }
+                    if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     go(cx, i + 1, slots);
                     false
                 });
-                if *neg && !found { go(cx, i + 1, slots); }
+                if exists && found != *neg { go(cx, i + 1, slots); }
             }
             Step::Count { src, keys, tests, out, bind } => {
                 cx.key.clear();
@@ -1696,6 +1728,14 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 go(cx, i + 1, slots);
             }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
+            Step::Test { op, s, p, matcher, want } => {
+                let s = cx.syms.name(val(slots, *s));
+                let hit = match matcher {
+                    Some(m) => m.is_match(&s),
+                    None => crate::code_rule_dsl::logic::strings::test(op, &s, &cx.syms.name(val(slots, *p))),
+                };
+                if hit == *want { go(cx, i + 1, slots) }
+            }
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }

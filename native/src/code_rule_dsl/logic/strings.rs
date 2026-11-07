@@ -167,8 +167,8 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; `rx_group(s, re, name)`: the named group's text (`group`); and `core.rr`'s
-/// text functors (`functions`). NULL gives NULL.
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them). NULL
+/// gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -176,12 +176,6 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
             return Ok(None);
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
-    })?;
-    db.create_scalar_function(c"rx_group", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let (Some(s), Some(re), Some(name)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
-            return Ok(None);
-        };
-        Ok(group(&s, &re, &name))
     })?;
     functions::register(db)
 }
