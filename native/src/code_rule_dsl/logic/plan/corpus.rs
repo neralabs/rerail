@@ -343,6 +343,10 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
         for (rel, rows) in prog.facts {
             all.facts.insert(rename(&rel), rows);
         }
+        for (rel, mut native) in prog.natives {
+            native.rename_reads(rename);
+            all.natives.insert(rename(&rel), native);
+        }
         // A rule `core.rr` gives (its head is the engine's) is taken once.
         for rule in prog.rules {
             if !(core.contains(&rule.head.rel) && all.rules.contains(&rule)) {

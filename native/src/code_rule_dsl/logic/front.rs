@@ -357,10 +357,21 @@ pub(in crate::code_rule_dsl) enum Native {
     DfsFirst { edge: String, target: String, roots: Option<String> },
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
-    MatchAll { input: String, pattern: String, groups: Vec<String> },
+    MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
 }
 
 impl Native {
+    /// Rewrite producer inputs with the same relation mapping as the rest of its program.
+    pub(in crate::code_rule_dsl) fn rename_reads(&mut self, rename: impl Fn(&str) -> String) {
+        match self {
+            Native::DfsFirst { edge, target, roots } => {
+                *edge = rename(edge);
+                *target = rename(target);
+                if let Some(roots) = roots { *roots = rename(roots); }
+            }
+            Native::MatchAll { input, .. } => *input = rename(input),
+        }
+    }
     /// The relations it reads.
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
         match self {
@@ -824,6 +835,11 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut edges = Edges::new();
+    for (rel, native) in &prog.natives {
+        if !derived.contains(rel) { continue; }
+        edges.entry(rel.clone()).or_default().extend(native.reads().into_iter()
+            .filter(|read| derived.contains(*read)).map(|read| (read.to_owned(), false)));
+    }
     // Aggregation edges that are not monotone: negative, and named apart when they close a cycle.
     let mut aggs = BTreeSet::new();
     for r in &prog.rules {
@@ -936,6 +952,9 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
     while let Some(r) = todo.pop() {
         if !need.insert(r.clone()) {
             continue;
+        }
+        if let Some(native) = prog.natives.get(&r) {
+            todo.extend(native.reads().into_iter().map(str::to_owned));
         }
         for body in body_of.get(r.as_str()).into_iter().flatten() {
             todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));

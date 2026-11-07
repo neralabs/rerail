@@ -9,6 +9,25 @@
 
 use regex::Regex;
 
+/// Every occurrence, its captures, and zero-based Unicode scalar offsets. Advance through each text once:
+/// counting every prefix independently would make many matches quadratic in the text length.
+pub(in crate::code_rule_dsl) fn occurrences<'s>(re: &Regex, groups: &[String], s: &'s str) -> Vec<(Vec<&'s str>, [i64; 3])> {
+    let mut out = Vec::new();
+    let (mut byte, mut chars) = (0, 0);
+    for (ordinal, caps) in re.captures_iter(s).enumerate() {
+        let m = caps.get(0).expect("a complete match");
+        let start = chars + s[byte..m.start()].chars().count();
+        let end = start + m.as_str().chars().count();
+        byte = m.end();
+        chars = end;
+        let row: Option<Vec<&str>> = groups.iter().map(|g| caps.name(g).map(|m| m.as_str())).collect();
+        if let Some(row) = row {
+            out.push((row, [ordinal as i64, start as i64, end as i64]));
+        }
+    }
+    out
+}
+
 /// Each match's groups' texts, in `groups`' order; matches missing a group are left out. Without groups, one empty
 /// row when `re` matches anywhere.
 pub(in crate::code_rule_dsl) fn rows<'s>(re: &Regex, groups: &[String], s: &'s str) -> Vec<Vec<&'s str>> {
