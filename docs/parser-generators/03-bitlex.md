@@ -60,10 +60,10 @@ shows how each is replaced by bit operations:
   times: `rounds`.
 - **Depth is a count,** a prefix sum, and the field a byte is in comes from matching by depth.
 
-The `machine` construct stays in the language, and the JSON lexer's comments still use one
-(7 states). Where plain bit operations are enough, no machine is used: JSON's escapes come from
-simdjson's carry trick (`after_odd_run`), and a JSON file without a `/` outside strings needs only
-one prefix XOR (`toggle`).
+The `machine` construct stays in the language, but no lexer here uses one now. Where plain bit
+operations are enough, no machine is used: JSON's escapes come from simdjson's carry trick
+(`after_odd_run`), its strings from one prefix XOR (`toggle`), and a comment escapes the file to
+tree-sitter (§2.5).
 
 ## 2. The language
 
@@ -83,7 +83,6 @@ directed acyclic graph of mask operations.
 | `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
 | `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
 | `rounds N [until settled] { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
-| `variant NAME { … } [unless E]` | One way to compute a set of names. Of consecutive variants, the first whose `unless` mask is empty is kept, once per file (§2.5). |
 | `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
@@ -93,6 +92,7 @@ directed acyclic graph of mask operations.
 | `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
+| `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
 | `tree NAME { … }` | The tree section: where each node starts and ends, for the tape (`13-tape-on-the-gpu.md`). It holds the statements below, and masks and scans of its own. |
 | `node KIND start S end E [level L]` | A node at each bit of `S`. It ends at the first bit of `E` at or after its start where count `L` after the byte equals `L` before the start; without a level, at the first bit. Listed order is rank: outermost first at one byte. |
 | `field NAME of KIND … = EXPR`, `supertype NAME of KIND … = EXPR` | A node of those kinds starting at a bit of `EXPR` has the field, or is in the supertype. |
@@ -202,30 +202,12 @@ mask s_open = opened | fstrings*.iq_open
 - Machines take parameters the same way (`machine NAME(P, …) { … }`,
   `machine NAME = TEMPLATE(…)`). The reference evaluator runs only machines without them.
 
-**Per-file variants.** A lexer may describe two ways to compute the same masks, and choose one
-per file by a test that is exact for that file:
-
-```text
-variant plain {                    # strings by toggle, as in simdjson; no comments
-  mask inside = toggle(quote & ~escaped)
-  mask in_cmt = empty
-} unless (slash | star) & ~inside  # a '/' or '*' outside the strings: comments may start there
-variant general {                  # the `lex` machine
-  mask inside = lex.in(str)
-  mask in_cmt = lex.in(cmt) | lex.on(bend -> code)
-}
-```
-
-- **The choice.** Each body runs in order. The first whose `unless` mask is empty, or that has no
-  `unless`, is kept; the others' names are discarded. The choice is one decision per file, like
-  fallback.
-- **Bodies.** A body only defines names (classes, masks, machines, counts), and every variant of a
-  run defines the same ones. Tokens, errors and the tree come after, and read the kept names.
-- **Compiling.** A compiler may compile only some variants. A file whose test rejects every
-  compiled variant goes to tree-sitter; the reference evaluator runs them all.
-
-`lexers/json.bitlex` uses this: a file with no `/` or `*` outside `toggle(q)`'s strings has no
-comments, so the `lex` machine does not run.
+**Escapes.** `escape "WHY" when E` sends a file with any bit of `E` to tree-sitter, as an error
+does. It says the lexer does not handle a construct, not that the file is malformed. The test is
+part of the lexer's own masks, so it costs one OR per file. `lexers/json.bitlex` escapes
+comments: its strings are `toggle(q)`, as in simdjson, and a `/` or `*` outside them escapes.
+The `lex` machine that lexes comments exactly is not in the file; a lowering for machines is
+§3.2.
 
 ### 2.6 Unicode classes
 
@@ -414,9 +396,8 @@ cost of running every lane and every round.
 
 ## 4. The examples
 
-- `lexers/json.bitlex`: tree-sitter-json's tokens, comments included.
-  - Masks only, for a file without comments.
-  - The 7-state `lex` machine otherwise.
+- `lexers/json.bitlex`: tree-sitter-json's tokens, by masks only. A comment escapes to
+  tree-sitter.
 - `lexers/python.bitlex`: tree-sitter-python's leaves, with no machine.
   - Strings and comments by `reflect`, per line under three `hypotheses`, with a `rounds` fixed
     point for hidden triple quotes;

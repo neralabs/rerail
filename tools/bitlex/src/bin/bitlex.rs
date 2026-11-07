@@ -686,7 +686,6 @@ fn main() {
                         println!("ERROR {e}");
                     }
                     println!("rounds {:?}", o.rounds);
-                    println!("variants {:?}", o.variants);
                     let ops = bitlex::eval::OPS.load(std::sync::atomic::Ordering::Relaxed);
                     println!("ops per block {ops} (each op runs over all {} blocks)", src.len().div_ceil(64));
                 }

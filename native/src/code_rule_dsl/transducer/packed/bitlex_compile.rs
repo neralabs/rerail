@@ -15,8 +15,8 @@
 //!   `after_odd_run`. These read only bytes at or before their own, so the bits a `~` sets past
 //!   the end of the input never reach a byte inside it.
 //!
-//! - `variant`: of a run of variants the first is compiled, and its `unless` mask joins the
-//!   fallback output (`FALLBACK`): a file it rejects goes to tree-sitter.
+//! - `error` and `escape`: each mask joins the fallback output (`FALLBACK`); a file with a bit
+//!   of it goes to tree-sitter.
 //!
 //! Anything else is refused by name.
 
@@ -44,7 +44,7 @@ struct Lowering {
     /// Classes, lowered when first used.
     classes: HashMap<String, Vec<(u32, u32)>>,
     names: HashMap<String, u16>,
-    /// The masks any of whose bits sends the file to tree-sitter: a compiled variant's `unless`.
+    /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     fallbacks: Vec<u16>,
 }
 
@@ -81,29 +81,20 @@ pub(in crate::code_rule_dsl) const FALLBACK: &str = "fallback";
 
 impl Lowering {
     fn stmts(&mut self, stmts: &[Stmt]) -> Result<(), String> {
-        // Of a run of variants only the first is compiled; a file it rejects falls back.
-        let mut in_run = false;
         for stmt in stmts {
             match stmt {
-                Stmt::Variant { body, unless, .. } => {
-                    if !in_run {
-                        self.stmts(body)?;
-                        if let Some(e) = unless {
-                            let v = self.expr(e)?;
-                            self.fallbacks.push(v);
-                        }
-                    }
-                    in_run = true;
-                    continue;
-                }
                 Stmt::Lexer(_) | Stmt::Class(..) => {}
                 Stmt::Mask(name, expr) => {
                     let value = self.expr(expr)?;
                     self.names.insert(name.clone(), value);
                 }
+                // Both send the file to tree-sitter.
+                Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
+                    let value = self.expr(expr)?;
+                    self.fallbacks.push(value);
+                }
                 other => return Err(format!("not compiled yet: {}", statement(other))),
             }
-            in_run = false;
         }
         Ok(())
     }

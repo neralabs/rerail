@@ -97,58 +97,48 @@ fn unsupported_operations_are_refused() {
     assert!(error.contains("next"), "{error}");
 }
 
-/// Of a run of variants the compiler keeps the first; its `unless` mask is the fallback bit. On a
-/// file the evaluator runs it on, its masks are equal and the fallback bit is clear; on any other,
-/// the fallback bit is set. The second variant has a machine, which is not compiled.
-const VARIANTS: &str = r#"
+/// Errors and escapes are the fallback output: on every input and every executor its bits equal
+/// the OR of their masks, and a file has one exactly when the evaluator reports one.
+const FALLBACKS: &str = r#"
 class quote     = '"'
 class backslash = '\\'
 class slash     = '/'
+class star      = '*'
+class lf        = '\n'
 mask escaped    = after_odd_run(backslash)
-variant plain {
-  mask inside   = toggle(quote & ~escaped)
-} unless slash & ~inside
-variant general {
-  machine m {
-    events {
-      q = quote & ~escaped
-    }
-    states out in
-    start out
-    final out
-    out on q -> in
-    in  on q -> out
-  }
-  mask inside   = m.in(in)
-}
-mask code       = ~inside
+mask inside     = toggle(quote & ~escaped)
+mask code       = ~inside & ~quote
+error "newline in a string"  when inside & lf
+escape "a comment"           when code & (slash | star)
 "#;
 
 #[test]
-fn the_first_variant_is_compiled_and_its_test_is_the_fallback() {
+fn errors_and_escapes_are_the_fallback_output() {
     let names = ["inside", "code", bitlex_compile::FALLBACK];
-    let stmts = ::bitlex::syntax::parse(VARIANTS).expect("parses");
+    let stmts = ::bitlex::syntax::parse(FALLBACKS).expect("parses");
     let compiled = bitlex_compile::compile(&stmts, &names).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let mut cases = inputs();
-    cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"/".to_vec()]);
-    let (mut plain, mut general) = (0, 0);
+    cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
+    let (mut clean, mut falls) = (0, 0);
     for bytes in cases {
         let tables = std::collections::HashMap::new();
         let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).expect("evaluates");
-        let kept_plain = out.variants == ["plain"];
-        let want = evaluated(&stmts, &bytes, &names[..2]);
+        let vars = |name: &str| match out.vars.get(name) {
+            Some(::bitlex::eval::Val::M(m)) => m.clone(),
+            _ => panic!("{name}"),
+        };
+        let (inside, code, lf) = (vars("inside"), vars("code"), vars("lf"));
+        let (slash, star) = (vars("slash"), vars("star"));
+        let want = inside.and(&lf).or(&code.and(&slash.or(&star))).w;
+        // The program has no tokens, so the evaluator's "in no token" errors are not its own.
+        let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
+        assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
         for (executor, got) in executors(&p, &bytes) {
-            let fallback = cut(got[2].clone(), bytes.len()).iter().any(|&w| w != 0);
-            assert_eq!(fallback, !kept_plain, "{executor}, {} bytes", bytes.len());
-            if kept_plain {
-                for k in 0..2 {
-                    assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{}, {executor}, {} bytes", names[k], bytes.len());
-                }
-            }
+            assert_eq!(cut(got[2].clone(), bytes.len()), want, "{executor}, {} bytes", bytes.len());
         }
-        if kept_plain { plain += 1 } else { general += 1 }
+        if falls_back { falls += 1 } else { clean += 1 }
     }
-    assert!(plain > 0 && general > 0, "both variants reached: {plain} plain, {general} general");
+    assert!(clean > 0 && falls > 0, "{clean} clean, {falls} falling back");
 }
