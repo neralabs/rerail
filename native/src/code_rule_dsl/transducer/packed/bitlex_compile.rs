@@ -460,7 +460,13 @@ impl Lowering {
         Ok(Val { v: self.op(BlockOp::AndNot(w, a.v)), d: a.d, dirty: false, set: None })
     }
 
+    /// `prev(a, k)`. When `a` is `k` or more bytes late, its bits already stand for the bytes
+    /// `k` earlier at a delay `k` smaller: no operation. Its bits for the bytes before the stream
+    /// are clean (`next` cleans them), so the bytes shifted in are 0, as a carry's.
     fn prev(&mut self, a: Val, k: u64) -> Result<Val, String> {
+        if u64::from(a.d) >= k {
+            return Ok(Val { d: a.d - k as u8, set: None, ..a });
+        }
         let mut v = a.v;
         let mut left = k;
         while left > 0 {
@@ -842,19 +848,31 @@ impl Lowering {
 
     /// The starts of tokens whose text is `word`: the word's bytes from the start, and the
     /// token's first last byte at its length.
+    ///
+    /// Each term is brought to the word's delay once, from its own value: the carried words are
+    /// those of `start`, `last` and the letters, shared by every keyword (a chain, each step
+    /// aligned in turn, would carry a new value per letter). The terms are not cleaned before
+    /// the stream: `start`, ANDed with each, is 0 there.
     fn keyword(&mut self, start: Val, last: Val, word: &[u8]) -> Result<Val, String> {
         if word.is_empty() {
             return Err("an empty keyword".into());
         }
-        let mut out = start;
+        let later = |x: Val, j: usize| Val { d: x.d + j as u8, set: None, ..x };
+        let mut terms: Vec<(Val, bool)> = Vec::new();
         for (j, &b) in word.iter().enumerate() {
-            let byte = self.leaf(BlockOp::Eq(b), b == 0);
-            let at = self.next(byte, j as u64)?;
-            out = self.and(out, at)?;
-            let end = self.next(last, j as u64)?;
-            out = if j + 1 == word.len() { self.and(out, end)? } else { self.andnot(out, end)? };
+            terms.push((later(self.leaf(BlockOp::Eq(b), b == 0), j), true));
+            terms.push((later(last, j), j + 1 == word.len()));
         }
-        Ok(out)
+        let d = terms.iter().map(|t| t.0.d).max().unwrap_or(0).max(start.d);
+        if d > MAX_DELAY {
+            return Err(format!("keyword {}: a delay of {d} bytes", String::from_utf8_lossy(word)));
+        }
+        let mut out = self.at(start, d)?;
+        for (t, holds) in terms {
+            let x = self.at(t, d)?;
+            out = self.op(if holds { BlockOp::And(out, x) } else { BlockOp::AndNot(out, x) });
+        }
+        Ok(Val { v: out, d, dirty: start.dirty, set: None })
     }
 
     /// `aligned(a, k)`: the bytes of `a` at offsets 0, k, 2k, … in their run. For each residue

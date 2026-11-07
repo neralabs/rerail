@@ -630,8 +630,8 @@ fn one_byte_tokens_end_at_their_start() {
 }
 
 /// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 500;
-const JSON_CARRIED_WORDS: usize = 84;
+const JSON_OPS: usize = 483;
+const JSON_CARRIED_WORDS: usize = 78;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -656,7 +656,7 @@ fn json_loop_keeps_values_in_registers() {
 }
 
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve, never
-/// raise them. The stack traffic is the spill of 84 carried words and their live values into
+/// raise them. The stack traffic is the spill of 78 carried words and their live values into
 /// 31 registers; the target is stage 1's 0.
-const JSON_LOOP: usize = 2047;
-const JSON_LOOP_STACK: usize = 438;
+const JSON_LOOP: usize = 1915;
+const JSON_LOOP_STACK: usize = 405;
