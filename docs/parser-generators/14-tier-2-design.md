@@ -1,199 +1,280 @@
-# Parser generators: tier 2, designed before it is built
+# Parser generators: JSON's two tiers on Metal, designed before they are built
 
-Status: design, for review (2026-11-07). Nothing here is built. It replaces the CPU tape
-writer, which interpreted rows in Rust and was deleted.
+Status: design, for review (2026-11-07). Nothing here is built. It is designed for JSON, the
+simdjson case, first. §10 lists what must generalise.
 
 ## Intro
 
 A Bitlex file compiles to two tiers (decision 0049):
 
 - **tier 1** is bit operations on every byte: classes, strings, each token's first and last
-  byte, and per-byte errors;
-- **tier 2** is the per-token rules of the tree section: each token's kind, which nodes open
-  and close, nesting, fields, checks, and the tape.
+  byte, per-byte errors;
+- **tier 2** is the per-token rules: kinds, keys, nesting, checks, the tape.
 
-Both tiers are generated code, compiled from the Bitlex file. No executor interprets rows.
-Tree-sitter's tapes are the reference.
+Both are generated code, compiled from the Bitlex file. Tree-sitter's tapes are the reference.
 
-This page designs tier 2, and how both tiers run on Metal and on the CPU.
+On Metal the work is split by what each value depends on. Most values depend only on nearby
+bytes. A few depend on the whole file before a byte, or after it. Those few are resolved by
+prefix scans over small per-chunk entries, and everything else runs in parallel.
+
+The plan for JSON, from the analysis in §1:
 
 ```
-Metal: one kernel, a threadgroup per run of files, in rounds split by barriers
-  1. per block, in parallel: bit operations; small accumulators to threadgroup memory
-  2. barrier
-  3. scans over the accumulators: carries, offsets, the open-node stack at each block
-  4. barrier
-  5. per output, in parallel: each block's tokens, then each node's record
-CPU: one generated loop per file; blocks in order, tokens in order, a stack in registers
+pass A    every byte, once:  tier 1, and each 2 KB's entry (two candidates)
+barrier
+scans     over the entries:  S1 (strings)  ->  S2 (stack, keys)  ->  S3 (counts)
+barrier
+pass B    every byte again:  exact carry-ins; each block's tokens; node records
+barrier                      (with one mid-pass barrier to match closes to opens)
+pass C    every node:        the tape's columns, at their final widths
 ```
 
-## 1. What tier 2 needs from the rest of the file
+So the bytes are read twice, and the longest chain of dependent scans is three. No
+threadgroup waits on another.
 
-Each tier-2 rule reads something that may lie in an earlier block. Each is one kind of
-accumulator, with an associative combine, so a scan resolves it:
+## 1. The analysis: what depends on what
 
-| rule in the tree section | what crosses a block edge | accumulator | combine | JSON size |
+Every value of the compiled program gets one class:
+
+- **local:** a function of the bytes within a few positions;
+- **forward:** depends on everything before it, resolved by a forward scan;
+- **backward:** depends on everything after it, resolved by a backward scan.
+
+A carried value's **depth** is the number of scans that must run before it. The analysis
+orders the scans by depth. Scans at the same depth run together, in either direction.
+
+JSON's values:
+
+| value | inputs | class | resolved by | depth |
 |---|---|---|---|---:|
-| tier 1's carries (`escaped`, `toggle`, `fill`) | the carry | borrow or parity | carry-lookahead, XOR | 3 bits |
-| `prev(x, k)` | the top `k` bits of `x` one block back | none: the lane before, by a SIMD shuffle | | 0 |
-| a node's place in preorder (`ord`) | nodes before the block | count | add | 12 bits |
-| `after K` | the last token's kind before the block | last present | right if present | 5 bits |
-| a node without nesting that spans blocks (a string) | its open start's `ord` | last present | right if present | 32 bits |
-| `nested max D`, `parent K`, `end with F` | the open nodes at the block's start | stack effect: pops, then pushes | cancel the middle | see §2 |
-| errors, checks | any error | flag | OR | 1 bit |
-| codes numbered by first use | codes seen | bitset | OR | 64 bits |
+| byte classes: `\`, `"`, op, ws, newline | bytes | local | | 0 |
+| `escaped` | backslashes | forward borrow | S1 | 1 |
+| `inside` (string toggle) | quotes, `escaped` | forward parity | S1, fused | 1 |
+| token starts and last bytes | the above | local, given S1 | | 1 |
+| `prev(content)`, `prev(word)` | the lane before | local: a SIMD shuffle | | 1 |
+| a token's kind | its first byte, or up to 8 bytes | local | | 1 |
+| open brackets at a byte | brackets outside strings | forward stack | S2 | 2 |
+| key: a string followed by `:` | the next token after its close | backward | S2 | 2 |
+| field `value`: after a `:` | the token before | forward, last present | S2 | 2 |
+| a node's `ord` | node starts before it | forward count | S3 | 3 |
+| an open's `ord`, for its close | the stack, `ord`s | forward, per level | in pass B | 4 |
+| errors | anything | OR | any scan | |
 
-All of it comes from the tree section's rows. Nothing in it is specific to JSON.
+Two choices made by this table:
 
-## 2. The open-node stack
+- **Keys are found backward.** A key is a string whose next token is `:`. That depends only on
+  tier 1, so it is depth 2. The forward rule ("after `{` or `,`, when the parent is an
+  object") needs the stack, which makes keys and so every `ord` one scan deeper. The two rules
+  agree on valid JSON, and pass B's checks refuse a file where they would not.
+- **Pairs need no stack entry.** Every open object below the innermost has an open pair, since
+  the deeper container is that pair's value. Only the innermost object's pair is in doubt: one
+  bit, "after a `:`, before the next `,` or `}`".
 
-`parent K`, `end with F` and `nested max D` all ask which nodes are open at a token. That is a
-stack. Its effect over a block is a pair of lists: the nodes it closes that opened before it,
-then the nodes it opens and leaves open. Two such effects combine into one. The closes of the
-second cancel against the opens of the first.
+### 1.1 Fusing a scan into the pass before it
 
-The bound comes from the Bitlex file. JSON's nested kinds are `object` and `array`, at most 13
-deep. A `pair` sits under each `object`, and `document` is at the bottom. So the stack holds at
-most 28 entries of 5 kinds, 3 bits each:
+S2's entries depend on S1 only through the string state at a block's first byte. Each entry
+holds both candidates, and the scan phase picks one once S1 is done. So S1 and S2 need no pass
+over the bytes between them.
 
-| part of the stack effect | JSON |
-|---|---:|
-| closes: a count and the kinds they close | 5 + 84 bits |
-| opens: a count and their kinds | 5 + 84 bits |
-| total | about 23 bytes |
+- **The string state:** in a string at the block's start or not, two candidates.
+- **The escape state** at the first byte matters only when the byte before the block is a
+  backslash. The lane sees that byte in its halo. Only then does an entry need four candidates,
+  and that case is rare.
 
-Most blocks open or close a few nodes, so the compiler may pack the common case smaller. A
-stack effect that overflows its bound is a file for tree-sitter, as `nested max D` already
-says.
+The general rule, for later: fuse when the dependent summary is small and the earlier carry
+reaches it through `k` bits at the edge, so `2^k` candidates, and when computing the
+candidates costs less than another pass over the bytes. Otherwise add a pass.
 
-**Matching a close to its open.** A node's `size` is written where it closes. It needs the
-`ord` of its open, which may be in an earlier block:
+## 2. The entries
 
-- **in the same block:** the lane's walk keeps the open `ord`s in registers;
-- **in an earlier block of the same pass:** each lane publishes its unmatched opens, by depth,
-  to threadgroup memory. A close at depth `d` takes the latest earlier open at depth `d`. That
-  is one prefix max per depth, so `D` scans of one pass's lanes (`06-block-parallel.md` §4.3);
-- **in an earlier pass:** the stack of open `ord`s at the pass's start, at most 28 words in
-  threadgroup memory. The threadgroup updates it at the end of each pass.
+One entry per SIMD group of 32 lanes, so per 2 KB. A lane takes a 64-byte block. Inside a
+SIMD group, lanes combine their values in registers with SIMD prefix operations. So only the
+entries are stored between passes.
 
-## 3. The kernel
+| field | bits | combine |
+|---|---:|---|
+| S1: the escape and string carries, as a function of the carry-in | 4 | compose |
+| *per string-state candidate (×2):* | | |
+| the stack effect (§3) | 64 | §3 |
+| first and last token kinds | 6 | first / last present |
+| keys: is the string open at the end a key? (needs the right) | 2 | backward borrow |
+| token count; node count, and +1 if the open string is a key | 12 + 13 + 1 | add |
+| error | 1 | OR |
+| codes used (JSON has fewer than 32) | 32 | OR |
+| total | about 35 bytes | |
 
-One threadgroup owns a run of files. Its 1,024 lanes each take a 64-byte block, so a pass
-covers 64 KB, and the threadgroup loops passes to the run's end. Scans reset at each file's
-first block. The corpus's median file is 3.7 KB, so most threadgroups hold many files.
+S1's 4 bits are a function from the escape carry-in to (escape carry-out, string parity).
+Two such functions compose into one, so S1 is one scan for both of tier 1's carries.
 
-One threadgroup owns all its blocks, so every round ends with a threadgroup barrier. Nothing
-waits on another threadgroup, so there is no look-back and no polling.
+**Where entries go.** In threadgroup memory while they fit, and in device memory past that.
+32 KB, less pass B's 3.4 KB (§4), holds about 800 entries, so 1.6 MB of a file at a time.
+Larger files go in chunks (§6).
 
-### Round 1: tier 1's carries
+## 3. The 8-byte stack effect
 
-- **Per block:** the bytes, the classes, and the summary of each carry. Where one carry
-  depends on another at the block's first byte, the summary holds both candidates. For example,
-  the string toggle depends on whether the first byte is escaped (`06` §3.1).
-- **Per SIMD group:** the 32 lanes' summaries combined with SIMD prefix operations. One entry
-  per 2 KB goes to threadgroup memory.
-- **Barrier, then a scan** over the entries.
+A block's effect on the stack of open brackets is the brackets it closes that opened before
+it, then the brackets it opens and leaves open. JSON's brackets are `{` and `[`, so one bit
+each, at most 13 deep (`nested max 13`):
 
-### Round 2: tier 2's accumulators
+| bits | field |
+|---:|---|
+| 4 | closes: how many |
+| 13 | closes: the kinds they expect, innermost first |
+| 4 | opens: how many |
+| 13 | opens: their kinds, innermost first |
+| 1 | the innermost object's pair is open at the block's end |
+| 1 | the pair bit is set by this block, not passed through |
+| 2 | error: a kind mismatch, or deeper than 13 |
+| 26 | free |
 
-- **Per block:** the bytes are read again and tier 1's masks are recomputed with their
-  carry-ins. Recomputing is cheaper than storing a dozen masks per block (`06` §2). The lane
-  takes its node count, last token kind, stack effect, errors and code bits. The stack effect
-  comes from a walk over the block's bracket-like tokens only, a few per block.
-- **Per SIMD group and threadgroup:** as in round 1.
-- **Barrier, then a scan.** Each block now knows its `ord` offset, the kind of the token before
-  it, and the stack at its start. Each file knows its node total, so the `size` column's width.
+**Combine `a` then `b`.** The first `m = min(a.opens, b.closes)` of `b`'s closes cancel `a`'s
+innermost opens. Then:
 
-### Round 3: the tokens
+- `a`'s top `m` kinds must equal `b`'s first `m` expected kinds, or the error is set;
+- the closes are `a`'s, then `b`'s beyond `m`;
+- the opens are `a`'s below `m`, then `b`'s;
+- depth past 13 sets the error.
 
-- **Per block:** the masks once more. Then a loop over the block's token starts, at most 64,
-  in order. This is the generated per-token code, one straight-line case per kind:
-  - the kind, from the first byte, or a keyword compare of up to 8 bytes;
-  - the checks, such as `json_number`, over the token's bytes in 8-byte chunks;
-  - the nodes that open here, by `after`, `parent` and rank, each with its `ord`, code and
-    start;
-  - the nodes that close here: `size` and `end` into the open's record;
-  - unmatched opens and closes, kept for §2's match.
-- **Records go to a scratch area** in device memory: code, start, end and size, 4 bytes each.
-- **An `atomic_min` of `ord` per code** gives the first-use order. An `atomic_max` per column
-  gives its width.
-- **Barrier.**
+All of these are shifts, masks and one compare.
 
-### Round 4: the tape
+**Per block** the lane makes its effect by a walk over its block's bracket bits. That is
+usually 0 to 4 iterations, and at most 64.
 
-- **Per node, in parallel:**
-  - its code, renumbered by first use (a few dozen codes, sorted by one thread);
-  - `base` for each 16 nodes, and `off = start − base`;
-  - `tail`, from the start of the last node inside it;
-  - every column at its final width.
-- **No guesses.** Round 2's scan gives the counts, and round 3 gives the widths and the
-  numbering. Only the host's buffer capacity is guessed: from the file's length at the
-  language's measured density. A file that overflows it goes back with the true size.
+## 4. Pass B: every input from a scan
 
-### Threadgroup memory
+Pass B re-reads the bytes. For each lane it rebuilds the exact carry-ins: the entry's scan
+result, plus a SIMD prefix over the lanes before it in the group, plus a SIMD suffix for the
+backward key bit. Then it walks the lane's tokens in order.
 
-Apple GPUs give a threadgroup 32 KB. JSON's entries per 2 KB SIMD group:
+Each input the walk needs, and where it comes from:
 
-| | bytes |
-|---|---:|
-| tier 1's carries | 1 |
-| node count, last kind, the open string's `ord`, errors | 8 |
-| the stack effect | 23 |
-| the code bits | 8 |
-| total | 40 |
+| input | source |
+|---|---|
+| a token's index and start position | the token count's prefix, then a popcount below its bit; positions are written compacted, as simdjson's structural indexes |
+| a node's `ord` | the node count's prefix, then a popcount of node starts below its bit, plus its rank at its byte |
+| a token's kind | its first byte; a keyword compare of up to 8 bytes |
+| key or not | the key bit: local, or the backward scan's for a string still open at the block's end |
+| field `value` | the last token kind before it: local, or the forward scan's |
+| the parent's kind, for the checks | the stack at the block's start, then the brackets walked so far |
+| an open's `ord`, for its close | below |
 
-So 32 KB holds 800 entries, which is files up to 1.6 MB. Of the 774 corpus files, 5 are
-larger, up to 8.7 MB. For those, the entries go to device memory, still owned by one
-threadgroup.
+The node starts at one byte, with their ranks:
 
-## 4. The CPU
+| byte | nodes, outermost first |
+|---|---|
+| the first token | `document` |
+| `{` or `[` | `object` or `array`, then the punctuation token |
+| a key's opening quote | `pair`, `string`, `"` |
+| any other opening quote | `string`, `"` |
+| any other token start | the token |
 
-One generated function per program, as tier 1 already is. It loops over a file's blocks in
-order, and the carries stay in registers:
+**Matching a close to its open** needs the open's `ord`. That is the latest open at the same
+level before the close. JSON has 13 bracket levels, 13 pair levels and the open string, so 27
+values:
 
-- for each block, tier 1's masks, as now;
-- for each token start in the block, the same per-token cases as round 3, with the open-node
-  stack in registers, bounded by the Bitlex file's `max`;
-- records written directly at their final widths. The CPU knows a file's total only at its
-  end, so it writes 4-byte columns and narrows them in place if they fit.
+- **in the same lane:** in registers, from the walk;
+- **in an earlier lane of the same pass:** each lane offers its last unmatched open per level.
+  One SIMD prefix max per level runs over the lanes, since `ord`s grow. Then one value per
+  SIMD group and level goes to threadgroup memory: 32 × 27 × 4 bytes, 3.4 KB. Barrier.
+- **in an earlier pass:** the 27 values carried from pass to pass.
 
-## 5. The compiled form
+So pass B has one barrier in its middle. Before it, the walk writes every node's start record.
+After it, the closes whose open is outside the lane write `size` and `end` into the open's
+record. The second half walks only the lane's closes again.
 
-Tier 2 compiles to rows of the transducer's `Program`, beside the block program, as its other
-side programs are (`12-what-is-wanted.md` §3). They are printed and assembled by `rir`, and
-covered by the digest and `validate`:
+**Records** go to scratch in device memory, one per node: start, end and size (4 bytes each),
+code (2) and level (1). `atomic_min` of `ord` per code gives first use. `atomic_max` per
+column gives the widths.
 
-- the accumulators: each one's kind (count, last present, stack effect, flag, bitset) and its
-  width;
-- the per-kind cases: what each token kind opens and closes, and under which conditions;
-- the bounds: the stack's depth and kinds, and the scratch record's layout.
+**Checks** in the walk, any failure setting the file's error:
 
-Cranelift and the MSL generator each turn these rows into code. Neither interprets them at run
-time.
+- each token's kind against the one before, given the parent: simdjson's stage 2 table;
+- numbers with `json_number`, over their bytes in 8-byte chunks;
+- keywords;
+- the stack's errors.
 
-## 6. How it is checked
+## 5. Pass C: the tape
 
-- **Tapes equal tree-sitter's,** byte for byte, on the corpus. Every file goes either to a tape
-  or to tree-sitter.
-- **Metal's tapes equal the CPU's,** on every test input.
-- **Shape guards on the generated code:**
-  - round 3's loop has one case per token kind, and no loop over rows;
-  - nothing is allocated per token;
-  - the threadgroup memory per entry is within budget;
+One thread per node, reading the scratch records:
+
+- `code`: renumbered by first use, from a table of a few dozen codes sorted by one thread
+  after pass B;
+- `size`;
+- `base` for each 16 nodes, the start of node `16g`, and `off = start − base`;
+- `tail = end + 1 − start[C[end + 1] − 1]`, a gather from the starts;
+- each column at its final width.
+
+The only guess is the host's buffer capacity, from the file's length at JSON's measured node
+density. A file that overflows it runs again with the true size, which the first run knows.
+
+## 6. Large files: sequential chunks
+
+A file larger than the entry budget runs in chunks, in order, in the same threadgroup. Each
+chunk is passes A, B and C over its bytes, then a carry written to device memory for the next
+chunk:
+
+- S1's state at the boundary;
+- the totals: tokens, nodes, codes used;
+- the open brackets as a stack, with the pair bit;
+- the 27 open `ord`s;
+- the last token's kind;
+- the error.
+
+**The backward dependency at a chunk's end.** A string at the end of a chunk may be a key, and
+that is known only from the next token, which may be in the next chunk. So a chunk commits
+only up to its last block boundary before such a string. The carry records that boundary, and
+the next chunk starts there. It re-reads a few hundred bytes, the unresolved tail. Everything
+before the boundary is final.
+
+In the meantime, until chunks are built, entries past threadgroup memory spill to device
+memory, as §2 says.
+
+## 7. Many small files in one threadgroup
+
+The corpus's median file is 3.7 KB, so a threadgroup takes a run of files up to a chunk.
+Every scan is segmented: a file's first block resets every combine. Records, totals and errors
+are per file.
+
+## 8. The CPU
+
+One generated function per program. Blocks in order, tokens in order, every carry in a
+register, the bracket stack in registers bounded by 13. The CPU needs no scans:
+
+- keys by the forward rule, since the stack is at hand;
+- `ord` by a running count;
+- records written at their final place.
+
+## 9. Checks for the build
+
+- Tapes equal tree-sitter's byte for byte on the corpus, or the file goes to tree-sitter.
+- Metal's tapes equal the CPU's.
+- Shape guards:
+  - pass A and pass B read the bytes once each;
+  - the scan chain is S1, S2, S3;
+  - one case per token kind in the walk, and no interpretation of rows;
+  - nothing allocated per token;
+  - entries within budget;
   - no wait on another threadgroup.
-- **CPU time:** tier 2 next to simdjson's stage 2, about 12 ns per 64 bytes.
+- CPU and GPU time next to simdjson's stages: 9 to 13 ns per 64 bytes for stage 1, and about
+  12 for stage 2.
 
-## 7. Open questions
+## 10. What must generalise afterwards
 
-1. **Fusing rounds 1 and 2.** JSON's tier-2 accumulators depend on tier 1 only through
-   in-string state. With two candidates per entry, round 2's summaries could be made in round 1,
-   saving a pass over the bytes. That doubles the entry size.
-2. **Very large files.** One threadgroup owns a file, so an 8.7 MB file runs on one GPU core.
-   Such a file could be split across threadgroups with one extra dispatch between rounds, the
-   dispatch boundary being the barrier. Is that worth building now, or only when a large file
-   shows up in the timings?
-3. **The stack effect's size.** 23 bytes is the worst case. A compact form for the common case
-   (a few opens and closes) with an overflow flag might keep it to 8 bytes. Overflowing blocks
-   would then take the device-memory path.
-4. **Keeping a mask between rounds instead of recomputing it.** This is chosen per mask by
-   cost (`13` §5.3). JSON's tier 1 is cheap enough to recompute.
+- The analysis of §1, run by the compiler over any program's values, with backward carries.
+- The stack effect for any `nested` kinds: bits per kind, and the bound from `max`.
+- The pair bit is JSON's "a child that ends its parent" (`end with`). In general that is one
+  bit per such kind at the innermost level.
+- The backward key rule is JSON's. In general a rule may read the next token, and the analysis
+  chooses forward or backward by depth.
+- The chunk commit point, for any backward carry.
+
+## 11. Open questions
+
+1. **Pass B's mid barrier.** Matching closes inside a pass needs it. The alternative is a
+   fourth scan over the entries, for the 27 open `ord`s. That needs 108 bytes per entry, about
+   four times the entry, but drops the barrier and the second walk.
+2. **The four-candidate case** (a block after a backslash): store four candidates always, or
+   flag the entry and re-run its block in the scan phase?
+3. **Scratch records then pass C, or pass B writing the tape directly** once the widths are
+   known. They are known after S3 for `size`, but not for `off` and `tail` until every start is
+   written.
