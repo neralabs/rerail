@@ -34,7 +34,7 @@
 //! When the loop ends, each derived relation is recorded as a fact family: its digest over the
 //! batch, read from the documents' core facts (03 §2, §14).
 
-use super::owner::Lease;
+use super::owner::{Database, Lease};
 use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -179,7 +179,7 @@ fn sql(e: rusqlite::Error) -> StoreError {
 
 /// Declares the program's relations, their `new_` and `delta_` tables and the loop's control
 /// tables, empty, and loads the steps and their reads.
-fn declare(lease: &Lease<'_>, program: &Program) -> rusqlite::Result<()> {
+fn declare(lease: &Database, program: &Program) -> rusqlite::Result<()> {
     let mut storage = lease.storage.borrow_mut();
     for (name, definition) in CONTROL {
         storage.declare(lease, name, definition.to_owned(), true)?;
@@ -221,7 +221,7 @@ fn lattice(program: &Program, rel: &str) -> Option<(usize, i64)> {
 /// A lattice relation's fold (`merge_lattice`): the candidates of `new_<rel>` joined per key, those
 /// that change the relation's value as its delta (a value that differs from one already there is
 /// top), merged into the relation. Returns the delta's rows.
-fn fold_lattice(lease: &Lease<'_>, rel: &str, arity: usize, keys: usize, top: i64) -> rusqlite::Result<usize> {
+fn fold_lattice(lease: &Database, rel: &str, arity: usize, keys: usize, top: i64) -> rusqlite::Result<usize> {
     let key = (0..keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
     let v = format!("c{}", arity - 1);
     let on = (0..keys).map(|i| format!("r.c{i} = j.c{i}")).collect::<Vec<_>>().join(" AND ");
@@ -244,7 +244,7 @@ fn fold_lattice(lease: &Lease<'_>, rel: &str, arity: usize, keys: usize, top: i6
 /// Runs one chunk's waves to the fixpoint: every step is pending at first, and after each wave
 /// the readers of every relation that changed. Returns the number of waves.
 /// `empty`: the chunk has no documents, so a step reading its batch reads nothing and is skipped.
-fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
+fn waves(lease: &Database, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
     let derived: BTreeMap<&str, usize> = program.relations.iter().map(|(r, arity)| (r.as_str(), *arity)).collect();
     lease.execute_batch("DELETE FROM temp.wave_delta; DELETE FROM temp.wave_pending; INSERT INTO temp.wave_pending SELECT step FROM temp.wave_step")?;
     let mut wave = 0;
@@ -321,6 +321,14 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
         lease.storage.borrow_mut().statistics_boundary(lease)?;
     }
     Ok(wave)
+}
+
+/// Executes a lowered fact/rule program on an existing owner connection. Inputs may be virtual
+/// tables or SQL relations; outputs and wave diagnostics remain queryable on this connection.
+/// AST matching stays outside this loop and supplies relations like any other producer.
+pub(in crate::code_rule_dsl) fn execute_sql(db: &Database, program: &Program, max_waves: u32) -> StoreResult<u32> {
+    declare(db, program)?;
+    waves(db, program, None, max_waves, false)
 }
 
 /// The digest of a relation's rows in key order, and their count: all of them, or those whose

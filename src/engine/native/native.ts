@@ -286,7 +286,24 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
 export interface NativeBinding {
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
