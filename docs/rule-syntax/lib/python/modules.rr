@@ -50,13 +50,14 @@ py_docmod(d, p, q) :- doc(d, p, q), q != "".
 .decl py_workspace(q: symbol)
 py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _, _).
 
-// VERSIONS: `name: 3.0-` or `name: 3.0-3.9`. A module not listed has its nearest listed parent's range.
+// VERSIONS: `name: 3.0-` or `name: 3.0-3.9`, maybe with a comment (`_typeshed: 3.0-  # ...`). A module not listed
+// has its nearest listed parent's range.
 .decl py_vline(m: symbol, l: symbol)
 py_vline(m, l) :- py_stdlib(r), f = cat(r, "/VERSIONS"), file_line(f, _, l), match("(?<m>[A-Za-z0-9_.]+): *(?<rest>.*)", l).
 .decl py_vrange(m: symbol, a: number, b: number, c: number, e: number)
 py_vrange(m, a, b, c, e) :- py_vline(m, l), match("[^:]*: *(?<x>[0-9]+)\\.(?<y>[0-9]+)-(?<z>[0-9]+)\\.(?<w>[0-9]+).*", l),
     a = to_number(x), b = to_number(y), c = to_number(z), e = to_number(w).
-py_vrange(m, a, b, 99, 99) :- py_vline(m, l), match("[^:]*: *(?<x>[0-9]+)\\.(?<y>[0-9]+)- *", l),
+py_vrange(m, a, b, 99, 99) :- py_vline(m, l), match("[^:]*: *(?<x>[0-9]+)\\.(?<y>[0-9]+)- *(#.*)?", l),
     a = to_number(x), b = to_number(y).
 // py_anc(q, m): m is q or a package above it.
 .decl py_anc(q: symbol, m: symbol)
