@@ -98,8 +98,8 @@ impl StorageMaintenance {
                         let pressed = store
                             .capacity()
                             .is_ok_and(|capacity| !matches!(capacity.state, CapacityState::Normal));
-                        if pressed || store.corpus_collection_due().unwrap_or(false) {
-                            let policy = crate::content_store::CorpusPolicy::default();
+                        let policy = crate::content_store::CorpusPolicy::default();
+                        if pressed || store.corpus_pass_wanted(&policy, now).unwrap_or(false) {
                             let started = Instant::now();
                             while started.elapsed() < Duration::from_secs(1) && !thread_stop.load(Ordering::Acquire) {
                                 match store.collect_corpus_pass(&policy, now) {
