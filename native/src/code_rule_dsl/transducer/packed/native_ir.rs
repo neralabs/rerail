@@ -435,6 +435,17 @@ impl BlockInst {
     pub(super) fn carried(&self) -> bool {
         matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..))
     }
+
+    /// The values the instruction reads.
+    pub(super) fn operands(&self) -> Vec<usize> {
+        match *self {
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => vec![usize::from(a)],
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
+                vec![usize::from(a), usize::from(b)]
+            }
+            _ => vec![],
+        }
+    }
 }
 
 impl BlockNative {

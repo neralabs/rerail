@@ -158,3 +158,35 @@ Over the 774 files (615,787 blocks), best of 3 or 5, paired runs, load 24 to 33:
   - it allocates small vectors per token.
 
   It is correct, and checked against tree-sitter, but it is not yet stage 2's shape.
+
+### Tier 1's codegen
+
+The loop's code around the program, fixed in the Cranelift lowering (`native_cpu_block.rs`):
+
+- **Full blocks get their own body.** A block wholly inside the file, and not the first, has
+  every `within` all ones. Its body is the hot loop. The first block and the last ones take the
+  general body. A head block picks one per block.
+- **The pointers are induction variables.** Every load and store is `[pointer, #offset]`, with
+  no address arithmetic per access.
+- **The movemask weights and nibble mask are made once**, before the loop.
+- **Bit logic folds as it is emitted.** A constant folds. A class stays complemented, as its
+  `cmeq #0` makes it, until a use needs it plain: an `and` with it is one `bic`, and a `not` of
+  it is free.
+
+| JSON tier 1 loop | before | after |
+|---|---:|---:|
+| instructions | 253 | 178 |
+| stack loads and stores | 0 | 0 |
+
+Paired CPU timings, load 42 to 59: tier 1 takes 9.5 to 10.4 ns per block; simdjson's stage 1
+takes 9.0 to 11.0. Stage 1 also validates UTF-8 and writes indexes.
+
+The 28 instructions left over the target need instructions Cranelift lacks:
+- `cmtst`: one instruction per class test, not an `and` and a `cmeq #0` (8 per block);
+- `pmull`: the string toggle's prefix XOR in about two instructions, not thirteen.
+
+### Tier 2 is generated code
+
+The CPU writer (`tape_writer.rs`) interprets rows, and it is 600x simdjson's stage 2. That was
+the wrong design. Tier 2 is generated from the Bitlex file, as tier 1 is: Cranelift on the
+CPU, MSL on the GPU. A Rust version stays only as a test oracle.

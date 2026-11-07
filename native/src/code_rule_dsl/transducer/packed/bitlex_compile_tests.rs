@@ -722,9 +722,10 @@ fn json_loop_keeps_values_in_registers() {
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
 /// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
-/// 0049) lowered them to 483 and 6, and one structural class and kinds in tier 2 to 253 and 0; the target is
+/// 0049) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a full-block body with folded
+/// logic to 178; the target is
 /// stage 1's 150.
-const JSON_LOOP: usize = 253;
+const JSON_LOOP: usize = 178;
 const JSON_LOOP_STACK: usize = 0;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------

@@ -264,27 +264,36 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let mut builder_context = FunctionBuilderContext::new();
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
-        // entry -> row (one per file) -> body (one per block) -> exit (the file's counts) ->
-        // row or done.
+        // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
+        // -> exit (the file's counts) -> row or done. A full block lies inside the file and is
+        // not the first: every `within` is all ones, so its body (the hot loop, block2) has no
+        // end-of-file arithmetic. The first block and the last ones take the general body.
         let entry = f.create_block();
         let row = f.create_block();
         let body = f.create_block();
+        let general = f.create_block();
+        let head = f.create_block();
         let exit = f.create_block();
         let done = f.create_block();
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
-        f.append_block_param(body, types::I64);
         // The carried state, packed (decision 0048): each carry holds only its bits, in a field
         // of a few loop-carried words, never a word per bit.
         let state = State::of(native);
         let carried = state.words;
-        for _ in 0..carried {
-            f.append_block_param(body, types::I64);
+        // Each loop block's parameters: the block index, the byte and output pointers (so that
+        // every load and store is `[pointer, #offset]`), the state words, the counts.
+        for b in [body, general, head] {
+            for _ in 0..3 + carried {
+                f.append_block_param(b, types::I64);
+            }
+            // One loop-carried popcount per extract, the mask pass's count for the extract
+            // pass; stored after the outputs' words at the exit.
+            for _ in &native.extracts {
+                f.append_block_param(b, types::I64);
+            }
         }
-        // One loop-carried popcount per extract, the mask pass's count for the extract pass;
-        // stored after the outputs' words at the exit.
         for _ in &native.extracts {
-            f.append_block_param(body, types::I64);
             f.append_block_param(exit, types::I64);
         }
 
@@ -294,6 +303,17 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let (arena, rows, nrows, out_all) = (params[0], params[1], params[2], params[3]);
         let zero = f.ins().iconst(types::I64, 0);
         let even = f.ins().iconst(types::I64, super::block::carry::EVEN as i64);
+        // The two vector constants every class needs, made once: the nibble mask and the
+        // movemask weights. (Other constants are made where used, decision 0047.)
+        let nibble = {
+            let c = f.ins().iconst(types::I8, 0x0f);
+            f.ins().splat(types::I8X16, c)
+        };
+        let weights = {
+            const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
+            let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
+            f.ins().vconst(types::I8X16, handle)
+        };
         let no_rows = f.ins().icmp_imm(IntCC::Equal, nrows, 0);
         f.ins().brif(no_rows, done, &[], row, &[zero.into()]);
 
@@ -314,16 +334,37 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The first block's carries are zero, made here: the entry's zero, live across every
         // row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
-        let first: Vec<cranelift_codegen::ir::BlockArg> =
-            std::iter::repeat_n(zero.into(), carried + native.extracts.len() + 1).collect();
+        let first: Vec<cranelift_codegen::ir::BlockArg> = [zero.into(), bytes.into(), out.into()]
+            .into_iter()
+            .chain(std::iter::repeat_n(zero.into(), carried + native.extracts.len()))
+            .collect();
         let no_counts: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), native.extracts.len()).collect();
-        f.ins().brif(none, exit, &no_counts, body, &first);
+        // Blocks 1 .. len / 64 are full.
+        let full_end = f.ins().ushr_imm(len, 6);
+        f.ins().brif(none, exit, &no_counts, head, &first);
 
-        // The body: one block, straight-line.
+        // The head: the end, or the next block's body.
+        f.switch_to_block(head);
+        let hp = f.block_params(head).to_vec();
+        let args: Vec<cranelift_codegen::ir::BlockArg> = hp.iter().map(|&v| v.into()).collect();
+        let counted: Vec<cranelift_codegen::ir::BlockArg> = hp[3 + carried..].iter().map(|&v| v.into()).collect();
+        let ended = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, hp[0], blocks);
+        let next_block = f.create_block();
+        f.ins().brif(ended, exit, &counted, next_block, &[]);
+        f.switch_to_block(next_block);
+        let past_first = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, hp[0], 1);
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, hp[0], full_end);
+        let is_full = f.ins().band(past_first, inside);
+        f.ins().brif(is_full, body, &args, general, &args);
+
+        let stride = 8 * native.outputs.len() as i64;
+        for (body, full) in [(body, true), (general, false)] {
+        // A body: one block, straight-line.
         f.switch_to_block(body);
         let i = f.block_params(body)[0];
-        let packed_in: Vec<Value> = f.block_params(body)[1..1 + carried].to_vec();
-        let counts_in: Vec<Value> = f.block_params(body)[1 + carried..].to_vec();
+        let (base, dst) = (f.block_params(body)[1], f.block_params(body)[2]);
+        let packed_in: Vec<Value> = f.block_params(body)[3..3 + carried].to_vec();
+        let counts_in: Vec<Value> = f.block_params(body)[3 + carried..].to_vec();
         // The state carried out, word by word: each field ORed in as soon as its value is made,
         // so that no value stays live to the back edge for its carry.
         let mut packed_out: Vec<Option<Value>> = vec![None; carried];
@@ -336,7 +377,8 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         };
         // Bits `from..from + n` of the state carried in, as the low bits of a word.
         let read = |f: &mut FunctionBuilder<'_>, field: &Field, from: u8, n: u8| {
-            let x = f.ins().ushr_imm(packed_in[field.word], i64::from(field.pos + from));
+            let shift = field.pos + from;
+            let x = if shift == 0 { packed_in[field.word] } else { f.ins().ushr_imm(packed_in[field.word], i64::from(shift)) };
             if field.pos + from + n == 64 { x } else { f.ins().band_imm(x, ((1u64 << n) - 1) as i64) }
         };
         // Constants are made in the body, where they are used (decision 0047): `movi` for a
@@ -346,17 +388,13 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let c = f.ins().iconst(types::I8, i64::from(byte));
             f.ins().splat(types::I8X16, c)
         };
-        let nibble = splat(&mut f, 0x0f);
         let zero16 = splat(&mut f, 0);
-        let weights = {
-            const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
-            let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
-            f.ins().vconst(types::I8X16, handle)
-        };
-        let offset = f.ins().ishl_imm(i, 6);
-        let base = f.ins().iadd(bytes, offset);
         let loads = MemFlags::new().with_notrap();
-        let mut values: Vec<Value> = Vec::with_capacity(native.insts.len());
+        // Each instruction's value, symbolic for the bit logic: a constant folds, and a class
+        // stays complemented (as its compare makes it) until a use needs it plain, so that an
+        // `and` with it is one `bic` and a `not` of it is free.
+        let mut syms: Vec<Sym> = Vec::with_capacity(native.insts.len());
+        let mut values: Vec<Option<Value>> = Vec::with_capacity(native.insts.len());
         // The block's 64 bytes, loaded once for every compare and class.
         let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
         let chunks: Vec<Value> = if reads {
@@ -404,11 +442,40 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             cache[t].clone().expect("looked up")
         };
         for (at, inst) in native.insts.iter().enumerate() {
-            let v = |x: u16| values[usize::from(x)];
+            let logic = |x: u16| syms[usize::from(x)];
+            let folded = match *inst {
+                BlockInst::Const(c) => Some(Sym::Known(c)),
+                BlockInst::Within(_) if full => Some(Sym::Known(u64::MAX)),
+                BlockInst::Not(a) => Some(logic(a).not()),
+                BlockInst::And(a, b) => Some(Sym::and(&mut f, logic(a), logic(b))),
+                BlockInst::AndNot(a, b) => Some(Sym::and(&mut f, logic(a), logic(b).not())),
+                BlockInst::Or(a, b) => Some(Sym::and(&mut f, logic(a).not(), logic(b).not()).not()),
+                BlockInst::Xor(a, b) => Some(Sym::xor(&mut f, logic(a), logic(b))),
+                _ => None,
+            };
+            if let Some(sym) = folded {
+                syms.push(sym);
+                values.push(None);
+                // A carried value is made plain where it is made.
+                if let Some(k) = state.top[at] {
+                    let value = plain(&mut f, &syms, &mut values, at);
+                    let field = state.fields[k];
+                    let top = f.ins().ushr_imm(value, 64 - i64::from(field.width));
+                    put(&mut f, &mut packed_out, &field, top);
+                }
+                continue;
+            }
+            for x in inst.operands() {
+                plain(&mut f, &syms, &mut values, x);
+            }
+            let v = |x: u16| values[usize::from(x)].expect("made plain");
+            let mut complemented = false;
             let value = match *inst {
                 // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
                 // shifts so that t = 64 needs no shift by 64 (`block::within`). At a delay `d`,
                 // the bits below `len + d` and not below `d` (`block::within_at`).
+                // In a full block, all ones.
+                BlockInst::Within(_) if full => f.ins().iconst(types::I64, -1),
                 BlockInst::Within(d) => {
                     let below = |f: &mut FunctionBuilder<'_>, end: Value| {
                         let start = f.ins().ishl_imm(i, 6);
@@ -451,9 +518,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                             f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
-                    let none = bitmask(&mut f, &parts, weights);
-                    f.ins().bnot(none)
+                    // The bytes with no selected bit: the class complemented, no vector `mvn`.
+                    complemented = true;
+                    bitmask(&mut f, &parts, weights)
                 }
                 BlockInst::Pair { before, table, .. } => {
                     let BlockInst::Pair { bits, .. } = *inst else { unreachable!() };
@@ -469,9 +536,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                             f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
-                    let none = bitmask(&mut f, &parts, weights);
-                    f.ins().bnot(none)
+                    // The bytes with no selected bit: the class complemented, no vector `mvn`.
+                    complemented = true;
+                    bitmask(&mut f, &parts, weights)
                 }
                 BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => {
                     let (BlockInst::Plane(k) | BlockInst::PlaneBefore(k)) = *inst else { unreachable!() };
@@ -484,16 +551,11 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                             f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
-                    let none = bitmask(&mut f, &parts, weights);
-                    f.ins().bnot(none)
+                    // The bytes with no selected bit: the class complemented, no vector `mvn`.
+                    complemented = true;
+                    bitmask(&mut f, &parts, weights)
                 }
-                BlockInst::Const(c) => f.ins().iconst(types::I64, c as i64),
-                BlockInst::Not(a) => f.ins().bnot(v(a)),
-                BlockInst::And(a, b) => f.ins().band(v(a), v(b)),
-                BlockInst::Or(a, b) => f.ins().bor(v(a), v(b)),
-                BlockInst::Xor(a, b) => f.ins().bxor(v(a), v(b)),
-                BlockInst::AndNot(a, b) => f.ins().band_not(v(a), v(b)),
+                BlockInst::Const(_) | BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => unreachable!("folded"),
                 BlockInst::Prev(a, k) => {
                     // The top `k` of the bits the field keeps of `a`'s previous word.
                     let field = &state.fields[state.top[usize::from(a)].expect("a looked-back value has a field")];
@@ -552,36 +614,43 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     y
                 }
             };
+            syms.push(Sym::Value(value, complemented));
+            values.push((!complemented).then_some(value));
             if let Some(k) = state.top[at] {
+                let value = plain(&mut f, &syms, &mut values, at);
                 let field = state.fields[k];
                 let top = f.ins().ushr_imm(value, 64 - i64::from(field.width));
                 put(&mut f, &mut packed_out, &field, top);
             }
-            values.push(value);
         }
-        let stride = 8 * native.outputs.len() as i64;
-        let at = f.ins().imul_imm(i, stride);
-        let address = f.ins().iadd(out, at);
         for (k, &v) in native.outputs.iter().enumerate() {
-            f.ins().store(MemFlags::new().with_notrap(), values[usize::from(v)], address, 8 * k as i32);
+            let value = plain(&mut f, &syms, &mut values, usize::from(v));
+            f.ins().store(MemFlags::new().with_notrap(), value, dst, 8 * k as i32);
         }
         let counts_out: Vec<Value> = native
             .extracts
             .iter()
             .zip(&counts_in)
             .map(|(&k, &c)| {
-                let n = f.ins().popcnt(values[usize::from(native.outputs[k])]);
+                let n = f.ins().popcnt(values[usize::from(native.outputs[k])].expect("stored, so plain"));
                 f.ins().iadd(c, n)
             })
             .collect();
         let next = f.ins().iadd_imm(i, 1);
-        let more = f.ins().icmp(IntCC::UnsignedLessThan, next, blocks);
-        let again: Vec<cranelift_codegen::ir::BlockArg> = std::iter::once(next.into())
+        let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, stride));
+        let again: Vec<cranelift_codegen::ir::BlockArg> = [next.into(), next_base.into(), next_dst.into()]
+            .into_iter()
             .chain(packed_out.iter().map(|&c| c.expect("every carried word holds a field").into()))
             .chain(counts_out.iter().map(|&c| c.into()))
             .collect();
-        let counted: Vec<cranelift_codegen::ir::BlockArg> = counts_out.iter().map(|&c| c.into()).collect();
-        f.ins().brif(more, body, &again, exit, &counted);
+        if full {
+            // The hot loop's back edge: to itself while the next block is full.
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
+            f.ins().brif(more, body, &again, head, &again);
+        } else {
+            f.ins().jump(head, &again);
+        }
+        }
 
         f.switch_to_block(exit);
         let totals = f.block_params(exit).to_vec();
@@ -614,6 +683,66 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, output_delays: native.output_delays.clone(), clif, disassembly })
+}
+
+/// A value of the bit logic: a known word, or a value that is the word itself or its complement.
+#[derive(Clone, Copy)]
+enum Sym {
+    Known(u64),
+    Value(Value, bool),
+}
+
+impl Sym {
+    fn not(self) -> Sym {
+        match self {
+            Sym::Known(c) => Sym::Known(!c),
+            Sym::Value(v, neg) => Sym::Value(v, !neg),
+        }
+    }
+
+    /// `a & b`, one instruction at most: a complemented side is a `bic`; both complemented,
+    /// the complement of an `or`.
+    fn and(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        match (a, b) {
+            (Sym::Known(x), Sym::Known(y)) => Sym::Known(x & y),
+            (Sym::Known(0), _) | (_, Sym::Known(0)) => Sym::Known(0),
+            (Sym::Known(u64::MAX), s) | (s, Sym::Known(u64::MAX)) => s,
+            (Sym::Known(c), Sym::Value(v, neg)) | (Sym::Value(v, neg), Sym::Known(c)) => {
+                let x = if neg { f.ins().bnot(v) } else { v };
+                Sym::Value(f.ins().band_imm(x, c as i64), false)
+            }
+            (Sym::Value(x, false), Sym::Value(y, false)) => Sym::Value(f.ins().band(x, y), false),
+            (Sym::Value(x, false), Sym::Value(y, true)) | (Sym::Value(y, true), Sym::Value(x, false)) => Sym::Value(f.ins().band_not(x, y), false),
+            (Sym::Value(x, true), Sym::Value(y, true)) => Sym::Value(f.ins().bor(x, y), true),
+        }
+    }
+
+    fn xor(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        match (a, b) {
+            (Sym::Known(x), Sym::Known(y)) => Sym::Known(x ^ y),
+            (Sym::Known(0), s) | (s, Sym::Known(0)) => s,
+            (Sym::Known(u64::MAX), s) | (s, Sym::Known(u64::MAX)) => s.not(),
+            (Sym::Known(c), Sym::Value(v, neg)) | (Sym::Value(v, neg), Sym::Known(c)) => {
+                let k = f.ins().iconst(types::I64, c as i64);
+                Sym::Value(f.ins().bxor(v, k), neg)
+            }
+            (Sym::Value(x, nx), Sym::Value(y, ny)) => Sym::Value(f.ins().bxor(x, y), nx != ny),
+        }
+    }
+}
+
+/// Value `x` plain (not complemented), made once.
+fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>], x: usize) -> Value {
+    if let Some(v) = values[x] {
+        return v;
+    }
+    let v = match syms[x] {
+        Sym::Known(c) => f.ins().iconst(types::I64, c as i64),
+        Sym::Value(v, false) => v,
+        Sym::Value(v, true) => f.ins().bnot(v),
+    };
+    values[x] = Some(v);
+    v
 }
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.

@@ -707,13 +707,7 @@ impl Plan {
 }
 
 fn operands(inst: &BlockInst) -> Vec<usize> {
-    match *inst {
-        BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => vec![usize::from(a)],
-        BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
-            vec![usize::from(a), usize::from(b)]
-        }
-        _ => vec![],
-    }
+    inst.operands()
 }
 
 /// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the SIMD

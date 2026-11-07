@@ -1206,17 +1206,23 @@ pub(super) fn machine_loop(disassembly: &str) -> Vec<String> {
             body.push(line.trim().to_owned());
         }
     }
-    let (body, lines) = blocks.iter().max_by_key(|(_, l)| l.len()).cloned().expect("a block");
-    let back = format!("b label{body}");
-    let exits = lines.last().cloned().unwrap_or_default();
-    let mut out = lines;
-    for (label, l) in &blocks {
-        let target = exits.split(|c: char| !c.is_alphanumeric()).any(|w| w == format!("label{label}"));
-        if target && l.last().is_some_and(|t| *t == back) {
-            out.extend(l.iter().cloned());
+    // A block and the edge blocks its last branch takes back to it.
+    let targets = |exits: &str, label: &str| exits.split(|c: char| !c.is_alphanumeric()).any(|w| w == format!("label{label}"));
+    let looped = |body: &str, lines: &[String]| -> Option<Vec<String>> {
+        let exits = lines.last().cloned().unwrap_or_default();
+        let back = format!("b label{body}");
+        let mut out = lines.to_vec();
+        let mut is_loop = targets(&exits, body);
+        for (label, l) in &blocks {
+            if targets(&exits, label) && l.last().is_some_and(|t| *t == back) {
+                out.extend(l.iter().cloned());
+                is_loop = true;
+            }
         }
-    }
-    out
+        is_loop.then_some(out)
+    };
+    // The hot loop: the largest block that loops to itself (the full blocks' body).
+    blocks.iter().filter_map(|(label, l)| looped(label, l)).max_by_key(Vec::len).expect("a loop")
 }
 
 /// A loop's stack loads and stores (spills and reloads), and its vector `mvn`s.
@@ -1226,11 +1232,11 @@ pub(super) fn loop_costs(lines: &[String]) -> (usize, usize) {
     (stack, mvn)
 }
 
-/// The function's loop-carried values, read from the Cranelift IR: the body block's parameters
-/// after its block index.
+/// The function's loop-carried values, read from the Cranelift IR: the hot body's parameters
+/// after its block index and its byte and output pointers.
 pub(super) fn carried_params(clif: &str) -> usize {
     let line = clif.lines().find(|l| l.trim_start().starts_with("block2(")).expect("the body block");
-    line.matches(": i64").count() - 1
+    line.matches(": i64").count() - 3
 }
 
 /// Stage 1 compiles to a loop with no stack traffic and no vector `mvn`: every value and
