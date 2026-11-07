@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import types
 import unittest
+import sys
 
 spec = importlib.util.spec_from_file_location('rr_native_guard', Path(__file__).resolve().parents[3] / 'scripts/dsl/data_layer_audit/native_guard.py')
 guard = importlib.util.module_from_spec(spec)
@@ -12,7 +13,9 @@ spec.loader.exec_module(guard)
 
 class GuardTests(unittest.TestCase):
     def module(self):
-        module = types.ModuleType('source_linter')
+        module = types.ModuleType('_rr_guard_fixture')
+        sys.modules[module.__name__] = module
+        self.addCleanup(lambda: sys.modules.pop(module.__name__, None))
         # Source-defined methods stay distinguishable from dataclass-generated storage methods.
         exec(compile('''from dataclasses import dataclass
 from typing import NamedTuple
@@ -45,6 +48,11 @@ class TupleFinding(NamedTuple):
         mapped = guard.codes({'check': module})
         constructor = module.Finding.__init__.__code__
         self.assertTrue(constructor not in mapped or mapped[constructor][2])
+
+    def test_standard_wrapper_of_generated_repr_is_permitted(self):
+        module = self.module()
+        mapped = guard.codes({'check': module})
+        self.assertTrue(mapped[module.Finding.__repr__.__code__][2])
         constructor = module.TupleFinding.__new__.__code__
         self.assertTrue(constructor not in mapped or mapped[constructor][2])
 
