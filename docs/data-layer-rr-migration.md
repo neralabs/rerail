@@ -592,3 +592,29 @@ The next shared fix must preserve exact requested source and line text without r
 Earlier short-case receipts remain historical evidence; they do not certify this boundary.
 
 - [Failing native control and consumer inventory](../fixtures/host/data-layer-port/rr-long-source-text-red-and-audit.json.gz).
+
+## Exact demanded text and filtered positional joins, 7 November
+
+The native producer now retains complete source and physical-line text when the program requests it.
+Plan-time provenance tracks copied span columns and equality. Large AST subtree text remains bounded.
+The regression first failed on a 5,013-character line. The repaired source and line views pass their exact-value assertions.
+Six storage-demand cases verify that unused container text is not copied.
+All 43 focused reader tests and 13 syntax-view tests pass. One reader test remains ignored.
+
+The reporter corpus adds four source-positive variants for nine rules: base, long line, many lines, and Unicode line.
+All 36 complete reporter comparisons now pass, as do all five unchanged ForwardRef tests.
+These are supplemental cases, not validation of every audited text consumer.
+
+ForwardRef initially timed out at 100 seconds on the many-line case.
+An external sample found nested native joins. The operator profile identified the cause:
+file-local extraction materialized all ordered AST-node triples before applying semantic candidate filters.
+With 32 comment lines, each of two operators performed 147,741 steps.
+The planner now keeps independent node groups with their candidate filters. Genuine tree-edge joins still move into local execution.
+The many-line positive now uses 0.65 CPU seconds at this debug checkpoint.
+Cross-file base retention remains a memory risk. These focused results do not establish repository-wide performance.
+
+The checkpoint is bac50064f72ca4748cc9ed28420428c0c555e482.
+All five focused locality tests pass; one profiling test remains ignored. GPU-specific suites were not run.
+The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
+
+- [Failing tests, repairs, all 36 comparisons, and profiles](../fixtures/host/data-layer-port/rr-long-source-native-repair.json.gz).

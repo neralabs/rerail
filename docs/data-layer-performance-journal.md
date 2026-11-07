@@ -7938,3 +7938,25 @@ The audit identifies 24 other draft consumers for follow-up; it does not claim t
 The next shared repair must keep requested source text exact while avoiding whole-tree text copies.
 The inventory is 64 drafts and 36 absent translations. Full migration acceptance remains false.
 No repository cold run was performed, and no Linear tickets were created.
+
+## 2026-11-07: demanded text and positional-product repair
+
+Complete requested source and physical-line text now survives the 256-byte AST-text limit.
+Plan-time span provenance avoids copying unused container text. Six storage-demand cases pass.
+All 43 focused reader tests and 13 syntax-view tests pass; one reader test remains ignored.
+
+Nine rule families pass all 36 source-positive padded reporter cases.
+ForwardRef initially timed out at 100 seconds on 1,024 comment lines.
+An external sample showed nested native joins. The operator profile exposed ordered node triples created before candidate filtering.
+With 32 comment lines, two extracted operators each performed 147,741 steps.
+The splitter now keeps independent node groups fused with semantic filters. The original policy remains unchanged.
+An attempted scope narrowing did not fix the timeout and was reverted.
+
+The small debug profile changes from 0.939 to 0.571 summed phase CPU seconds and 77.9 to 70.0 MB peak RSS.
+The before profile used the ineffective narrowing; the after profile uses the unchanged policy. This is not an isolated same-policy benchmark.
+The 1,024-comment positive now completes at 0.65 summed phase CPU seconds and 78.2 MB peak RSS.
+All five unchanged ForwardRef tests and five focused locality tests pass. One locality profiling test remains ignored.
+Cross-file base retention still needs memory assessment; no repository-scale speed or memory claim follows from these measurements.
+The native unit and CLI builds took 48.94 and 17.01 seconds. Compile time is separate from execution.
+Evidence is retained in rr-long-source-native-repair.json.gz, including the external sample and native operator profiles.
+The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
