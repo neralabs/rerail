@@ -718,3 +718,28 @@ Missing(@place("required.py", 1)) :- !doc(_, "required.py", _).
     assert_eq!(result["diagnostics"][0]["code"], "MISSING");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Direct scanner APIs select buffers, including hidden paths and nonstandard extensions.
+#[test]
+fn explicit_input_files_preserve_the_callers_document_batch() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputs");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join(".hidden/a.txt"), "hidden text").unwrap();
+    std::fs::write(root.join("included.py"), "included text").unwrap();
+    std::fs::write(root.join("ignored.py"), "ignored text").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "explicit-inputs" revision 1
+.language python
+.violation Seen(at: span, t: symbol) "{t}"
+Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"),
+        &serde_json::json!({"inputFiles": [".hidden/a.txt", "included.py"]})).unwrap();
+    let mut paths: Vec<&str> = result["diagnostics"].as_array().unwrap().iter().map(|r| r["path"].as_str().unwrap()).collect();
+    paths.sort();
+    assert_eq!(paths, [".hidden/a.txt", "included.py"]);
+    assert_eq!(result["files"], 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
