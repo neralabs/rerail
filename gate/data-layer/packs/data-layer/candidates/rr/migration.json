@@ -2411,6 +2411,7 @@
       "native/src/code_rule_dsl/logic/sql/select.rs",
       "native/src/code_rule_dsl/logic/strings.rs"
     ],
-    "rootMetadataCommit": "7b44f4813"
+    "rootMetadataCommit": "7b44f4813",
+    "canonicalCallTextCommit": "eea5ed2da"
   }
 }

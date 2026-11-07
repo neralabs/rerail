@@ -8438,3 +8438,66 @@ and [complete supplemental corpus, regressions, ordering evidence, and family co
 The inventory is 72 drafts and 28 absent translations. Full migration acceptance remains false.
 Production integration, CLI/enforcement, persistent-workspace acceptance, and the remaining translations still require work.
 No Linear ticket was created.
+
+## 2026-11-07 — Plan-scope ownership, canonical calls, and primary document boundaries
+
+The 73rd draft translates all thirteen ownership rules into `.rr`. The inventory is 73 drafts and 27 absent translations.
+Full migration acceptance remains false. The active engine remains this repository root.
+Merge `c372d1556` adopts Final shape through `b505d5121`, including its proposed `.rr` tape specification.
+That upstream change contains documentation only. No sibling work in progress or retired engine code was copied.
+
+Ownership needs canonical whole-call and callee text for substring checks. The source uses `ast.unparse` for both.
+Test commit `029351a86` fails on the existing modern engine with missing `call_text` statistics.
+Commit `eea5ed2da` extends the existing generic printer with `call_text` and `call_function_text`.
+The relation projection requests the needed columns. All four text columns share the existing native parse.
+There is no rule-specific Rust detector or Python execution in the rule.
+The new oracle covers 118 source cases and nineteen canonical call/callee pairs. All 107 existing annotation comparisons still pass.
+
+The Datalog rule preserves ordinary positional-argument order, exact nominal annotation spelling, descendant checks, direct class members, and Store contexts.
+Its nested-runner checks use the existing tape containment input, with a separate AST ownership edge for decorator expressions.
+It does not build a complete production ancestor closure.
+File selection is one batch over the available filesystem inventory. The file adapter then reads only selected files.
+The collector adapter transports caller-owned AST fields. Its raw source remains an independent input.
+
+The regression ladder caught these faults:
+
+- Five original positives failed because the public API bypasses the configured plugin's source-trigger gate.
+- A valid multiline literal gained a parser error from an intermediate fragment document with the same path.
+- The minimal engine query accepted that literal. A diagnostic query identified the error document's role as `fragment`.
+- The rule now selects primary documents. Original-file analysis cannot consume errors from synthetic fragments or annotation guests.
+- Public parser-error facts require the `SyntaxError: ` prefix. Raw error facts omit the severity key.
+- NUL errors have no filename or line suffix. The configured reporter omits parser errors entirely.
+- Several raw API positives lack plugin triggers. The corpus now retains both those cases and trigger-enabled counterparts for every code.
+
+The frozen root CLI has SHA-256 `11d9746f23c2bda97ff8eedada4bcf8c9dbf9e4f646ed7e0d69e929ca3f88db3`.
+Its production source is `eea5ed2da`, with Final shape baseline `a2c9ee123`.
+The branch later merged the documentation-only `b505d5121`. That merge does not change the binary's recorded source.
+The unit receipt separately records its later test-only source and binary hash.
+Final focused acceptance:
+
+- All 15 unchanged original tests pass. Fourteen complete API returns match across 28 native calls.
+- The single construction-only test retains its exact Python inheritance assertion. It does not count as native detector coverage.
+- Seventeen source/native callback roundtrips cover that interface, including all original witnesses with separate raw source and supplied AST inputs.
+- All 223 API cases pass: 163 detector positives, 55 clean results, four parser-error fact results, and one exact decoding exception.
+- All 202 configured reporter cases pass: 110 positives and 92 clean results.
+- Every configured code from PSO001 through PSO013 has a positive observation and an independent disabled-detector control.
+- An unchanged original positive rejects a disabled detector with its file inventory preserved. The API parser-error output has a separate control.
+- All 73 draft readers, 63 focused native reader/runtime tests, 63 migration tooling tests, and both authoring gate tests pass.
+
+Each final corpus uses 16 disjoint shards with two workers. The slowest final shard took 40 seconds.
+Every case appears exactly once. Two upstream file-writing native utilities remain ignored; the whole-library checker was excluded.
+No full repository cold run or full engine suite was performed. No CPU or memory improvement is claimed.
+Native canonical printing can repeat when a prepared file batch is built again.
+
+Evidence: [direct original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-plan-scope-ownership-native-direct-contracts.json.gz)
+and [complete supplemental contracts, failed steps, and positive controls](../gate/data-layer/fixtures/host/data-layer-port/rr-plan-scope-ownership-native-supplemental-contracts.json.gz).
+Production integration, CLI/enforcement and persistent-workspace acceptance remain required. No Linear ticket was created.
+The next missing translation is `transaction_closures`.
+
+The alignment audit confirms that local and remote Final shape both point to `b505d5121`.
+That commit is an ancestor of this branch. No committed Final shape engine change remains unmerged.
+The planner and executor retain its resolutions. Local native differences provide the generic capabilities described in this entry and previous entries.
+The tooling rejects libraries from retired checkouts, including identical copies. All 63 tooling tests pass again.
+Regeneration leaves all 88 inspected rule, manifest, corpus, and printer-oracle files unchanged.
+The build receipt now names the actual upstream ancestor, `a2c9ee123`, instead of the later documentation-only commit.
+Both evidence bundles were regenerated and checked without changing the recorded test results.

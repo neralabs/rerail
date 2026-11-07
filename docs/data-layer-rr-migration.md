@@ -11,7 +11,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`a2c9ee123`. That branch includes the migration and regex fixes, the current planner,
+`b505d5121`. That branch includes the migration and regex fixes, the current planner,
 indexed SQL maintenance, native relation reclamation, corpus publication leases, and the current Python module world.
 It also keeps parsed rules and prepared programs for the process, as decision 0060 specifies.
 Merge `2bf167c90` takes those changes without restoring an older planner or executor.
@@ -19,6 +19,8 @@ Merge its committed engine, frontend, libraries, build files, and locks into thi
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
 The canonical printer also supplies call-receiver text for `async_patterns`.
+The ownership rule also requests whole-call and callee text through the shared `call_text` and `call_function_text` relations.
+All four text columns share one native parse for each demanded prepared file batch.
 The generic `project.rr` input supplies the caller's root spelling once per run, without path resolution or a directory scan.
 These generic extensions use the modern engine's existing relation and demand interfaces.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
@@ -60,7 +62,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **72 target drafts and 28 absent translations**. None has full acceptance yet.
+The current inventory contains **73 target drafts and 27 absent translations**. None has full acceptance yet.
+The 73rd draft, `plan_scope_ownership`, passes all 15 original tests and preserves 14 complete API returns through 28 native calls.
+One original test checks Python collector inheritance only. Seventeen source/native callback roundtrips back the transferable behavior of that interface.
+The supplemental corpus contains 223 API cases and 202 reporter cases, including 163 and 110 detector-positive cases respectively.
+Every configured ownership code has a trigger-enabled positive witness and an independent disabled-detector control.
+The API-only parser-error result has its own disabled-output control.
+Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-plan-scope-ownership-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-plan-scope-ownership-native-supplemental-contracts.json.gz) retain exact values and regression evidence.
+File-only rules must select `doc_role(d, "primary")`. Intermediate fragment parses can share the original file's path.
 The 72nd draft, `async_sync_boundary`, passes all five original cases, 295 supplemental API/helper cases, and 158 reporter cases.
 The API corpus contains 165 scans: 148 positives, 16 clean results, and one exact decoding exception. Helpers account for 130 cases.
 The reporter corpus contains 74 positive cases. Native queries also back the original result's three category properties.
@@ -121,7 +131,7 @@ The original five-column finding index remains available for existing consumers.
 The engine now executes ordered DFS, memoized DFS, and repeated regex captures.
 Typed repository readers and Ed25519 verification are implemented.
 Kernel tests cover these capabilities; the dependent rule suites still need acceptance.
-Remaining gaps include canonical subtree serialization, native printing, and string-annotation parsing.
+Remaining gaps include canonical subtree serialization, statement printing, and exact string-annotation compatibility.
 These are engine requirements, not permission to approximate a linter.
 
 `cached_pure_lazy_allowlist` stores hashes of CPython `ast.dump` text.
