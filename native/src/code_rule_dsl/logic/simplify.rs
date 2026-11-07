@@ -660,6 +660,15 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             _ => false,
         }
     };
+    // A derived relation read with every variable bound is a test of those values (`er_sym(f, _)`, `!is_async(f)`):
+    // the reader reached it, and its negation, through the filter already, so inlining keeps the strata. Only in a
+    // rule that also looks up a base relation, which built whole is the cross product (`er_wrapped(f, v, v) :-
+    // er_sym(f, _), !is_async(f), kind(v, "call")`: every def with every call, 1.4 GB on 200 files); an alias or an
+    // intersection of derived relations (`u19(n) :- m25(n)`) is no bigger than what it reads.
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let test = |a: &Atom, bound: &BTreeSet<String>| {
+        derived.contains(a.rel.as_str()) && a.args.iter().all(|t| matches!(t, Term::Wild) || matches!(t, Term::Var(v) if bound.contains(v)) || matches!(t, Term::Int(_) | Term::Str(_)))
+    };
     // A rule is a filter when every literal is a functional lookup or a test of what its head (and earlier
     // lookups) bind.
     let filter = |rule: &Rule| -> Option<Vec<Literal>> {
@@ -670,6 +679,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             let before = todo.len();
             todo.retain(|l| {
                 let ok = match l {
+                    Literal::Atom(a) if a.rel != rule.head.rel && test(a, &bound) => true,
                     Literal::Atom(a) if !a.neg => functional(a, &bound),
                     Literal::Atom(a) => base_lookup(&a.rel) && l.vars().is_subset(&bound),
                     Literal::Cmp { .. } => l.vars().is_subset(&bound),
@@ -681,7 +691,9 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                 !ok
             });
             if todo.is_empty() {
-                return Some(rule.body.clone());
+                let tests = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel != rule.head.rel && derived.contains(a.rel.as_str())));
+                let looks_up = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && base_lookup(&a.rel)));
+                return (!tests || looks_up).then(|| rule.body.clone());
             }
             if todo.len() == before {
                 return None;
@@ -1754,6 +1766,36 @@ mod tests {
         assert!(inside.contains("span_within($n, $b)") && !inside.contains("<="), "{inside}");
         // Two documents: not a containment of one document's nodes.
         assert!(!rules("other")[0].contains("within"), "{:?}", rules("other"));
+    }
+
+    /// eager-resolve's `er_wrapped`: tests of derived relations on the head's variables and a base lookup, with
+    /// nothing joining f to v. Built whole it is every def with every call; inlined, its reader tests its own pair.
+    #[test]
+    fn a_filter_may_test_derived_relations_of_its_head() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .decl child(p: node, c: node, i: number)
+            .input node, child
+            .decl sym(f: node, s: symbol)
+            sym(f, "x") :- node(_, f, "function_definition", _, _).
+            .decl async(f: node)
+            async(f) :- child(f, a, 0), node(_, a, "async", _, _).
+            .decl wrapped(f: node, v: node, c: node)
+            wrapped(f, v, v) :- sym(f, _), !async(f), node(_, v, "call", _, _).
+            .decl alias(f: node)
+            alias(f) :- sym(f, _).
+            .decl out(f: node)
+            .output out
+            out(f) :- sym(f, _), child(f, v, 0), wrapped(f, v, c), alias(f).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert!(report.inlined.iter().any(|r| r == "wrapped"), "{:?}", report.inlined);
+        assert!(!report.inlined.iter().any(|r| r == "alias"), "{:?}", report.inlined);
+        let out: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert!(out.iter().all(|r| !r.contains("wrapped(") && r.contains("!async(")), "{out:?}");
     }
 
     #[test]

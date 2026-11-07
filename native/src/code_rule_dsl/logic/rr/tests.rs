@@ -352,6 +352,21 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
+/// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
+#[test]
+fn a_set_of_tests_on_a_span_tests_its_text() {
+    let p = parse(concat!(
+        ".decl source(d: number, sp: span)\n.decl text(n: loc, s: symbol)\n.input source, text\n",
+        ".decl hit(d: number)\n.output hit\n",
+        "hit(d) :- source(d, sp), (contains(\"a\", sp) ; contains(\"b\", sp)).\n",
+    ))
+    .unwrap();
+    let rule = p.rules.iter().find(|r| r.head.rel == "hit").unwrap().to_string();
+    assert!(rule.contains("text($sp, "), "{rule}");
+    assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
+}
+
 /// What is not lowered yet says so by name.
 #[test]
 fn unlowered_constructs_are_named() {
