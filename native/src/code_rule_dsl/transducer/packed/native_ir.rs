@@ -400,6 +400,14 @@ pub(super) enum BlockInst {
     Class { table: u16, bits: u8 },
     /// Bit `k` of every byte of the block: one bit-plane (`BlockNative::planes_form`).
     Plane(u8),
+    /// The bytes whose byte before is in `before`'s classes and which are in `table`'s, for a
+    /// shared class of `bits` (`block::BlockOp::Pair`): on the CPU the class bytes of the block
+    /// loaded one byte back, ANDed with the block's own, then one test.
+    Pair { before: u16, table: u16, bits: u8 },
+    /// Bit `k` of every byte's byte before (0x00 before the stream): one bit-plane of the
+    /// source one byte back, for `pair` in the planes form. Local: the byte before a lane is read
+    /// from the source.
+    PlaneBefore(u8),
     /// A 64-bit pattern repeated over the stream.
     Const(u64),
     Not(u16),
@@ -430,6 +438,7 @@ impl BlockNative {
             .map(|op| match *op {
                 BlockOp::Eq(byte) => BlockInst::EqByte(byte),
                 BlockOp::Class { table, bits } => BlockInst::Class { table, bits },
+                BlockOp::Pair { before, table, bits } => BlockInst::Pair { before, table, bits },
                 BlockOp::Const(c) => BlockInst::Const(c),
                 BlockOp::Not(a) => BlockInst::Not(a),
                 BlockOp::And(a, b) => BlockInst::And(a, b),
@@ -468,6 +477,23 @@ impl BlockNative {
                     }
                     f.index(word)
                 }
+                // The same with the byte before's planes (8..16) for `before`'s functions.
+                BlockInst::Pair { before, table, bits } => {
+                    let (p, t) = (self.tables[usize::from(before)], self.tables[usize::from(table)]);
+                    let half = |n: &[u8; 16], c: usize| (0..16).fold(0u16, |a, i| a | (u16::from(n[i] >> c & 1) << i));
+                    let mut word = Term::Zero;
+                    for c in (0..8).filter(|c| bits >> c & 1 == 1) {
+                        let pl = f.function(8, 4, half(&p.lo, c));
+                        let ph = f.function(12, 4, half(&p.hi, c));
+                        let l = f.function(0, 4, half(&t.lo, c));
+                        let h = f.function(4, 4, half(&t.hi, c));
+                        let a = f.and(pl, ph);
+                        let b = f.and(l, h);
+                        let both = f.and(a, b);
+                        word = f.or(word, both);
+                    }
+                    f.index(word)
+                }
                 BlockInst::Not(a) => f.push(BlockInst::Not(m(a))),
                 BlockInst::And(a, b) => f.push(BlockInst::And(m(a), m(b))),
                 BlockInst::Or(a, b) => f.push(BlockInst::Or(m(a), m(b))),
@@ -501,7 +527,8 @@ enum Term {
 #[derive(Default)]
 struct PlaneFormulas {
     insts: Vec<BlockInst>,
-    planes: [Option<u16>; 8],
+    /// Planes 0..8 of the bytes, 8..16 of the bytes before.
+    planes: [Option<u16>; 16],
     functions: std::collections::HashMap<(usize, usize, u16), Term>,
     shared: std::collections::HashMap<BlockInst, u16>,
 }
@@ -509,7 +536,7 @@ struct PlaneFormulas {
 impl PlaneFormulas {
     /// An instruction's index, shared with an earlier identical one.
     fn push(&mut self, inst: BlockInst) -> u16 {
-        let pure = !matches!(inst, BlockInst::Class { .. });
+        let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. });
         if pure {
             if let Some(&i) = self.shared.get(&inst) {
                 return i;
@@ -535,7 +562,8 @@ impl PlaneFormulas {
         if let Some(i) = self.planes[k] {
             return i;
         }
-        let i = self.push(BlockInst::Plane(k as u8));
+        let inst = if k < 8 { BlockInst::Plane(k as u8) } else { BlockInst::PlaneBefore(k as u8 - 8) };
+        let i = self.push(inst);
         self.planes[k] = Some(i);
         i
     }

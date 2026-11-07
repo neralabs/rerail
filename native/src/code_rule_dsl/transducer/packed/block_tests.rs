@@ -481,6 +481,55 @@ fn class_bits_equal_reference_on_every_executor() {
     check_all(&rows, |bytes| selectors.iter().map(|&s| reference(bytes, |b| table.member(b, s))).collect());
 }
 
+/// `pair`: the byte before's class bytes AND the byte's, on irregular tables, for each class
+/// bit, several selections and both orders, beside a `class` of the same table (the lookups are
+/// shared); in the planes form too, through Cranelift. The byte before the stream is 0x00.
+#[test]
+fn pair_equals_reference_on_every_executor() {
+    let a = block::ClassTable {
+        lo: [0x01, 0x82, 0x44, 0x08, 0x10, 0xff, 0x00, 0x21, 0x40, 0x80, 0x03, 0x0c, 0x30, 0xc0, 0x55, 0xaa],
+        hi: [0xff, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x00, 0x0f, 0xf0, 0x33, 0xcc, 0x5a, 0xa5],
+    };
+    let b = block::ClassTable { lo: a.hi, hi: a.lo };
+    let tables = [a, b];
+    let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let mut cases: Vec<(u16, u16, u8)> = (0..8).map(|c| (0, 1, 1u8 << c)).collect();
+    cases.extend([(0, 1, 0xff), (1, 0, 0x5a), (0, 0, 0x81), (1, 1, 0x7f)]);
+    let mut rows = format!("  block 0 table 0 lo={} hi={}\n  block 0 table 1 lo={} hi={}\n", hex(&a.lo), hex(&a.hi), hex(&b.lo), hex(&b.hi));
+    for (i, (p, t, bits)) in cases.iter().enumerate() {
+        rows.push_str(&format!("  block 0 %{i} = pair t{p} t{t} {bits:#04x}\n"));
+    }
+    rows.push_str(&format!("  block 0 %{} = class t1 0x0f\n", cases.len()));
+    for i in 0..=cases.len() {
+        rows.push_str(&format!("  block 0 output %{i}\n"));
+    }
+    let classes = |t: &block::ClassTable, x: u8| t.lo[usize::from(x & 15)] & t.hi[usize::from(x >> 4)];
+    let want = |bytes: &[u8]| -> Vec<Vec<u64>> {
+        let mut out: Vec<Vec<u64>> = cases
+            .iter()
+            .map(|&(p, t, bits)| {
+                let hits: Vec<bool> = (0..bytes.len())
+                    .map(|j| {
+                        let before = if j == 0 { 0 } else { bytes[j - 1] };
+                        classes(&tables[usize::from(p)], before) & classes(&tables[usize::from(t)], bytes[j]) & bits != 0
+                    })
+                    .collect();
+                words_of(&hits)
+            })
+            .collect();
+        out.push(reference(bytes, |x| b.member(x, 0x0f)));
+        out
+    };
+    check_all(&rows, want);
+    let p = program(&rows);
+    let planes = native_ir::lower(&p).expect("lowers").block_programs.remove(0).planes_form();
+    assert!(!planes.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Pair { .. })));
+    let compiled = native_cpu_block::compile(&planes).expect("compiles");
+    for bytes in inputs() {
+        assert_eq!(compiled.run(&bytes), want(&bytes), "planes form, {} bytes", bytes.len());
+    }
+}
+
 /// The planes form (`class` as formulas of bit-planes, which Metal runs) equals the reference on
 /// the CPU too, through Cranelift; it has no `class` left, and the Metal interpreter reads no
 /// table.
@@ -905,11 +954,23 @@ fn stage1_cost_per_block() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        for width in LaneWidth::ALL {
-            let s = (0..5)
-                .map(|_| run_generated_with(&native, &bytes, width, ClassStrategy::Planes).expect("runs").1)
-                .fold(f64::MAX, f64::min);
-            println!("generated msl, {:2}-byte lanes: {:.3} ns per block (GPU time, all rounds, best of 5)", width.bytes(), s / blocks * 1e9);
+        // The mask passes alone, and with the extract pass's count and scan (its scatter is a
+        // second command buffer, not timed here).
+        let mut masks = native.clone();
+        masks.extracts.clear();
+        for (what, program) in [("masks", &masks), ("masks + extract sizes", &native)] {
+            for strategy in ClassStrategy::ALL {
+                for width in LaneWidth::ALL {
+                    let s = (0..5)
+                        .map(|_| run_generated_with(program, &bytes, width, strategy).expect("runs").1)
+                        .fold(f64::MAX, f64::min);
+                    println!(
+                        "generated msl, {what}, {strategy:?}, {:2}-byte lanes: {:.3} ns per block (GPU time, all rounds, best of 5)",
+                        width.bytes(),
+                        s / blocks * 1e9
+                    );
+                }
+            }
         }
     }
 }

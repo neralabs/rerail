@@ -101,6 +101,26 @@ static inline ulong halo_of_group_before(device const ulong* halos, uint g) {
   return select(0ul, halos[max(g, 1u) - 1u], g > 0u);
 }
 
+// The byte before 16-byte chunk `first` of the source (0x00 before the stream): for `pair` and
+// the byte before's bit-planes.
+static inline uint byte_before(device const uint4* bytes, uint first) {
+  return select(0u, bytes[max(first, 1u) - 1u].w >> 24u, first > 0u);
+}
+// 16 bytes one back: each byte replaced by the byte before it, `before` the byte before the first.
+static inline uint4 bytes_before(uint4 v, uint before) {
+  return uint4((v.x << 8u) | before, (v.y << 8u) | (v.x >> 24u), (v.z << 8u) | (v.y >> 24u), (v.w << 8u) | (v.z >> 24u));
+}
+// An XOR prefix scan of a word across the SIMD group (Hillis-Steele, five shuffles): for scans of
+// more than one bit; one bit's parity is a ballot's popcount (`lane_in_parity`).
+static inline uint simd_prefix_inclusive_xor32(uint v, uint l) {
+  v ^= select(0u, simd_shuffle_up(v, ushort(1)), l >= 1u);
+  v ^= select(0u, simd_shuffle_up(v, ushort(2)), l >= 2u);
+  v ^= select(0u, simd_shuffle_up(v, ushort(4)), l >= 4u);
+  v ^= select(0u, simd_shuffle_up(v, ushort(8)), l >= 8u);
+  v ^= select(0u, simd_shuffle_up(v, ushort(16)), l >= 16u);
+  return v;
+}
+
 static inline ushort prefix_xor(ushort x) {
   x ^= ushort(x << 1u); x ^= ushort(x << 2u); x ^= ushort(x << 4u); x ^= ushort(x << 8u);
   return x;

@@ -95,10 +95,11 @@ fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
         BlockInst::Xor(a, b) => [5, u32::from(a), u32::from(b), 0],
         BlockInst::AndNot(a, b) => [6, u32::from(a), u32::from(b), 0],
         BlockInst::Plane(k) => [7, 0, 0, u32::from(k)],
+        BlockInst::PlaneBefore(k) => [11, 0, 0, u32::from(k)],
         BlockInst::Prev(a, k) => [8, u32::from(a), round, u32::from(k)],
         BlockInst::Toggle(a) => [9, u32::from(a), round, 0],
         BlockInst::AfterOddRun(a) => [10, u32::from(a), round, 0],
-        BlockInst::Class { .. } => unreachable!("the planes form has no class"),
+        BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
 
@@ -318,13 +319,13 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
         }
     };
     let mut helpers = String::new();
-    if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. })) {
+    if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
         helpers.push_str(NZ16);
         for (t, table) in native.tables.iter().enumerate() {
             helpers.push_str(&lookup_helper(t, table));
         }
     }
-    if native.insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
+    if native.insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
         helpers.push_str(TRANSPOSE8);
     }
     let plan = Plan::new(native);
@@ -710,19 +711,43 @@ fn emit(
     let bits = width.bytes();
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
     let mut out = String::new();
-    if insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
+    let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
+    if back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 c{c} = bytes[{base} + {c}u];\n"));
         }
     }
-    let used: std::collections::BTreeSet<u16> =
-        insts.iter().filter_map(|i| if let BlockInst::Class { table, .. } = **i { Some(table) } else { None }).collect();
+    // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
+    // the word's bytes one back.
+    if back {
+        out.push_str(&format!("  const uint before = byte_before(bytes, {base});\n"));
+    }
+    let used: std::collections::BTreeSet<u16> = insts
+        .iter()
+        .filter_map(|i| match **i {
+            BlockInst::Class { table, .. } | BlockInst::Pair { table, .. } => Some(table),
+            _ => None,
+        })
+        .collect();
     for t in used {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 k{t}_{c} = classes_t{t}(c{c});\n"));
         }
     }
-    if insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
+    let used_before: std::collections::BTreeSet<u16> =
+        insts.iter().filter_map(|i| if let BlockInst::Pair { before, .. } = **i { Some(before) } else { None }).collect();
+    if !used_before.is_empty() {
+        for c in 0..chunks {
+            let prior = if c == 0 { "before".to_owned() } else { format!("(c{}.w >> 24u)", c - 1) };
+            out.push_str(&format!("  const uint4 b{c} = bytes_before(c{c}, {prior});\n"));
+        }
+    }
+    for t in used_before {
+        for c in 0..chunks {
+            out.push_str(&format!("  const uint4 kb{t}_{c} = classes_t{t}(b{c});\n"));
+        }
+    }
+    if insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
         out.push_str(&planes(width));
     }
     for &at in chosen {
@@ -743,6 +768,17 @@ fn emit(
                     .join(" | ")
             }
             BlockInst::Plane(k) => format!("p{k}"),
+            BlockInst::PlaneBefore(k) => format!("{m}(({m}(p{k}) << 1u) | {m}((before >> {k}u) & 1u))"),
+            BlockInst::Pair { before, table, bits: sel } => {
+                let s4 = u32::from(sel) * 0x0101_0101;
+                (0..chunks)
+                    .map(|c| {
+                        let part = format!("{m}(nz16(kb{before}_{c} & k{table}_{c} & {s4:#010x}u))");
+                        if c == 0 { part } else { format!("({part} << {}u)", c * 16) }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            }
             BlockInst::EqByte(byte) => {
                 let c4 = u32::from(byte) * 0x0101_0101;
                 (0..chunks)

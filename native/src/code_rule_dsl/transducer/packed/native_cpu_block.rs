@@ -44,12 +44,12 @@ impl CompiledBlock {
     /// the count the function summed as it wrote the plane.
     pub(super) fn extract(&self, bytes: &[u8]) -> BlockRun {
         let blocks = padded(bytes);
-        let flat: Vec<u8> = blocks.iter().flatten().copied().collect();
+        let flat = framed(&blocks);
         let n = blocks.len();
         let mut out = vec![0u64; self.outputs * n + self.extracts.len()];
         // SAFETY: the function reads `blocks.len()` whole blocks of `flat` and writes
         // `outputs * blocks.len()` words of `out` and then one count per extract, all allocated.
-        unsafe { (self.entry)(flat.as_ptr(), n as u64, out.as_mut_ptr()) };
+        unsafe { (self.entry)(flat[FRONT..].as_ptr(), n as u64, out.as_mut_ptr()) };
         // The function counts whole blocks; the bits past the end (the padding's) come off.
         let past = |words: &[u64]| match (words.last(), bytes.len() % 64) {
             (Some(&w), r) if r != 0 => (w >> r).count_ones() as usize,
@@ -84,7 +84,7 @@ impl CompiledBlock {
     #[cfg(test)]
     pub(super) fn cpu_seconds(&self, bytes: &[u8], runs: usize) -> f64 {
         let blocks = padded(bytes);
-        let flat: Vec<u8> = blocks.iter().flatten().copied().collect();
+        let flat = framed(&blocks);
         let mut out = vec![0u64; self.outputs * blocks.len() + self.extracts.len()];
         let now = || {
             let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -96,11 +96,22 @@ impl CompiledBlock {
             .map(|_| {
                 let start = now();
                 // SAFETY: as in `run`.
-                unsafe { (self.entry)(flat.as_ptr(), blocks.len() as u64, out.as_mut_ptr()) };
+                unsafe { (self.entry)(flat[FRONT..].as_ptr(), blocks.len() as u64, out.as_mut_ptr()) };
                 now() - start
             })
             .fold(f64::MAX, f64::min)
     }
+}
+
+/// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,
+/// and the byte before the stream is 0x00.
+const FRONT: usize = 16;
+
+/// The blocks, contiguous, after `FRONT` zero bytes.
+fn framed(blocks: &[[u8; 64]]) -> Vec<u8> {
+    let mut flat = vec![0u8; FRONT];
+    flat.extend(blocks.iter().flatten());
+    flat
 }
 
 /// Compile a block program's native IR.
@@ -158,8 +169,12 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let c = f.ins().iconst(types::I8, i64::from(bits));
                     Some(f.ins().splat(types::I8X16, c))
                 }
-                BlockInst::Plane(k) => {
+                BlockInst::Plane(k) | BlockInst::PlaneBefore(k) => {
                     let c = f.ins().iconst(types::I8, 1i64 << k);
+                    Some(f.ins().splat(types::I8X16, c))
+                }
+                BlockInst::Pair { bits, .. } => {
+                    let c = f.ins().iconst(types::I8, i64::from(bits));
                     Some(f.ins().splat(types::I8X16, c))
                 }
                 _ => None,
@@ -214,20 +229,48 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let loads = MemFlags::new().with_notrap();
         let mut values: Vec<Value> = Vec::with_capacity(native.insts.len());
         // The block's 64 bytes, loaded once for every compare and class.
-        let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)));
+        let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
         let chunks: Vec<Value> = if reads {
             (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
         } else {
             vec![]
         };
+        // The block's bytes one back (each byte's byte before), loaded once for every `pair`:
+        // unaligned loads at -1, the first block's reading `FRONT`'s zeros.
+        let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
+        let befores: Vec<Value> = if back {
+            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16 - 1)).collect()
+        } else {
+            vec![]
+        };
         // Each class's nibbles, split once.
-        let (low, high): (Vec<Value>, Vec<Value>) = if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. })) {
+        let classy = native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. }));
+        let (low, high): (Vec<Value>, Vec<Value>) = if classy {
             chunks.iter().map(|&c| (f.ins().band(c, nibble), f.ins().ushr_imm(c, 4))).unzip()
         } else {
             (vec![], vec![])
         };
-        // Each table's class bytes, looked up once per block for every class taken from it.
+        let (low_before, high_before): (Vec<Value>, Vec<Value>) =
+            befores.iter().map(|&c| (f.ins().band(c, nibble), f.ins().ushr_imm(c, 4))).unzip();
+        // Each table's class bytes, looked up once per block for every class taken from it (and
+        // at the bytes before, for every `pair`).
         let mut classes: Vec<Option<Vec<Value>>> = vec![None; native.tables.len()];
+        let mut classes_before: Vec<Option<Vec<Value>>> = vec![None; native.tables.len()];
+        let lookup = |f: &mut FunctionBuilder<'_>, cache: &mut Vec<Option<Vec<Value>>>, t: usize, low: &[Value], high: &[Value]| {
+            if cache[t].is_none() {
+                let (lo, hi) = tables[t];
+                cache[t] = Some(
+                    (0..4)
+                        .map(|part| {
+                            let l = f.ins().swizzle(lo, low[part]);
+                            let h = f.ins().swizzle(hi, high[part]);
+                            f.ins().band(l, h)
+                        })
+                        .collect(),
+                );
+            }
+            cache[t].clone().expect("looked up")
+        };
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
@@ -238,20 +281,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 }
                 BlockInst::Class { table, .. } => {
                     let sel = constants[at].expect("a splat per class");
-                    let t = usize::from(table);
-                    if classes[t].is_none() {
-                        let (lo, hi) = tables[t];
-                        classes[t] = Some(
-                            (0..4)
-                                .map(|part| {
-                                    let l = f.ins().swizzle(lo, low[part]);
-                                    let h = f.ins().swizzle(hi, high[part]);
-                                    f.ins().band(l, h)
-                                })
-                                .collect(),
-                        );
-                    }
-                    let bytes = classes[t].clone().expect("looked up");
+                    let bytes = lookup(&mut f, &mut classes, usize::from(table), &low, &high);
                     let parts: Vec<Value> = bytes
                         .iter()
                         .map(|&both| {
@@ -261,9 +291,25 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                         .collect();
                     bitmask(&mut f, &parts, weights)
                 }
-                BlockInst::Plane(_) => {
+                BlockInst::Pair { before, table, .. } => {
+                    let sel = constants[at].expect("a splat per pair");
+                    let back = lookup(&mut f, &mut classes_before, usize::from(before), &low_before, &high_before);
+                    let own = lookup(&mut f, &mut classes, usize::from(table), &low, &high);
+                    let parts: Vec<Value> = back
+                        .iter()
+                        .zip(&own)
+                        .map(|(&p, &b)| {
+                            let both = f.ins().band(p, b);
+                            let picked = f.ins().band(both, sel);
+                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
+                        })
+                        .collect();
+                    bitmask(&mut f, &parts, weights)
+                }
+                BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => {
                     let bit = constants[at].expect("a splat per plane");
-                    let parts: Vec<Value> = chunks
+                    let source = if matches!(inst, BlockInst::Plane(_)) { &chunks } else { &befores };
+                    let parts: Vec<Value> = source
                         .iter()
                         .map(|&bytes| {
                             let picked = f.ins().band(bytes, bit);

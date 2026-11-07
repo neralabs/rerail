@@ -18,7 +18,7 @@ program -
   block 0 table 1 lo=e7a383838bcbcbcbcbcbcbcbcbdbcbcb hi=02020202020202028080808021011549
   ; byte_2_high, read at the byte itself (every low nibble).
   block 0 table 2 lo=ffffffffffffffffffffffffffffffff hi=0101010101010101e6aebaba01010101
-  ; 0x01 at least 0xe0, 0x02 at least 0xf0, 0x04 at least 0xc0, 0x08 at least 0x80.
+  ; 0x01 at least 0xe0, 0x02 at least 0xf0, 0x04 at least 0xc0.
   block 0 table 3 lo=ffffffffffffffffffffffffffffffff hi=0000000000000000080808080c0c0d0f
   block 0 %0 = class t0 0x07      ; op
   block 0 %1 = class t0 0x18      ; whitespace
@@ -37,62 +37,27 @@ program -
   block 0 %14 = or %0, %13        ; potential_structural_start
   block 0 %15 = andnot %14, %8    ; structural_start
   block 0 %16 = and %4, %7        ; non_quote_inside_string(unescaped)
-  block 0 %17 = class t1 0x01
-  block 0 %18 = prev %17, 1
-  block 0 %19 = class t2 0x01
-  block 0 %20 = and %18, %19      ; special case 0x01
-  block 0 %21 = class t3 0x08      ; at least 0x80: not TOO_LONG's byte-before class
-  block 0 %22 = prev %21, 1
-  block 0 %23 = not %22          ; the byte before is ASCII (or the stream's start)
-  block 0 %24 = class t2 0x02
-  block 0 %25 = and %23, %24      ; special case 0x02
-  block 0 %26 = class t1 0x04
-  block 0 %27 = prev %26, 1
-  block 0 %28 = class t2 0x04
-  block 0 %29 = and %27, %28      ; special case 0x04
-  block 0 %30 = class t1 0x08
-  block 0 %31 = prev %30, 1
-  block 0 %32 = class t2 0x08
-  block 0 %33 = and %31, %32      ; special case 0x08
-  block 0 %34 = class t1 0x10
-  block 0 %35 = prev %34, 1
-  block 0 %36 = class t2 0x10
-  block 0 %37 = and %35, %36      ; special case 0x10
-  block 0 %38 = class t1 0x20
-  block 0 %39 = prev %38, 1
-  block 0 %40 = class t2 0x20
-  block 0 %41 = and %39, %40      ; special case 0x20
-  block 0 %42 = class t1 0x40
-  block 0 %43 = prev %42, 1
-  block 0 %44 = class t2 0x40
-  block 0 %45 = and %43, %44      ; special case 0x40
-  block 0 %46 = class t1 0x80
-  block 0 %47 = prev %46, 1
-  block 0 %48 = class t2 0x80
-  block 0 %49 = and %47, %48      ; special case 0x80
-  block 0 %50 = or %20, %25
-  block 0 %51 = or %50, %29
-  block 0 %52 = or %51, %33
-  block 0 %53 = or %52, %37
-  block 0 %54 = or %53, %41
-  block 0 %55 = or %54, %45
-  block 0 %56 = class t3 0x01      ; at least 0xe0
-  block 0 %57 = class t3 0x02      ; at least 0xf0
-  block 0 %58 = class t3 0x04      ; at least 0xc0
-  block 0 %59 = prev %56, 2
-  block 0 %60 = prev %57, 3
-  block 0 %61 = or %59, %60    ; must_be_2_3_continuation
-  block 0 %62 = xor %61, %49   ; must be one exactly when TWO_CONTS
-  block 0 %63 = or %55, %62    ; UTF-8 error
-  block 0 %64 = prev %56, 1
-  block 0 %65 = prev %57, 2
-  block 0 %66 = or %58, %64
-  block 0 %67 = or %66, %65  ; a sequence still open after the byte
+  ; simdjson's check_special_cases: the byte before's class (t1) AND the byte's (t2), one test
+  ; each. The byte before the stream is 0x00, ASCII: a continuation there is TOO_LONG.
+  block 0 %17 = pair t1 t2 0x7f   ; every special case but TWO_CONTS
+  block 0 %18 = pair t1 t2 0x80   ; TWO_CONTS
+  block 0 %19 = class t3 0x01      ; at least 0xe0
+  block 0 %20 = class t3 0x02      ; at least 0xf0
+  block 0 %21 = class t3 0x04      ; at least 0xc0
+  block 0 %22 = prev %19, 2
+  block 0 %23 = prev %20, 3
+  block 0 %24 = or %22, %23    ; must_be_2_3_continuation
+  block 0 %25 = xor %24, %18   ; must be one exactly when TWO_CONTS
+  block 0 %26 = or %17, %25    ; UTF-8 error
+  block 0 %27 = prev %19, 1
+  block 0 %28 = prev %20, 2
+  block 0 %29 = or %21, %27
+  block 0 %30 = or %29, %28  ; a sequence still open after the byte
   block 0 output %15
   block 0 output %16
   block 0 output %7
-  block 0 output %63
-  block 0 output %67
+  block 0 output %26
+  block 0 output %30
   ; The extract pass: the structural starts' positions, simdjson's structural indexes.
   block 0 extract %15
   0000 STOP 0

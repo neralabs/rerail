@@ -9,7 +9,7 @@ using namespace metal;
 // The operations a dispatch runs, [from, to), and the lanes.
 struct BlockArgs { uint from, to, lanes, pad; };
 // An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
-// eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane), operands a and b, and an immediate
+// eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands a and b, and an immediate
 // (eq's byte; const's pattern as b = low half, imm = high half; plane's bit), and the carried
 // operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, each with its round in b.
 struct BlockStep { uint op, a, b, imm; };
@@ -76,6 +76,7 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
       case 5u: out = a ^ b; break;
       case 6u: out = a & ~b; break;
       case 7u: out = plane_lane(mine, s.imm, M(0)); break;
+      case 11u: out = M((plane_lane(mine, s.imm, M(0)) << 1u) | M((byte_before(bytes, lane * chunks) >> s.imm) & 1u)); break;
       case 8u: out = apply_prev(a, s.imm, halo_before(a, l, halo_of_group_before(halos + s.b * groups, g))); break;
       case 9u: out = apply_toggle(a, lane_in_parity(summary_toggle(a), carry_before(state, 0u, g), l)); break;
       case 10u: out = apply_after_odd_run(a, lane_in_borrow(summary_after_odd_run(a), carry_before(state, 1u, g), l)); break;

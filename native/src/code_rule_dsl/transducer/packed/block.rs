@@ -29,6 +29,12 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     Eq(u8),
     /// The bytes in any class of `bits` of table `table` (`ClassTable`).
     Class { table: u16, bits: u8 },
+    /// The bytes whose byte before is in table `before`'s classes and which are themselves in
+    /// table `table`'s, for a shared class of `bits`: simdjson's `check_special_cases`
+    /// (`byte_1_high & byte_1_low` at the byte before, `byte_2_high` at the byte), one vector AND
+    /// before the bitmask. The byte before the stream is 0x00. No carry: every executor reads
+    /// the byte before from the source.
+    Pair { before: u16, table: u16, bits: u8 },
     /// The same 64-bit pattern over every 64 bytes of the stream, e.g. simdjson's `ODD_BITS`.
     Const(u64),
     Not(u16),
@@ -104,6 +110,7 @@ impl BlockOp {
         match self {
             BlockOp::Eq(byte) => format!("eq {byte:#04x}"),
             BlockOp::Class { table, bits } => format!("class t{table} {bits:#04x}"),
+            BlockOp::Pair { before, table, bits } => format!("pair t{before} t{table} {bits:#04x}"),
             BlockOp::Const(c) => format!("const {c:#018x}"),
             BlockOp::Not(a) => format!("not %{a}"),
             BlockOp::And(a, b) => two("and", a, b),
@@ -119,7 +126,7 @@ impl BlockOp {
     /// The values the operation reads.
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Const(_) => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::AfterOddRun(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) => vec![a, b],
         }
@@ -138,8 +145,12 @@ impl BlockOp {
                 .and_then(|v| v.parse().ok())
                 .ok_or_else(|| format!("a bad value `{word}`"))
         };
+        let table = |t: &str| -> Result<u16, String> {
+            t.strip_prefix('t').and_then(|t| t.parse().ok()).ok_or_else(|| format!("a bad table `{t}`"))
+        };
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         match words.as_slice() {
+            ["pair", a, t, b] => Ok(BlockOp::Pair { before: table(a)?, table: table(t)?, bits: byte(b)? }),
             ["eq", b] => Ok(BlockOp::Eq(byte(b)?)),
             ["class", t, b] => Ok(BlockOp::Class {
                 table: t.strip_prefix('t').and_then(|t| t.parse().ok()).ok_or_else(|| format!("a bad table `{t}`"))?,
@@ -172,6 +183,12 @@ impl BlockOp {
             BlockOp::Eq(byte) => out.extend_from_slice(&[0, byte]),
             BlockOp::Class { table, bits } => {
                 out.push(7);
+                out.extend_from_slice(&table.to_le_bytes());
+                out.push(bits);
+            }
+            BlockOp::Pair { before, table, bits } => {
+                out.push(11);
+                out.extend_from_slice(&before.to_le_bytes());
                 out.extend_from_slice(&table.to_le_bytes());
                 out.push(bits);
             }
@@ -241,6 +258,9 @@ impl BlockProgram {
             .all(|(at, op)| op.operands().iter().all(|&v| usize::from(v) < at));
         let tables = self.ops.iter().all(|op| match *op {
             BlockOp::Class { table, bits } => usize::from(table) < self.tables.len() && bits != 0,
+            BlockOp::Pair { before, table, bits } => {
+                usize::from(before) < self.tables.len() && usize::from(table) < self.tables.len() && bits != 0
+            }
             // Up to 63 bytes: the halo is one 64-bit word on every executor.
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
             _ => true,
@@ -317,6 +337,11 @@ impl BlockProgram {
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
                     blocks.iter().map(|block| class(block, table, bits)).collect()
+                }
+                BlockOp::Pair { before, table, bits } => {
+                    let (a, b) = (&self.tables[usize::from(before)], &self.tables[usize::from(table)]);
+                    let shifted = before_blocks(&blocks);
+                    blocks.iter().zip(&shifted).map(|(block, prev)| pair(prev, block, a, b, bits)).collect()
                 }
                 BlockOp::Const(c) => vec![c; blocks.len()],
                 BlockOp::Not(a) => v(a).iter().map(|&x| !x).collect(),
@@ -470,6 +495,54 @@ pub(super) fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
 #[cfg(not(target_arch = "aarch64"))]
 pub(super) fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
     block.iter().enumerate().fold(0, |m, (j, &b)| m | (u64::from(table.member(b, bits)) << j))
+}
+
+/// Each block's bytes one back: byte `j` of block `i`'s is stream byte `64 i + j - 1`, 0x00
+/// before the stream.
+pub(super) fn before_blocks(blocks: &[[u8; 64]]) -> Vec<[u8; 64]> {
+    let mut last = 0u8;
+    blocks
+        .iter()
+        .map(|block| {
+            let mut out = [0u8; 64];
+            out[0] = last;
+            out[1..].copy_from_slice(&block[..63]);
+            last = block[63];
+            out
+        })
+        .collect()
+}
+
+/// `pair` over one block, given the block's bytes one back: two lookups at each, an AND of the
+/// class bytes, a test against the class bits, and the bitmask.
+#[cfg(target_arch = "aarch64")]
+pub(super) fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
+    use core::arch::aarch64::*;
+    // SAFETY: NEON is in the aarch64 baseline; each load reads 16 bytes of a block or a table.
+    unsafe {
+        let classes = |t: &ClassTable, d: uint8x16_t| {
+            let l = vqtbl1q_u8(vld1q_u8(t.lo.as_ptr()), vandq_u8(d, vdupq_n_u8(0x0f)));
+            let h = vqtbl1q_u8(vld1q_u8(t.hi.as_ptr()), vshrq_n_u8::<4>(d));
+            vandq_u8(l, h)
+        };
+        let sel = vdupq_n_u8(bits);
+        let at = |offset: usize| {
+            let p = classes(before, vld1q_u8(prev.as_ptr().add(offset)));
+            let b = classes(table, vld1q_u8(block.as_ptr().add(offset)));
+            vtstq_u8(vandq_u8(p, b), sel)
+        };
+        to_bitmask(at(0), at(16), at(32), at(48))
+    }
+}
+
+/// Off aarch64, a byte at a time (not a measured path).
+#[cfg(not(target_arch = "aarch64"))]
+pub(super) fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
+    (0..64).fold(0, |m, j| {
+        let both = before.lo[usize::from(prev[j] & 15)] & before.hi[usize::from(prev[j] >> 4)]
+            & table.lo[usize::from(block[j] & 15)] & table.hi[usize::from(block[j] >> 4)];
+        m | (u64::from(both & bits != 0) << j)
+    })
 }
 
 /// simdjson's arm64 `simd8x64<bool>::to_bitmask`: each byte weighted by its bit, then three
