@@ -251,7 +251,7 @@ method(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "c
 .decl basex(c: node, e: node)
 basex(c, e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument").
 .decl base(c: node, b: node)
-base(c, b) :- basex(c, e), pv(e, "cls", b).
+base(c, b) :- basex(c, e), pv(e, "cls", b), !special_base(e).
 // The class and every workspace subclass: what a late-bound `self` or `cls` may be.
 .decl sub(c: node, s: node)
 sub(c, c) :- kind(c, "class_definition").
@@ -589,9 +589,11 @@ extb(e) :- basex(_, e), builtin_ref(e, _).
 special_base_q("typing.Generic"). special_base_q("typing.Protocol"). special_base_q("typing.TypedDict").
 special_base_q("typing_extensions.Generic"). special_base_q("typing_extensions.Protocol").
 special_base_q("typing_extensions.TypedDict").
-// A generic class as a base, `K[T]` (`os.PathLike[str]`, `Mapping[K, V]`): the class K.
+// A generic class as a base, `K[T]` (`os.PathLike[str]`, `Mapping[K, V]`): the class K. Not a special form: typeshed's
+// `Generic: type[_Generic]` reads as `_Generic` or any subclass, and every `class X(Generic[T])` is one, so a special
+// form read as a class makes each generic class a base of every other.
 .decl gbase(e: node, k: node)
-gbase(e, k) :- basex(_, e), kind(e, "subscript"), field(e, "value", g), pv(g, "cls", k).
+gbase(e, k) :- basex(_, e), kind(e, "subscript"), field(e, "value", g), pv(g, "cls", k), !special_base(e).
 base(c, b) :- basex(c, e), gbase(e, b).
 .decl special_base(e: node)
 special_base(e) :- basex(_, e), qn(e, q), special_base_q(q).

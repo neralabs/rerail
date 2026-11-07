@@ -586,7 +586,9 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     // module of main.py resolves at one layer of python/modules.rr: alpha's stub package before its typed package,
     // beta's typed package from its `.py`, gamma (installed untyped, so not read) from typeshed's stubs/, delta from
     // a directory a `.pth` file names, eps from the declarations before its stub package. zeta, a single-file module
-    // in site-packages, is not a typed package: its call has no target.
+    // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
+    // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
+    // another generic class, would be Var's base and its `__init__` a target).
     let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_site/ws");
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -601,6 +603,7 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
         got,
         [
             "decls/eps.pyi",
+            "ts/stdlib/cv.pyi",
             "ts/stubs/types-gamma/gamma/__init__.pyi",
             "venv/extra/delta/__init__.pyi",
             "venv/lib/python3.13/site-packages/alpha-stubs/__init__.pyi",
