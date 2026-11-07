@@ -21,6 +21,7 @@
 mod setfix;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
+pub(in crate::code_rule_dsl) mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(test)]
 #[allow(dead_code)]

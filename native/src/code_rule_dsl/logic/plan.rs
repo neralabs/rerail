@@ -1336,6 +1336,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "rx_span" => &[&["c"], &["m"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -2145,7 +2146,10 @@ impl Run<'_> {
     /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
     fn native_relation(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
         use crate::code_rule_dsl::logic::front::Native;
-        let Native::DfsFirst { edge, target, roots } = native;
+        let (edge, target, roots) = match native {
+            Native::DfsFirst { edge, target, roots } => (edge, target, roots),
+            Native::MatchAll { input, pattern, groups } => return self.match_all(rel, input, pattern, groups),
+        };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
             let mut st = self.db.prepare(sql)?;
@@ -2171,6 +2175,31 @@ impl Run<'_> {
         let rows = crate::code_rule_dsl::logic::native::dfs_first::dfs_first(&edges, &targets, roots.as_deref());
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
+        Ok(n)
+    }
+
+    /// `match_all` over symbols (`front::Native::MatchAll`): each distinct text of `input`, and each match's groups.
+    /// Symbols are atoms (interned by `sym_atom`) or text, as the run stores them.
+    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String]) -> Result<usize> {
+        let re = regex::Regex::new(pattern).map_err(|e| Error::Plan(format!("match_all: bad regex {pattern:?}: {e}")))?;
+        let atoms = self.model.inputs.atoms.is_some();
+        let c = self.model.col(input, 0);
+        let text = if atoms { format!("sym_text({c})") } else { c.clone() };
+        let texts: Vec<(SqlValue, String)> = {
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {c}, {text} FROM {input}"))?;
+            let rows = st.query_map([], |row| Ok((row.get::<_, SqlValue>(0)?, row.get::<_, Option<String>>(1)?)))?;
+            rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
+        };
+        let hole = if atoms { "sym_atom(?)" } else { "?" };
+        let holes: Vec<&str> = std::iter::once("?").chain(groups.iter().map(|_| hole)).collect();
+        let mut st = self.db.prepare(&format!("INSERT OR IGNORE INTO {rel} VALUES ({})", holes.join(", ")))?;
+        let mut n = 0;
+        for (v, t) in &texts {
+            for row in crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t) {
+                let params: Vec<SqlValue> = std::iter::once(v.clone()).chain(row.into_iter().map(|g| SqlValue::Text(g.to_owned()))).collect();
+                n += st.execute(rusqlite::params_from_iter(params))?;
+            }
+        }
         Ok(n)
     }
 
@@ -3419,7 +3448,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(native) = prog.natives.get(*rel)
         {
-            super::profile::stratum(&skey, "native operator over its inputs' tables (dfs_first)", || why.clone());
+            super::profile::stratum(&skey, "native operator over its inputs' tables (dfs_first, match_all)", || why.clone());
             let n = run.native_relation(rel, native)?;
             super::profile::note(format!("{rel} rows"), || n.to_string());
             run.refresh(rel, false)?;

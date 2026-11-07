@@ -607,6 +607,7 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
@@ -722,7 +723,7 @@ impl CoreRows {
         }
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
-                if i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
+                if i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -761,6 +762,43 @@ impl CoreRows {
             let j = starts.partition_point(|&s| s < b);
             if j < toks.len() && toks[j].2 != id {
                 self.token_after.push([id, toks[j].2]);
+            }
+        }
+    }
+
+    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
+    /// one of its lines (`src_line`), is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
+    /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
+    /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
+    pub(super) fn matches(&mut self, p: &mut Projected, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
+        use crate::code_rule_dsl::logic::front::SpanIn;
+        let facts = std::sync::Arc::clone(&p.facts);
+        let src = facts.source.as_str();
+        let base = p.len();
+        let x = p.extra.as_mut().expect("core.rr's spans");
+        let source = x.tokens;
+        for &(within, pattern, ref re) in patterns {
+            let pat = string(pattern) as i64;
+            let containers: Vec<u32> = match within {
+                SpanIn::Source => vec![source],
+                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| source + l).collect(),
+            };
+            for c in containers {
+                let [a, b] = x.spans[c as usize];
+                let cid = i64::from(p.key) << 32 | i64::from(base + c);
+                for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
+                    for (g, name) in re.capture_names().enumerate() {
+                        let name = match (g, name) {
+                            (0, _) => "",
+                            (_, Some(name)) => name,
+                            (_, None) => continue,
+                        };
+                        let Some(m) = caps.get(g) else { continue };
+                        let id = base + x.spans.len() as u32;
+                        x.spans.push([a + m.start() as u32, a + m.end() as u32]);
+                        self.rx_span.push([pat, cid, j as i64, string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
+                    }
+                }
             }
         }
     }
@@ -807,6 +845,7 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }
 }

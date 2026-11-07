@@ -908,6 +908,73 @@ Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
     assert_eq!(actual, ["original:valid", "tampered:invalid", "unsigned:unsigned"]);
 }
 
+/// `match_all` and `match` with captures (`core.rr`): over a `source` or `src_line` span each group is a span, with
+/// its text and line (`rx_span`); over a symbol, `match_all` gives a row per match with its groups' text.
+#[test]
+fn match_all_captures_spans_over_source_text_and_symbols_over_symbols() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchall");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1  # SEC1 SEC22\nclass Foo:\n    pass\nclass Bar: pass\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl sec(l: number, c: symbol, k: number)
+sec(l, c, k) :- src_line(d, l, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c), line(m, k).
+.decl cls(x: symbol, k: number)
+cls(x, k) :- source(d, sp), match_all("(?m)^class\\s+(?<c>\\w+)", sp), text(c, x), line(c, k).
+.decl whole(x: symbol, k: number)
+whole(x, k) :- src_line(d, k, sp), match("x = (?<v>\\d+).*", sp), text(v, x).
+.decl sv(s: symbol)
+sv("a=1 b=22 c=x").
+sv("none here").
+.decl kv(k: symbol, v: symbol)
+kv(k, v) :- sv(s), match_all("(?<k>[a-z]+)=(?<v>[0-9]+)", s).
+.decl hasb(s: symbol)
+hasb(s) :- sv(s), match_all("b=", s).
+.decl nob(s: symbol)
+nob(s) :- sv(s), !match_all("b=", s).
+.decl st(d: number, sp: span)
+st(d, sp) :- source(d, sp).
+.decl via(x: symbol)
+via(x) :- st(_, sp), match_all("(?m)^class\\s+(?<c>\\w+)", sp), text(c, x).
+.output sec, cls, whole, kv, hasb, nob, via
+.decl hit(m: span, c: symbol)
+hit(m, c) :- src_line(d, _, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c).
+.violation NQ(at: span, c: symbol) code {c} "{c} suppression"
+NQ(m, c) :- hit(m, c).
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    assert_eq!(read("sec"), "1\tSEC1\t1\n1\tSEC22\t1");
+    assert_eq!(read("cls"), "Bar\t4\nFoo\t2");
+    assert_eq!(read("whole"), "1\t1");
+    assert_eq!(read("kv"), "a\t1\nb\t22");
+    assert_eq!(read("hasb"), "a=1 b=22 c=x");
+    assert_eq!(read("nob"), "none here");
+    assert_eq!(read("via"), "Bar\nFoo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `data-layer/noqa-sec-ratchet.rr`, whose `match_all` over each line's span is what lowering refused (O80): every
+/// SEC code on a suppression line counts, inside the comment or not.
+#[test]
+fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("noqa");
+    std::fs::create_dir_all(dir.join("impl")).unwrap();
+    std::fs::write(dir.join("impl/a.py"), "x = \"SEC1\"  # noqa: SEC2\ny = 1  # noqa: E501, SEC3 SEC44\nz = \"SEC9\"\n").unwrap();
+    let rule = crate::code_rule_dsl::logic::rr::library().join("../data-layer/noqa-sec-ratchet.rr");
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("annotations.csv")).unwrap(), "noqa_sec_annotations\t4\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `dfs_first` and `dfs_first_memo` through rules: the first target by edge order from each root, the ord of the
 /// root's edge that starts the path, and the memo variant over its roots in order.
 #[test]
