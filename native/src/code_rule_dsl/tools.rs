@@ -163,6 +163,38 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// The run's settings (t21 E4): `key=value` lines of `<root>/.rerail/env` (blank lines and `#` comments
+/// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
+pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
+    let file = root.join(".rerail/env");
+    let text = if file.exists() { std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))? } else { String::new() };
+    let lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| (l, file.display().to_string()));
+    let mut settings: Vec<(String, String)> = Vec::new();
+    for (line, from) in lines.chain(flags.iter().map(|f| (f.as_str(), "--env".to_owned()))) {
+        let (key, value) = line.split_once('=').ok_or_else(|| format!("{from}: `{line}` is not key=value"))?;
+        let (key, value) = (key.trim().to_owned(), value.trim().to_owned());
+        settings.retain(|(k, _)| *k != key);
+        settings.push((key, value));
+    }
+    Ok(settings)
+}
+
+/// `program` with the run's settings as `env(key, value)` facts, for a program that declares `env`; any other
+/// program is returned as it is. The facts are part of the program's text, so the plan, and every memo keyed by
+/// it, is per setting.
+pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
+    let declares = program.lines().any(|l| {
+        let l = l.trim_start();
+        l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
+    });
+    if !declares || settings.is_empty() {
+        return program.to_owned();
+    }
+    let quote = super::logic::rr::quote;
+    let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
+    format!("{program}\n// The run's settings (--env, .rerail/env).\n{facts}")
+}
+
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
 /// and `core.rr` resolved, as one program's text.
 pub fn flatten(path: &std::path::Path) -> Result<String, String> {
@@ -197,4 +229,22 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         text += "  (planner statistics and node ids read from the T facts file)\n";
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod settings_tests {
+    #[test]
+    fn settings_become_env_facts_for_a_program_that_declares_env() {
+        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".rerail")).unwrap();
+        std::fs::write(root.join(".rerail/env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
+        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
+        let program = ".decl env(key: symbol, value: symbol)\n";
+        let with = super::with_settings(program, &settings);
+        assert!(with.contains("env(\"quote\", \"a\\\"b\").") && with.contains("env(\"python.version\", \"3.13\")."), "{with}");
+        // A program that does not declare `env` is unchanged.
+        assert_eq!(super::with_settings(".decl envy(x: symbol)\n", &settings), ".decl envy(x: symbol)\n");
+    }
 }
