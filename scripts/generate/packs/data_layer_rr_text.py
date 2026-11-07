@@ -239,3 +239,43 @@ def admin_async_purity(source, target, header):
     for pattern in original.SKIP_PATTERNS:
         text += f'admin_skip_probe(p) :- option("path", p), match({quote(search(pattern))}, p).\n'
     return text
+
+
+def async_executor(source, target, header):
+    original = module(source, 'async_executor')
+    _, space, _ = classes()
+    q = json.dumps
+    text = header('async_executor', target).replace('#include "python/ast.rr"\n', '')
+    text += '.decl executor_path(p: symbol)\nexecutor_path(p) :- doc(_, p, _).\nexecutor_path(p) :- option("path", p).\n'
+    text += '.decl executor_strict(p: symbol)\n.decl executor_allowed(p: symbol)\n'
+    for directory in original.STRICT_DIRECTORIES:
+        text += f'executor_strict(p) :- executor_path(p), suffix(".py", p), contains({q(directory)}, p).\n'
+    for pattern in original.ALLOWED_PATTERNS:
+        text += f'executor_allowed(p) :- executor_path(p), match({q(search(re.compile(pattern)))}, p).\n'
+    text += '.decl executor_input(d: number)\n'
+    for entry in ['check_file', 'check_source']:
+        text += f'executor_input(d) :- doc(d, _, _), option("entryPoint", {q(entry)}).\n'
+    text += 'executor_input(d) :- doc(d, p, _), !option("entryPoint", _), executor_strict(p), !executor_allowed(p).\n'
+    trim = r'\A' + space + '+|' + space + r'+\z'
+    text += '\n.violation Executor(at: span, source: symbol, preview: symbol) code "run_in_executor"\n    "run_in_executor in backend implementation: {preview}"\n'
+    text += f'Executor(@place(p, l), clean, @slice(clean, 0, 80)) :- executor_input(d), doc(d, p, _), lf_line(d, l, t), clean = @replace_all(t, {q(trim)}, ""), match({q(search(original.EXECUTOR_PATTERN))}, t), !match({q(search(original.NOQA_PATTERN))}, t).\n'
+    for index, pattern in enumerate([original.EXECUTOR_PATTERN, original.NOQA_PATTERN]):
+        text += f'\n.violation ExecutorPattern{index}(at: span) code "EXECUTOR_PATTERN" "matched"\n'
+        text += f'ExecutorPattern{index}(@place("input.py", 1)) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({q(search(pattern))}, t).\n'
+    for entry, code, relation in [('should_check_file', 'EXECUTOR_STRICT', 'executor_strict'), ('is_allowed', 'EXECUTOR_ALLOWED', 'executor_allowed')]:
+        name = 'ExecutorStrictProbe' if entry == 'should_check_file' else 'ExecutorAllowedProbe'
+        text += f'\n.violation {name}(at: span) code "{code}" "matched"\n{name}(@place("input.py", 1)) :- option("entryPoint", {q(entry)}), option("path", p), {relation}(p).\n'
+    return text
+
+
+def rust_sql_grammar_boundary(source, target, header):
+    original = module(source, 'rust_sql_grammar_boundary')
+    q = json.dumps
+    text = header('rust_sql_grammar_boundary', target).replace('.language python', '.language rust').replace('#include "python/ast.rr"\n', '')
+    text += '.decl rust_boundary_input(d: number)\n'
+    text += 'rust_boundary_input(d) :- doc(d, _, _), option("entryPoint", "check_file").\n'
+    text += 'rust_boundary_input(d) :- doc(d, p, _), !option("entryPoint", "check_file"), prefix("rust/nera_compiler_sql/src/", p), suffix(".rs", p).\n'
+    for index, (pattern, message) in enumerate(original.FORBIDDEN_PATTERNS):
+        text += f'\n.violation RustBoundary{index}(at: span, ordinal: number, rule: symbol) code "rust_sql_grammar_boundary"\n    {q(message)}\n'
+        text += f'RustBoundary{index}(@place(p, l), {index}, {q(pattern.pattern)}) :- rust_boundary_input(d), doc(d, p, _), split_line(d, l, t), match({q(search(pattern))}, t).\n'
+    return text

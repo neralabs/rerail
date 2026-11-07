@@ -124,6 +124,9 @@
 // A terminal boundary adds no extra row. Text is complete, including lines longer than 256 bytes.
 // These logical line numbers are separate from AST coordinates. Prepared only when demanded.
 .decl split_line(d: number, l: number, t: symbol)
+// LF-only lines, as Python str.split('\n'): preserve CR and other Unicode separators.
+// Empty input and a terminal LF each retain an empty line. Made only when demanded.
+.decl lf_line(d: number, l: number, t: symbol)
 .decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
 .decl end_line(n: loc, l: number)                        // 1-based line of the last character
 .decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
@@ -140,7 +143,7 @@
 // tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, split_line, line_count, end_line, col, op_at, syntax_error
+.input source, src_line, split_line, lf_line, line_count, end_line, col, op_at, syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
 // A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,

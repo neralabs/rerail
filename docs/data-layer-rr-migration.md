@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **53 target drafts and 47 absent translations**. None has full acceptance yet.
+The current inventory contains **57 target drafts and 43 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -92,6 +92,18 @@ Complete the migration in this order:
 No new Linear tickets are authorized by this work. Requirements stay in this journal until reviewed.
 Cold repository runs remain limited to changed kernels. Do not benchmark the whole batch.
 
+Rule execution must stay native. The user confirmed this constraint during the migration.
+Use Rerail's Python AST and traversal interfaces. Add native subtree serialization when a contract requires it.
+Python remains available for offline source recordings and test generation. Rules must never invoke it.
+Existing signatures and signed hashes remain input contracts. Do not re-sign repository data to make a port pass.
+
+The independent inventory now covers 125 original modules from 4,467 scanned test files.
+It retains 5,754 detector-related cases, 33 integration cases, and 52 workflow cases.
+[The inventory](../fixtures/host/data-layer-port/rr-original-test-inventory.json) also retains each collected assertion site and definition hash.
+Collection does not certify native execution. Four checks have no detector-imported suite at this source revision:
+`bootstrap_eager_resolve`, `bootstrap_lazy_sql`, `plan_optimizer_v2`, and `rust_sql_grammar_boundary`.
+Those checks need explicit source-derived contracts, with their provenance stated separately.
+
 ## Commands and current evidence
 
 ```sh
@@ -127,7 +139,7 @@ The eight direct original modules pass all 531 test bodies without skips or orig
 They make 477 native calls. Of the cases, 171 make no native call.
 Native helper truth-value probes are separate from detector-positive cases.
 Those cases are listed individually and do not count as native detector coverage.
-The reports compare recorded DTOs only after checking that the current source inputs and scope match.
+The reports compare complete API returns. For supported legacy normalization, they also compare source inputs and scope.
 Both executions use `PYTHONHASHSEED=0`: one test constructs source from a Python set.
 The original source recording has three skipped async cases. The native run executes their reviewed assertion transfers.
 
@@ -160,7 +172,7 @@ Copy each tested binary into this worktree and record its hash before replaying 
 Do not treat a report from a changing executable as an acceptance receipt.
 
 
-## Latest integration checkpoint
+## Earlier integration checkpoint
 
 The integrated engine is `8104bdd7fc9a7e0899ae4f0677d04ad11a50a579` on `jeremy/data-layer-rr-engine-20261106`.
 It includes final-shape `5332989f8` and syntax snapshot `fa50cd94c`.
@@ -184,3 +196,55 @@ The current reader refuses seven policies: five need `match_all`, one needs `dfs
 The integrated reader's broad source-check test also reaches the 115-second limit.
 The bounded atom tests pass nine active cases; file-local tests pass five active cases.
 Full integrated native validation remains incomplete.
+
+## Native execution checkpoint
+
+The integration engine is now `d85ccee0064fbeacee2a00ecc5120ea7471ba197`.
+The frozen executable has SHA-256 `480a4fd20114631dc32f0b0eee2550fbbb87524fa24dec62648f9b2dbd471ade`.
+The production addon still uses the earlier JSON baseline.
+
+Four more policies now use `.rr`: async executor, Rust SQL grammar boundary, dynamic module loading, and ClassVar checks.
+The eleven direct original modules pass all **771 test bodies**, without native-run skips or detector fallbacks.
+They make 714 native calls and compare all 430 recorded API returns.
+The source recording has 768 passes and three skips. The native run executes the three reviewed assertion transfers.
+
+[The direct-suite receipt](../fixtures/host/data-layer-port/rr-eleven-direct-contracts.json.gz) retains the source recording, sixteen shards, and eleven positive mutation controls.
+Each control disables detection and requires an original positive test to fail its complete API comparison.
+The lifecycle control stops before two later calls in that same test. Its receipt retains those unreached calls.
+Passing runs require every recorded call.
+
+The receipt lists 242 cases without native calls. Those cases still run and pass as Python assertions.
+They do not certify native coverage. Portable counterparts remain required for assertions that describe rule behavior.
+Forty-three observations lack legacy normalized DTOs. Their complete API return values still match.
+
+The ClassVar port also matches seventeen source-derived edge cases.
+The Rust boundary port matches thirty-one source-derived API observations, with its own positive control.
+The pinned source has no dedicated pytest suite for the Rust boundary rule. Supplementary cases do not count as original tests.
+
+Native repository readers now support typed JSON, YAML, JSON Lines, tab-separated files, and text lines.
+They cache file contents and decoded documents across selectors before source-file partitioning.
+Malformed inputs publish no partial rows. Missing and malformed inputs produce `input_error` rows.
+Revision and stamped-artifact readers still fail explicitly.
+
+The current engine also verifies existing signed bytes without Python.
+A public-rule regression exposed a SQL error: an aggregate replaced a result variable that the planner already bound.
+That replacement discarded the equality test. The repair preserves it.
+Another regression keeps repository-only rules in the global phase, including empty source corpora.
+
+An external stack sample exposed a symbol-lock deadlock during SQL view loading.
+The native loader now uses a separate scratch cursor over the same atom arena.
+The corrected regression changes from a five-second timeout to a pass in 0.03 seconds.
+Six reader tests, seven native set-engine tests, twelve string tests, and five active file-local tests pass.
+
+The source guard now rejects custom dataclass methods, including collector methods.
+It permits generated storage methods and their standard `repr` wrappers. It also covers future threads.
+The lifecycle adapter now uses native diagnostic text instead of calling the source formatter through the legacy normalizer.
+
+The latest sibling survey found final-shape `4358d6e55` and quality `cb569f948`.
+The syntax branch remains `fa50cd94c`.
+Final-shape includes a copy of this branch's signature implementation and a new native `tree_digest`.
+That digest uses a different hash format. It does not produce the existing CPython dump hashes.
+This engine does not yet include those later sibling changes.
+
+These results cover direct assertions and snapshot execution. No policy receives full migration acceptance from this checkpoint.
+Associated suites, portable helper counterparts, configured reporting, persistent workspaces, and the remaining translations still require work.

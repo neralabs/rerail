@@ -7,7 +7,7 @@ const python = process.platform === "win32" ? "python" : "python3";
 
 describe("data-layer .rr authoring contract", () => {
   test("protects the complete DTO comparator and rejects incomplete acceptance evidence", () => {
-    expect(() => execFileSync(python, ["test/scripts/data_layer_rr/test_migration.py"], {
+    expect(() => execFileSync(python, ["-m", "unittest", "discover", "-s", "test/scripts/data_layer_rr", "-p", "test_*.py"], {
       timeout: 30_000, stdio: "pipe",
     })).not.toThrow();
   });

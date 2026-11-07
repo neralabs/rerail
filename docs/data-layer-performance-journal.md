@@ -7521,3 +7521,91 @@ No repository-wide cold batch was run. Raw reports and failed attempts remain un
 The structure check passes 24 metrics. Its only failing metric retains the same three pre-existing flat-directory counts.
 The newly introduced duplicate fixture resolver was removed; the harness uses the existing shared resolver.
 Typecheck, boundary checks, and Windows path checks pass.
+
+## 2026-11-06: Native `.rr` rules and complete direct-suite comparisons
+
+The user confirmed native execution as a requirement. Rules cannot call Python.
+Python remains available for offline source recordings and original assertion bodies.
+Existing signed data remains unchanged. Native subtree serialization still requires work for the stored CPython hashes.
+
+The migration now contains 57 drafts and 43 absent translations from the 100 existing ports.
+No policy has full migration acceptance. The production addon remains the earlier executable baseline.
+The new drafts cover async executor, Rust SQL grammar boundary, dynamic module loading, and ClassVar checks.
+
+The integration engine is `d85ccee0064fbeacee2a00ecc5120ea7471ba197`.
+The frozen binary has SHA-256 `480a4fd20114631dc32f0b0eee2550fbbb87524fa24dec62648f9b2dbd471ade`.
+Both identifiers refer to the isolated engine branch. The primary production addon remains unchanged.
+
+Direct source evidence:
+
+- Eleven complete original modules pass all 771 test bodies through native snapshot execution.
+- The run makes 714 native calls and compares all 430 recorded API returns.
+- Every shard reports zero skipped native cases, zero source detector fallbacks, and zero missing recorded calls.
+- The source recording has 768 passes and three skips. The native run executes the three reviewed assertion transfers.
+- Eleven disabled-policy controls reject original positive cases through the complete source API comparison.
+- The lifecycle control stops before two later calls in the same test. Its mutation receipt retains those unreached calls.
+- Passing runs require every recorded call. Mutation failures do not relax that requirement.
+
+`rr-eleven-direct-contracts.json.gz` retains the complete source recording, sixteen native shards, and all eleven mutation controls.
+The receipt binds the engine, policies, libraries, source files, and harness files.
+Its acceptance field is explicitly false. These results do not cover configured reporting or persistent workspaces.
+
+The receipt lists 242 cases without native calls. All 242 cases run and pass as Python assertions.
+They do not count as native rule coverage. Portable counterparts remain required for assertions that describe rule behavior.
+Forty-three observations lack legacy normalized DTOs. Their complete API values still receive comparisons.
+
+The independent inventory scans 4,467 original test files and identifies 125 related modules.
+It retains 5,754 detector-related cases, 33 integration cases, and 52 workflow cases.
+Its collection also retains assertion sites and definition hashes.
+Seven inventory guard tests reject missing shards, duplicate shards, mixed collectors, omitted modules, and false module ownership.
+Five receipt guard tests reject missing source returns, substituted expected values, skipped assertions, and incomplete independent coverage.
+
+Source-derived evidence remains separate from original pytest coverage.
+The ClassVar port matches seventeen additional cases, including duplicate chained findings, comments, Unicode columns, helper exemptions, and source-argument gates.
+The Rust boundary port matches thirty-one API observations from seven existing probes and seven fresh cases.
+Its native policy selects the Rust scope from all supplied documents. It does not reuse the oracle's selected file list.
+The pinned source has no dedicated pytest suite for that rule.
+
+Native repairs from actual failures:
+
+1. Async executor requires LF-only splitting. The native `lf_line` view preserves other separators and terminal empty lines.
+2. Repository readers now emit typed rows from JSON, YAML, JSON Lines, tab-separated files, and text lines.
+   They cache file contents and decoded documents across selectors before source-file partitioning.
+   Malformed inputs emit no partial rows. Revision and stamped-artifact inputs still fail explicitly.
+3. Repository-only rules now run once in the global phase. They also run with no source documents.
+4. Native Ed25519 checks preserve the existing public signature bytes, including the source helper's base64 transport rules.
+5. The shared signing regression initially reported an empty list as both valid and invalid.
+   SQL generation replaced an already-bound aggregate result and lost its equality test.
+   The repair retains the equality. The public signing-library regression now passes.
+6. An external `sample` report exposed a symbol-lock deadlock during computed SQL view loading.
+   The loader held the symbol write lock while `sym_text` requested the same lock for reading.
+   A scratch cursor now shares the atom arena without holding the registered cursor's lock across SQL execution.
+   The corrected regression changes from a five-second timeout to a pass in 0.03 seconds.
+7. Noqa ratchet and test budget both name different inputs `base_sig`.
+   Combined programs now namespace those readers before they share decoded files.
+   A regression proves that each policy receives only its own baseline signature.
+
+The focused native runs pass six reader tests, seven set-engine tests, twelve string tests, and five active file-local tests.
+The complete native suite still lacks a passing receipt.
+The user deferred only the unavailable Ruff and SQLFluff fixture archives.
+Shared-cache concurrency and the earlier unrelated native failures remain open.
+
+The source guard previously treated every dataclass method as passive storage.
+New regressions prove that this rule wrongly exempted collector methods and custom DTO methods.
+The guard now permits generated storage methods and their standard `repr` wrappers. It covers future threads too.
+The stricter run exposed a lifecycle formatter call through the legacy normalizer.
+The adapter now obtains the message from native diagnostics. It does not call that source formatter.
+
+Failed attempts remain recorded. One loader regression initially omitted symbol-function registration and failed before the deadlock.
+The corrected regression reproduces the timeout. Its passing run also exercises input loading after a probe replacement.
+An earlier replay selected an obsolete source recording with process-specific temporary paths.
+The current receipt uses the corrected complete recording and the original caller-root normalization.
+
+The latest sibling survey found final-shape `4358d6e55`, quality `cb569f948`, and unchanged syntax `fa50cd94c`.
+Final-shape includes a copy of this branch's signature implementation and a new structural `tree_digest`.
+That digest uses a different hash format. It does not produce the existing CPython dump hashes.
+Those later sibling changes are not yet part of this frozen engine.
+
+No whole-repository cold run occurred. Runtime commands remain bounded at 115 seconds.
+The existing exception permits native builds to finish. Build time remains separate from execution time.
+No new Linear tickets were created.

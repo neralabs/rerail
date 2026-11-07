@@ -111,13 +111,19 @@ def main():
         raise ValueError('Wrong upstream source pin')
     manifest = read_json(ROOT / MANIFEST)
     by_check = {entry['check']: entry for entry in manifest['rules']}
-    from data_layer_rr_text import no_source_inspection, serverplan_name_inference, hasattr_async, no_blanket_grammar_bypass, admin_async_purity
+    from data_layer_rr_text import no_source_inspection, serverplan_name_inference, hasattr_async, no_blanket_grammar_bypass, admin_async_purity, async_executor, rust_sql_grammar_boundary
+    from data_layer_rr_dynamic import dynamic_module_loading
+    from data_layer_rr_ast import classvar_check
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
                   ('no_source_inspection', lambda s, t: no_source_inspection(s, t, header)),
                   ('hasattr_async', lambda s, t: hasattr_async(s, t, header)),
                   ('no_blanket_grammar_bypass', lambda s, t: no_blanket_grammar_bypass(s, t, header)),
                   ('admin_async_purity', lambda s, t: admin_async_purity(s, t, header)),
+                  ('async_executor', lambda s, t: async_executor(s, t, header)),
+                  ('rust_sql_grammar_boundary', lambda s, t: rust_sql_grammar_boundary(s, t, header)),
+                  ('dynamic_module_loading', lambda s, t: dynamic_module_loading(s, t, header)),
+                  ('classvar_check', lambda s, t: classvar_check(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]

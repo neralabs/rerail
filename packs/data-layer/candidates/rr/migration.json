@@ -440,13 +440,18 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
+      "sha256": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
           "before": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
           "after": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
           "reason": "Add a demanded text-line relation with exact CPython splitlines semantics; preserve physical AST lines"
+        },
+        {
+          "before": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
+          "after": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
+          "reason": "Add the demanded LF-only source view required by async_executor str.split(newline); preserve all other separators and trailing empty lines"
         }
       ]
     },
@@ -1001,6 +1006,34 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "packs/data-layer/candidates/rr/async-executor.rr",
+      "sha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_async_executor.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
+      "sha256": "364aa315707106d4e8ce1d624cdf36f856c453440f6c1a6bcdcdfd17e38cd59d",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_rust_sql_grammar_boundary.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/dynamic-module-loading.rr",
+      "sha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_dynamic_module_loading.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/classvar-check.rr",
+      "sha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_classvar_check.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1101,8 +1134,9 @@
       "batch": 2,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-dynamic-module-loading.json",
       "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/dynamic-module-loading.rr",
+      "ruleSha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223"
     },
     {
       "check": "forwardref",
@@ -1125,8 +1159,9 @@
       "batch": 2,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-classvar-check.json",
       "legacySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/classvar-check.rr",
+      "ruleSha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37"
     },
     {
       "check": "type_safety_patterns",
@@ -1149,8 +1184,9 @@
       "batch": 2,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-async-executor.json",
       "legacySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/async-executor.rr",
+      "ruleSha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f"
     },
     {
       "check": "async_patterns",
@@ -1336,8 +1372,9 @@
       "batch": 4,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-rust-sql-grammar-boundary.json",
       "legacySha256": "80d7fab57e7782b6b7c49316084305fdaf5899389f1c2fa8a7f4d48c8cdfef65",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
+      "ruleSha256": "364aa315707106d4e8ce1d624cdf36f856c453440f6c1a6bcdcdfd17e38cd59d"
     },
     {
       "check": "missing_async_pairs",
@@ -1913,10 +1950,12 @@
   ],
   "engineSource": {
     "branch": "jeremy/data-layer-rr-engine-20261106",
-    "commit": "8104bdd7fc9a7e0899ae4f0677d04ad11a50a579",
+    "commit": "d85ccee0064fbeacee2a00ecc5120ea7471ba197",
     "finalShapeCommit": "5332989f8",
     "qualityBaseCommit": "8f399baeae405bdad5fee4d65e123c25076f5ccf",
     "status": "Integration candidate; primary production addon unchanged",
-    "syntaxCommit": "fa50cd94c"
+    "syntaxCommit": "fa50cd94c",
+    "latestFinalShapeSurveyCommit": "4358d6e55dfbcbdbf1f56551fcb89e5aea456eb8",
+    "latestQualitySurveyCommit": "cb569f94866707aaf2269fc35ea97fa5c14b7dc3"
   }
 }

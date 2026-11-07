@@ -110,3 +110,7 @@ The importer adds the repository header and resolves adjacent table includes. It
 | `packs/data-layer/candidates/rr/hasattr-async.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/admin-async-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/async-executor.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/dynamic-module-loading.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/classvar-check.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
