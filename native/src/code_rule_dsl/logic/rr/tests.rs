@@ -66,7 +66,7 @@ Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, 
 /// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
 #[test]
 fn native_python_syntax_verdict_keeps_raw_source_available() {
-    for source in ["marker = 1\nprint \"legacy\"\n", "marker = 1\n\"\\x\"\n", "marker = t\"future\"\n"] {
+    for source in ["marker = 1\nprint \"legacy\"\n", "marker = 1\n\"\\x\"\n", "marker = t\"future\"\n", "\u{feff}marker = 1\n"] {
         let rows = finding_contract(source, r#"
 .language python
 .violation ParseFailure(at: span) code "PARSE" "invalid Python"
