@@ -455,6 +455,43 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     bodies.into_keys().collect()
 }
 
+/// A computed view: one rule whose head computes columns (`cc_trim($raw, @replace_all($raw, …)) :- split_line(_, _,
+/// $raw)`) from what its positive atoms bind. Built whole it is a view SQLite reads by scanning (it has no index), so a
+/// reader joins every row of it; inlined where the reader reads the domain already (`domain_read`), it is a function
+/// of the reader's own rows.
+fn computed(rules: &[&Rule]) -> bool {
+    let [rule] = rules else { return false };
+    let mut bound = BTreeSet::new();
+    rule.body.iter().for_each(|l| if let Literal::Atom(a) = l { a.vars().into_iter().for_each(|v| { bound.insert(v); }) });
+    let mut head = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut head));
+    rule.head.args.iter().any(|t| matches!(t, Term::Call(..)))
+        && !rule.body.is_empty()
+        && rule.body.iter().all(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel != rule.head.rel))
+        && head.is_subset(&bound)
+}
+
+/// Whether `reader` (a rule body reading `read`, a computed view's row) reads every atom of the view's rule `def`:
+/// each, with the head's variables as `read` names them and the others `_`, implied by one of the reader's atoms.
+fn domain_read(def: &Rule, read: &Atom, reader: &[Literal]) -> bool {
+    let mut as_read: BTreeMap<&str, &Term> = BTreeMap::new();
+    for (h, r) in def.head.args.iter().zip(&read.args) {
+        if let Term::Var(v) = h {
+            if as_read.insert(v, r).is_some_and(|t| t != r) {
+                return false;
+            }
+        }
+    }
+    def.body.iter().all(|l| {
+        let Literal::Atom(a) = l else { return false };
+        let a = Atom { args: a.args.iter().map(|t| match t {
+            Term::Var(v) => as_read.get(v.as_str()).map_or(Term::Wild, |t| (*t).clone()),
+            t => t.clone(),
+        }).collect(), ..a.clone() };
+        reader.iter().any(|l| matches!(l, Literal::Atom(b) if implies(b, &a)))
+    })
+}
+
 /// At most this many rules in a filter inlined by `inline_filters`: each reader becomes one copy per rule.
 const FILTER_RULES: usize = 2;
 
@@ -521,7 +558,8 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                 // `core.rr`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
                 && !super::rr::core_names().contains(*rel)
                 && rules.len() <= FILTER_RULES
-                && rules.iter().all(|r| r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && filter(r).is_some())
+                && (rules.iter().all(|r| r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && filter(r).is_some())
+                    || computed(rules))
         })
         .map(|(rel, _)| rel.clone())
         .collect();
@@ -533,6 +571,20 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                     candidates.remove(&a.rel);
                 }
                 _ => {}
+            }
+        }
+    }
+    // A computed view is inlined only where its reader reads its domain already (each of its atoms implied by one of
+    // the reader's), so the copy adds the function and nothing else.
+    for rule in &prog.rules {
+        for l in &rule.body {
+            if let Literal::Atom(read) = l
+                && candidates.contains(&read.rel)
+                && let [def] = rules_of[&read.rel].as_slice()
+                && filter(def).is_none()
+                && !domain_read(def, read, &rule.body)
+            {
+                candidates.remove(&read.rel);
             }
         }
     }
@@ -570,11 +622,17 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                         to.insert(v.clone(), x.clone());
                     }
                     (Term::Var(v), r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: Term::Var(to[v].clone()) }),
-                    (h, r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: h.clone() }),
+                    _ => {}
                 }
             }
             let rename = |l: &Literal| rename_all(l, &to);
             body.extend(def.body.iter().map(rename));
+            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables.
+            for (h, r) in def.head.args.iter().zip(&read.args) {
+                if !matches!(h, Term::Var(_)) {
+                    body.push(rename(&Literal::Cmp { l: r.clone(), op: "=", r: h.clone() }));
+                }
+            }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
             work.push(c);
@@ -1553,6 +1611,36 @@ mod tests {
         assert!(inside.contains("span_within($n, $b)") && !inside.contains("<="), "{inside}");
         // Two documents: not a containment of one document's nodes.
         assert!(!rules("other")[0].contains("within"), "{:?}", rules("other"));
+    }
+
+    #[test]
+    fn a_computed_view_is_inlined_where_its_reader_reads_its_domain() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl split_line(d: int, l: int, t: sym)
+            .input split_line
+            .decl picked(d: int)
+            .input picked
+            .decl trim(raw: sym, s: sym)
+            trim($raw, @replace_all($raw, "^ +", "")) :- split_line(_, _, $raw).
+            .decl line(d: int, l: int, s: sym)
+            .output line
+            line($d, $l, $s) :- picked($d), split_line($d, $l, $raw), trim($raw, $s).
+            .decl other(s: sym)
+            .output other
+            other($s) :- picked($r), trim($r, $s).
+            "#,
+        )
+        .unwrap();
+        // `other` does not read `trim`'s domain: inlined there, it would read every line; so `trim` stays built.
+        let report = simplify(&mut prog);
+        assert!(!report.inlined.contains(&"trim".to_owned()), "{report:?}");
+        prog.rules.retain(|r| r.head.rel != "other");
+        let report = simplify(&mut prog);
+        assert!(report.inlined.contains(&"trim".to_owned()), "{report:?}");
+        let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        // The function of the reader's own line; the domain's second `split_line` read is implied and dropped.
+        assert_eq!(rules, vec![r#"line($d, $l, $s) :- picked($d), split_line($d, $l, $raw), $s = @replace_all($raw, "^ +", "")"#], "{rules:?}");
     }
 
     #[test]

@@ -2706,6 +2706,27 @@ impl Run<'_> {
                     let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
                 }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
+                {
+                    // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
+                    // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
+                    let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
+                        Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
+                        None => args[1].clone(),
+                    };
+                    // A constant string is a symbol (`Int`) once lowered.
+                    let bound = |t: &Term| match t {
+                        Term::Var(v) => slots.contains_key(v),
+                        Term::Str(_) | Term::Int(_) => true,
+                        _ => false,
+                    };
+                    if !bound(&args[0]) || !bound(&pattern) {
+                        return None;
+                    }
+                    let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
+                    lines.push(format!("test {f} {ts} {tp} {want}"));
+                }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
                     if let Term::Call(f, args) = r
                         && f != "cat"

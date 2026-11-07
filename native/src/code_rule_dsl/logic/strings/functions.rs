@@ -51,6 +51,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_mul", &[Number, Number], Number),
     ("float_div", &[Number, Number], Number),
     ("float_str", &[Number], Text),
+    // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
+    ("rx_group", &[Text, Text, Text], Text),
 ];
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
@@ -147,6 +149,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
