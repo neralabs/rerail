@@ -407,12 +407,14 @@ impl<T> Ran<T> {
     }
 }
 
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], lease: Option<crate::content_store::CorpusRunLease<'_>>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let fresh = store
         .record_corpus_run(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), now)
         .map_err(|e| Error::Plan(e.to_string()))?;
+    // Recorded: the manifest holds the run's sources, and its own collection may run.
+    drop(lease);
     if !fresh || std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
         return Ok(None);
     }
@@ -658,6 +660,14 @@ pub(crate) fn run_with_options(
             own_store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
             &own_store
         }
+    };
+    // A run that records its manifest holds collection off the store's sources until it has (`CorpusRunLease`): the
+    // sources it reads are held by nothing before.
+    let lease = if tapes.is_some() && t.is_none() {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        Some(store.begin_corpus_run(now + 3600).map_err(|e| Error::Plan(e.to_string()))?)
+    } else {
+        None
     };
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
@@ -1275,7 +1285,7 @@ pub(crate) fn run_with_options(
     {
         run_sources.push(id);
     }
-    let collecting = if recording { record_run(store, root, &run_sources, &memo_program)? } else { None };
+    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, lease)? } else { drop(lease); None };
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;

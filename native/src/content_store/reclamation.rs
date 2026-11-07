@@ -12,12 +12,54 @@ use std::time::Instant;
 
 const OBJECT_TAPE: i64 = 1;
 const OBJECT_SOURCE: i64 = 2;
+/// A corpus run in progress (`begin_corpus_run`): its pin holds no object, it holds collection off sources and tapes.
+const OBJECT_CORPUS_RUN: i64 = 3;
+
+/// A corpus run's hold on collection, from before it looks up its first source until its manifest is recorded (then
+/// `corpus_live` keeps what it read). Until then the run's sources are held by nothing else: a collection running
+/// beside it (another run's, in the background) would delete one, and the run's memo rows and manifest, which
+/// reference it, would fail. Released when dropped; a run that dies leaves a lease that expires.
+pub struct CorpusRunLease<'a> {
+    store: &'a ContentStore,
+    id: i64,
+}
+
+impl Drop for CorpusRunLease<'_> {
+    fn drop(&mut self) {
+        let Ok(mut connection) = self.store.connection.lock() else { return };
+        if let Ok(transaction) = connection.transaction_with_behavior(TransactionBehavior::Immediate) {
+            let _ = transaction.execute("DELETE FROM object_pins WHERE object_kind_id=?1 AND object_id=?2", params![OBJECT_CORPUS_RUN, self.id]);
+            let _ = self.store.commit(transaction);
+        }
+    }
+}
 
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
 pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
 
 impl ContentStore {
+    /// Holds collection off sources and tapes until `lease_until` or until the lease is dropped (`CorpusRunLease`).
+    pub fn begin_corpus_run(&self, lease_until: i64) -> StoreResult<CorpusRunLease<'_>> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let owner_id = intern_string(&transaction, STRING_OWNER, "corpus-run")?;
+        let id: i64 = transaction.query_row(
+            "SELECT COALESCE(MAX(object_id), 0) + 1 FROM object_pins WHERE object_kind_id=?1",
+            [OBJECT_CORPUS_RUN],
+            |r| r.get(0),
+        )?;
+        transaction.execute(
+            "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)",
+            params![OBJECT_CORPUS_RUN, id, owner_id, lease_until],
+        )?;
+        self.commit(transaction)?;
+        Ok(CorpusRunLease { store: self, id })
+    }
+
     pub fn pin_source(
         &self,
         source_id: SourceId,
@@ -185,7 +227,14 @@ impl ContentStore {
                 )?;
             }
         }
-        let current_generation = generation(&transaction)?;
+        // While a corpus run holds a lease (`begin_corpus_run`), no source or tape is old enough to collect: the run may
+        // be about to reference one its manifest does not hold yet. (Expired leases were deleted above.)
+        let running: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM object_pins WHERE object_kind_id=?1)",
+            [OBJECT_CORPUS_RUN],
+            |r| r.get(0),
+        )?;
+        let current_generation = if running { i64::MIN } else { generation(&transaction)? };
         // Tapes leave in bulk, and their ids may be reused: the working set holds none of them.
         self.working_set().clear();
         report.tapes = execute_collect(
