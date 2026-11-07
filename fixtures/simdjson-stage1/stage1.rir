@@ -4,6 +4,7 @@
 ;   2 inside a string (its last bit set: an unclosed string);
 ;   3 UTF-8 errors (simdjson's lookup algorithm, utf8_lookup4);
 ;   4 a UTF-8 sequence still open (its last bit set: an incomplete sequence at the end).
+; The extract pass writes output 0's positions: simdjson's structural indexes.
 ; Names follow simdjson's json_structural_indexer, json_scanner, json_string_scanner and
 ; utf8_lookup4_algorithm.
 program -
@@ -92,4 +93,6 @@ program -
   block 0 output %7
   block 0 output %63
   block 0 output %67
+  ; The extract pass: the structural starts' positions, simdjson's structural indexes.
+  block 0 extract %15
   0000 STOP 0

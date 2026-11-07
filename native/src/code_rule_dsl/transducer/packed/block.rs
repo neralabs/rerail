@@ -207,12 +207,25 @@ impl ClassTable {
     }
 }
 
-/// A block program: its class tables, its operations and the values it outputs.
+/// A block program: its class tables, its operations, the values it outputs, and the outputs
+/// whose positions the extract pass writes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct BlockProgram {
     pub(super) tables: Vec<ClassTable>,
     pub(super) ops: Vec<BlockOp>,
     pub(super) outputs: Vec<u16>,
+    /// Values, each also an output, whose set bits the extract pass writes as byte positions
+    /// (`docs/parser-generators/10-lowering-to-bit-operations.md` §4.1): simdjson's structural
+    /// indexes from its structural mask.
+    pub(super) extracts: Vec<u16>,
+}
+
+/// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
+/// order).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct BlockRun {
+    pub(super) outputs: Vec<Vec<u64>>,
+    pub(super) positions: Vec<Vec<u32>>,
 }
 
 impl BlockProgram {
@@ -232,7 +245,8 @@ impl BlockProgram {
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
             _ => true,
         });
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables {
+        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v));
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -254,7 +268,38 @@ impl BlockProgram {
         for v in &self.outputs {
             out.extend_from_slice(&v.to_le_bytes());
         }
+        // Appended only when present, so programs without extracts keep their digests.
+        if !self.extracts.is_empty() {
+            out.extend_from_slice(&(self.extracts.len() as u32).to_le_bytes());
+            for v in &self.extracts {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
         out
+    }
+
+    /// Each extract's output index (its place in `outputs`).
+    pub(super) fn extract_outputs(&self) -> Vec<usize> {
+        self.extracts
+            .iter()
+            .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
+            .collect()
+    }
+
+    /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
+    /// sized by its count before it is written (`extract`).
+    pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
+        let outputs = self.interpret(bytes);
+        let positions = self
+            .extract_outputs()
+            .into_iter()
+            .map(|k| {
+                let words = &outputs[k];
+                let count = words.iter().map(|w| w.count_ones() as usize).sum();
+                extract::positions(words, count)
+            })
+            .collect();
+        BlockRun { outputs, positions }
     }
 
     /// The CPU interpreter: every output's words over `bytes`, one dispatch per operation over
@@ -321,6 +366,42 @@ impl BlockProgram {
                 words
             })
             .collect()
+    }
+}
+
+/// The extract pass on the CPU (`10-lowering-to-bit-operations.md` §4.1): a plane's set bits as
+/// byte positions, into a vector allocated once at its final size.
+pub(super) mod extract {
+    /// The positions of `words`' set bits, `count` of them (the mask pass's popcount), by
+    /// simdjson's flattening (`bit_indexer::write`): per word, eight positions written whether
+    /// or not the word has them (trailing zeros, then clear the lowest bit), then eight more
+    /// while the word has more; the slack past the last position is never read.
+    pub(in crate::code_rule_dsl) fn positions(words: &[u64], count: usize) -> Vec<u32> {
+        // A word writes at most seven entries past its own bits, which the next word overwrites;
+        // eight entries of slack cover the last.
+        let mut out = vec![0u32; count + 8];
+        let mut at = 0usize;
+        for (i, &word) in words.iter().enumerate() {
+            let base = i as u32 * 64;
+            let n = word.count_ones() as usize;
+            let mut w = word;
+            let mut write8 = |w: &mut u64, at: usize| {
+                for j in 0..8 {
+                    out[at + j] = base + w.trailing_zeros();
+                    *w &= w.wrapping_sub(1);
+                }
+            };
+            write8(&mut w, at);
+            let mut written = 8;
+            while written < n {
+                write8(&mut w, at + written);
+                written += 8;
+            }
+            at += n;
+        }
+        assert_eq!(at, count, "the extract's count is the plane's popcount");
+        out.truncate(count);
+        out
     }
 }
 

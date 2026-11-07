@@ -5,6 +5,7 @@
 //! straight bit operations.
 
 use super::*;
+use super::block::BlockRun;
 
 /// A transducer program whose walk does nothing and whose block program is `rows`.
 fn program(rows: &str) -> Program {
@@ -191,6 +192,8 @@ const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
     "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow",
+    // The extract pass's size: each extract's popcount, summed as the plane is written.
+    "popcnt",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -648,7 +651,7 @@ fn lookback_fallback_equals_reference() {
                 for spins in [0, 64] {
                     let source = generate_polling(&native, width, ClassStrategy::Planes, spins);
                     let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
-                    assert_eq!(got, want, "{} bytes, {}-byte lanes, {spins} polls", bytes.len(), width.bytes());
+                    assert_eq!(got.outputs, want, "{} bytes, {}-byte lanes, {spins} polls", bytes.len(), width.bytes());
                 }
             }
         }
@@ -709,6 +712,68 @@ fn fnv(indexes: &[u32]) -> u64 {
         }
     }
     hash
+}
+
+/// Every executor's run with the extract pass: the outputs and each extract's positions.
+fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+    let mut out = vec![
+        ("cpu interpreter".to_owned(), block.run(bytes)),
+        ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").extract(bytes)),
+    ];
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
+        for width in LaneWidth::ALL {
+            let w = width.bytes();
+            out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
+            let (got, _) = run_generated_extract(&native, bytes, width, ClassStrategy::Planes).expect("runs");
+            out.push((format!("generated msl, {w}-byte lanes"), got));
+        }
+    }
+    out
+}
+
+/// The extract pass writes a plane's set bits as positions, none past the end, on every
+/// executor: an all-ones plane (every chunk full, the tail cut at every length), a plane of
+/// quotes, and an empty plane.
+#[test]
+fn extract_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = const 0xffffffffffffffff\n  block 0 %1 = eq 0x22\n  block 0 %2 = eq 0x01\n\
+                \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n\
+                \x20 block 0 extract %0\n  block 0 extract %1\n  block 0 extract %2\n";
+    let p = program(rows);
+    let mut cases = inputs();
+    cases.extend([4095usize, 4096, 4097, 9000].map(|n| vec![b'"'; n]));
+    for bytes in cases {
+        let ones: Vec<u32> = (0..bytes.len() as u32).collect();
+        let quotes: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == b'"').collect();
+        let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
+        for (name, got) in extract_executors(&p, &bytes) {
+            assert_eq!(got.positions, vec![ones.clone(), quotes.clone(), soh.clone()], "{name}, {} bytes", bytes.len());
+        }
+    }
+}
+
+#[test]
+fn extract_round_trips_and_refusals() {
+    let text = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n\
+                \x20 block 0 output %0\n  block 0 output %1\n  block 0 extract %1\n  0000 STOP 0\n";
+    let p = rir::assemble(text).unwrap_or_else(|e| panic!("{e}"));
+    let dump = rir::disassemble(&p, None);
+    assert!(dump.contains("block 0 extract %1"), "{dump}");
+    assert_eq!(rir::assemble(&dump).expect("reassembles").plain_digest(), p.plain_digest());
+    let without = rir::assemble(&text.replace("  block 0 extract %1\n", "")).unwrap();
+    assert_ne!(without.plain_digest(), p.plain_digest(), "the digest covers extracts");
+    let refused = |rows: &str| {
+        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n"))
+            .err()
+            .unwrap_or_else(|| panic!("not refused: {rows}"))
+    };
+    // An extract is an output; outputs come before extracts.
+    assert!(refused("  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n  block 0 output %0\n  block 0 extract %1\n").contains("verifier"));
+    assert!(refused("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 output %0\n").contains("after an extract"));
 }
 
 /// Stage 1's three outputs on `bytes` are simdjson's: the same structural indexes, no control
@@ -791,18 +856,23 @@ fn stage1_equals_simdjson_on_every_executor() {
     for (path, len, want) in stage1_files() {
         let bytes = repo_file(&path);
         assert_eq!(bytes.len(), len, "{path} changed since simdjson's indexes were recorded");
-        if len < 200_000 {
-            for (name, got) in executors(&p, &bytes) {
-                check_stage1(&format!("{path}, {name}"), &bytes, &got, want);
-            }
+        let runs: Vec<(String, BlockRun)> = if len < 200_000 {
+            extract_executors(&p, &bytes)
         } else {
-            check_stage1(&format!("{path}, cranelift"), &bytes, &compiled.run(&bytes), want);
+            let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
             #[cfg(target_os = "macos")]
             {
-                use metal_program_backend::block_program::{LaneWidth, run_generated};
-                let got = run_generated(&native, &bytes, LaneWidth::W64).expect("runs");
-                check_stage1(&format!("{path}, generated msl"), &bytes, &got, want);
+                use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
+                let (got, _) = run_generated_extract(&native, &bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
+                runs.push(("generated msl".to_owned(), got));
             }
+            runs
+        };
+        for (name, got) in runs {
+            check_stage1(&format!("{path}, {name}"), &bytes, &got.outputs, want);
+            // The extract pass's positions are simdjson's structural indexes.
+            let found = &got.positions[0];
+            assert_eq!((found.len(), fnv(found)), want, "{path}, {name}: extracted indexes differ from simdjson's");
         }
     }
 }

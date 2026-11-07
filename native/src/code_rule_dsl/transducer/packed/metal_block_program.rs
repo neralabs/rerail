@@ -20,13 +20,19 @@
 //! - **The interpreter** keeps its values in slots, so a group cannot recompute another's; it
 //!   scans the groups' aggregates in a dispatch of its own instead (`block_carry_scan`).
 use super::*;
-use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, mask_tail};
+use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, BlockRun, mask_tail};
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
-const SOURCE: &str = concat!(include_str!("metal_block_carry.metal"), include_str!("metal_block_program.metal"));
+/// The extract pass's kernels (`metal_block_extract.metal`), shared likewise.
+const EXTRACT: &str = include_str!("metal_block_extract.metal");
+const SOURCE: &str = concat!(
+    include_str!("metal_block_carry.metal"),
+    include_str!("metal_block_program.metal"),
+    include_str!("metal_block_extract.metal")
+);
 /// Lanes per threadgroup: one SIMD group.
 const GROUP: usize = 32;
 
@@ -102,6 +108,16 @@ pub(in crate::code_rule_dsl) fn interpret(
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<Vec<Vec<u64>>, Error> {
+    interpret_extract(program, bytes, width).map(|run| run.outputs)
+}
+
+/// The interpreter with the extract pass: the outputs, then each extract's positions, counted
+/// from its slot (`block_extract_count_W`) in the same command buffer.
+pub(in crate::code_rule_dsl) fn interpret_extract(
+    program: &BlockProgram,
+    bytes: &[u8],
+    width: LaneWidth,
+) -> Result<BlockRun, Error> {
     // The interpreter runs the planes form: `class` as formulas of bit-planes, as generated MSL.
     let native = BlockNative::lower(program).planes_form();
     let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
@@ -157,9 +173,15 @@ pub(in crate::code_rule_dsl) fn interpret(
         from = at;
     }
     passes.push(lanes_pass(&run, args(from, native.insts.len())));
+    let planes: Vec<u64> = native.extracts.iter().map(|&k| (usize::from(native.outputs[k]) * stream.slot_bytes) as u64).collect();
+    let extract = Extract::new(SOURCE, &stream, width, bytes.len(), native.extracts.len())?;
+    passes.extend(extract.count_passes(&stream, &planes));
+    passes.extend(extract.scan_passes());
     encode_passes(&passes)?;
+    let positions = extract.scatter(&stream, &planes)?;
     let words = stream.slots(steps.len());
-    Ok(native.outputs.iter().map(|&v| finish(&words[usize::from(v)], bytes.len())).collect())
+    let outputs = native.outputs.iter().map(|&v| finish(&words[usize::from(v)], bytes.len())).collect();
+    Ok(BlockRun { outputs, positions })
 }
 
 /// SWAR byte compare, emitted once into every generated kernel (the interpreter's `eq16`).
@@ -306,7 +328,8 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
         helpers.push_str(TRANSPOSE8);
     }
     let plan = Plan::new(native);
-    let mut out = format!("{CARRY}\n{EQ16}\n{helpers}\n");
+    let extract = if native.extracts.is_empty() { "" } else { EXTRACT };
+    let mut out = format!("{CARRY}\n{extract}\n{EQ16}\n{helpers}\n");
     let mut widths: Vec<usize> = plan.rounds.iter().map(|r| r.scanned.len()).filter(|&m| m > 0).collect();
     widths.sort_unstable();
     widths.dedup();
@@ -327,6 +350,8 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
          \x20   constant uint& lanes [[buffer(2)]],\n\
          \x20   device atomic_uint* states [[buffer(3)]],\n\
          \x20   device const ulong* halos [[buffer(4)]],\n\
+         \x20   constant uint& len [[buffer(5)]],\n\
+         \x20   device uint* counts [[buffer(6)]],\n\
          \x20   uint gl [[thread_position_in_grid]],\n\
          \x20   uint g [[threadgroup_position_in_grid]],\n\
          \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
@@ -338,6 +363,13 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
     out.push_str(&body(native, &plan, width, &all, &mut Vec::new()));
     for (k, v) in native.outputs.iter().enumerate() {
         out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
+    }
+    // The extract pass's sizes: each extract's count per group, from the plane just written.
+    for (e, &k) in native.extracts.iter().enumerate() {
+        out.push_str(&format!(
+            "  extract_count(uint(popcount(extract_word(v{}, gl, len))), g, counts + {e}u * groups);\n",
+            native.outputs[k]
+        ));
     }
     out.push_str("}\n");
     out
@@ -802,6 +834,18 @@ pub(in crate::code_rule_dsl) fn run_generated_with(
     width: LaneWidth,
     strategy: ClassStrategy,
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
+    run_source(native, &generate_with(native, width, strategy), bytes, width).map(|(run, seconds)| (run.outputs, seconds))
+}
+
+/// Generated MSL with the extract pass: the outputs and each extract's positions, and the GPU
+/// seconds of the mask passes with the count's scan (the scatter is a second command buffer,
+/// after the host has allocated the positions at their total).
+pub(in crate::code_rule_dsl) fn run_generated_extract(
+    native: &BlockNative,
+    bytes: &[u8],
+    width: LaneWidth,
+    strategy: ClassStrategy,
+) -> Result<(BlockRun, f64), Error> {
     run_source(native, &generate_with(native, width, strategy), bytes, width)
 }
 
@@ -811,7 +855,7 @@ pub(in crate::code_rule_dsl) fn run_source(
     source: &str,
     bytes: &[u8],
     width: LaneWidth,
-) -> Result<(Vec<Vec<u64>>, f64), Error> {
+) -> Result<(BlockRun, f64), Error> {
     // The planes form has the same plan: `class` is local in both, and carried instructions
     // are kept in order.
     let plan = Plan::new(native);
@@ -828,19 +872,140 @@ pub(in crate::code_rule_dsl) fn run_source(
     let states = MappedBuffer::zeroed::<u32>(device, rounds.max(1) * stream.groups)?;
     let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups * CANDIDATES * plan.halo_stride)?;
     let lanes = stream.lanes as u32;
-    let passes: Vec<Pass<'_>> = pipelines
+    let len = bytes.len() as u32;
+    // `tempo_block` writes each extract's chunk counts as it writes the plane.
+    let extract = Extract::new(source, &stream, width, bytes.len(), native.extracts.len())?;
+    let mut passes: Vec<Pass<'_>> = pipelines
         .iter()
         .map(|pipeline| Pass {
             pipeline,
-            buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*states.buffer, 0), (4, &*halos.buffer, 0)],
-            args: vec![(2, bytes_of(&lanes))],
+            buffers: vec![
+                (0, &*stream.source.buffer, 0),
+                (1, &*stream.values.buffer, 0),
+                (3, &*states.buffer, 0),
+                (4, &*halos.buffer, 0),
+                (6, &*extract.counts.buffer, 0),
+            ],
+            args: vec![(2, bytes_of(&lanes)), (5, bytes_of(&len))],
             groups: stream.groups,
             threads: GROUP,
         })
         .collect();
+    passes.extend(extract.scan_passes());
     let seconds = encode_passes(&passes)?;
+    let planes: Vec<u64> = native.extracts.iter().map(|&k| (k * stream.slot_bytes) as u64).collect();
+    let positions = extract.scatter(&stream, &planes)?;
     let words = stream.slots(native.outputs.len());
-    Ok((words.iter().map(|w| finish(w, bytes.len())).collect(), seconds))
+    let outputs = words.iter().map(|w| finish(w, bytes.len())).collect();
+    Ok((BlockRun { outputs, positions }, seconds))
+}
+
+/// The extract pass's buffers (`metal_block_extract.metal`): each extract's chunk counts (a
+/// chunk is a group's span), and its chunk offsets with the total after them.
+struct Extract {
+    counts: MappedBuffer,
+    offsets: MappedBuffer,
+    count: Option<metal::ComputePipelineState>,
+    scan: Option<metal::ComputePipelineState>,
+    scatter: Option<metal::ComputePipelineState>,
+    extracts: usize,
+    chunks: usize,
+    len: u32,
+}
+
+impl Extract {
+    fn new(source: &str, stream: &Stream, width: LaneWidth, len: usize, extracts: usize) -> Result<Self, Error> {
+        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        let chunks = stream.groups;
+        let w = width.bytes();
+        let pipeline = |name: String| if extracts > 0 { pipeline_named(source, &name).map(Some) } else { Ok(None) };
+        Ok(Self {
+            counts: MappedBuffer::zeroed::<u32>(device, extracts.max(1) * chunks)?,
+            offsets: MappedBuffer::zeroed::<u32>(device, extracts.max(1) * (chunks + 1))?,
+            count: pipeline(format!("block_extract_count_{w}"))?,
+            scan: pipeline("block_extract_scan".into())?,
+            scatter: pipeline(format!("block_extract_scatter_{w}"))?,
+            extracts,
+            chunks,
+            len: len as u32,
+        })
+    }
+
+    fn counts_at(&self, e: usize) -> u64 {
+        (e * self.chunks * 4) as u64
+    }
+
+    fn offsets_at(&self, e: usize) -> u64 {
+        (e * (self.chunks + 1) * 4) as u64
+    }
+
+    /// The interpreter's counts: each plane (a byte offset into the values) counted per chunk.
+    fn count_passes<'a>(&'a self, stream: &'a Stream, planes: &[u64]) -> Vec<Pass<'a>> {
+        let Some(count) = &self.count else { return vec![] };
+        planes
+            .iter()
+            .enumerate()
+            .map(|(e, &plane)| Pass {
+                pipeline: count,
+                buffers: vec![(0, &*stream.values.buffer, plane), (1, &*self.counts.buffer, self.counts_at(e))],
+                args: vec![(2, bytes_of(&self.len))],
+                groups: stream.groups,
+                threads: GROUP,
+            })
+            .collect()
+    }
+
+    /// Each extract's scan of its counts: one SIMD group.
+    fn scan_passes(&self) -> Vec<Pass<'_>> {
+        let Some(scan) = &self.scan else { return vec![] };
+        let chunks = self.chunks as u32;
+        (0..self.extracts)
+            .map(|e| Pass {
+                pipeline: scan,
+                buffers: vec![(0, &*self.counts.buffer, self.counts_at(e)), (1, &*self.offsets.buffer, self.offsets_at(e))],
+                args: vec![(2, bytes_of(&chunks))],
+                groups: 1,
+                threads: GROUP,
+            })
+            .collect()
+    }
+
+    /// After the counts and scans have run: each extract's positions, in buffers allocated at
+    /// the scanned totals and written by one scatter dispatch each.
+    fn scatter(&self, stream: &Stream, planes: &[u64]) -> Result<Vec<Vec<u32>>, Error> {
+        let Some(scatter) = &self.scatter else { return Ok(vec![]) };
+        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        let offsets = self.offsets.buffer.contents().cast::<u32>();
+        // SAFETY: the buffer holds `extracts * (chunks + 1)` offsets, written by the scans.
+        let totals: Vec<usize> =
+            (0..self.extracts).map(|e| unsafe { *offsets.add(e * (self.chunks + 1) + self.chunks) } as usize).collect();
+        let buffers: Vec<MappedBuffer> =
+            totals.iter().map(|&n| MappedBuffer::zeroed::<u32>(device, n.max(1))).collect::<Result<_, _>>()?;
+        let passes: Vec<Pass<'_>> = planes
+            .iter()
+            .enumerate()
+            .map(|(e, &plane)| Pass {
+                pipeline: scatter,
+                buffers: vec![
+                    (0, &*stream.values.buffer, plane),
+                    (1, &*self.offsets.buffer, self.offsets_at(e)),
+                    (3, &*buffers[e].buffer, 0),
+                ],
+                args: vec![(2, bytes_of(&self.len))],
+                groups: stream.groups,
+                threads: GROUP,
+            })
+            .collect();
+        encode_passes(&passes)?;
+        Ok(buffers
+            .iter()
+            .zip(&totals)
+            .map(|(b, &n)| {
+                // SAFETY: the buffer holds at least `n` positions, written by the scatter.
+                unsafe { std::slice::from_raw_parts(b.buffer.contents().cast::<u32>(), n) }.to_vec()
+            })
+            .collect())
+    }
 }
 
 /// The source padded to whole SIMD groups of lanes, and a buffer of `slots` slots of lane words.

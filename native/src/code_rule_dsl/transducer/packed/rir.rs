@@ -282,6 +282,9 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         for value in &block.outputs {
             let _ = writeln!(out, "  block {at} output %{value}");
         }
+        for value in &block.extracts {
+            let _ = writeln!(out, "  block {at} extract %{value}");
+        }
     }
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
@@ -672,7 +675,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             parts.directives.push(directive);
         }
         "block" => {
-            // `block N %i = op …` or `block N output %v`: program N's rows in order, a new
+            // `block N %i = op …`, `block N output %v` or `block N extract %v`: program N's rows
+            // in order (tables, operations, outputs, extracts), a new
             // program at the next index.
             let at: usize = line.number("")?;
             if at == parts.block_programs.len() {
@@ -683,7 +687,12 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let program = parts.block_programs.last_mut().expect("pushed");
             let first = line.word()?;
             if first == "output" {
+                if !program.extracts.is_empty() {
+                    return Err(format!("block {at} output after an extract"));
+                }
                 program.outputs.push(line.number("%")?);
+            } else if first == "extract" {
+                program.extracts.push(line.number("%")?);
             } else if first == "table" {
                 let t: usize = line.number("")?;
                 if t != program.tables.len() || !program.ops.is_empty() {

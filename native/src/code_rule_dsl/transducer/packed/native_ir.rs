@@ -385,6 +385,8 @@ pub(super) struct BlockNative {
     pub tables: Vec<super::block::ClassTable>,
     pub insts: Vec<BlockInst>,
     pub outputs: Vec<u16>,
+    /// The outputs (indexes into `outputs`) whose positions the extract pass writes.
+    pub extracts: Vec<usize>,
 }
 
 /// An instruction of a block body.
@@ -439,7 +441,7 @@ impl BlockNative {
                 BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
             })
             .collect();
-        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone() }
+        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone(), extracts: program.extract_outputs() }
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes
@@ -482,6 +484,7 @@ impl BlockNative {
             tables: self.tables.clone(),
             insts: f.insts,
             outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
+            extracts: self.extracts.clone(),
         }
     }
 }

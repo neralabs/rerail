@@ -7,10 +7,11 @@
 //! byte weighted by its bit, then three rounds of pairwise adds, `addp`); elsewhere
 //! `vhigh_bits` (one `pmovmskb` on x86).
 //!
-//! `out` holds each output's words in turn: output `k`'s word for block `i` at `k * blocks + i`.
+//! `out` holds each output's words in turn: output `k`'s word for block `i` at `k * blocks + i`;
+//! then each extract's popcount over all the blocks, the size of its extract pass.
 
 use super::Error;
-use super::block::{mask_tail, padded};
+use super::block::{BlockRun, extract::positions, mask_tail, padded};
 use super::native_ir::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -25,6 +26,8 @@ pub(super) struct CompiledBlock {
     _module: JITModule,
     entry: Entry,
     outputs: usize,
+    /// The outputs whose positions the extract pass writes.
+    extracts: Vec<usize>,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
     /// The machine code, disassembled.
@@ -34,20 +37,44 @@ pub(super) struct CompiledBlock {
 impl CompiledBlock {
     /// Every output's words over `bytes`; bits past the end are zero.
     pub(super) fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
+        self.extract(bytes).outputs
+    }
+
+    /// The outputs, then the extract pass: each extract's positions, into a vector allocated at
+    /// the count the function summed as it wrote the plane.
+    pub(super) fn extract(&self, bytes: &[u8]) -> BlockRun {
         let blocks = padded(bytes);
         let flat: Vec<u8> = blocks.iter().flatten().copied().collect();
-        let mut out = vec![0u64; self.outputs * blocks.len()];
-        // SAFETY: the function reads `blocks.len()` whole blocks of `flat` and writes
-        // `outputs * blocks.len()` words of `out`, both allocated to those sizes.
-        unsafe { (self.entry)(flat.as_ptr(), blocks.len() as u64, out.as_mut_ptr()) };
         let n = blocks.len();
-        (0..self.outputs)
+        let mut out = vec![0u64; self.outputs * n + self.extracts.len()];
+        // SAFETY: the function reads `blocks.len()` whole blocks of `flat` and writes
+        // `outputs * blocks.len()` words of `out` and then one count per extract, all allocated.
+        unsafe { (self.entry)(flat.as_ptr(), n as u64, out.as_mut_ptr()) };
+        // The function counts whole blocks; the bits past the end (the padding's) come off.
+        let past = |words: &[u64]| match (words.last(), bytes.len() % 64) {
+            (Some(&w), r) if r != 0 => (w >> r).count_ones() as usize,
+            _ => 0,
+        };
+        let positions = self
+            .extracts
+            .iter()
+            .enumerate()
+            .map(|(e, &k)| {
+                let words = &out[k * n..(k + 1) * n];
+                let count = out[self.outputs * n + e] as usize - past(words);
+                let mut words = words.to_vec();
+                mask_tail(&mut words, bytes.len());
+                positions(&words, count)
+            })
+            .collect();
+        let outputs = (0..self.outputs)
             .map(|k| {
                 let mut words = out[k * n..(k + 1) * n].to_vec();
                 mask_tail(&mut words, bytes.len());
                 words
             })
-            .collect()
+            .collect();
+        BlockRun { outputs, positions }
     }
 }
 
@@ -58,7 +85,7 @@ impl CompiledBlock {
     pub(super) fn cpu_seconds(&self, bytes: &[u8], runs: usize) -> f64 {
         let blocks = padded(bytes);
         let flat: Vec<u8> = blocks.iter().flatten().copied().collect();
-        let mut out = vec![0u64; self.outputs * blocks.len()];
+        let mut out = vec![0u64; self.outputs * blocks.len() + self.extracts.len()];
         let now = || {
             let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
             // SAFETY: `t` is a valid timespec to write.
@@ -104,6 +131,12 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
         for _ in &carried {
             f.append_block_param(body, types::I64);
+        }
+        // One loop-carried popcount per extract, the mask pass's count for the extract pass;
+        // stored after the outputs' words at the exit.
+        for _ in &native.extracts {
+            f.append_block_param(body, types::I64);
+            f.append_block_param(exit, types::I64);
         }
 
         // The entry: constants every block uses, and each output's first word.
@@ -165,13 +198,16 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let zero = f.ins().iconst(types::I64, 0);
         let even = f.ins().iconst(types::I64, super::block::carry::EVEN as i64);
         let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
-        let first: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), carried.len() + 1).collect();
-        f.ins().brif(none, exit, &[], body, &first);
+        let first: Vec<cranelift_codegen::ir::BlockArg> =
+            std::iter::repeat_n(zero.into(), carried.len() + native.extracts.len() + 1).collect();
+        let no_counts: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), native.extracts.len()).collect();
+        f.ins().brif(none, exit, &no_counts, body, &first);
 
         // The body: one block, straight-line.
         f.switch_to_block(body);
         let i = f.block_params(body)[0];
-        let carries_in: Vec<Value> = f.block_params(body)[1..].to_vec();
+        let carries_in: Vec<Value> = f.block_params(body)[1..1 + carried.len()].to_vec();
+        let counts_in: Vec<Value> = f.block_params(body)[1 + carried.len()..].to_vec();
         let mut carries_out: Vec<Value> = Vec::with_capacity(carried.len());
         let offset = f.ins().ishl_imm(i, 6);
         let base = f.ins().iadd(bytes, offset);
@@ -286,13 +322,34 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let address = f.ins().iadd(output_bases[k], at);
             f.ins().store(MemFlags::new().with_notrap(), values[usize::from(v)], address, 0);
         }
+        let counts_out: Vec<Value> = native
+            .extracts
+            .iter()
+            .zip(&counts_in)
+            .map(|(&k, &c)| {
+                let n = f.ins().popcnt(values[usize::from(native.outputs[k])]);
+                f.ins().iadd(c, n)
+            })
+            .collect();
         let next = f.ins().iadd_imm(i, 1);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, blocks);
-        let again: Vec<cranelift_codegen::ir::BlockArg> =
-            std::iter::once(next.into()).chain(carries_out.iter().map(|&c| c.into())).collect();
-        f.ins().brif(more, body, &again, exit, &[]);
+        let again: Vec<cranelift_codegen::ir::BlockArg> = std::iter::once(next.into())
+            .chain(carries_out.iter().map(|&c| c.into()))
+            .chain(counts_out.iter().map(|&c| c.into()))
+            .collect();
+        let done: Vec<cranelift_codegen::ir::BlockArg> = counts_out.iter().map(|&c| c.into()).collect();
+        f.ins().brif(more, body, &again, exit, &done);
 
         f.switch_to_block(exit);
+        let totals = f.block_params(exit).to_vec();
+        if !totals.is_empty() {
+            let words = f.ins().imul_imm(blocks, native.outputs.len() as i64);
+            let from = f.ins().ishl_imm(words, 3);
+            let after = f.ins().iadd(out, from);
+            for (e, &t) in totals.iter().enumerate() {
+                f.ins().store(MemFlags::new().with_notrap(), t, after, (e * 8) as i32);
+            }
+        }
         f.ins().return_(&[]);
         f.seal_all_blocks();
         f.finalize();
@@ -308,7 +365,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), clif, disassembly })
+    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), clif, disassembly })
 }
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.
