@@ -1022,7 +1022,7 @@ pub(crate) fn run_with_options(
         decoded.sort();
         decoded.dedup();
         let mut text = decoded.join("\n");
-        if !text.is_empty() {
+        if !decoded.is_empty() {
             text.push('\n');
         }
         std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;

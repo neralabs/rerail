@@ -166,7 +166,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
             .iter()
             .enumerate()
             .map(|(c, (_, t))| match t.as_str() {
-                "int" | "flat" => Ok(Some(Domain::Int)),
+                "int" | "flat" | "min" | "max" => Ok(Some(Domain::Int)),
                 "node" => Ok(Some(Domain::Node)),
                 "sym" if input => Ok(Some(base_domain(rel, c).unwrap_or(Domain::Name))),
                 "sym" => Ok(None),
