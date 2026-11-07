@@ -17,6 +17,20 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     rows
 }
 
+#[test]
+fn boolean_lookbehind_is_not_a_named_capture() {
+    let rows = finding_contract("x = 1\n", r#"
+.policy "contract:boolean-lookbehind" revision 1
+.language python
+.decl sample(s: symbol)
+sample("str|Expression"). sample("Bstr|Expression"). sample("éstr|Expression").
+.violation Boundary(at: span, spelling: symbol) code "BOUNDARY" "{spelling}"
+Boundary(@place("input.py", 1), s) :- sample(s), match("(?s:.*?)(?<![A-Za-z_é])str\\|Expression(?s:.*)", s).
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["parameters"]["spelling"], "str|Expression");
+}
+
 /// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
 /// and tags at the same line do not collapse into the old five-column finding index.
 #[test]
