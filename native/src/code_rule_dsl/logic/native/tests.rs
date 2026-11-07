@@ -16,6 +16,7 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let db = connection();
+        super::register_symbols(&db).unwrap();
         let atom: i64 = db.query_row("SELECT sym_atom('kept')", [], |r| r.get(0)).unwrap();
         db.execute_batch(&format!("CREATE TEMP VIEW computed AS SELECT sym_atom(sym_text({atom})) AS c0;
             CREATE TEMP VIEW recomputed AS SELECT sym_atom(sym_text({atom})) AS c0;
@@ -30,7 +31,7 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
         super::setfix::close(&db, "reentrant").unwrap();
         send.send(()).unwrap();
     });
-    receive.recv_timeout(std::time::Duration::from_secs(5)).expect("loading a computed SQL view deadlocked on its own symbol lock");
+    receive.recv_timeout(std::time::Duration::from_secs(5)).expect("computed SQL input did not finish; see the worker panic or timeout");
 }
 
 fn pairs(db: &Connection, sql: &str) -> Vec<(i64, i64)> {
