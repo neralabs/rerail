@@ -314,7 +314,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
-    // creating transaction, it was ignored, so no store returned freed pages (decision 0051 §4).
+    // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
     let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
     if pages == 0 {
         connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
@@ -337,7 +337,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     crate::code_rule_dsl::text::install(connection)?;
     crate::code_rule_dsl::prefilter::tapes::install(connection)?;
     // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
-    // committed rows (decision 0047).
+    // committed rows (decision 0049).
     super::atoms::Atoms::install(connection)?;
     Ok(())
 }

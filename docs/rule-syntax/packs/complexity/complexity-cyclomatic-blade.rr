@@ -1,0 +1,21 @@
+.policy "complexity-cyclomatic-blade" revision 2
+.description "Keep functions in Blade templates at cyclomatic complexity 6 or below, counting each if, elseif, loop, catch, switch, match, ternary and && or ||; branch-heavy functions are hard to follow and test."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+.scope exclude "**/vendor/**", "**/node_modules/**", "**/tests/**", "**/Tests/**"
+
+#include "complexity/php.rr"
+#include "blade/syntax.rr"
+//   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
+//   blade_code(n)       n is in the PHP program the template compiles to
+
+// The complexity pack's ceiling over the PHP a Blade template compiles to, counted as the PHP rule counts: the
+// functions and closures the template defines, in `<?php ?>`, `@php … @endphp` or an echo. The template's own
+// directives (@if, @foreach, an echo's ?:) run in no function, so they are never scored:
+//   @php $format = function ($v) { if … elseif … foreach … }; @endphp
+//   -> `$format` has cyclomatic complexity 7, over the ceiling of 6.
+// The compiled PHP is a document of its own derived from the template, reached through
+// parsed(document, "compiled-view", program) (blade/syntax.rr); it has PHP's kinds, so the PHP table applies as it is.
+.violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
+complexity(f, msg) :- cc_report(f, msg), blade_code(f).

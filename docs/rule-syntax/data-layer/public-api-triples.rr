@@ -278,9 +278,13 @@ checked(o, b) :- live(o, b), count : { live(p, b), p < o,
 // same_params(f, g): f and the lazy member g of its group take the same parameters, by name and position.
 // Python linter _legacy_decorator_applicable compares the full param_names tuples; this ignores self and cls.
 .decl same_params(f: node, g: node)
-same_params(f, g) :- member(o, b, _, f), member(o, b, "lazy", g),
-    count : { params(f, x, i), x != "self", x != "cls", !params(g, x, i) } = 0,
-    count : { params(g, x, i), x != "self", x != "cls", !params(f, x, i) } = 0.
+same_params(f, g) :- lazy_pair(f, g), !params_differ(f, g).
+.decl lazy_pair(f: node, g: node)
+lazy_pair(f, g) :- member(o, b, _, f), member(o, b, "lazy", g).
+// params_differ(f, g): one of the two has a parameter (other than self and cls) at a position the other lacks.
+.decl params_differ(f: node, g: node)
+params_differ(f, g) :- lazy_pair(f, g), params(f, x, i), x != "self", x != "cls", !params(g, x, i).
+params_differ(f, g) :- lazy_pair(f, g), params(g, x, i), x != "self", x != "cls", !params(f, x, i).
 
 // missing(o, b, s, at): checked group (o, b) has no member in slot s. Lazy-only groups need no other slot, as in
 // the Python linter's required_slots. The finding is anchored at the exemplar, as the Python linter reports exemplar.path/line.

@@ -54,7 +54,7 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) unread: Vec<String>,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
-    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0048).
+    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
     pub(in crate::code_rule_dsl) within: usize,
 }
 
@@ -265,7 +265,8 @@ fn fold_constants(rule: &mut Rule) -> usize {
     // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
     // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
     // chunk (`typing::file_local::split`); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
-    let mut named = rule.head.vars();
+    let mut named = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut named));
     for l in &rule.body {
         match l {
             Literal::Agg { var, over, .. } => {

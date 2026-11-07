@@ -1,0 +1,21 @@
+.policy "ruff-int001-f-string-in-get-text-func-call" revision 2
+.description "Pass a constant template to a gettext call and format the translated result; an f-string is evaluated before the catalog lookup."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff INT001 (flake8-gettext): a translation call whose first positional argument is an f-string (or adjacent literals one of which is). The text is
+// formatted before the catalog lookup, so the lookup is for the formatted string, which no catalog has.
+// Translation calls: a plain name in option `flake8-gettext.function-names` (default `_`, `gettext`, `ngettext`; plus
+// `extend-function-names`), `builtins.<one of them>`, and gettext.gettext / gettext.ngettext through imports.
+// Ruff checks ngettext's second argument only in preview.
+//   _(f"Hello, {name}!")                  ← INT001
+//   gettext_mod.gettext(f"{x}")            ← INT001, after `import gettext as gettext_mod`
+//   _(t"{x}")                              not reported: a t-string
+//   _gettext(f"{x}")                       not reported: not a translation name
+#include "python/misc2-messages.rr"
+
+.violation INT001(at: node) code "INT001"
+    "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {name}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    suppress ruff "INT001"
+INT001(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "fstr").

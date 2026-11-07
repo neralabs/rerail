@@ -1,4 +1,4 @@
-//! Containment read off the tree, made per looked-up node (decision 0048), in two modes:
+//! Containment read off the tree, made per looked-up node (decision 0050), in two modes:
 //!
 //! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.

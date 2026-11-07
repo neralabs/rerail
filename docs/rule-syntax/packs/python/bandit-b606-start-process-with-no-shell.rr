@@ -1,0 +1,18 @@
+.policy "bandit-b606-start-process-with-no-shell" revision 2
+.description "Validate input passed to the os exec, spawn and startfile functions; they start whatever program and arguments they receive."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B606 (start_process_with_no_shell): a call to one of os's exec*, spawn* or startfile functions,
+// Bandit's "no_shell" group. Every such call is reported; the arguments are not inspected.
+//   import os
+//   os.execvp("ls", ["ls", path])          B606
+//   from os import spawnv; spawnv(m, p, a) B606
+//   os.system("ls")                        not reported (a shell: B605)
+
+#include "python/security.rr"   // qual_call, process_fn
+
+.violation B606(at: node) code "B606"
+    "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives."
+    suppress nosec "B606"
+B606(c) :- qual_call(c, q), process_fn("no_shell", q).

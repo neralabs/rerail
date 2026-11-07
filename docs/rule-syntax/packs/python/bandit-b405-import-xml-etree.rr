@@ -1,0 +1,18 @@
+.policy "bandit-b405-import-xml-etree" revision 2
+.description "Avoid importing xml.etree.ElementTree or cElementTree; use defusedxml instead, since the standard parsers are open to XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B405 (its B001 blacklist): an import of xml.etree.cElementTree or xml.etree.ElementTree, or of a name in them.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import xml.etree.ElementTree as ET          B405
+//   from xml.etree import cElementTree          B405
+//   import xml.etree                            not reported
+//   importlib.import_module("xml.etree.ElementTree") B405: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B405(at: node) code "B405"
+    "ElementTree XML parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B405"
+B405(n) :- blacklisted(n, "B405").

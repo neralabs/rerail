@@ -50,7 +50,7 @@ pub fn run_rr(path: &std::path::Path, root: &std::path::Path, out: &std::path::P
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     let source = rr::print(&program).map_err(|e| e.to_string())?;
-    let report = corpus::run_with_options(&source, root, None, out, "program", Binding::Cpu, 1 << 18, &Default::default(), options).map_err(|e| e.to_string())?;
+    let report = corpus::run_with_options(&[source.as_str()], root, None, out, "program", Binding::Cpu, 1 << 18, &Default::default(), options).map_err(|e| e.to_string())?;
     let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
         Ok(text) => text.lines().map(|line| serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())).collect::<Result<Vec<_>, _>>()?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -90,7 +90,7 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
-/// one (decision 0049): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
 /// findings. T's facts reproduce one program's run only.
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;

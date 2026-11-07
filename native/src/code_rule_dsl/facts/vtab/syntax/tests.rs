@@ -448,7 +448,7 @@ said(s) :- comment(_, s).
     );
     let out = dir.join("out");
     let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
-    corpus::run_with_options(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("dotted"), "a.b\nb\n");
     assert_eq!(read("low"), "àb\n");

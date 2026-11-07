@@ -1,0 +1,17 @@
+.policy "ruff-pyi032-any-eq-ne-annotation" revision 2
+.description "Use object instead of Any to annotate the other operand of equality and inequality methods; object accepts every value while keeping type checking on."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI032 (flake8-pyi), every file: `__eq__` or `__ne__` in a class, with exactly two ordinary positional
+// parameters (positional-only ones, before `/`, do not count), the second annotated `Any`. Equality accepts any
+// object; `object` says so and keeps type checking on. Reported at the annotation.
+//   def __eq__(self, other: Any) -> bool: ...     ← PYI032: write `other: object`
+#include "python/typing.rr"
+
+.violation PYI032(at: node) code "PYI032" "Annotate the other operand of this `__eq__` or `__ne__` as `object` instead of `Any`; `==` and `!=` must accept any value, and `Any` turns type checking off."
+    suppress ruff "PYI032"
+PYI032(a) :- pyi_method(_, f, x), (x = "__eq__" ; x = "__ne__"), count : { sig_param(f, p, n, i, "pos", b, d) } = 2,
+    sig_param(f, _, _, j, "pos", a, _), count : { sig_param(f, p, n, i, "pos", b, d), i < j } = 1, !unset(a),
+    type_bare(a, t), typing_sym(t, "Any").

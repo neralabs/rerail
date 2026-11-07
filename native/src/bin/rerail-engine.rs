@@ -91,7 +91,7 @@ fn logic(args: &[String]) -> Result<String, String> {
     rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
 }
 
-/// `gc`: collects a store until nothing is left to collect (decision 0051): converts a store made before 0051 to
+/// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to
 /// incremental vacuum, decides which corpus runs to keep (`--history-mb`: the high-water mark, default 512; the low
 /// water is three quarters of it), and runs passes until two in a row find nothing.
 fn gc(args: &[String]) -> Result<String, String> {
@@ -118,7 +118,7 @@ fn gc(args: &[String]) -> Result<String, String> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let mut out = String::new();
     if store.convert_to_incremental_vacuum().map_err(e)? {
-        out += "converted to incremental vacuum (a store made before decision 0051)\n";
+        out += "converted to incremental vacuum (a store made before decision 0053)\n";
     }
     let kept = store.keep_corpus_runs(&policy, now).map_err(e)?;
     out += &format!(

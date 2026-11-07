@@ -1,0 +1,38 @@
+.policy "eslint-no-sequences" revision 3
+.description "Avoid the comma operator outside for-loop headers unless the sequence is wrapped in parentheses; it hides side effects and is easily mistaken for a separator."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen, deparen_count
+
+// ESLint's no-sequences: the comma operator, reported at its first comma. A for loop's initialiser and update
+// may always use it. With allowInParentheses (the default, true) a sequence in parentheses shows intent and is
+// allowed; where the syntax already has parentheses (the test of if, while and do, a switch's discriminant, a
+// with's object) or as an arrow's body, it needs a second pair.
+//   a = 1, b = 2;                  → reported
+//   foo((a, b));   for (i = 0, j = 1; ; i++, j++) {}     fine
+//   if (a, b) {}                   → reported;   if ((a, b)) {}   fine
+//   () => (a, b)                   → reported;   () => ((a, b))   fine
+// allowInParentheses: false reports every one outside for heads.
+.violation no_sequences(at: loc) code "no-sequences" "Unexpected use of comma operator."
+    suppress eslint "no-sequences"
+    suppress oxlint "no-sequences"
+    suppress biome "lint/complexity/noCommaOperator"
+no_sequences(t) :- kind(s, "sequence_expression"), !in_for_head(s), !intended(s), child(s, x, 0), token_after(x, t).
+
+.decl in_for_head(s: node)  // for (a, b; ; c, d): the initialiser or the update
+in_for_head(s) :- kind(f, "for_statement"), (field(f, "initializer", e) ; field(f, "increment", e)), deparen(e, s).
+.decl intended(s: node)
+intended(s) :- !option("allowInParentheses", "false"), syntax_parens(s, k), k >= 2.
+intended(s) :- !option("allowInParentheses", "false"), kind(s, "sequence_expression"), !syntax_parens(s, _),
+    token_before(s, p), text(p, "("), token_after(s, q), text(q, ")").
+// syntax_parens(s, k): s is the test of if/while/do, a switch's or with's head, or an arrow's body, inside k
+// pairs of parentheses (the statement's own pair counts).
+.decl syntax_parens(s: node, k: number)
+syntax_parens(s, k) :- (kind(p, "if_statement") ; kind(p, "while_statement") ; kind(p, "do_statement")),
+    field(p, "condition", e), deparen_count(e, s, k), kind(s, "sequence_expression").
+syntax_parens(s, k) :- (kind(p, "switch_statement"), field(p, "value", e) ; kind(p, "with_statement"),
+    field(p, "object", e)), deparen_count(e, s, k), kind(s, "sequence_expression").
+syntax_parens(s, k) :- kind(p, "arrow_function"), field(p, "body", e), deparen_count(e, s, k), kind(s, "sequence_expression").

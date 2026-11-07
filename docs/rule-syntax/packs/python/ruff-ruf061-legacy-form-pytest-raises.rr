@@ -1,0 +1,25 @@
+.policy "ruff-ruf061-legacy-form-pytest-raises" revision 1
+.description "Use the context-manager form of pytest raises, warns and deprecated_call instead of passing the callable as an argument; it reads better and accepts extra arguments."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF061: `pytest.raises(E, func, …)`, `pytest.warns(W, func, …)` or `pytest.deprecated_call(func, …)`:
+// the callable is passed, positionally after the expected type or as `func=`, so pytest calls it.
+//   pytest.raises(ZeroDivisionError, func, 1, b=0)   ← RUF061
+//   with pytest.raises(ZeroDivisionError):           not reported
+//       func(1, b=0)
+#include "python/ruff.rr"
+
+param_slot("pytest.raises", "func", 1).
+param_slot("pytest.warns", "func", 1).
+param_slot("pytest.deprecated_call", "func", 0).
+
+.violation RUF061(at: node, msg: symbol) code "RUF061" "{msg}"
+    suppress ruff "RUF061"
+RUF061(c, "Use `with pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`.") :-
+    call_q(c, "pytest.raises"), call_param(c, "func", _).
+RUF061(c, "Use `with pytest.warns(Warn):` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.warns`.") :-
+    call_q(c, "pytest.warns"), call_param(c, "func", _).
+RUF061(c, "Use `with pytest.deprecated_call():` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.deprecated_call`.") :-
+    call_q(c, "pytest.deprecated_call"), call_param(c, "func", _).

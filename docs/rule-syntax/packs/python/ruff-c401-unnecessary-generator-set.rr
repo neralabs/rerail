@@ -1,0 +1,25 @@
+.policy "ruff-c401-unnecessary-generator-set" revision 2
+.description "Use a set comprehension instead of passing a generator expression to set, or pass the iterable itself when the generator yields its items unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C401 (flake8-comprehensions): `set(…)` of the builtin set, whose one argument is a generator
+// expression. When the generator is `x for x in y`, one plain `for` and no `if`, that yields its target
+// unchanged, `set(y)` says it; otherwise a set comprehension does. Ruff's fixes are unsafe; none here.
+//   set(f(x) for x in y)       ← C401: {f(x) for x in y}
+//   set(x for x in y)          ← C401: set(y)
+//   set(x for x in y if x)     ← C401: {x for x in y if x}
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), c4_comp(e, k), c4_passthrough(e)
+
+.violation C401(at: node, id: symbol, msg: symbol) code "C401" "{msg}"
+    suppress ruff "C401"
+C401(c, "generator-set-identity",
+    "Replace with `set(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior.") :-
+    gen_set(c, g), c4_passthrough(g).
+C401(c, "generator-set",
+    "Rewrite `set(<generator>)` as a set comprehension: `{expr for ...}` instead of `set(expr for ...)`.") :-
+    gen_set(c, g), !c4_passthrough(g).
+.decl gen_set(c: node, g: node)
+gen_set(c, g) :- c4_call(c, "set"), c4_only(c, g), c4_comp(g, "generator").

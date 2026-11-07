@@ -1,0 +1,15 @@
+.policy "eslint-no-octal" revision 3
+.description "Avoid numeric literals that start with a zero followed by a digit; legacy octal is deprecated and easily misread as decimal."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-octal: a number literal whose source starts with 0 and another digit. `071` is the legacy octal
+// 57, and `08` a decimal written with a leading zero; both are errors in strict code.
+//   var a = 071;   var b = 08;      → reported
+//   0o71   0x71   0   0.5   0e1      fine
+// No options.
+.violation no_octal(at: node) code "no-octal"
+    "Write this number with a 0o prefix if it is octal, or drop the leading zero if it is decimal."
+    suppress eslint "no-octal"
+no_octal(n) :- kind(n, "number"), glob("0[0-9]*", n).

@@ -1,0 +1,23 @@
+.policy "eslint-plugin-vue-no-v-text-v-html-on-component" revision 2
+.description "Don't use v-text or v-html on a Vue component; they replace the content the component renders."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vdir(e, a, d, arg), vcustom(e), vcustom_any_ns(e), vel_name(e, x)
+
+// eslint-plugin-vue's no-v-text-v-html-on-component: v-text or v-html on a custom component. Options: allow (component
+// names, matched as written, in PascalCase or in kebab-case) and ignoreElementNamespaces (true: an SVG or MathML
+// element name is never a component, wherever it stands).
+//   <my-comp v-html="html" />    <div is="my-comp" v-text="t" />        reported
+//   <div v-html="html" />        <svg><circle v-text="t" /></svg>       not reported
+.violation on_component(at: node, d: symbol) code "vue/no-v-text-v-html-on-component"
+    "Remove v-{d} from this component and pass the content through a slot or prop instead."
+    suppress eslint "vue/no-v-text-v-html-on-component"
+on_component(a, d) :- vdir(e, a, d, _), (d = "text" ; d = "html"), component(e), !allowed(e).
+.decl component(e: node)
+component(e) :- vcustom(e), !option("ignoreElementNamespaces", "true").
+component(e) :- vcustom_any_ns(e), option("ignoreElementNamespaces", "true").
+.decl allowed(e: node)
+allowed(e) :- vel_name(e, x), option_item("allow", _, y),
+    (y = x ; y = @convert(x, "pascalCase", "") ; y = @convert(x, "kebabCase", "")).

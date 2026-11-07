@@ -377,16 +377,21 @@ fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_stor
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
-    run_programs_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
+    run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_with_options(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
-    run_programs_with_options(&[program], root, t_facts, out, modes, binding, chunk_nodes, typing, options)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
+pub(crate) fn run_with_options(
+    programs: &[&str],
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -474,7 +479,7 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
         }
     }
     // The persistent store: tapes kept across runs, keyed by content (`RERAIL_TAPE_CACHE` names it, `off` parses
-    // every file), and the run's atoms and each file's memoised rows (decision 0050): atoms are never given out again,
+    // every file), and the run's atoms and each file's memoised rows (decision 0052): atoms are never given out again,
     // so a memoised row's symbols mean the same in every run. The run's SQL works in `store.sqlite`, on the same
     // atoms. Without the store, or reproducing T, the atoms are the run's own.
     let tapes = tape_cache().map_err(|e| Error::Plan(e.to_string()))?;
@@ -510,7 +515,7 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
     if !pushed.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || format!("{} cross-file rules read a join made per chunk instead of its base relations (first: {})", pushed.len(), pushed.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
     }
-    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0050).
+    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
     let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
@@ -661,7 +666,7 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>);
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
-    // A run over the persistent store records which sources it read, its manifest (decision 0051).
+    // A run over the persistent store records which sources it read, its manifest (decision 0053).
     let recording = tapes.is_some() && t.is_none();
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>)> {
     let worker = scope.spawn(|| {
@@ -854,7 +859,7 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
                     measured
                 }
             };
-            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel == syntax::WITHIN || rel == syntax::SPAN_WITHIN || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || crate::code_rule_dsl::logic::front::is_transduced(&rel) || rel == syntax::WITHIN || rel == syntax::SPAN_WITHIN || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.estimated_len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
@@ -947,7 +952,7 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
     worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
-    // The run's manifest, then collection in the background while the cross-file part runs (decision 0051).
+    // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
     let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program)? } else { None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
@@ -1061,18 +1066,18 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
     drop(statements);
-    // The run's atoms are written at its end (decision 0047 §4.3), and the profile says how often they were.
+    // The run's atoms are written at its end (decision 0049 §4.3), and the profile says how often they were.
     store.flush_atoms().map_err(|e| Error::Plan(e.to_string()))?;
     let ((segments, atoms, bytes), pending) = store.atom_writes();
     crate::code_rule_dsl::logic::profile::decision("atoms", || {
-        format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0047)", bytes as f64 / 1e6)
+        format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
     });
     if memoised {
         crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk)", docs.len()));
     }
     if let Some(collecting) = collecting {
         let (passes, outcome) = collecting.join().map_err(|_| Error::Plan("store collection panicked".to_owned()))?;
-        crate::code_rule_dsl::logic::profile::decision("store collection (decision 0051)", || match outcome {
+        crate::code_rule_dsl::logic::profile::decision("store collection (decision 0053)", || match outcome {
             Ok(summary) => format!("{passes} passes in the background: {summary}"),
             Err(e) => format!("{passes} passes, then stopped: {e}"),
         });

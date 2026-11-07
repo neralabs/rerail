@@ -1,0 +1,44 @@
+.policy "ruff-pd101-pandas-nunique-constant-series-check" revision 2
+.description "Avoid comparing nunique() with 1 to check whether a pandas Series is constant; compare its values with the first one instead, which stops at the first difference."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PD101 (pandas-vet): `s.nunique()` compared with 1 by `<=`, `==`, `!=` or `>`, to test whether a series is
+// constant. nunique counts every distinct value; comparing the array with its first element is cheaper. The
+// receiver must look like a local value: a parameter (not self or cls), an assigned name, or any expression
+// that is not a literal or display. Reported at the comparison, in a file that imports pandas.
+//   data.nunique() <= 1                  ← PD101
+//   data.dropna().nunique() == 1         ← PD101
+//   data.nunique() >= 1                  not reported: tests non-empty
+//   {"hello": "world"}.nunique() == 1    not reported: not a series
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+.violation PD101(at: node, alt: symbol) code "PD101"
+    "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `{alt}`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
+    suppress ruff "PD101"
+PD101(e, alt) :- kind(e, "comparison_operator"), op_at(e, 0, o), !op_at(e, 1, _), nunique_alt(o, alt),
+    child(e, l, 0), unparen(l, c), field(c, "function", f), unparen(f, g), attr_of(g, v, "nunique"),
+    child(e, r, 1), ruff_int(r, "1"), series_like(v), docof(e, d), seen_module(d, "pandas").
+seen_ask("pandas").
+.decl nunique_alt(o: symbol, alt: symbol)
+nunique_alt("<=", "a.shape[0] == 0 or (a[0] == a).all()"). nunique_alt("==", "a.shape[0] > 0 and (a[0] == a).all()").
+nunique_alt("!=", "a.shape[0] == 0 or not (a[0] == a).all()").
+nunique_alt(">", "a.shape[0] > 0 and not (a[0] == a).all()").
+
+// series_like(v): Ruff's RelevantLocal. A name must be bound by an assignment, loop or parameter; any other
+// expression counts unless it is a literal, a display or a comprehension.
+.decl series_like(v: node)
+series_like(v) :- unparen(v, m), !kind(m, "identifier"), kind(m, k), !not_series_kind(k), !py_literal(m).
+series_like(v) :- unparen(v, m), kind(m, "identifier"), ref_site(m, s), site_form(s, f), local_form(f),
+    !self_param(s).
+.decl local_form(f: symbol)
+local_form("assign"). local_form("param"). local_form("augassign"). local_form("for"). local_form("walrus").
+.decl self_param(s: node)
+self_param(s) :- site_form(s, "param"), binding(_, x, s, _), (x = "self" ; x = "cls").
+.decl not_series_kind(k: symbol)
+not_series_kind("tuple"). not_series_kind("list"). not_series_kind("set"). not_series_kind("dictionary").
+not_series_kind("list_comprehension"). not_series_kind("set_comprehension").
+not_series_kind("dictionary_comprehension"). not_series_kind("generator_expression").
+not_series_kind("concatenated_string").

@@ -1,0 +1,36 @@
+.policy "ruff-pie796-non-unique-enums" revision 2
+.description "Give each Enum member a unique value; a duplicate becomes an alias of the earlier member instead of a new one."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE796 (flake8-pie): two members of an `enum.Enum` subclass with the same value. The second becomes an
+// alias of the first, not a member of its own. Members are plain assignments in the class body; `enum.auto()`
+// (alone or in a tuple) is skipped, and in a stub so is a value left unknown (`...`, `cast(T, ...)`). Values
+// compare as written: a str by its value, anything else by its text without spaces. Each repeat is reported.
+//   class E(Enum):
+//       A = 1
+//       C = 1                  ← PIE796
+//       D = enum.auto()        not compared
+#include "python/bugbear.rr"
+
+.violation PIE796(at: node, v: node) code "PIE796" "Enum contains duplicate value: `{v}`"
+    suppress ruff "PIE796"
+PIE796(st, v) :- member(c, st, v, k), member(c, o, _, k), o < st.
+// member(c, st, v, k): statement st of enum class c assigns the value v, compared as k.
+.decl member(c: node, st: node, v: node, k: symbol)
+member(c, st, v, k) :- enum_class(c), field(c, "body", b), child(b, st, _), asgstmt(a, st), !assign_ann(a, _),
+    assign_value(a, v), !auto_value(v), !unknown_in_stub(v), value_key(v, k).
+.decl enum_class(c: node)
+enum_class(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), sym_of(e, "enum.Enum").
+.decl auto_value(v: node)
+auto_value(v) :- bb_sym_call(v, "enum.auto").
+auto_value(v) :- unparen(v, t), (kind(t, "tuple") ; kind(t, "expression_list")), child(t, e, _),
+    bb_sym_call(e, "enum.auto").
+.decl unknown_in_stub(v: node)
+unknown_in_stub(v) :- docof(v, d), file_name(d, f), suffix(".pyi", f), unparen(v, m), kind(m, "ellipsis").
+unknown_in_stub(v) :- docof(v, d), file_name(d, f), suffix(".pyi", f), (bb_sym_call(v, "typing.cast") ;
+    bb_sym_call(v, "typing_extensions.cast")), call_nkwargs(v, 0), call_nargs(v, 2), bb_pos(v, 1, e), kind(e, "ellipsis").
+.decl value_key(v: node, k: symbol)
+value_key(v, cat("s:", s)) :- plain_str(v, s).
+value_key(v, cat("e:", @replace_all(t, "\\s+", ""))) :- unparen(v, m), !plain_str(m, _), text(m, t).

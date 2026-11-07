@@ -1,0 +1,18 @@
+.policy "bandit-b304-ciphers" revision 2
+.description "Avoid weak ciphers such as DES, TripleDES, ARC2, ARC4, Blowfish, CAST5, IDEA, SEED, and XOR; use a modern cipher such as AES."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B304 (its B001 blacklist): a call that makes a weak cipher: ARC2, ARC4, Blowfish, DES or XOR from PyCrypto or
+// PyCryptodome; ARC4, Blowfish, CAST5, IDEA, SEED or TripleDES from cryptography.
+//   from Crypto.Cipher import DES; DES.new(key)     B304
+//   algorithms.TripleDES(key)                        B304, with algorithms imported from cryptography
+//   algorithms.AES(key)                              not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B304(at: node) code "B304"
+    "Replace this weak cipher with AES in an authenticated mode such as GCM."
+    suppress nosec "B304"
+B304(n) :- blacklisted(n, "B304").

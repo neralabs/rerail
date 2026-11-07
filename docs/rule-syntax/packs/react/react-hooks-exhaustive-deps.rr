@@ -1,0 +1,133 @@
+.policy "react-hooks-exhaustive-deps" revision 2
+.description "List exactly the component values an effect, useCallback, useMemo or useImperativeHandle callback reads in its dependency array; a missing one leaves the callback reading stale values."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/exhaustive-deps: useEffect, useLayoutEffect, useCallback, useMemo and useImperativeHandle rerun
+// their callback when a listed dependency changes, so the list must name every value of the component the callback
+// reads. One finding per Hook call at its array, for any of
+//   a missing dependency:      useEffect(() => log(id), [])                           "id"
+//   an unnecessary one:        useCallback(() => {}, [id]);  useEffect(f, [ref.current]);  [outerConst]
+//   a duplicate:               useMemo(() => a, [a, a])
+// and, at their own places: a spread, a literal or a complex expression in the array (`[...deps]`, `["a"]`,
+// `[a[0]]`); an array that is not a literal (`useEffect(f, deps)`); an async effect; a callback missing, not
+// inline (`useMemo(make(), [])`), or a variable that is not a function; useMemo/useCallback without an array; an
+// effect without an array that sets state; a useEffectEvent function in the array; `ref.current` read in an effect's
+// cleanup; an assignment to a component variable from inside the callback; and, when the array is right, a listed
+// object, array or function built anew each render (`const opts = {}; useEffect(…, [opts])`).
+// Values that never change need no listing: refs, state setters, dispatch, useEffectEvent functions, const string,
+// number and null literals, and component functions that only read those.
+// The rule's options (additionalHooks, requireExplicitEffectDeps, …) are not in the JSON.
+#include "tsx/react-hooks.rr"
+
+.violation exhaustive_deps(at: node, msg: symbol)
+    code "react-hooks/exhaustive-deps" "{msg}"
+    suppress eslint "react-hooks/exhaustive-deps"
+    suppress oxlint "exhaustive-deps"
+    suppress biome "lint/correctness/useExhaustiveDependencies"
+exhaustive_deps(at, m) :- report(c, at, m), docof(c, d), react_doc(d).
+
+.decl report(c: node, at: node, msg: symbol)
+// The callback itself.
+report(c, f, "Pass a callback to this hook; without one React throws when it runs.") :-
+    deps_hook(c, _, f, k), !call_arg(c, _, k).
+report(c, f, "Pass a dependency array to this hook; with only a callback it recomputes on every render and memoizes nothing.") :-
+    deps_cb(c, _), deps_hook(c, x, f, _), (x = "useMemo" ; x = "useCallback"), !deps_list(c, _).
+report(c, f, "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.") :-
+    checked(c, f), deps_cb(c, cb), !deps_fn(cb), !kind(cb, "identifier").
+report(c, f, "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.") :-
+    deps_named_cb(c, site), site_form(site, "param"), deps_hook(c, _, f, _).
+report(c, f, cat("Add `", x, "` to this hook's dependency array, or pass an inline function; the value passed as its callback can change between renders.")) :-
+    deps_named_cb(c, site), !site_form(site, "param"), !deps_visit(c, _), deps_hook(c, _, f, _), deps_cb(c, cb),
+    text(cb, x).
+.decl checked(c: node, f: node)  // the callback gets analysed: there is an array, or it is an effect
+checked(c, f) :- deps_hook(c, _, f, _), deps_list(c, _).
+checked(c, f) :- deps_hook(c, x, f, _), deps_effect(x).
+report(c, v, "Make this effect callback synchronous and call an async function from inside it; an async callback returns a promise where React expects a cleanup.") :-
+    deps_visit(c, v), deps_hook(c, x, _, _), deps_effect(x), op(v, "async").
+
+// `ref.current` read in the function an effect returns: by cleanup time it may point elsewhere. Unless the code
+// assigns `ref.current` itself somewhere (then it is a plain mutable box), copy it inside the effect.
+report(c, at, cat("Copy `", x, ".current` to a variable inside the effect and use that variable in the cleanup; by the time the cleanup runs the ref may point elsewhere.")) :-
+    cleanup_read(c, r, at), text(r, x), at = max a : { cleanup_read(c, q, a), ref_site(q, site), ref_site(r, site) },
+    ref_site(r, site), !current_assigned(site).
+.decl cleanup_read(c: node, r: node, at: node)  // r.current read in the outermost function v returns
+cleanup_read(c, r, p) :- deps_hook(c, x, _, _), deps_effect(x), deps_visit(c, v), deps_component(v, _),
+    deps_ref(v, r, _), field(m, "object", r), kind(m, "member_expression"), field(m, "property", p), text(p, "current"),
+    nearest(r, g, function_kind), outer_fn(v, g, h), child(rs, h, _), kind(rs, "return_statement").
+.decl outer_fn(v: node, g: node, h: node)  // h is the outermost function in v that holds g (or g itself)
+outer_fn(v, g, g) :- deps_visit(_, v), nearest(g, v, function_kind).
+outer_fn(v, g, h) :- deps_visit(_, v), function_node(g), within(g, v), nearest(g, p, function_kind), p != v,
+    outer_fn(v, p, h).
+.decl current_assigned(site: node)
+current_assigned(site) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", m), field(m, "property", p), text(p, "current"), field(m, "object", o), ref_site(o, site).
+
+// An assignment to a component variable from the callback is lost on the next render. Reported once per
+// variable, and then nothing else is checked for this Hook.
+// The plugin meets references scope by scope (the callback's own, then each nested block or function in order),
+// so the first assignment is the earliest in the outermost scope that has one:
+//   if (a) { v = {}; }  v = 43;      reported at 43
+report(c, w, cat("Keep `", x, "` in a useRef and assign its `.current` instead, or declare it inside the callback; this assignment is lost after each render.")) :-
+    stale(c, x, w, i, j), i = min i2 : { stale(c, x, _, i2, _) }, j = min j2 : { stale(c, x, _, i, j2) }.
+.decl stale(c: node, x: symbol, w: node, scope: number, at: number)
+stale(c, k, w, i, j) :- deps_visit(c, v), deps_component(v, _), deps_ref(v, r, _), deps_key(r, k),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", r),
+    field(a, "right", w), nearest(r, sc, block_scope), visit_index(sc, i), visit_index(r, j).
+.decl analysed(c: node)  // the dependency check proper runs: a component scope, and no lost assignment
+analysed(c) :- deps_visit(c, v), deps_component(v, _), !stale(c, _, _, _, _).
+
+// An effect without an array that sets state directly in its body re-renders forever.
+report(c, f, "Pass a dependency array to this effect; it sets state on every run without one, which can re-render in an endless loop.") :-
+    analysed(c), !deps_list(c, _), deps_hook(c, _, f, _), deps_visit(c, v), deps_used(c, _, r), nearest(r, v, function_kind),
+    ref_site(r, p), setter(p).
+.decl setter(p: node)  // the second name of `const [s, setS] = useState()`, not reassigned
+setter(p) :- deps_stable_site(p), kind(d, "variable_declarator"), within(p, d), deps_init_hook(d, "useState").
+
+// The array itself, and each element the check cannot read.
+report(c, a, "Pass the dependencies as an array literal written in place, so each value the callback reads can be checked against it.") :-
+    analysed(c), deps_list(c, a), !deps_array(c, _).
+report(c, e, "List the dependencies one by one instead of spreading another list into this array, so each one can be checked.") :-
+    analysed(c), deps_elem(c, e), kind(e, "spread_element").
+report(c, e, "Remove this literal from the dependency array; it never changes. If you meant the variable it names, list that variable instead.") :-
+    analysed(c), deps_elem(c, e), deps_bare(e, n), literal(n).
+report(c, e, "Move this expression into a variable declared before the hook and list that variable, so the dependency can be checked.") :-
+    analysed(c), deps_elem(c, e), !kind(e, "spread_element"), deps_bare(e, n), !literal(n), !deps_dkey(n, _).
+report(c, e, cat("Remove `", x, "` from this dependency array; call a useEffectEvent function from the effect without listing it, since it is not a reactive value.")) :-
+    analysed(c), deps_elem(c, e), kind(e, "identifier"), text(e, x), ref_site(e, d), deps_init_hook(d, "useEffectEvent"),
+    field(d, "name", n), kind(n, "identifier").
+.decl literal(n: node)
+literal(n) :- kind(n, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex").
+
+// The verdict: missing, unnecessary or duplicate keys, reported together at the array.
+report(c, a, cat("Add `", k, "` to this dependency array; the callback reads it, so without it the callback keeps a stale value.")) :-
+    analysed(c), deps_list(c, a), deps_missing(c, k).
+report(c, a, cat("Remove `", k, "` from this dependency array: the callback does not read it, or it is an outer or `.current` value whose change never re-renders the component.")) :-
+    analysed(c), deps_list(c, a), deps_unnecessary(c, k).
+report(c, a, cat("Remove the repeated `", k, "` from this dependency array.")) :-
+    analysed(c), deps_list(c, a), deps_duplicate(c, k).
+.decl problem(c: node)
+problem(c) :- deps_missing(c, _) ; deps_unnecessary(c, _) ; deps_duplicate(c, _).
+
+// With the array right, a listed value of the component's own scope that is built anew each render (an object,
+// array, function, class, JSX, `new …`, regex, or a ?: or && that may give one) reruns the Hook every time.
+report(c, d, "Wrap this value in its own useMemo or useCallback, or move it inside the hook that lists it; built anew each render, it reruns that hook every time.") :-
+    analysed(c), deps_array(c, _), !problem(c), deps_declared(c, k, _), deps_visit(c, v), deps_component(v, cf),
+    decl_site(s, k, d, _, "value"), (s = cf ; field(cf, "body", s)), construction_site(d).
+.decl construction_site(d: node)
+construction_site(d) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), field(d, "value", w),
+    construction(w).
+construction_site(d) :- kind(d, "function_declaration") ; kind(d, "class_declaration").
+.decl construction(e: node)  // getConstructionExpressionType
+construction(e) :- kind(e, k), construction_kind(k).
+construction(e) :- (kind(e, "as_expression") ; kind(e, "parenthesized_expression")), child(e, x, 0), construction(x).
+construction(e) :- kind(e, "ternary_expression"), (field(e, "consequence", x) ; field(e, "alternative", x)),
+    construction(x).
+construction(e) :- kind(e, "binary_expression"), (op(e, "&&") ; op(e, "||") ; op(e, "??")),
+    (field(e, "left", x) ; field(e, "right", x)), construction(x).
+construction(e) :- kind(e, "assignment_expression"), field(e, "right", x), construction(x).
+.decl construction_kind(k: symbol)
+construction_kind("object"). construction_kind("array"). construction_kind("arrow_function").
+construction_kind("function_expression"). construction_kind("class"). construction_kind("jsx_element").
+construction_kind("jsx_self_closing_element"). construction_kind("new_expression"). construction_kind("regex").

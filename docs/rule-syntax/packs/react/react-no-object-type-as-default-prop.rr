@@ -1,0 +1,42 @@
+.policy "react-no-object-type-as-default-prop" revision 2
+.description "Avoid object, array, function, JSX and other newly created values as destructured prop defaults in function components; each render gets a new reference."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-object-type-as-default-prop: in a function component whose first parameter destructures its props, a
+// default that builds a new value on every call: an object, array, function, class, `new`, JSX element, regex or
+// Symbol() call.
+//   function Hello({ items = [], onClick = () => {} }) { return <div/>; }    both defaults reported
+//   function Hello({ size = 10, label = "x", items = EMPTY }) { … }          not: primitives and references
+// Components wrapped in memo or forwardRef are not checked: the plugin records the wrapper call, which has no
+// parameters. A fragment default (<></>) is not reported either, as in the plugin.
+#include "tsx/react-class.rr"
+//   fn_component(f, c)   function f is a component, recorded at c (f itself unless wrapped)
+
+.violation default_prop(at: node)
+    code "react/no-object-type-as-default-prop"
+    "Hoist this default to a module-level constant and default to that, so each render reuses one reference; if it depends on other props, build it with useMemo instead."
+    suppress eslint "react/no-object-type-as-default-prop"
+    suppress oxlint "no-object-type-as-default-prop"
+    suppress biome "lint/nursery/noReactObjectTypeAsDefaultProp"
+// a is `items = []` (shorthand) or `items: list = []`; the plugin reports the AssignmentPattern. Parentheses around
+// the default don't matter: `items = ({})` is reported.
+default_prop(a) :- fn_component(f, f), first_param_pattern(f, o), default_in(o, a, e), deparen(e, v), fresh_value(v),
+    docof(f, d), react_doc(d).
+.decl default_in(o: node, a: node, e: node)  // pattern o has a default a whose value is e
+default_in(o, a, e) :- first_param_pattern(_, o), child(o, a, _), kind(a, "object_assignment_pattern"),
+    field(a, "right", e).
+default_in(o, a, e) :- first_param_pattern(_, o), child(o, p, _), kind(p, "pair_pattern"), field(p, "value", a),
+    kind(a, "assignment_pattern"), field(a, "right", e).
+// f's first parameter is an object pattern o, typed or not; `({ a = [] } = {})` is an AssignmentPattern: skipped.
+.decl first_param_pattern(f: node, o: node)
+first_param_pattern(f, o) :- field(f, "parameters", ps), child(ps, p, 0), (kind(p, "object_pattern"), o = p ;
+    kind(p, "required_parameter"), field(p, "pattern", o), kind(o, "object_pattern"), !field(p, "value", _)).
+first_param_pattern(f, o) :- kind(f, "arrow_function"), field(f, "parameter", o), kind(o, "object_pattern").
+// fresh_value(v): react-class's fresh_kind, or a Symbol() call. <></> (a JSXFragment: a jsx_element with no tag,
+// tsx/jsx's tag) is not reported, as in the plugin; <Fragment></Fragment> is.
+.decl fresh_value(v: node)
+fresh_value(v) :- kind(v, k), fresh_kind(k), !kind(v, "jsx_element").
+fresh_value(v) :- kind(v, "jsx_element"), tag(v, _).
+fresh_value(v) :- kind(v, "call_expression"), field(v, "function", s), kind(s, "identifier"), text(s, "Symbol").

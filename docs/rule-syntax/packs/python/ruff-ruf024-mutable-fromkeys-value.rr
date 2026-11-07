@@ -1,0 +1,18 @@
+.policy "ruff-ruf024-mutable-fromkeys-value" revision 2
+.description "Don't pass a mutable object such as a list, dict or set as the value to dict.fromkeys; every key shares the same instance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF024: `dict.fromkeys(keys, value)` with a mutable value (a list, dict or set display or
+// comprehension, or a `list(…)`, `dict(…)`, `set(…)` or collections call): every key gets the same object.
+//   dict.fromkeys(names, [])        ← RUF024  `{name: [] for name in names}`
+//   dict.fromkeys(names, ())        not reported: a tuple cannot change
+//   d.fromkeys(names, [])           not reported: d may not be dict
+#include "python/ruff-classes.rr"
+
+.violation RUF024(at: node) code "RUF024"
+    "Build the dict with a comprehension that creates a fresh value per key, e.g. `{key: [] for key in keys}`; `dict.fromkeys` shares one mutable value across all keys. Leave it if sharing is intended."
+    suppress ruff "RUF024"
+RUF024(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "fromkeys"), ruff_qual(o, "builtins.dict"),
+    call_nargs(c, 2), call_nkwargs(c, 0), ruff_arg(c, 1, v), mutable_value(v).

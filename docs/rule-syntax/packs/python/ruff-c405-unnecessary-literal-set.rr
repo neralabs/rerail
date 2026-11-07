@@ -1,0 +1,18 @@
+.policy "ruff-c405-unnecessary-literal-set" revision 2
+.description "Write a set literal instead of passing a list or tuple literal to set(); the call builds a throwaway sequence first."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C405 (flake8-comprehensions): `set(…)` of the builtin set, whose one argument is a list or tuple
+// display. Its fix is unsafe; none here.
+//   set([1, 2])    set((1,))       ← C405: {1, 2}, {1}
+//   set([])                        ← C405: set()
+//   set([x for x in y])            not reported here (C403)
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), list_like(e, k)
+
+.violation C405(at: node, kind: symbol) code "C405"
+    "Replace `set([...])` or `set((...))` with the set literal `{...}`; an empty {kind} becomes `set()`."
+    suppress ruff "C405"
+C405(c, k) :- c4_call(c, "set"), c4_only(c, a), list_like(a, k), (k = "list" ; k = "tuple").

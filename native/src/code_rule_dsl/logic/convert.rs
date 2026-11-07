@@ -843,14 +843,14 @@ fn replace_var(literal: &str, from: &str, to: &str) -> String {
 }
 
 /// `a` strictly below `b` in the tree: the language's `within` (`core.rr`), which the engine reads off the tree
-/// (decision 0048).
+/// (decision 0050).
 fn within_strict(a: &str, b: &str) -> String {
     format!("within({a}, {b})")
 }
 
 /// `a`'s span within `b`'s (or equal). Used where `a` is already below `b`'s parent and `b` is one of its children,
 /// whose spans don't overlap: then it says "`a` is `b` or below it", which the front syntax has no alternative
-/// for. The engine makes it `span_within` (decision 0048).
+/// for. The engine makes it `span_within` (decision 0050).
 fn within(a: &str, b: &str, e: &mut Emitter) -> Body {
     let (d, s, t, u, w) = (e.var(), e.var(), e.var(), e.var(), e.var());
     vec![format!("node({d}, {a}, _, {s}, {t})"), format!("node({d}, {b}, _, {u}, {w})"), format!("{u} <= {s}"), format!("{t} <= {w}")]

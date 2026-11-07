@@ -1,0 +1,47 @@
+.policy "eslint-no-setter-return" revision 7
+.description "Don't return a value from a JavaScript setter, including setters in property descriptors; the returned value is always ignored."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-b-scope.rr"
+//   member_kind, fn_holder, static_key, held_value, deparen, call_arg, static_prop, own_fn; builtin_ref
+
+// ESLint's no-setter-return: `return value;` in a setter. A setter is a `set` accessor of an object or class,
+// or the `set` function of a property descriptor given to Object.defineProperty, Reflect.defineProperty,
+// Object.defineProperties or Object.create, where Object and Reflect are the globals. An arrow there with an
+// expression body returns that expression, and is reported at it. A bare `return;` is fine. No options.
+//   ({ set a(v) { return v; } })                                 → reported
+//   Object.defineProperty(o, "a", { set(v) { return v; } })      → reported
+//   Object.defineProperties(o, { a: { set: v => v } })           → reported, at the second v
+//   class A { set a(v) { this.v = v; return; } }                 fine
+.violation no_setter_return(at: node, msg: symbol) code "no-setter-return" "{msg}"
+    suppress eslint "no-setter-return"
+    suppress oxlint "no-setter-return"
+    suppress biome "lint/correctness/noSetterReturn"
+no_setter_return(r, "Return without a value here: a setter's return value is ignored.") :-
+    kind(r, "return_statement"), child(r, e, _), !not_stmt(e), own_fn(r, f), setter(f).
+no_setter_return(b, "Put this setter's arrow body in braces so it returns nothing; a setter's return value is ignored.") :-
+    kind(f, "arrow_function"), setter(f), field(f, "body", b), !kind(b, "statement_block").
+
+.decl setter(f: node)
+setter(f) :- member_kind(f, "set").
+// `set` of a descriptor: `set: function (v) {}`, `"set": v => …`, the method `set(v) {}`, and even the getter
+// `get set() {}`: ESLint's isSetter asks only for a Property named set, whatever its kind.
+setter(f) :- fn_holder(f, h), static_key(h, "set"),
+    child(o, h, _), kind(o, "object"), descriptor(o).
+
+// descriptor(o): object literal o is a property descriptor, the third argument of defineProperty or a value
+// in the second argument of defineProperties or create.
+.decl descriptor(o: node)
+descriptor(o) :- global_call(c, x), (x = "Object.defineProperty" ; x = "Reflect.defineProperty"),
+    call_arg(c, a, 2), deparen(a, o).
+descriptor(o) :- global_call(c, x), (x = "Object.create" ; x = "Object.defineProperties"), call_arg(c, a, 1),
+    deparen(a, g), kind(g, "object"), child(g, p, _), held_value(p, v), kind(p, "pair"), deparen(v, o).
+// global_call(c, "Object.create"): the callee is a member of the global Object or Reflect, not a local of
+// that name, and not turned off by `/* global Object: off */` (ESLint's isGlobalReference: builtin_ref).
+//   Object.create(p, {…})   Object["create"](p, {…})   Object?.create(…)
+.decl global_call(c: node, x: symbol)
+global_call(c, cat(o, cat(".", x))) :- kind(c, "call_expression"), field(c, "function", m), deparen(m, e),
+    static_prop(e, b, x), (o = "Object" ; o = "Reflect"), builtin_ref(b, o).

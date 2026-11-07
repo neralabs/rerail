@@ -1,0 +1,18 @@
+.policy "eslint-plugin-vue-no-v-html" revision 2
+.description "Avoid the v-html directive; rendering raw HTML can expose users to XSS attacks."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/code.rr"
+//   vdir(e, a, d, arg), vexpr(a, x)
+
+// eslint-plugin-vue's no-v-html: every v-html directive in the template. Option ignorePattern: a regex; a value
+// that matches it (searched in the expression's text) is not reported.
+//   <div v-html="html" />                       reported
+//   <div v-html="sanitize(html)" />             with ignorePattern "^sanitize": not reported
+.violation no_v_html(at: node) code "vue/no-v-html"
+    "Render this content with text interpolation or components instead of v-html, or sanitize it first, to avoid XSS."
+    suppress eslint "vue/no-v-html"
+no_v_html(a) :- vdir(_, a, "html", _), !ignored(a).
+.decl ignored(a: node)
+ignored(a) :- option("ignorePattern", p), vexpr(a, x), text(x, t), match(cat(".*(?:", p, ").*"), t).

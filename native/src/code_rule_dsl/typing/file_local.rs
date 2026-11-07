@@ -498,7 +498,9 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
                         lits.insert(j);
                     }
                 }
-                let mut outside: BTreeSet<String> = rule.head.vars();
+                // The head's variables, those inside a call (`@cat(p, s)`) too.
+                let mut outside: BTreeSet<String> = BTreeSet::new();
+                rule.head.args.iter().for_each(|t| t.vars(&mut outside));
                 for (j, l) in rule.body.iter().enumerate() {
                     if !lits.contains(&j) {
                         outside.extend(l.vars());
@@ -564,7 +566,7 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
 }
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its
-/// rows names its document (decision 0050): a relation without one, `r(p, l)`, is derived by the chunks as
+/// rows names its document (decision 0052): a relation without one, `r(p, l)`, is derived by the chunks as
 /// `r_at(d, p, l)`, `d` a document its rules bind (from `node`, `doc`, …, or a node through `node(d, n, …)`), and
 /// the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.

@@ -1,0 +1,22 @@
+.policy "eslint-no-empty-static-block" revision 4
+.description "Remove empty class static blocks, or add a comment explaining why one is empty."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   empty_block
+
+// ESLint's no-empty-static-block: a class `static { }` block with no statements and no comment inside.
+//   class A { static {} }              → reported at the `{`
+//   class A { static { /* why */ } }   not reported: the comment says why it is empty
+// No options. ESLint's suggestion writes ` /* empty */ ` between the braces; so does this rule's fix.
+.violation no_empty_static_block(at: node) code "no-empty-static-block"
+    "Remove this empty static block, or add a comment saying why it is empty."
+    suppress eslint "no-empty-static-block"
+    suppress oxlint "no-empty-static-block"
+    suppress biome "lint/suspicious/noEmptyBlockStatements"
+    fix explain "Add comment inside empty static block."
+// b is the block's `{ … }`; empty_block: nothing at all between the braces, comments included.
+no_empty_static_block(b) :- kind(s, "class_static_block"), field(s, "body", b), empty_block(b).
+explain(b) => replace(b, `{ /* empty */ }`).

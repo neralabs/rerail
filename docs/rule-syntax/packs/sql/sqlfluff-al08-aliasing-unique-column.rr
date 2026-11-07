@@ -1,0 +1,22 @@
+.policy "sqlfluff-al08-aliasing-unique-column" revision 2
+.description "Keep column names and aliases unique within a SQL SELECT list, ignoring case and quotes; duplicate output columns are ambiguous."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AL08 (aliasing.unique.column). Within one SELECT list, the output names (an item's alias, else the
+// column it reads) must differ, compared without quotes and case; each repeat is reported at its name:
+//   select foo, b as foo from t            the second foo
+//   select col_b as Col_B, "col_b" as "Col_B" from t     the second Col_B
+//   select a.id, b.id from t               the second id
+// Items with no name (an expression without an alias) take no part.
+
+#include "sql/syntax.rr"
+
+.violation AL08(at: node, x: symbol) code "AL08" "Reuse of column alias '{x}'."
+    suppress sqlfluff "AL08", "aliasing", "aliasing.unique", "aliasing.unique.column", "all", "core"
+AL08(n, x) :- output_name(s, t, n, k), output_name(s, u, _, k), earlier(u, t), text(n, x).
+// output_name(s, t, n, k): item t of SELECT s is named by identifier n, whose folded name is k.
+.decl output_name(s: node, t: node, n: node, k: symbol)
+output_name(s, t, n, k) :- select_term(s, t, _), field(t, "alias", n), ident_fold(n, k).
+output_name(s, t, n, k) :- select_term(s, t, _), !field(t, "alias", _), field(t, "value", c), column_ref(c, _, n),
+    ident_fold(n, k).

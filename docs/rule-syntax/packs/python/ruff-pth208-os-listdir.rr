@@ -1,0 +1,24 @@
+.policy "ruff-pth208-os-listdir" revision 2
+.description "Use Path.iterdir() instead of os.listdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH208 (flake8-use-pathlib): a call of `os.listdir`, however it is imported, with any arguments,
+// unless the path is a file descriptor. The message names the path when there is one, says `Path()` when
+// there are no arguments, and otherwise (`*args`, `**kw`) asks for the path. Reported at the callee.
+//   os.listdir(".")                      ← PTH208: `Path(".").iterdir()`
+//   os.listdir()                         ← PTH208: `Path().iterdir()`
+//   fd = 3; os.listdir(fd)               not reported: a file descriptor
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
+//   arg_value(c, x, i, a), call_len(c, n) (python/pathlib)
+
+.violation PTH208(at: node, msg: symbol) code "PTH208" "{msg}"
+    suppress ruff "PTH208"
+PTH208(f, cat(cat("Use `Path(", s), cat(").iterdir()` instead of `os.listdir(", cat(s, ")`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors.")))) :-
+    pth_call(c, "os.listdir", f), arg_value(c, "path", 0, a), !file_descriptor(a), text(a, s).
+PTH208(f, "Use `Path().iterdir()` instead of `os.listdir()`; it lazily yields `Path` objects, so take `.name` for plain names.") :-
+    pth_call(c, "os.listdir", f), call_len(c, 0).
+PTH208(f, "Use `Path(path).iterdir()` instead of `os.listdir(...)` once the path argument is known; it lazily yields `Path` objects. Leave it for bytes paths and file descriptors.") :-
+    pth_call(c, "os.listdir", f), !arg_value(c, "path", 0, _), call_len(c, n), n > 0.

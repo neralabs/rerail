@@ -1,0 +1,21 @@
+.policy "react-no-string-refs" revision 2
+.description "Use callback refs or createRef instead of string refs; string refs are deprecated and removed in React 19."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-string-refs: a `ref` prop whose value is a string, written as ref="x" or ref={"x"}.
+//   <div ref="hello" />   <div ref={'hello'} />            reported, at the prop
+//   <div ref={this.hello} />   <div ref={`hello`} />     not (templates only with noTemplateLiterals, not in the JSON)
+// Before React 18.3 the plugin also reports reads of this.refs; the recording assumes the latest React.
+#include "tsx/react-class.rr"
+
+.violation no_string_refs(at: node)
+    code "react/no-string-refs"
+    "Replace this string ref with a callback ref or createRef(); string refs are removed in React 19."
+    suppress eslint "react/no-string-refs"
+    suppress oxlint "no-string-refs"
+    suppress biome "lint/nursery/noReactStringRefs"
+// ESTree has no parentheses, so ref={("x")} is a string too.
+no_string_refs(a) :- jsx_prop(o, "ref", a), child(a, v, 1), docof(a, d), react_doc(d),
+    (kind(v, "string") ; kind(v, "jsx_expression"), child(v, e, 0), deparen(e, s), kind(s, "string")).

@@ -1,0 +1,14 @@
+.policy "ruff-pyi030-unnecessary-literal-union" revision 2
+.description "Merge the Literal members of a union into a single Literal listing all the values; it means the same thing and is shorter."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI030 (flake8-pyi), every file: a union with two or more `Literal[…]` members, which can be one
+// Literal. Nested unions are flattened and reported once, at the outermost; `|` counts anywhere, at runtime too.
+//   x: Literal[1] | Literal[2] | None      ← PYI030: write `Literal[1, 2] | None`
+#include "python/typing.rr"
+
+.violation PYI030(at: node) code "PYI030" "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
+    suppress ruff "PYI030"
+PYI030(u) :- union_top(u), count : { union_leaf(u, m), typing_subscript(m, "Literal") } >= 2.

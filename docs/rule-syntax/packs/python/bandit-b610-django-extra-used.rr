@@ -1,0 +1,43 @@
+.policy "bandit-b610-django-extra-used" revision 3
+.description "Pass only literal strings to the where, tables and select arguments of Django QuerySet.extra(); dynamic values open the query to SQL injection."
+.language python
+.mode steer
+.scope include "**/*"
+// Bandit's B610 (django_extra_used): any call named extra (Bandit does not check for a QuerySet) whose where
+// or tables argument is not a list of string literals, or whose select argument is not a dict of string
+// literals to string literals. Positional arguments are extra's: select, where, params, tables, ….
+//   User.objects.extra(where=["id = %s"], params=[uid])       not reported
+//   User.objects.extra(where=["id = " + uid])                 B610
+//   qs.extra(select={"n": f"count({col})"})                   B610
+//   qs.extra(tables=table_names)                              B610: not a list literal
+//   anything.extra(None, ["a = b"])                           B610: a select of None is no dict
+// The JSON also required a QuerySet-looking receiver; Bandit does not (see NOTES-py-bandit.md).
+
+#include "python/security.rr"   // call_leaf, pos_arg, kwarg, literal
+
+.violation B610(at: node) code "B610"
+    "Pass only literal strings to where, tables and select in this .extra() call, with values in params; dynamic SQL allows injection."
+    suppress nosec "B610"
+B610(c) :- extra_arg(c, k, v), (k = "where" ; k = "tables"), !strings(v).
+B610(c) :- extra_arg(c, "select", v), !string_pairs(v).
+
+// extra_arg(c, k, v): argument k of an extra() call is v: positional i is extra's i-th parameter, which wins
+// over a keyword of the same name.
+.decl extra_arg(c: node, k: symbol, v: node)
+extra_arg(c, k, v) :- call_leaf(c, "extra"), pos_arg(c, i, v), extra_param(i, k).
+extra_arg(c, k, v) :- call_leaf(c, "extra"), kwarg(c, k, v), !positional_param(c, k).
+.decl positional_param(c: node, k: symbol)
+positional_param(c, k) :- call_leaf(c, "extra"), pos_arg(c, i, _), extra_param(i, k).
+.decl extra_param(i: number, k: symbol)
+extra_param(0, "select"). extra_param(1, "where"). extra_param(2, "params"). extra_param(3, "tables").
+extra_param(4, "order_by"). extra_param(5, "select_params").
+// sql_text(e): e is a str constant: a plain string literal or adjacent ones; not an f-string, bytes or a name.
+.decl sql_text(e: node)
+sql_text(e) :- unparen(e, m), (kind(m, "string") ; kind(m, "concatenated_string")), literal(m, "str", _).
+// strings(l): a list whose every item is a str constant.  string_pairs(d): a dict whose every key and value is.
+.decl strings(l: node)
+strings(l) :- kind(l, "list"), count : { child(l, e, _), !kind(e, "comment"), !sql_text(e) } = 0.
+.decl string_pairs(d: node)
+string_pairs(d) :- kind(d, "dictionary"), count : { child(d, p, _), !kind(p, "comment"), !plain_pair(p) } = 0.
+.decl plain_pair(p: node)
+plain_pair(p) :- kind(p, "pair"), field(p, "key", k), sql_text(k), field(p, "value", v), sql_text(v).

@@ -1,0 +1,21 @@
+.policy "ruff-f405-undefined-local-with-import-star-usage" revision 2
+.description "Import names explicitly instead of relying on a star import to define them; names that may only come from a star import can't be checked."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F405 (pyflakes): a name that nothing in the file binds and that is no builtin, read where a star import
+// may bind it. It may be undefined, and no tool can tell. A name in `__all__` counts too.
+//   from os.path import *
+//   print(join("a", "b"))      ← F405 at `join`
+//   __all__ = ["exists"]       ← F405 at "exists"
+#include "python/pyflakes.rr"
+//   unbound_ref(n, x)   n reads x and no scope on its LEGB chain binds it
+//   star_reach(n)       a star import in n's module, or in a def or class around n
+//   all_entry(s, x)     string s names x in the module's `__all__`
+
+.violation F405(at: node, x: symbol) code "F405"
+    "Import `{x}` explicitly from its module; it may only be defined by a star import."
+    suppress ruff "F405"
+F405(n, x) :- unbound_ref(n, x), !builtin(x), star_reach(n).
+F405(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !bound_in(m, x), !builtin(x), star(m).

@@ -1,0 +1,40 @@
+.policy "ruff-fbt003-boolean-positional-value-in-call" revision 2
+.description "Pass True and False to Python calls as keyword arguments rather than positionally; a bare boolean does not say what it switches."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FBT003 (flake8-boolean-trap): `True` or `False` passed by position, where the reader cannot tell what it
+// switches. Calls whose meaning is plain are exempt: by callee name (`get`, `setdefault`, `int`, …), a
+// one-argument setter (`set(x)`, `set_visible(x)`, `setVisible(x)`), `multiprocessing.Value`, and the
+// qualified names in option `flake8-boolean-trap.extend-allowed-calls`. Reported at each boolean.
+//   used("a", True)                       ← FBT003
+//   {}.deploy(True, False)                ← FBT003 twice
+//   {}.get("hello", False)                not reported: an allowed name
+//   set_visible(True)                     not reported: a setter
+#include "python/ruff.rr"
+
+.violation FBT003(at: node) code "FBT003"
+    "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
+    suppress ruff "FBT003"
+FBT003(b) :- call_item(c, a, _), pos_item(a), unparen(a, b), (kind(b, "true") ; kind(b, "false")), !trap_allowed(c).
+
+.decl trap_allowed(c: node)
+trap_allowed(c) :- callee_word(c, x), allowed_word(x).
+trap_allowed(c) :- callee_word(c, x), call_nargs(c, 1), (x = "set" ; match("set[_A-Z].*", x)).
+trap_allowed(c) :- call_q(c, "multiprocessing.Value").
+trap_allowed(c) :- call_q(c, q), option_item("flake8-boolean-trap.extend-allowed-calls", _, q).
+// callee_word(c, x): the callee is the name x or an attribute `….x`.
+.decl callee_word(c: node, x: symbol)
+callee_word(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x).
+callee_word(c, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, x).
+.decl allowed_word(x: symbol)
+allowed_word("__setattr__"). allowed_word("append"). allowed_word("assertEqual"). allowed_word("assertEquals").
+allowed_word("assertNotEqual"). allowed_word("assertNotEquals"). allowed_word("bool"). allowed_word("bytes").
+allowed_word("coalesce"). allowed_word("count"). allowed_word("failIfEqual"). allowed_word("failUnlessEqual").
+allowed_word("float"). allowed_word("fromkeys"). allowed_word("get"). allowed_word("getattr").
+allowed_word("getboolean"). allowed_word("getfloat"). allowed_word("getint"). allowed_word("ifnull").
+allowed_word("index"). allowed_word("insert"). allowed_word("int"). allowed_word("is_"). allowed_word("is_not").
+allowed_word("isnull"). allowed_word("next"). allowed_word("nvl"). allowed_word("param"). allowed_word("pop").
+allowed_word("remove"). allowed_word("set_blocking"). allowed_word("set_enabled"). allowed_word("setattr").
+allowed_word("setdefault"). allowed_word("str").

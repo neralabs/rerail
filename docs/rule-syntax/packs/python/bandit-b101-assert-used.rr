@@ -1,0 +1,14 @@
+.policy "bandit-b101-assert-used" revision 2
+.description "Avoid assert statements in Python code; they are stripped when Python runs with optimization, so any check they perform silently disappears."
+.language python
+.mode steer
+.scope include "**/*"
+// Bandit's B101 (assert_used): every assert statement. `python -O` compiles them away.
+//   assert user.is_admin                 B101
+//   if not user.is_admin: raise Denied   not reported
+// Bandit's `skips` option (file globs to leave out) has no counterpart in the JSON and is not ported.
+
+.violation B101(at: node) code "B101"
+    "Replace this assert with an if check that raises an exception; asserts are stripped when Python runs with -O."
+    suppress nosec "B101"
+B101(a) :- kind(a, "assert_statement").

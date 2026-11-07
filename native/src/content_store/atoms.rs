@@ -2,7 +2,7 @@
 //! Strings live back to back in one byte arena; the table holds only ids. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
 //!
-//! The store's single interner (C12, docs/final-shape/03-architecture.md §10.6; decision 0047). A
+//! The store's single interner (C12, docs/final-shape/03-architecture.md §10.6; decision 0049). A
 //! process holds one `Atoms` per database: the arena, shared by the store and the planner's symbols.
 //! On disk the arena is `atom_segment` rows, each a run of consecutive atoms (their end offsets and
 //! their bytes), appended by a flush; SQL reads atoms through the `atoms` virtual table over the
@@ -138,7 +138,7 @@ impl Interner {
 }
 
 /// More pending atoms than this, more pending bytes, or atoms pending this long, make a flush due
-/// (decision 0047 §4.2): what a crash can lose.
+/// (decision 0049 §4.2): what a crash can lose.
 const DUE_ATOMS: usize = 256 * 1024;
 const DUE_BYTES: usize = 16 << 20;
 const DUE_AFTER: Duration = Duration::from_secs(30);
@@ -155,7 +155,7 @@ struct State {
     since: Option<Instant>,
 }
 
-/// A process's atoms of one database (decision 0047): the arena, its watermark and the lease.
+/// A process's atoms of one database (decision 0049): the arena, its watermark and the lease.
 pub(crate) struct Atoms {
     /// The database file; `None` for an in-memory database, whose atoms are never written.
     path: Option<PathBuf>,
@@ -240,7 +240,7 @@ impl Atoms {
     }
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
-    /// (its SQL's scratch) whose symbols are the store's (decision 0050).
+    /// (its SQL's scratch) whose symbols are the store's (decision 0052).
     pub(crate) fn share(self: &Arc<Self>, path: &Path) {
         REGISTRY.lock().insert(key(path), Arc::downgrade(self));
     }
@@ -281,7 +281,7 @@ impl Atoms {
                 // SAFETY: called by SQLite on this connection's thread, under its mutex.
                 let state = unsafe { ffi::sqlite3_txn_state(handle as *mut ffi::sqlite3, c"main".as_ptr()) };
                 if state == ffi::SQLITE_TXN_WRITE {
-                    eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0047)");
+                    eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)");
                     return true;
                 }
                 false
@@ -661,7 +661,7 @@ impl Drop for Atoms {
 
 impl super::ContentStore {
     /// The atom of each of `values`, giving out new ones. They are written with the next write
-    /// transaction on the store, or in one of their own when a flush is due (decision 0047 §4).
+    /// transaction on the store, or in one of their own when a flush is due (decision 0049 §4).
     pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         let ids = self.atoms.intern_all(values)?;
         if self.atoms.due() {

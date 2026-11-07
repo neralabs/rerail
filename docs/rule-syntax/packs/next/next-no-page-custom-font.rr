@@ -1,0 +1,56 @@
+.policy "next-no-page-custom-font" revision 2
+.description "Add Google Fonts stylesheet links only inside the default-exported custom Document in pages/_document; fonts linked elsewhere load for one page and skip font optimization."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-page-custom-font. A <link> to a Google Fonts stylesheet is allowed only in the custom
+// Document (the file name after its last "pages" starts with /_document), inside its default-exported component:
+//   pages/index.js:      <link href="https://fonts.googleapis.com/css2?family=Inter" />   one page only
+//   pages/_document.js:  class MyDocument extends Document { render() { … <link …/> … } }
+//                        export default MyDocument                                     fine
+//   pages/_document.js:  a link in some other component of the file                    outside <Head>
+// The default-exported component is found as the plugin finds it: the function of `export default function`,
+// a class extending next/document's default import when the default export is a class, else whatever declares
+// the name that follows `export default` (a function, class or variable).
+
+#include "tsx/next.rr"
+
+.violation font(at: node, why: symbol) code "@next/next/no-page-custom-font"
+    "{why} This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font"
+    suppress eslint "@next/next/no-page-custom-font"
+    suppress oxlint "no-page-custom-font"
+font(o, "Custom fonts not added in `pages/_document.js` will only load for a single page.") :- font_link(o, d),
+    !doc_file(d).
+font(o, "Using `<link />` outside of `<Head>` will disable automatic font optimization.") :- font_link(o, d),
+    doc_file(d), count : { within(o, c), default_component(d, c) } = 0.
+
+// font_link(o, d): a Google Fonts link in d. A file name ending in "pages" is skipped altogether.
+.decl font_link(o: node, d: number)
+font_link(o, d) :- tag_of(o, "link"), attr_str(o, "href", h), prefix("https://fonts.googleapis.com/css", h),
+    docof(o, d), pages_last(d, r), r != "".
+.decl doc_file(d: number)
+doc_file(d) :- pages_last(d, r), prefix("/_document", r).
+
+// default_component(d, c): c is (an ancestor that counts as) the default-exported component of d.
+.decl default_component(d: number, c: node)
+// export default function Doc() { … }
+default_component(d, f) :- default_export(d, f), (kind(f, "function_declaration") ; kind(f, "function_expression")).
+// export default class Doc extends Document { … }: any class extending that name.
+default_component(d, c) :- default_export(d, k), (kind(k, "class_declaration") ; kind(k, "class")),
+    default_import(d, "next/document", x), class_kind(c), superclass(c, x), docof(c, d).
+// export default Doc / export default withX(Doc): the first token names it (the plugin's token scan).
+default_component(d, c) :- default_export(d, v), !declared(v), match("(?<x>[A-Za-z_$][A-Za-z0-9_$]*).*", v),
+    named_decl(c, x), docof(c, d).
+.decl default_export(d: number, v: node)  // `export default v`
+default_export(d, v) :- kind(e, "export_statement"), op(e, "default"), (field(e, "declaration", v) ; field(e, "value", v)),
+    docof(e, d).
+.decl class_kind(c: node)
+class_kind(c) :- kind(c, "class_declaration").
+class_kind(c) :- kind(c, "class").
+.decl declared(v: node)  // the export declares the component itself: the two cases above
+declared(v) :- class_kind(v).
+declared(v) :- kind(v, "function_declaration").
+declared(v) :- kind(v, "function_expression").
+.decl named_decl(c: node, x: symbol)  // the ESTree nodes with an id: functions, classes, declarators
+named_decl(c, x) :- kind(c, k), (k = "function_declaration" ; k = "function_expression" ; k = "class_declaration" ;
+    k = "class" ; k = "variable_declarator" ; k = "generator_function_declaration"), field(c, "name", n), text(n, x).

@@ -1,0 +1,19 @@
+.policy "ruff-g001-logging-string-format" revision 2
+.description "Pass values to a logging call as arguments instead of formatting its message with str.format; the logger then formats only records it emits."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G001 (flake8-logging-format): a logging call whose message is built with `str.format`. The logger formats
+// `%s` arguments itself, and only for records it emits; `.format` runs on every call. The message is the first
+// argument (the second for `log`) or `msg=`; it counts when it is `<literal>.format(…)`. Reported at the message.
+//   logging.info("Hello {}".format("World!"))                    ← G001
+//   logging.log(logging.INFO, msg="Hello {}".format("World!"))    ← G001
+//   logging.info(template.format(x))                             not reported: the receiver is not a literal
+#include "python/logging.rr"
+
+.violation G001(at: node) code "G001"
+    "Pass the values as logger arguments with `%s` placeholders, e.g. `logger.info(\"x=%s\", x)`, instead of `.format()`, doubling any literal `%`; leave it if the logger is not from `logging`."
+    suppress ruff "G001"
+G001(e) :- log_msg(_, e), kind(e, "call"), field(e, "function", f), unparen(f, g), attr_of(g, o, "format"),
+    unparen(o, s), py_literal(s).

@@ -1,0 +1,24 @@
+.policy "ruff-com818-trailing-comma-on-bare-tuple" revision 2
+.description "Remove a stray comma at the end of a statement, or parenthesize the tuple; a trailing comma silently turns the value into a tuple."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff COM818 (flake8-commas): a comma that ends a logical line, which makes the statement's value a tuple
+// without parentheses. Usually a typo: `x = 1,` binds `(1,)`. Ruff sees it in the token stream: a comma, then
+// (comments skipped) the end of the logical line. That is a simple statement whose last token is a comma, with no
+// `;` after it. Inside brackets the line does not end there. Reported at the comma.
+//   foo = 1,                     ← COM818
+//   bar = 1; foo = bar,          ← COM818
+//   return False,                ← COM818
+//   foo = (1,)                   not reported
+//   foo = 1,; bar = 2            not reported: a `;` follows
+#include "python/ast.rr"
+
+.violation COM818(at: span) code "COM818"
+    "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
+    suppress ruff "COM818"
+COM818(t) :- (kind(p, "module") ; kind(p, "block")), child(p, s, _), last_token(s, t), text(t, ","),
+    !semicolon_after(t).
+.decl semicolon_after(t: span)
+semicolon_after(t) :- token_after(t, u), text(u, ";").

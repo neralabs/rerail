@@ -1,0 +1,21 @@
+.policy "ruff-c406-unnecessary-literal-dict" revision 2
+.description "Write a dict literal instead of passing a list or tuple of pairs to dict(); the call builds a throwaway sequence first."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C406 (flake8-comprehensions): `dict(…)` of the builtin dict, whose one argument is a list or tuple
+// display of two-element tuples, or an empty one. Ruff counts each tuple's elements only, so `(k, *v)`
+// counts too. Its fix is unsafe; none here.
+//   dict([(1, 2), (3, 4)])    dict(())      ← C406: {1: 2, 3: 4}, {}
+//   dict([(1, 2), x])                       not reported
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), list_like(e, k)
+
+.violation C406(at: node, kind: symbol) code "C406"
+    "Rewrite `dict([(k, v), ...])` as the dict literal `{k: v, ...}` and `dict([])` as `{}`; check the result when a pair unpacks with `*`, as in `(k, *v)`."
+    suppress ruff "C406"
+C406(c, k) :- c4_call(c, "dict"), c4_only(c, a), list_like(a, k), (k = "list" ; k = "tuple"),
+    count : { child(a, e, _), !kind(e, "comment"), !two_tuple(e) } = 0.
+.decl two_tuple(e: node)  // `(1, 2)`, or `((1, 2))`: Ruff's tree has no parentheses
+two_tuple(e) :- unparen(e, m), kind(m, "tuple"), count : { child(m, i, _), !kind(i, "comment") } = 2.

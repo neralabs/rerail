@@ -1,0 +1,17 @@
+.policy "ruff-f504-percent-format-extra-named-arguments" revision 2
+.description "Remove dict keys that no %(key) placeholder in the %-format string uses; an unused key usually means a typo or a stale argument."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F504 (pyflakes): a format with only `%(key)` placeholders applied to a dict display with a str key that
+// no placeholder names. Only literal str keys are compared, and a `**spread` hides what the dict holds.
+//   "%(a)s" % {"a": 1, "b": 2}    ← F504: "b" is unused
+//   "%(a)s" % {"a": 1, **more}    not reported
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
+
+.violation F504(at: node) code "F504" "`%`-format string has unused named argument(s)"
+    suppress ruff "F504"
+F504(b) :- percent_fmt(b, _, r, v), pct_positional(v, 0), kind(r, "dictionary"), !dict_spread(r),
+    child(r, p, _), kind(p, "pair"), field(p, "key", k), plain_str(k, x), !pct_key(v, x).

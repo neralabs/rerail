@@ -1,13 +1,13 @@
-//! A corpus run's file-local results, memoised per file (decision 0050): what the chunks hand on for one document
+//! A corpus run's file-local results, memoised per file (decision 0052): what the chunks hand on for one document
 //! (its rows of each exported relation and its file-local output lines) under its content, its path and the run's
 //! plan. A later run whose plan is the same reads a file's entry instead of parsing and evaluating it.
 //!
 //! The rows are replayable as they are because their values are stable across runs: a document's key is a function
 //! of its path (`doc_keys`), a node is `key << 32 | index` in its tape (a function of the content and the grammar),
 //! a kind is its grammar code, and a symbol is an atom of the persistent store, which never gives one out again
-//! (decision 0047): the run interns into it. The plan names everything else the rows depend on: the engine build, the
+//! (decision 0049): the run interns into it. The plan names everything else the rows depend on: the engine build, the
 //! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
-//! it (decision 0051); the document key is in the entry, and an entry under another key is a miss.
+//! it (decision 0053); the document key is in the entry, and an entry under another key is a miss.
 
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};

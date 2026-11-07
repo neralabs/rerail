@@ -1,0 +1,115 @@
+.policy "eslint-one-var" revision 4
+.description "Combine var, let and const declarations into one statement per kind in each scope, instead of declaring them across several statements."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/statements.rr"
+
+// ESLint's one-var. Each kind of declaration (var, let, const, using, await using) and each class of declarator,
+// initialized (`a = 1`) or uninitialized (`b`), has a mode:
+//   always       one declaration per scope       var a; var b;         → combine the second into the first
+//   consecutive  none directly after another     let a; let b;         → combine; `let a; f(); let b;` is fine
+//   never        one declarator per declaration  const a = 1, b = 2;   → split
+// separateRequires (with always) keeps `x = require(…)` declarators in declarations of their own.
+
+// ---- modes, from the options -----------------------------------------------------------------------------------
+.decl key_of(k: symbol, key: symbol)  // the object-form option for each kind
+key_of("var", "var"). key_of("let", "let"). key_of("const", "const").
+key_of("using", "using"). key_of("await using", "awaitUsing").
+.decl class_of(c: symbol)
+class_of("initialized"). class_of("uninitialized").
+// mode(k, c, m): kind k's declarators of class c are checked in mode m; c = "all" when both classes have m.
+.decl mode(k: symbol, c: symbol, m: symbol)
+// The string form, ["error", "never"], sets every kind and class. No options at all means "always".
+mode(k, c, m)        :- key_of(k, _), class_of(c), option("option", m).
+mode(k, c, "always") :- key_of(k, _), class_of(c), !option(_, _).
+// The object form: { var: "never" } sets both of var's classes; { initialized: "never" } sets that class for
+// every kind, over the kind's own setting. A kind the object leaves out is not checked.
+mode(k, c, m)        :- key_of(k, key), option(key, m), class_of(c), !option(c, _).
+mode(k, c, m)        :- key_of(k, _), class_of(c), option(c, m).
+mode(k, "all", m)    :- mode(k, "initialized", m), mode(k, "uninitialized", m).
+
+// ---- declarations ------------------------------------------------------------------------------------------------
+// decl(d, k): a declaration statement, or a for-in/of head: `var a; for (var k in o) …` declares var twice.
+.decl decl(d: node, k: symbol)
+decl(d, k) :- var_decl(d, k).
+decl(f, k) :- for_head(f, k).
+// declares(d, c): d declares a variable of class c; every declaration declares "all".
+.decl declares(d: node, c: symbol)
+declares(d, "initialized")   :- declarator(d, v, _), initialized(v).
+declares(d, "uninitialized") :- declarator(d, v, _), !initialized(v).
+declares(d, "all")           :- decl(d, _).
+// requires(d) / plain(d): some declarator of d is / is not `= require(…)`.
+.decl requires(d: node)
+requires(d) :- declarator(d, v, _), require_call(v).
+.decl plain(d: node)
+plain(d) :- declarator(d, v, _), !require_call(v).
+
+// ---- findings ------------------------------------------------------------------------------------------------
+// Each sits on the declaration's keyword. c names the declarators it is about, as ESLint's message ids do
+// (combine, combineInitialized, …).
+.violation COMBINE(at: span, k: symbol, c: symbol) code "one-var"
+    "Combine this with the previous '{k}' statement ({c} variables)."
+    suppress eslint "one-var"
+    suppress oxlint "one-var"
+    suppress biome "lint/style/useSingleVarDeclarator"
+.violation SPLIT(at: span, k: symbol, c: symbol) code "one-var"
+    "Split '{k}' declarations into multiple statements ({c} variables)."
+    suppress eslint "one-var"
+    suppress oxlint "one-var"
+    suppress biome "lint/style/useSingleVarDeclarator"
+.violation SPLIT_REQUIRES(at: span, k: symbol) code "one-var"
+    "Move the require() calls into their own '{k}' statement, separate from other variables."
+    suppress eslint "one-var"
+    suppress oxlint "one-var"
+    suppress biome "lint/style/useSingleVarDeclarator"
+
+// ---- always ----------------------------------------------------------------------------------------------------
+// claims(e, c): under always, e takes its scope's one declaration for class c (ESLint's recordTypes). Under
+// separateRequires a require claims "require" instead of "initialized", so requires get a declaration of their own.
+.decl claims(e: node, c: symbol)
+claims(e, "uninitialized") :- decl(e, k), declares(e, "uninitialized"), mode(k, "uninitialized", "always").
+claims(e, "initialized")   :- declarator(e, v, _), initialized(v), !apart(v), decl(e, k),
+    mode(k, "initialized", "always").
+claims(e, "require")       :- declarator(e, v, _), apart(v), decl(e, k), mode(k, "initialized", "always").
+.decl apart(v: node)
+apart(v) :- require_call(v), option("separateRequires", "true").
+.decl same(d: node, e: node, k: symbol)  // d and e declare kind k in one scope
+same(d, e, k) :- decl(d, k), decl_scope(d, s), decl(e, k), decl_scope(e, s), d != e.
+// crowded(d): an earlier declaration e already holds d's place, so d should join it (ESLint's hasOnlyOneStatement
+// is false). Only an e that was not crowded itself claims anything: ESLint records a declaration's classes only
+// when it passes. Hence `ordered by earlier`: crowded at d reads crowded at earlier e.
+.decl crowded(d: node) ordered by earlier
+// Both classes always: any claim but a require, unless d has a require (requires may stand alone).
+crowded(d) :- same(d, e, k), earlier(e, d), !crowded(e), mode(k, "all", "always"), claims(e, c), c != "require",
+    !requires(d).
+crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "uninitialized"), claims(e, "uninitialized").
+crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "initialized"), claims(e, "initialized"),
+    !requires(d).
+crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), requires(d), claims(e, "require").
+// Reported as "combine" when both classes are always, else by d's classes in always mode. A for head's
+// variable is not reported for "uninitialized" alone.
+COMBINE(t, k, "all") :- crowded(d), decl(d, k), keyword(d, t), mode(k, "all", "always").
+COMBINE(t, k, "initialized") :- crowded(d), decl(d, k), keyword(d, t), !mode(k, "all", "always"),
+    declares(d, "initialized"), mode(k, "initialized", "always").
+COMBINE(t, k, "uninitialized") :- crowded(d), decl(d, k), keyword(d, t), !mode(k, "all", "always"),
+    declares(d, "uninitialized"), mode(k, "uninitialized", "always"), !for_head(d, _).
+
+// ---- consecutive -------------------------------------------------------------------------------------------------
+// d comes right after e in a block or the program (comments between are fine; not in a switch case), both kind
+// k with variables of class c, and joining them would not mix require() declarators with others.
+COMBINE(t, k, c) :- var_decl(d, k), decl_stmt(d, x), prev_stmt(x, y), decl_stmt(e, y), var_decl(e, k),
+    mode(k, c, "consecutive"), declares(d, c), declares(e, c), keyword(d, t),
+    child(p, x, _), (kind(p, "program") ; kind(p, "statement_block")),
+    ( !requires(d), !requires(e) ; !plain(d), !plain(e) ).
+
+// ---- never -------------------------------------------------------------------------------------------------------
+// d has two declarators or more and a class in never mode. `for (let i = 0, n = xs.length; …)` is exempt.
+SPLIT(t, k, c) :- var_decl(d, k), count : { declarator(d, _, _) } > 1, declares(d, c), mode(k, c, "never"),
+    !field(_, "initializer", d), keyword(d, t).
+
+// ---- separateRequires ------------------------------------------------------------------------------------------
+// Under always, one declaration mixes require() declarators with others: `var fs = require("fs"), n = 0;`.
+// `export const …` too: ESLint only leaves those out of its fix.
+SPLIT_REQUIRES(t, k) :- var_decl(d, k), option("separateRequires", "true"), mode(k, "initialized", "always"),
+    requires(d), plain(d), keyword(d, t).

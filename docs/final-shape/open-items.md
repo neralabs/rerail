@@ -8,7 +8,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
 | O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
-| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | closed (2026-11-06): decision 0047, atoms are arena segments written with the rows that name them; 3 appends per full-corpus run instead of 104 commits |
+| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | closed (2026-11-06): decision 0049, atoms are arena segments written with the rows that name them; 3 appends per full-corpus run instead of 104 commits |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
@@ -46,7 +46,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
-| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0048 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
@@ -196,7 +196,7 @@ That needs:
   unwritten atom.
 - an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
 
-**Closed (2026-11-06):** decision 0047. On the full corpus: 3 appends of 29.6 MB instead of 104 commits and about 800 MB. Atoms are stored as segments of the arena with no value index, SQL reads them through a virtual table, a lease covers other processes, and the decision sets out recovery after a crash.
+**Closed (2026-11-06):** decision 0049. On the full corpus: 3 appends of 29.6 MB instead of 104 commits and about 800 MB. Atoms are stored as segments of the arena with no value index, SQL reads them through a virtual table, a lease covers other processes, and the decision sets out recovery after a crash.
 
 ## O4. Spill files after a crash
 
@@ -1284,7 +1284,7 @@ steps `payload_values`) remain Datalog recursion over tree edges, against §7. *
 kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
 
 2026-11-06: the `.rr` built-in `within(n, a)` is no longer lowered to an id range or a recursive `below` relation
-over `child`. The engine serves it from a relation read off the tree (decision 0048 §4): n's ancestors for a bound
+over `child`. The engine serves it from a relation read off the tree (decision 0050 §4): n's ancestors for a bound
 n, a's subtree for a bound a. The converter writes it. The `.rdl` programs' `@within`/`@depth` and the two walks
 are unchanged.
 
@@ -1488,3 +1488,15 @@ cannot unwind, it ends every test that shares the process, so a filtered run ove
 device tests. It was not checked whether this predates O81's change; nothing in that change touches device
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
+
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then
+
+- With `--features metal-tests` (profiling build), `transducer::packed` runs 733 tests and about 440 fail.
+  `metal_backend::launch::tests::command_boundaries_and_nested_scopes_do_not_reset_the_limit` fails alone
+  (`assertion failed: !reserve()`, `metal_launch.rs:324`), also on final-rerail-shape-rr-align's and
+  Parser-generators' own builds; others (e.g. `phase_four::literal_predicates::…`) pass alone and fail in the
+  batch, which points at the launch guard's process-wide budget carried from test to test.
+- `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed twice in a `logic::` run at
+  load 50-80 and passed on its own each time.
+**Closure:** the launch guard's budget is per test (or the suite runs its Metal tests in one thread), and the
+packed suites and `explain` pass in a filtered run.

@@ -1,0 +1,51 @@
+.policy "eslint-no-prototype-builtins" revision 4
+.description "Call hasOwnProperty, isPrototypeOf and propertyIsEnumerable through Object.prototype, not on the object; it may shadow them or have no prototype."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/names.rr"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-control.rr"
+//   deparen, static_prop, optional_link
+
+// ESLint's no-prototype-builtins: calling one of Object.prototype's three builtins on the object itself.
+// `Object.create(null)` has no prototype, and a parsed JSON object may have a key "hasOwnProperty".
+//   foo.hasOwnProperty("bar")   foo["isPrototypeOf"](bar)   foo?.propertyIsEnumerable(x)   → reported
+//   Object.prototype.hasOwnProperty.call(foo, "bar")                                     fine
+// Reported at the property. Suggestion: `Object.prototype.hasOwnProperty.call(foo, "bar")`, not offered after
+// an optional chain (the call may be skipped) or where Object is declared in the file. No options.
+.violation no_prototype_builtins(at: node, x: symbol) code "no-prototype-builtins"
+    "Call Object.prototype.{x}.call(obj, ...) instead; the object may override {x} or have no prototype."
+    suppress eslint "no-prototype-builtins"
+    suppress oxlint "no-prototype-builtins"
+    suppress biome "lint/suspicious/noPrototypeBuiltins"
+    fix via_prototype "Call Object.prototype.{x}."
+no_prototype_builtins(p, x) :- builtin_call(_, m, x), (field(m, "property", p) ; field(m, "index", p)).
+
+// builtin_call(c, m, x): call c's callee, parentheses aside, is the member m named x. ESTree's ChainExpression
+// does not hide it: `(a?.hasOwnProperty)(b)` counts.
+.decl builtin_call(c: node, m: node, x: symbol)
+builtin_call(c, m, x) :- kind(c, "call_expression"), field(c, "function", f), deparen(f, m), static_prop(m, _, x),
+    builtin(x).
+.decl builtin(x: symbol)
+builtin("hasOwnProperty"). builtin("isPrototypeOf"). builtin("propertyIsEnumerable").
+
+// The suggestion rewrites the whole call, object first:
+//   a.b.hasOwnProperty(k)  →  Object.prototype.hasOwnProperty.call(a.b, k)
+// The object's text keeps its parentheses, so `(a, b).hasOwnProperty(k)` stays a sequence in the first argument.
+via_prototype(p, x) :- fixable(c, x, p, o), c ~ `$_($$$A)`, !c ~ `$_()`
+    => replace(c, `Object.prototype.$x.call($o, $$$A)`).
+via_prototype(p, x) :- fixable(c, x, p, o), c ~ `$_()` => replace(c, `Object.prototype.$x.call($o)`).
+.decl fixable(c: node, x: symbol, p: node, o: node)
+fixable(c, x, p, o) :- builtin_call(c, m, x), (field(m, "property", p) ; field(m, "index", p)), field(m, "object", o),
+    !optional(c), !object_declared(c).
+.decl optional(c: node)  // ESLint's isAfterOptional, or a parenthesised chain as the callee (ESTree's ChainExpression)
+//   a?.b.hasOwnProperty(k)    a.hasOwnProperty?.(k)    (a?.hasOwnProperty)(k)       no suggestion
+//   (a?.b).hasOwnProperty(k)  the chain ends at the parentheses                     suggestion
+optional(c) :- builtin_call(c, _, _), optional_link(c).
+optional(c) :- builtin_call(c, _, _), field(c, "function", f), kind(f, "parenthesized_expression"), deparen(f, m),
+    optional_link(m).
+// object_declared(c): a value named Object is declared in a scope around c, so `Object.prototype` may not be the
+// global's. Unlike prefer-object-has-own, a script's own `var Object` counts too (ESLint asks for no defs at all).
+.decl object_declared(c: node)
+object_declared(c) :- builtin_call(c, _, _), decl_site(s, "Object", _, _, "value"), within(c, s).

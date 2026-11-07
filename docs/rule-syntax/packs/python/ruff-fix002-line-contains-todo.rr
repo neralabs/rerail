@@ -1,0 +1,17 @@
+.policy "ruff-fix002-line-contains-todo" revision 2
+.description "Resolve the missing feature, optimization or refactoring a TODO comment marks before shipping, then remove the comment."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FIX002 (flake8-fixme): a comment holding the task tag `TODO`, in any case, as the first word after a `#`
+// (python/misc-comments). Reported at the comment; Ruff reports at the tag, on the same line.
+//   # TODO: something           ← FIX002
+//   # a # todo                  ← FIX002: after another `#`
+//   # TODOS                     not reported: not the whole word
+#include "python/misc-comments.rr"
+
+.violation FIX002(at: node, d: symbol) code "FIX002"
+    "Do the work this `{d}` comment describes, then remove the `{d}` note; if the work belongs in a separate change or the note documents planned work on purpose, leave it."
+    suppress ruff "FIX002"
+FIX002(c, d) :- fixme_tag(c, "todo", d).

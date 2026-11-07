@@ -1,0 +1,21 @@
+.policy "ruff-ruf017-quadratic-list-summation" revision 3
+.description "Avoid flattening lists by summing them onto an empty list; it is quadratic, so chain them with itertools instead."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF017: `sum(lists, [])` flattens by adding lists one at a time, copying the total at each step:
+// quadratic. The builtin sum, a positional iterable, and an empty list, `[]` or `list()`, as `start` (second
+// or `start=`).
+//   sum([x, y], [])              ← RUF017  `list(itertools.chain.from_iterable([x, y]))`
+//   sum([x, y], start=[])        ← RUF017
+//   sum(x, list())               ← RUF017
+//   sum([x, y])                  not reported
+//   sum(iterable=x, start=[])    not reported: Ruff wants the iterable positional
+#include "python/ruff.rr"
+param_slot("builtins.sum", "iterable", 0). param_slot("builtins.sum", "start", 1).
+
+.violation RUF017(at: node) code "RUF017"
+    "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
+    suppress ruff "RUF017"
+RUF017(c) :- ruff_arg(c, 0, _), call_param(c, "start", s), empty_literal(s, "list").

@@ -1,0 +1,75 @@
+.policy "typescript-eslint-consistent-type-imports" revision 3
+.description "Use import type for TypeScript imports whose bindings are only used as types, and use import type instead of import() type annotations."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts" exclude "**/node_modules/**" exclude "**/dist/**" exclude "**/build/**" exclude "**/out/**" exclude "**/.next/**" exclude "**/coverage/**" exclude "**/vendor/**" exclude "**/.venv/**" exclude "**/.yarn/**" exclude "**/generated/**" exclude "**/__generated__/**" exclude "**/*.generated.*" exclude "**/*.gen.*" exclude "**/*.min.js" exclude "**/*.d.ts"
+
+#include "tsx/ts-a.rr"
+//   in_type(n)
+#include "tsx/names.rr"
+//   ref_site(r, site), import_binding(site, local, src, imported)
+
+// typescript-eslint's consistent-type-imports: imports used only as types are written `import type`.
+// prefer "type-imports" (the default):
+//   import { A } from "m"; let a: A;            → All imports in the declaration are only used as types.
+//   import { A, B } from "m"; let a: A; f(B);   → Imports "A" are only used as type.
+//   import { A } from "m"; let a: typeof A;     → reported too: `typeof` is erased
+// A name with no use, or used as a value (an export, a call, JSX), keeps the import a value import. With JSX in the
+// file, `React` is used (the parser's jsxPragma). With experimentalDecorators and emitDecoratorMetadata, nothing
+// is reported. prefer "no-type-imports" reports every `import type` and inline `type` instead.
+// disallowTypeAnnotations (default true) reports `import("m")` used as a type.
+.violation consistent_type_imports(at: node, id: symbol, msg: symbol) code "@typescript-eslint/consistent-type-imports"
+    "{msg}"
+    suppress eslint "@typescript-eslint/consistent-type-imports"
+    suppress oxlint "consistent-type-imports"
+consistent_type_imports(i, "typeOverValue", "All imports in the declaration are only used as types. Use `import type`.") :-
+    type_only(i, _), !mixed(i), !has(i, _, "import_attribute").
+consistent_type_imports(i, "someImportsAreOnlyTypes", cat("Imports ", cat(names, " are only used as type."))) :-
+    type_only(i, _), mixed(i),
+    names = join q by b sep ", " : { type_only(i, b), import_binding(b, x, _, _), q = cat("\"", cat(x, "\"")) }.
+consistent_type_imports(n, "avoidImportType", "Use an `import` instead of an `import type`.") :-
+    option("prefer", "no-type-imports"), (kind(n, "import_statement"), op(n, "type") ;
+    kind(n, "import_specifier"), first_token(n, t), text(t, "type"), field(n, "name", m), t != m).
+consistent_type_imports(c, "noImportTypeAnnotations", "`import()` type annotations are forbidden.") :-
+    !option("disallowTypeAnnotations", "false"), kind(c, "call_expression"), field(c, "function", f), kind(f, "import"),
+    in_type(c).
+
+// mixed(i): i also binds a value or an unused name, so only some of it can move to `import type`. An import
+// with attributes (`with { type: "json" }`) whose names are all types is not reported at all.
+.decl mixed(i: node)
+mixed(i) :- spec(i, s), !type_only(i, s).
+
+// checked(i): a value import, in type-imports mode, in a file without decorator metadata.
+.decl checked(i: node)
+checked(i) :- kind(i, "import_statement"), !op(i, "type"), !option("prefer", "no-type-imports"),
+    !(option("experimentalDecorators", "true"), option("emitDecoratorMetadata", "true")).
+// spec(i, s): a binding of i that is not marked `type` inline.
+.decl spec(i: node, s: node)
+spec(i, s) :- checked(i), import_binding(s, _, _, _), (s = i ; within(s, i)), !inline_type(s).
+.decl inline_type(s: node)
+inline_type(s) :- kind(s, "import_specifier"), first_token(s, t), text(t, "type"), field(s, "name", n), t != n.
+// type_only(i, s): s is used, and every use is in a type.
+.decl type_only(i: node, s: node)
+type_only(i, s) :- spec(i, s), used(s), !value_use(s).
+.decl used(s: node)
+used(s) :- use_of(s, _).
+used(s) :- value_use(s).
+used(s) :- import_binding(s, x, _, _), docof(s, d), kind(e, "export_specifier"), docof(e, d), field(e, "name", n),
+    text(n, x), type_export(n).
+// use_of(s, r): r refers to s. The import's own names (`import D`, `{ a as b }`) are not uses. (The T of a qualified
+// type `N.T` names a member of N; tsx/names does not read it as a reference.)
+.decl use_of(s: node, r: node)
+use_of(s, r) :- spec(_, s), ref_site(r, s), !inside(r, _, "import_statement").
+// value_use(s): a use outside types: an expression, `export { A }`, `export default A`, or React under JSX.
+// `export type { A }` and `export { type A }` are type uses.
+.decl value_use(s: node)
+value_use(s) :- use_of(s, r), !in_type(r), !type_export(r).
+.decl type_export(r: node)
+type_export(r) :- kind(e, "export_specifier"), field(e, "name", r), (op(e, "type") ; inside(e, x, "export_statement"),
+    op(x, "type")).
+value_use(s) :- import_binding(s, x, _, _), docof(s, d), kind(e, "export_specifier"), docof(e, d),
+    field(e, "name", n), text(n, x), !has(e, _, "string"), export_local(e).
+value_use(s) :- import_binding(s, "React", _, _), docof(s, d), docof(j, d),
+    (kind(j, "jsx_element") ; kind(j, "jsx_self_closing_element")).
+.decl export_local(e: node)  // `export { A }`, not `export { A } from "m"` (which names the other module's A)
+export_local(e) :- inside(e, x, "export_statement"), !field(x, "source", _), !op(x, "type"), !op(e, "type").

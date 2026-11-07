@@ -1,0 +1,18 @@
+.policy "next-no-head-import-in-document" revision 4
+.description "Use Head from next/document, not next/head, in pages/_document; next/head is meant for individual pages."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-head-import-in-document. `import … from "next/head"` in the custom Document:
+//   pages/_document.js:          import Head from "next/head"     reported
+//   pages/_document/index.tsx:   the same                         reported
+//   pages/index.js:              the same                         fine
+
+#include "tsx/next.rr"
+
+.violation head_import(at: node, rest: symbol) code "@next/next/no-head-import-in-document"
+    "`next/head` should not be imported in `pages{rest}`. Use `<Head />` from `next/document` instead. See: https://nextjs.org/docs/messages/no-head-import-in-document"
+    suppress eslint "@next/next/no-head-import-in-document"
+    suppress oxlint "no-head-import-in-document"
+    suppress biome "lint/suspicious/noHeadImportInDocument"
+head_import(i, r) :- import_stmt(i, d, "next/head"), document_file(d), pages_rest(d, r).

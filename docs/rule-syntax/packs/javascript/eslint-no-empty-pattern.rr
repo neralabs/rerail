@@ -1,0 +1,35 @@
+.policy "eslint-no-empty-pattern" revision 5
+.description "Avoid empty object and array destructuring patterns; they bind nothing and usually mean a default value was intended."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-empty-pattern: a destructuring pattern that binds nothing.
+//   const {} = foo;    const [] = foo;    function f({a: {}}) {}    → reported
+//   const {a = {}} = foo;    const [,] = foo (one hole is an element)  → not
+// Option `allowObjectPatternsAsParameters` ("false" by default) allows `function f({}) {}` and
+// `function f({} = {}) {}`: an empty object pattern that is itself a parameter, with no default or `{}`.
+.violation no_empty_pattern(at: node, type: symbol, eg: symbol) code "no-empty-pattern"
+    "Replace this empty {type} pattern with a binding or a default value, e.g. {eg}."
+    suppress eslint "no-empty-pattern"
+    suppress oxlint "no-empty-pattern"
+    suppress biome "lint/correctness/noEmptyPattern"
+no_empty_pattern(p, "object", "{a = {}} instead of {a: {}}") :- kind(p, "object_pattern"), !has_element(p), !allowed_param(p).
+no_empty_pattern(p, "array", "{a = []} instead of {a: []}") :- kind(p, "array_pattern"), !has_element(p), !op(p, ",").
+.decl has_element(p: node)  // a property, element or rest; comments do not count
+has_element(p) :- child(p, c, _), !kind(c, "comment").
+
+// The parameter forms. TypeScript wraps each parameter in required_parameter / optional_parameter, with the
+// default in its `value`; JavaScript has the pattern directly, or an assignment_pattern for a default.
+.decl allowed_param(p: node)
+allowed_param(p) :- option("allowObjectPatternsAsParameters", "true"), param_pattern(p, d), (unset(d) ; empty_object(d)).
+.decl param_pattern(p: node, default: node)  // p is a whole parameter; default is its `= …`, else unset
+param_pattern(p, d) :- (kind(w, "required_parameter") ; kind(w, "optional_parameter")), field(w, "pattern", p),
+    (field(w, "value", d) ; !field(w, "value", _), unset(d)).
+param_pattern(p, d) :- kind(f, "formal_parameters"), child(f, p, _), unset(d).
+param_pattern(p, d) :- kind(f, "formal_parameters"), child(f, a, _), kind(a, "assignment_pattern"),
+    field(a, "left", p), field(a, "right", d).
+// `({}) => x` has formal_parameters too; a lone identifier parameter is never a pattern.
+.decl empty_object(d: node)
+empty_object(d) :- deparen(d, o), kind(o, "object"), !has_element(o).

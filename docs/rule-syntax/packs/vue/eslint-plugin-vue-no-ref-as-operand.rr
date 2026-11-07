@@ -1,0 +1,92 @@
+.policy "eslint-plugin-vue-no-ref-as-operand" revision 2
+.description "Use .value when reading or writing a Vue ref or computed in script code; using the ref object itself as an operand acts on the wrapper, not its value."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vvue_import_call(c, x), vmacro(c, x), vsetup(o, f), estree_parent(x, p), static_prop(n, o, x), ref_site(r, s)
+
+// eslint-plugin-vue's no-ref-as-operand: a variable that holds a ref, used where its value is meant. A ref variable
+// is declared with ref(), computed(), toRef(), customRef(), shallowRef() (imported from Vue) or defineModel()
+// as its initialiser, or destructured from toRefs(). It is reported as
+//   the test of if, switch or ?:; an operand of a unary, update or binary operator; inside `${}` of an untagged
+//   template; either side of `+=` and the like, the left side of `=`; the left side of && || ?? when declared
+//   const; the object of a member other than .value and .effect; an argument of emit("event", …)
+//   const n = ref(0); n + 1; if (n) {}; n++; `${n}`; n.toFixed()       all reported;  n.value + 1 is not
+// The plugin's fix inserts `.value`; the policy offers none.
+.violation ref_operand(at: node, m: symbol) code "vue/no-ref-as-operand"
+    "Must use `.value` to read or write the value wrapped by `{m}()`."
+    suppress eslint "vue/no-ref-as-operand"
+ref_operand(r, m) :- ref_read(r, s, m), operand(r, s).
+
+// ref_var(s, m, decl): declaration site s holds a ref made by m; decl is "const", "let" or "var".
+.decl ref_var(s: node, m: symbol, decl: symbol)
+ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c), maker(c, m), declared(d, k).
+ref_var(p, "toRefs", k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c),
+    vvue_import_call(c, "toRefs"), field(d, "name", l), kind(l, "object_pattern"), has(l, p, ref_pattern_kind),
+    pattern_name(p, _, d), declared(d, k).
+ref_var(p, "defineModel", k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c),
+    model_call(c), field(d, "name", l), kind(l, "array_pattern"), child(l, p, 0), declared(d, k).
+// An alias is a ref variable too, also of a variable a ref was assigned to later:
+//   let foo; foo = ref(5); let bar = foo; bar = 4        bar = 4 is reported (foo's own reads are not)
+ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, r), kind(r, "identifier"),
+    (ref_read(r, _, m) ; assigned_ref(r, m)), declared(d, k).
+.decl assigned_ref(r: node, m: symbol)
+assigned_ref(r, m) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "identifier"), ref_site(l, s),
+    field(a, "right", w), vunwrap(w, c), maker(c, m), ref_site(r, s), r != l.
+.decl ref_pattern_kind(k: symbol)
+ref_pattern_kind("identifier"). ref_pattern_kind("shorthand_property_identifier_pattern").
+.decl maker(c: node, m: symbol)
+maker(c, m) :- vvue_import_call(c, m), (m = "ref" ; m = "computed" ; m = "toRef" ; m = "customRef" ; m = "shallowRef").
+maker(c, "defineModel") :- model_call(c).
+// defineModel(): the macro, or any free call of the name (the plugin follows the global, defined or not).
+.decl model_call(c: node)
+model_call(c) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), text(f, "defineModel"),
+    !ref_site(f, _).
+.decl declared(d: node, k: symbol)
+declared(d, k) :- kind(d, "variable_declarator"), child(v, d, _), (kind(v, "lexical_declaration") ;
+    kind(v, "variable_declaration")), first_token(v, t), text(t, k).
+// ref_read(r, s, m): identifier r reads the ref variable declared at s.
+.decl ref_read(r: node, s: node, m: symbol)
+ref_read(r, s, m) :- ref_var(s, m, _), !remade(s), ref_site(r, s), kind(r, "identifier").
+// remade(s): the variable is assigned a new ref later, `let b = ref(1); b = ref(2)`: the plugin then skips it.
+.decl remade(s: node)
+remade(s) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "identifier"), ref_site(l, s),
+    field(a, "right", w), vunwrap(w, c), maker(c, _).
+.decl operand(r: node, s: node)
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, k), whole(k).
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "binary_expression"), !logical(p).
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), logical(p), field(p, "left", w), deparen(w, r),
+    ref_var(s, _, "const").
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "augmented_assignment_expression").
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "assignment_expression"), field(p, "left", w),
+    deparen(w, r).
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "ternary_expression"), field(p, "condition", w),
+    deparen(w, r).
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "template_substitution"), child(t, p, _),
+    !tagged_template(t).
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, m), vmut_member(m, r), static_prop(m, _, x), x != "value",
+    x != "effect".
+operand(r, s) :- ref_read(r, s, _), estree_parent(r, al), kind(al, "arguments"), field(c, "arguments", al),
+    emit_call(c).
+.decl whole(k: symbol)  // the test of if and switch, an operand of a unary or update operator
+whole("if_statement"). whole("switch_statement"). whole("unary_expression"). whole("update_expression").
+.decl logical(p: node)
+logical(p) :- kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "??")).
+.decl vmut_member(m: node, r: node)
+vmut_member(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
+    deparen(w, r).
+// emit_call(c): emit("event", …) with emit from defineEmits(), or setup's context: setup(p, { emit }), ctx.emit(…).
+.decl emit_call(c: node)
+emit_call(c) :- call_arg(c, a, 0), kind(a, "string"), field(c, "function", f), kind(f, "identifier"), ref_site(f, s),
+    emitter(s).
+emit_call(c) :- call_arg(c, a, 0), kind(a, "string"), field(c, "function", f), static_prop(f, o, "emit"),
+    kind(o, "identifier"), ref_site(o, s), setup_context(s).
+.decl emitter(s: node)
+emitter(d) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c), vmacro(c, "defineEmits").
+emitter(p) :- vsetup(_, f), fn_param(f, q, 1), kind(q, "object_pattern"), child(q, p, _),
+    kind(p, "shorthand_property_identifier_pattern"), text(p, "emit").
+.decl setup_context(s: node)
+setup_context(p) :- vsetup(_, f), fn_param(f, p, 1), kind(p, "identifier").
+.decl fn_param(f: node, p: node, i: number)  // the i-th parameter's pattern
+fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), (field(q, "pattern", p) ; !field(q, "pattern", _), p = q).

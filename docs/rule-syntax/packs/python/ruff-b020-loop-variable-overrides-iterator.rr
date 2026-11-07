@@ -1,0 +1,18 @@
+.policy "ruff-b020-loop-variable-overrides-iterator" revision 2
+.description "Don't name a for-loop variable after a name used in the loop's iterable; the loop overwrites the original value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B020 (flake8-bugbear): a for loop whose target names a variable its iterable reads: `for items in
+// items:`. After the loop the name holds the last element, not the collection. A comprehension in the iterable
+// counts only by its own iterables (its variables are its own); a lambda's parameters are its own too.
+//   for items in items: …                    ← B020 at the target `items`
+//   for key, values in values.items(): …     ← B020 at `values`
+//   for var in [var for var in range(10)]:   not reported
+//   for vars in [i for i in vars]:           ← B020: `vars` is the comprehension's iterable
+#include "python/bugbear-loops.rr"
+
+.violation B020(at: node, x: symbol) code "B020" "Loop control variable `{x}` overrides iterable it iterates"
+    suppress ruff "B020"
+B020(n, x) :- kind(f, "for_statement"), field(f, "left", t), expr_name(t, n, x), iter_name(f, _, x).

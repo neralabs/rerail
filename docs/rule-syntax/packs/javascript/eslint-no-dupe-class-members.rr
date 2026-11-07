@@ -1,0 +1,40 @@
+.policy "eslint-no-dupe-class-members" revision 6
+.description "Don't declare the same method or field twice in a JavaScript class; the later one silently overwrites the earlier."
+.language javascript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+//   static_key, estree_key, member_kind, is_static
+
+// ESLint's no-dupe-class-members: a class member whose name an earlier member of the same class already
+// declared, both static or both not. A getter and a setter of one name are a pair, not duplicates:
+//   class A { foo() {} foo() {} }                 → the second foo
+//   class A { get foo() {} set foo(v) {} }        fine
+//   class A { foo() {} static foo() {} }          fine: one is static
+// Names are static names (`foo`, "foo", ['foo'] are the same); computed and #private names are not checked,
+// nor constructors. No options. Reported at the later member's key.
+.violation no_dupe_class_members(at: node, x: symbol) code "no-dupe-class-members"
+    "Duplicate name '{x}'. Rename or remove one of the two '{x}' members; the later declaration silently overwrites the earlier."
+    suppress eslint "no-dupe-class-members"
+    suppress oxlint "no-dupe-class-members"
+    suppress biome "lint/suspicious/noDuplicateClassMembers"
+no_dupe_class_members(k, x) :- class_entry(c, m, x, s, w), class_entry(c, e, x, s, v), e < m, clash(w, v), estree_key(m, k).
+
+// class_entry(c, m, x, s, w): m is a member of class body c named x, static s ("static" or ""), of kind w:
+// "get", "set", or "init" for a method or field.
+.decl class_entry(c: node, m: node, x: symbol, s: symbol, w: symbol)
+class_entry(c, m, x, s, w) :- kind(c, "class_body"), child(c, m, _), static_key(m, x), sort(m, w), static_of(m, s).
+.decl sort(m: node, w: symbol)
+sort(m, "get") :- member_kind(m, "get").
+sort(m, "set") :- member_kind(m, "set").
+sort(m, "init") :- member_kind(m, "method").
+sort(m, "init") :- (kind(m, "field_definition") ; kind(m, "public_field_definition")).
+.decl static_of(m: node, s: symbol)
+static_of(m, "static") :- child(_, m, _), is_static(m).
+static_of(m, "") :- child(c, m, _), kind(c, "class_body"), !is_static(m).
+// clash(w, v): a member of kind w after one of kind v replaces it. A getter only clashes with a getter or a
+// plain member; a setter likewise; a plain member with anything.
+.decl clash(w: symbol, v: symbol)
+clash("get", "init"). clash("get", "get"). clash("set", "init"). clash("set", "set").
+clash("init", "init"). clash("init", "get"). clash("init", "set").
