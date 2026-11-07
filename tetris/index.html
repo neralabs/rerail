@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11191b">
+  <title>Falling Facts · Rerail</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <a class="wordmark" href="/" aria-label="Falling Facts home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span data-text="engine_label"></span></a>
+      <div class="header-tools"><button id="browse-source" type="button">BROWSE .RR SOURCE <span>↗</span></button><span class="local"><b data-text="local_label"></b> <span></span></span></div>
+    </header>
+    <section class="intro"><div><p class="eyebrow" data-text="intro_label"></p><h1 data-text="title"></h1><p class="subtitle" data-text="subtitle"></p></div><span class="edition"><span data-text="edition_label"></span><br><b data-text="edition_number"></b></span></section>
+    <div class="workspace"><div class="play-space">
+    <section class="time-toolbar" aria-label="Time control">
+      <div><span class="eyebrow" data-text="timing_label"></span><span id="time-hint"></span></div>
+      <div class="time-actions"><div class="mode-switch" role="group" aria-label="Time mode"><button id="realtime-mode" data-time-mode="realtime" aria-pressed="true" data-text="realtime_label"></button><button id="manual-mode" data-time-mode="manual" aria-pressed="false" data-text="manual_label"></button></div><button id="time-step" data-key="KeyN" data-text="step_label" disabled></button><button id="gravity-step" data-key="KeyG" data-text="gravity_step_label" disabled></button><span class="clock-readout"><span data-text="clock"></span> ms</span></div>
+    </section>
+    <div class="game-layout">
+      <section class="well-panel">
+        <div class="panel-top"><span data-text="board_label"></span><span class="status"><i></i><span data-text="status"></span></span></div>
+        <div class="well-wrap"><div id="board" class="board" role="img" aria-label="Falling block game board"></div><div id="overlay" hidden><strong data-text="overlay"></strong><span data-text="overlay_hint"></span></div></div>
+        <div class="well-caption"><span data-text="dimensions"></span><span><span data-text="cell_label"></span> <i>↗</i></span></div>
+      </section>
+      <aside>
+        <section class="score-panel"><p class="eyebrow" data-text="score_label"></p><p class="score" data-text="score"></p><div class="metrics"><div><span data-text="level_label"></span><b data-text="level"></b></div><div><span data-text="lines_label"></span><b data-text="lines"></b></div><div><span data-text="pieces_label"></span><b data-text="pieces"></b></div></div></section>
+        <section class="next-panel"><p class="eyebrow" data-text="next_label"></p><div id="preview" class="preview" aria-label="Next piece"></div><span class="tiny" data-text="preview_hint"></span></section>
+        <section class="controls-panel"><p class="eyebrow" data-text="controls_label"></p><div id="controls"></div></section>
+        <button id="restart" data-key="KeyR"><span data-text="restart_label"></span><span>↗</span></button>
+        <div class="touch-controls" aria-label="Touch controls"><button data-key="ArrowLeft" aria-label="Move left" data-text="left_button"></button><button data-key="ArrowUp" aria-label="Rotate" data-text="rotate_button"></button><button data-key="ArrowRight" aria-label="Move right" data-text="right_button"></button><button data-key="Space" data-text="drop_button"></button><button data-key="KeyP" data-text="pause_button"></button></div>
+      </aside>
+    </div>
+    <footer><span data-text="footer"></span><div class="footer-actions"><button id="inspect" aria-expanded="false"><span data-text="inspect_label"></span> <span>+</span></button><button id="watch-engine" aria-expanded="false" aria-controls="evaluation-panel"><span data-text="graph_label"></span> <span>↗</span></button></div></footer>
+    <section id="inspector" hidden><div class="inspector-top"><span data-text="output_label"></span><span id="trace-summary"></span></div><div class="fact-legend"><span class="added">+ Added</span><span class="removed">− Removed</span><span>Unchanged facts stay dim</span><label><input id="changes-only" type="checkbox"> Changes only</label></div><pre id="trace" aria-label="Facts from the selected round"></pre></section>
+    </div>
+    <section id="evaluation-panel" class="evaluation-panel" hidden aria-label="Native fact evaluation">
+      <div class="evaluation-header"><div><p class="eyebrow">INSIDE THE ENGINE</p><h2>Evaluation waves</h2></div><div class="panel-window-controls"><button id="expand-graph" aria-label="Expand graph" aria-pressed="false" title="Expand graph">⛶</button><button id="close-evaluation" aria-label="Close evaluation panel">×</button></div></div>
+      <p class="evaluation-description">Recorded native rule executions. Nodes hold facts; edges are rules. Drag to pan, use + / − to zoom, or select a node to inspect its facts.</p>
+      <div class="round-selector"><label for="round-history">ROUND</label><select id="round-history" aria-label="Recorded round"></select><span id="round-input"></span></div>
+      <div class="playback-controls"><button id="wave-restart" aria-label="Replay from the start">↶</button><button id="wave-play">▶ Play</button><button id="wave-next">Step →</button><select id="wave-speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select><div class="graph-zoom-controls" role="group" aria-label="Graph zoom"><button id="graph-zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="graph-zoom-in" aria-label="Zoom in" title="Zoom in">+</button><button id="graph-fit">Fit graph</button></div></div>
+      <div class="graph-time-steps"><span>ADVANCE GAME TIME</span><button class="manual-step" data-key="KeyN" data-text="step_label"></button><button class="manual-step" data-key="KeyG" data-text="gravity_step_label"></button></div>
+      <div class="wave-progress"><input id="wave-position" type="range" min="0" max="1" value="0" aria-label="Evaluation position"><output id="wave-counter">Waiting for a traced round</output></div>
+      <div class="graph-options"><label><input id="show-empty" type="checkbox"> Animate empty results</label><label><input id="show-constants" type="checkbox"> Show constant inputs</label></div>
+      <div class="graph-legend"><span class="legend-write">● New facts</span><span class="legend-bounce">↶ Cache hit / duplicate</span><span class="legend-read">● Read</span><span class="legend-empty">○ No match</span></div>
+      <div id="evaluation-canvas"><svg id="evaluation-svg" role="img" aria-label="Animated fact dependency graph" tabindex="0"></svg><div id="graph-empty">Enable tracing, then press N or G to advance time.</div></div>
+      <div id="wave-status" role="status" aria-live="polite">Ready to capture an engine evaluation.</div>
+      <section class="firing-source" aria-label="Source of the firing rule"><div class="detail-heading"><span>FIRING RULE</span><span id="firing-rule-location"></span></div><code id="firing-rule-source">Start playback to follow the source.</code></section>
+      <div class="event-detail"><div class="detail-heading"><span id="detail-title">Select a fact set</span><span id="detail-count"></span></div><code id="detail-rule"></code><div id="detail-visual" hidden></div><details id="raw-facts" open><summary>Fact tuples</summary><pre id="detail-facts"></pre></details></div>
+      <section id="rule-source-view" class="rule-source-view" aria-label="Rule source code"><div class="detail-heading"><span id="source-location">game.rr</span><div class="source-view-actions"><button id="browse-current-source" type="button">Full source browser ↗</button><button id="follow-rule-source" type="button" aria-pressed="true">Following firing rule</button></div></div><p id="source-caption">Hover an edge to preview its rule. Click to pin its source here.</p><pre id="rule-source" tabindex="0" aria-label="Original rule source"></pre></section>
+      <p class="trace-note">Amber returns show native cache hits (rule query skipped) or duplicate candidates rejected by INSERT OR IGNORE. Each cache hit compares exact input fact sets. Playback stretches recorded execution time.</p>
+    </section></div>
+    <p id="error" role="alert" hidden></p>
+  </main>
+  <div id="rule-tooltip" class="rule-tooltip" role="tooltip" hidden><strong id="rule-tooltip-location"></strong><code id="rule-tooltip-source"></code><span>Click the edge to open this source below.</span></div>
+  <dialog id="source-browser" aria-labelledby="source-browser-title">
+    <div class="source-browser-header"><div><span class="eyebrow">THE WHOLE PROGRAM, IN PLAIN SIGHT</span><h2 id="source-browser-title">.rr source browser</h2></div><div class="source-browser-build"><span id="source-browser-file-count"></span><code id="source-browser-revision"></code><button id="close-source-browser" type="button" aria-label="Close source browser">×</button></div></div>
+    <div class="source-browser-layout"><nav class="source-file-sidebar" aria-label="Source files"><label for="source-file-filter">FILES</label><input id="source-file-filter" type="search" placeholder="Find a file…" autocomplete="off"><div id="source-files"></div></nav>
+      <section class="source-browser-editor"><div class="source-browser-file"><strong id="source-browser-path">game.rr</strong><span id="source-browser-kind"></span></div>
+        <div class="source-browser-toolbar"><label class="source-search-label">Find <input id="source-text-search" type="search" placeholder="Search this source…" autocomplete="off"></label><span id="source-search-count">0 matches</span><button id="source-search-previous" aria-label="Previous match">↑</button><button id="source-search-next" aria-label="Next match">↓</button><label>Line <input id="source-go-line" type="number" min="1" value="1"></label><button id="source-line-go">Go</button><label class="source-wrap-label"><input id="source-wrap" type="checkbox"> Wrap</label></div>
+        <pre id="source-browser-code" class="rr-source" tabindex="0" aria-label="Full syntax-highlighted source"></pre><p id="source-browser-status" role="status">Loading source…</p>
+      </section>
+    </div>
+  </dialog>
+  <script type="module" src="/browser.mjs"></script>
+</body>
+</html>

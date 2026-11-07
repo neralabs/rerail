@@ -1,0 +1,11 @@
+{
+  "name": "rerail-falling-blocks-local",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server.mjs",
+    "test": "node --test game.test.mjs",
+    "test:browser": "node browser-check.mjs"
+  }
+}

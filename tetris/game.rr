@@ -1,0 +1,268 @@
+// FALLING FACTS — all game decisions and screen contents live in this program.
+// Inputs are literal facts. next_* outputs replace the corresponding state facts.
+.decl keypress(code: symbol)
+.decl timestep(ms: number)
+.decl entropy(seed: number)
+.decl active(k: number, x: number, y: number, r: number)
+.decl board(x: number, y: number, k: number)
+.decl stats(score: number, lines: number, pieces: number)
+.decl mode(value: symbol)
+.decl rng(seed: number)
+.decl clock(ms: number)
+.decl time_mode(value: symbol)
+.decl next_active(k: number, x: number, y: number, r: number)
+.decl next_board(x: number, y: number, k: number)
+.decl next_stats(score: number, lines: number, pieces: number)
+.decl next_mode(value: symbol)
+.decl next_rng(seed: number)
+.decl next_clock(ms: number)
+.decl next_time_mode(value: symbol)
+.output next_active, next_board, next_stats, next_mode, next_rng, next_clock, next_time_mode
+
+.decl grid_x(x: number)
+grid_x(0). grid_x(1). grid_x(2). grid_x(3). grid_x(4). grid_x(5). grid_x(6). grid_x(7). grid_x(8). grid_x(9).
+.decl grid_y(y: number)
+grid_y(0). grid_y(1). grid_y(2). grid_y(3). grid_y(4). grid_y(5). grid_y(6). grid_y(7). grid_y(8). grid_y(9). grid_y(10). grid_y(11). grid_y(12). grid_y(13). grid_y(14). grid_y(15). grid_y(16). grid_y(17). grid_y(18). grid_y(19).
+.decl drop_step(d: number)
+drop_step(0). drop_step(1). drop_step(2). drop_step(3). drop_step(4). drop_step(5). drop_step(6). drop_step(7). drop_step(8). drop_step(9). drop_step(10). drop_step(11). drop_step(12). drop_step(13). drop_step(14). drop_step(15). drop_step(16). drop_step(17). drop_step(18). drop_step(19). drop_step(20).
+.decl shape(k: number, r: number, dx: number, dy: number)
+shape(0, 0, 0, 1). shape(0, 0, 1, 1). shape(0, 0, 2, 1). shape(0, 0, 3, 1).
+shape(0, 1, 2, 0). shape(0, 1, 2, 1). shape(0, 1, 2, 2). shape(0, 1, 2, 3).
+shape(0, 2, 3, 2). shape(0, 2, 2, 2). shape(0, 2, 1, 2). shape(0, 2, 0, 2).
+shape(0, 3, 1, 3). shape(0, 3, 1, 2). shape(0, 3, 1, 1). shape(0, 3, 1, 0).
+shape(1, 0, 1, 0). shape(1, 0, 2, 0). shape(1, 0, 1, 1). shape(1, 0, 2, 1).
+shape(1, 1, 1, 0). shape(1, 1, 2, 0). shape(1, 1, 1, 1). shape(1, 1, 2, 1).
+shape(1, 2, 1, 0). shape(1, 2, 2, 0). shape(1, 2, 1, 1). shape(1, 2, 2, 1).
+shape(1, 3, 1, 0). shape(1, 3, 2, 0). shape(1, 3, 1, 1). shape(1, 3, 2, 1).
+shape(2, 0, 1, 0). shape(2, 0, 0, 1). shape(2, 0, 1, 1). shape(2, 0, 2, 1).
+shape(2, 1, 2, 1). shape(2, 1, 1, 0). shape(2, 1, 1, 1). shape(2, 1, 1, 2).
+shape(2, 2, 1, 2). shape(2, 2, 2, 1). shape(2, 2, 1, 1). shape(2, 2, 0, 1).
+shape(2, 3, 0, 1). shape(2, 3, 1, 2). shape(2, 3, 1, 1). shape(2, 3, 1, 0).
+shape(3, 0, 1, 0). shape(3, 0, 2, 0). shape(3, 0, 0, 1). shape(3, 0, 1, 1).
+shape(3, 1, 2, 1). shape(3, 1, 2, 2). shape(3, 1, 1, 0). shape(3, 1, 1, 1).
+shape(3, 2, 1, 2). shape(3, 2, 0, 2). shape(3, 2, 2, 1). shape(3, 2, 1, 1).
+shape(3, 3, 0, 1). shape(3, 3, 0, 0). shape(3, 3, 1, 2). shape(3, 3, 1, 1).
+shape(4, 0, 0, 0). shape(4, 0, 1, 0). shape(4, 0, 1, 1). shape(4, 0, 2, 1).
+shape(4, 1, 2, 0). shape(4, 1, 2, 1). shape(4, 1, 1, 1). shape(4, 1, 1, 2).
+shape(4, 2, 2, 2). shape(4, 2, 1, 2). shape(4, 2, 1, 1). shape(4, 2, 0, 1).
+shape(4, 3, 0, 2). shape(4, 3, 0, 1). shape(4, 3, 1, 1). shape(4, 3, 1, 0).
+shape(5, 0, 0, 0). shape(5, 0, 0, 1). shape(5, 0, 1, 1). shape(5, 0, 2, 1).
+shape(5, 1, 2, 0). shape(5, 1, 1, 0). shape(5, 1, 1, 1). shape(5, 1, 1, 2).
+shape(5, 2, 2, 2). shape(5, 2, 2, 1). shape(5, 2, 1, 1). shape(5, 2, 0, 1).
+shape(5, 3, 0, 2). shape(5, 3, 1, 2). shape(5, 3, 1, 1). shape(5, 3, 1, 0).
+shape(6, 0, 2, 0). shape(6, 0, 0, 1). shape(6, 0, 1, 1). shape(6, 0, 2, 1).
+shape(6, 1, 2, 2). shape(6, 1, 1, 0). shape(6, 1, 1, 1). shape(6, 1, 1, 2).
+shape(6, 2, 0, 2). shape(6, 2, 2, 1). shape(6, 2, 1, 1). shape(6, 2, 0, 1).
+shape(6, 3, 0, 0). shape(6, 3, 1, 2). shape(6, 3, 1, 1). shape(6, 3, 1, 0).
+
+.decl unit(v: number)
+unit(1).
+.decl reset(v: number)
+reset(1) :- unit(1), !stats(_, _, _).
+reset(1) :- keypress("KeyR").
+.decl go(v: number)
+go(1) :- mode("playing"), !reset(1), !keypress("KeyP").
+.decl action(a: symbol)
+action("left") :- keypress("ArrowLeft").
+action("right") :- keypress("ArrowRight").
+action("rotate") :- keypress("ArrowUp").
+action("rotate") :- keypress("KeyX").
+action("back") :- keypress("KeyZ").
+action("down") :- keypress("ArrowDown").
+action("drop") :- keypress("Space").
+.decl elapsed(ms: number)
+.decl time_setting(value: symbol)
+time_setting(m) :- time_mode(m).
+time_setting("realtime") :- unit(1), !time_mode(_).
+next_time_mode("manual") :- time_setting("realtime"), keypress("KeyM").
+next_time_mode("realtime") :- time_setting("manual"), keypress("KeyM").
+next_time_mode(m) :- time_setting(m), !keypress("KeyM").
+elapsed(c + dt) :- clock(c), timestep(dt), time_setting("realtime").
+elapsed(c + 100) :- clock(c), keypress("KeyN"), time_setting("manual").
+elapsed(c + max(80, 700 - (lines / 10) * 55)) :-
+    clock(c), stats(_, lines, _), keypress("KeyG"), time_setting("manual").
+.decl due(v: number)
+due(1) :- elapsed(ms), stats(_, lines, _), ms >= max(80, 700 - (lines / 10) * 55).
+.decl fall(v: number)
+fall(1) :- go(1), action("down").
+fall(1) :- go(1), due(1).
+
+// Probe only the current piece's possible moves, rotation kicks, and drop column.
+.decl kick(priority: number, dx: number, dy: number)
+kick(0, 0, 0). kick(1, -1, 0). kick(2, 1, 0).
+kick(3, -2, 0). kick(4, 2, 0). kick(5, 0, -1). kick(6, 0, -2).
+.decl turn(r: number)
+turn((r + 1) - ((r + 1) / 4) * 4) :- active(_, _, _, r), action("rotate").
+turn((r + 3) - ((r + 3) / 4) * 4) :- active(_, _, _, r), action("back").
+.decl probe(x: number, y: number, r: number)
+probe(x, y + d, r) :- active(_, x, y, r), drop_step(d).
+probe(x - 1, y, r) :- active(_, x, y, r).
+probe(x + 1, y, r) :- active(_, x, y, r).
+probe(x + dx, y + dy, nr) :- active(_, x, y, _), turn(nr), kick(_, dx, dy).
+.decl blocked(x: number, y: number, r: number)
+blocked(x, y, r) :- probe(x, y, r), active(k, _, _, _), shape(k, r, dx, _), x + dx < 0.
+blocked(x, y, r) :- probe(x, y, r), active(k, _, _, _), shape(k, r, dx, _), x + dx >= 10.
+blocked(x, y, r) :- probe(x, y, r), active(k, _, _, _), shape(k, r, _, dy), y + dy < 0.
+blocked(x, y, r) :- probe(x, y, r), active(k, _, _, _), shape(k, r, _, dy), y + dy >= 20.
+blocked(x, y, r) :- probe(x, y, r), active(k, _, _, _), shape(k, r, dx, dy), board(x + dx, y + dy, _).
+.decl fits(x: number, y: number, r: number)
+fits(x, y, r) :- probe(x, y, r), !blocked(x, y, r).
+// The first obstruction below the piece bounds its continuous drop path.
+.decl obstruction(y: number)
+obstruction(q) :- active(_, x, y, r), blocked(x, q, r), q > y.
+.decl landing(y: number)
+landing(stop - 1) :- unit(1), stop = min q : { obstruction(q) }.
+.decl rotation(p: number, x: number, y: number, r: number)
+rotation(p, x + dx, y + dy, nr) :- active(_, x, y, _), turn(nr), kick(p, dx, dy), fits(x + dx, y + dy, nr).
+.decl better(p: number)
+better(p) :- rotation(p, _, _, _), rotation(q, _, _, _), q < p.
+.decl rotated(x: number, y: number, r: number)
+rotated(x, y, r) :- rotation(p, x, y, r), !better(p).
+.decl moved(k: number, x: number, y: number, r: number)
+moved(k, x - 1, y, r) :- go(1), action("left"), active(k, x, y, r), fits(x - 1, y, r).
+moved(k, x + 1, y, r) :- go(1), action("right"), active(k, x, y, r), fits(x + 1, y, r).
+moved(k, x, y, r) :- go(1), rotated(x, y, r), active(k, _, _, _).
+moved(k, x, y + 1, r) :- fall(1), active(k, x, y, r), fits(x, y + 1, r).
+moved(k, x, ly, r) :- go(1), action("drop"), active(k, x, _, r), landing(ly).
+.decl chosen(k: number, x: number, y: number, r: number)
+chosen(k, x, y, r) :- moved(k, x, y, r).
+chosen(k, x, y, r) :- active(k, x, y, r), !moved(_, _, _, _).
+.decl locking(v: number)
+locking(1) :- go(1), action("drop").
+locking(1) :- fall(1), active(_, x, y, r), !fits(x, y + 1, r).
+
+// A lock merges the four cells, clears complete rows, then compacts every survivor.
+.decl merged(x: number, y: number, k: number)
+merged(x, y, k) :- board(x, y, k).
+merged(x + dx, y + dy, k) :- locking(1), chosen(k, x, y, r), shape(k, r, dx, dy).
+.decl full(y: number)
+full(y) :- locking(1), grid_y(y), n = count : { merged(_, y, _) }, n = 10.
+.decl below(y: number, f: number)
+below(y, f) :- grid_y(y), full(f), f > y.
+.decl shift(y: number, n: number)
+shift(y, n) :- grid_y(y), n = count : { below(y, _) }.
+.decl clears(n: number)
+clears(n) :- unit(1), n = count : { full(_) }.
+.decl award(n: number, points: number)
+award(0, 0). award(1, 100). award(2, 300). award(3, 500). award(4, 800).
+.decl drop_points(n: number)
+drop_points(2 * (ly - y)) :- go(1), action("drop"), active(_, _, y, _), landing(ly).
+drop_points(1) :- go(1), action("down"), moved(_, _, _, _).
+drop_points(0) :- unit(1), !go(1).
+drop_points(0) :- go(1), !action("down"), !action("drop").
+drop_points(0) :- go(1), action("down"), !moved(_, _, _, _).
+
+next_board(x, y + n, k) :- !reset(1), locking(1), merged(x, y, k), !full(y), shift(y, n).
+next_board(x, y, k) :- !reset(1), !locking(1), board(x, y, k).
+next_active((s - (s / 7) * 7), 3, 0, 0) :- reset(1), entropy(s).
+next_active((s - (s / 7) * 7), 3, 0, 0) :- !reset(1), locking(1), rng(s).
+next_active(k, x, y, r) :- !reset(1), !locking(1), chosen(k, x, y, r).
+next_rng(((s * 48271) - ((s * 48271) / 2147483647) * 2147483647)) :- reset(1), entropy(s).
+next_rng(((s * 48271) - ((s * 48271) / 2147483647) * 2147483647)) :- !reset(1), locking(1), rng(s).
+next_rng(s) :- !reset(1), !locking(1), rng(s).
+next_stats(0, 0, 0) :- reset(1).
+next_stats(score + points * (lines / 10 + 1) + dp, lines + n, pieces + 1) :-
+    !reset(1), locking(1), stats(score, lines, pieces), clears(n), award(n, points), drop_points(dp).
+next_stats(score + dp, lines, pieces) :- !reset(1), !locking(1), stats(score, lines, pieces), drop_points(dp).
+
+.decl spawn_hit(v: number)
+spawn_hit(1) :- next_active(k, x, y, r), shape(k, r, dx, dy), next_board(x + dx, y + dy, _).
+next_mode("playing") :- reset(1).
+next_mode("over") :- !reset(1), locking(1), spawn_hit(1).
+next_mode("playing") :- !reset(1), locking(1), !spawn_hit(1).
+next_mode("paused") :- !reset(1), !locking(1), mode("playing"), keypress("KeyP").
+next_mode("playing") :- !reset(1), !locking(1), mode("paused"), keypress("KeyP").
+next_mode(m) :- !reset(1), !locking(1), mode(m), !keypress("KeyP").
+next_mode("over") :- !reset(1), !locking(1), mode("over"), keypress("KeyP").
+next_clock(0) :- reset(1).
+next_clock(0) :- !reset(1), locking(1).
+next_clock(0) :- !reset(1), !locking(1), go(1), due(1).
+next_clock(ms) :- !reset(1), !locking(1), go(1), !due(1), elapsed(ms).
+next_clock(c) :- !reset(1), !locking(1), !elapsed(_), clock(c).
+next_clock(c) :- !reset(1), !locking(1), !go(1), elapsed(_), clock(c).
+
+// Screen projection uses the resulting state, including one fact for every empty cell.
+.decl render_probe(x: number, y: number, r: number)
+render_probe(x, y + d, r) :- next_active(_, x, y, r), drop_step(d).
+.decl render_blocked(x: number, y: number, r: number)
+render_blocked(x, y, r) :- render_probe(x, y, r), next_active(k, _, _, _), shape(k, r, dx, _), x + dx < 0.
+render_blocked(x, y, r) :- render_probe(x, y, r), next_active(k, _, _, _), shape(k, r, dx, _), x + dx >= 10.
+render_blocked(x, y, r) :- render_probe(x, y, r), next_active(k, _, _, _), shape(k, r, _, dy), y + dy >= 20.
+render_blocked(x, y, r) :- render_probe(x, y, r), next_active(k, _, _, _), shape(k, r, dx, dy), next_board(x + dx, y + dy, _).
+.decl render_obstruction(y: number)
+render_obstruction(q) :- next_active(_, x, y, r), render_blocked(x, q, r), q > y.
+.decl render_landing(y: number)
+render_landing(stop - 1) :- unit(1), stop = min q : { render_obstruction(q) }.
+.decl live_cell(x: number, y: number, k: number)
+live_cell(x + dx, y + dy, k) :- next_active(k, x, y, r), shape(k, r, dx, dy), !next_mode("over").
+.decl ghost_cell(x: number, y: number, k: number)
+ghost_cell(x + dx, ly + dy, k) :- next_active(k, x, _, r), shape(k, r, dx, dy), render_landing(ly), !next_mode("over").
+.decl screen_cell(area: symbol, x: number, y: number, color: symbol, style: symbol)
+.decl color(k: number, value: symbol)
+color(0, "cyan"). color(1, "gold"). color(2, "violet"). color(3, "green").
+color(4, "red"). color(5, "blue"). color(6, "orange").
+screen_cell("board", x, y, c, "active") :- live_cell(x, y, k), grid_x(x), grid_y(y), color(k, c).
+screen_cell("board", x, y, c, "solid") :- next_board(x, y, k), !live_cell(x, y, _), color(k, c).
+screen_cell("board", x, y, c, "ghost") :- ghost_cell(x, y, k), grid_x(x), grid_y(y), !live_cell(x, y, _), !next_board(x, y, _), color(k, c).
+screen_cell("board", x, y, "empty", "empty") :- grid_x(x), grid_y(y), !live_cell(x, y, _), !next_board(x, y, _), !ghost_cell(x, y, _).
+.decl preview_cell(x: number, y: number, k: number)
+preview_cell(dx, dy, k) :- next_rng(s), k = (s - (s / 7) * 7), shape(k, 0, dx, dy).
+screen_cell("preview", x, y, c, "solid") :- preview_cell(x, y, k), color(k, c).
+screen_cell("preview", x, y, "empty", "empty") :- grid_x(x), x < 4, grid_x(y), y < 4, !preview_cell(x, y, _).
+
+.decl screen_text(id: symbol, value: symbol)
+screen_text("score", to_string(s)) :- next_stats(s, _, _).
+screen_text("lines", to_string(n)) :- next_stats(_, n, _).
+screen_text("level", to_string(n / 10 + 1)) :- next_stats(_, n, _).
+screen_text("pieces", to_string(n)) :- next_stats(_, _, n).
+screen_text("status", "PLAYING") :- next_mode("playing").
+screen_text("status", "PAUSED") :- next_mode("paused").
+screen_text("status", "GAME OVER") :- next_mode("over").
+screen_text("overlay", "") :- next_mode("playing").
+screen_text("overlay", "PAUSED") :- next_mode("paused").
+screen_text("overlay", "GAME OVER") :- next_mode("over").
+screen_text("overlay_hint", "P to continue") :- next_mode("paused").
+screen_text("overlay_hint", "R to play again") :- next_mode("over").
+screen_text("overlay_hint", "") :- next_mode("playing").
+screen_text("title", "FALLING FACTS").
+screen_text("subtitle", "A little gravity. A lot of logic.").
+screen_text("next_label", "UP NEXT").
+screen_text("score_label", "SCORE").
+screen_text("lines_label", "LINES").
+screen_text("level_label", "LEVEL").
+screen_text("pieces_label", "PIECES").
+screen_text("engine_label", "POWERED BY RERAIL").
+screen_text("board_label", "01 / THE WELL").
+screen_text("controls_label", "HOW TO PLAY").
+screen_text("footer", "STACK BLOCKS. CLEAR LINES. TRUST THE FACTS.").
+screen_text("restart_label", "NEW GAME").
+.decl screen_control(position: number, keys: symbol, label: symbol)
+screen_control(0, "← →", "Move"). screen_control(1, "↑ / X", "Rotate right").
+screen_control(2, "Z", "Rotate left"). screen_control(3, "↓", "Soft drop").
+screen_control(4, "SPACE", "Hard drop"). screen_control(5, "P", "Pause / resume").
+screen_control(6, "R", "New game").
+.output screen_cell, screen_text, screen_control
+screen_text("intro_label", "THE ENGINE TAKES A PLAY BREAK").
+screen_text("local_label", "LOCAL PLAY").
+screen_text("edition_label", "EXPERIMENT").
+screen_text("edition_number", "No. 001").
+screen_text("dimensions", "10 × 20").
+screen_text("cell_label", "EVERY CELL IS A FACT").
+screen_text("preview_hint", "MAKE ROOM FOR WHAT’S NEXT.").
+screen_text("inspect_label", "VIEW THE FACTS").
+screen_text("output_label", "LIVE ENGINE OUTPUT").
+screen_text("left_button", "←").
+screen_text("rotate_button", "↻").
+screen_text("right_button", "→").
+screen_text("drop_button", "DROP").
+screen_text("pause_button", "P").
+screen_text("time_mode", m) :- next_time_mode(m).
+screen_text("clock", to_string(ms)) :- next_clock(ms).
+screen_text("timing_label", "TIME CONTROL").
+screen_text("realtime_label", "REAL TIME").
+screen_text("manual_label", "MANUAL").
+screen_text("step_label", "+100 ms · N").
+screen_text("gravity_step_label", "GRAVITY STEP · G").
+screen_text("manual_hint", "Time waits for you. M switches modes.").
+screen_text("realtime_hint", "Gravity follows the clock. M switches modes.").
+screen_text("graph_label", "WATCH THE ENGINE").
