@@ -16,6 +16,7 @@
 // Only files that mention SqlVersionedMergedCte are read.
 
 #include "python/ast.rr"    // assign_target, assign_value, unparen, leaf_name; def_name from python/names
+#include "data-layer/match-frames.rr"   // mf_up, mf_def: a decorator belongs to the def it decorates
 
 // EXPECTED_CALLERS; the option expectedCallers replaces them.
 .decl vmi_default(c: symbol)
@@ -46,23 +47,34 @@ vmi_file(d) :- source(d, sp), text(sp, s), contains("SqlVersionedMergedCte", s).
 vmi_ctor(c) :- kind(c, "call"), field(c, "function", f), vmi_callee(f, "SqlVersionedMergedCte"), docof(c, d), vmi_file(d).
 vmi_ctor(c) :- kind(c, "call"), field(c, "function", f), vmi_callee(f, x), vmi_alias(i, x), earlier(i, c),
     docof(c, d), docof(i, d), vmi_file(d).
+// vmi_callee(f, x): callee f, parentheses aside, is the name x or `….x`.
 .decl vmi_callee(f: node, x: symbol)
-vmi_callee(f, x) :- (kind(f, "identifier") ; kind(f, "attribute")), leaf_name(f, x).
+vmi_callee(f, x) :- unparen(f, g), (kind(g, "identifier") ; kind(g, "attribute")), leaf_name(g, x).
 .decl vmi_alias(i: node, x: symbol)
 vmi_alias(i, x) :- kind(i, "import_from_statement"), field(i, "name", a), kind(a, "aliased_import"),
     field(a, "name", n), text(n, "SqlVersionedMergedCte"), field(a, "alias", al), text(al, x).
 
 // vmi_scope(o, s): class or def o and the classes and defs around it, outermost first ("Builder.compile").
+// A def or class never sits inside a decorator, so plain nearest climbs its scope chain.
 .decl vmi_owner(k: symbol)
 vmi_owner("function_definition"). vmi_owner("class_definition").
 .decl vmi_scope(o: node, s: symbol)
 vmi_scope(o, x) :- vmi_owner(k), kind(o, k), def_name(o, x), !nearest(o, _, vmi_owner).
 vmi_scope(o, @dot(p, x)) :- vmi_owner(k), kind(o, k), def_name(o, x), nearest(o, q, vmi_owner), vmi_scope(q, p).
+// The constructor's own place is the linter's scope stack, mf_up: a call in a decorator, a default or a base
+// belongs to the def or class.
 // vmi_caller(c, s, p): constructor c's caller s, in the file at path p.
 .decl vmi_caller(c: node, s: symbol, p: symbol)
-vmi_caller(c, cat(f, ":", s), p) :- vmi_ctor(c), nearest(c, o, vmi_owner), vmi_scope(o, s), docof(c, d), doc(d, p, _),
+vmi_caller(c, cat(f, ":", s), p) :- vmi_ctor(c), mf_up(c, o), vmi_scope(o, s), docof(c, d), doc(d, p, _),
     file_name(d, f).
-vmi_caller(c, cat(f, ":"), p) :- vmi_ctor(c), !nearest(c, _, vmi_owner), docof(c, d), doc(d, p, _), file_name(d, f).
+vmi_caller(c, cat(f, ":"), p) :- vmi_ctor(c), !mf_up(c, _), docof(c, d), doc(d, p, _), file_name(d, f).
+// vmi_report_path(s, p): the plugin reports every finding of caller s at the last path recorded for it. The files
+// come in PRODUCTION_ROOTS order, steps first, so a caller also found under l9700_sql_graph_query lands there.
+.decl vmi_report_path(s: symbol, p: symbol)
+vmi_report_path(s, p) :- vmi_caller(_, s, p), glob("impl/common/l9700_sql_graph_query/**", p).
+vmi_report_path(s, p) :- vmi_caller(_, s, p), !vmi_in_graph(s).
+.decl vmi_in_graph(s: symbol)
+vmi_in_graph(s) :- vmi_caller(_, s, p), glob("impl/common/l9700_sql_graph_query/**", p).
 
 // Assignments as the linter keeps them: one map per def (a class body inside a def writes the def's map), written
 // when the statement ends, last write wins. `x = v` maps x to v; `a, b = f()` maps a and b to the call.
@@ -73,19 +85,14 @@ vmi_binds(a, x, v) :- assign_target(a, t), (kind(t, "pattern_list") ; kind(t, "t
     kind(v, "call").
 // vmi_known(c, x, v): at constructor c, x maps to v: the latest such assignment in c's def finished before c.
 .decl vmi_known(c: node, x: symbol, v: node)
-vmi_known(c, x, v) :- vmi_ctor(c), nearest(c, f, "function_definition"),
-    k = max i : { vmi_binds(b, x, _), nearest(b, f, "function_definition"), earlier(b, c), !within(c, b),
-    visit_index(b, i) },
-    vmi_binds(a, x, v), visit_index(a, k), nearest(a, f, "function_definition").
-// vmi_catalog(c, e): expression e, read at c, is catalog-backed.
-.decl vmi_catalog(c: node, e: node)
-vmi_catalog(c, e) :- vmi_projection(c, e0), unparen(e0, e), kind(e, "call"), field(e, "function", f), vmi_callee(f, x),
-    vmi_builder(x).
-vmi_catalog(c, e) :- vmi_projection(c, e0), unparen(e0, e), kind(e, "identifier"), text(e, x), vmi_name_ok(c, x).
-.decl vmi_name_ok(c: node, x: symbol)
-vmi_name_ok(c, x) :- vmi_known(c, x, v0), unparen(v0, v), kind(v, "call"), field(v, "function", f), vmi_callee(f, b),
-    vmi_builder(b).
-vmi_name_ok(c, x) :- vmi_known(c, x, v0), unparen(v0, v), kind(v, "identifier"), text(v, y), vmi_name_ok(c, y).
+vmi_known(c, x, v) :- vmi_ctor(c), mf_def(c, f),
+    k = max i : { vmi_binds(b, x, _), mf_def(b, f), earlier(b, c), !within(c, b), visit_index(b, i) },
+    vmi_binds(a, x, v), visit_index(a, k), mf_def(a, f).
+// vmi_backed(c, e): expression e, read at constructor c, is catalog-backed: a builder call, or a name whose
+// known value is backed. A cycle derives nothing, so it is not backed.
+.decl vmi_backed(c: node, e: node)
+vmi_backed(c, e) :- vmi_ctor(c), unparen(e, m), kind(m, "call"), field(m, "function", f), vmi_callee(f, x), vmi_builder(x).
+vmi_backed(c, e) :- unparen(e, m), kind(m, "identifier"), text(m, x), vmi_known(c, x, v), vmi_backed(c, v).
 // vmi_projection(c, e): the read_projection= argument.
 .decl vmi_projection(c: node, e: node)
 vmi_projection(c, e) :- vmi_ctor(c), field(c, "arguments", al), child(al, k, _), kind(k, "keyword_argument"),
@@ -94,7 +101,9 @@ vmi_projection(c, e) :- vmi_ctor(c), field(c, "arguments", al), child(al, k, _),
 .violation VMI001(at: loc, caller: symbol) "Expected merged constructor is absent. Caller: {caller}."
 // The linter reports it at line 0 of the steps directory; the recording puts it at line 1.
 VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_caller(_, s, _).
-.violation VMI002(at: node, caller: symbol) "Unreviewed merged constructor requires catalog identity audit. Caller: {caller}."
-VMI002(c, s) :- vmi_caller(c, s, _), !vmi_expected(s).
-.violation VMI003(at: node, caller: symbol) "Merged constructor must use a catalog-backed projection builder. Caller: {caller}."
-VMI003(c, s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_catalog(c, _).
+.violation VMI002(at: loc, caller: symbol) "Unreviewed merged constructor requires catalog identity audit. Caller: {caller}."
+VMI002(@place(p, l), s) :- vmi_caller(c, s, _), !vmi_expected(s), vmi_report_path(s, p), line(c, l).
+.violation VMI003(at: loc, caller: symbol) "Merged constructor must use a catalog-backed projection builder. Caller: {caller}."
+VMI003(@place(p, l), s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_backed_ctor(c), vmi_report_path(s, p), line(c, l).
+.decl vmi_backed_ctor(c: node)
+vmi_backed_ctor(c) :- vmi_projection(c, e), vmi_backed(c, e).
