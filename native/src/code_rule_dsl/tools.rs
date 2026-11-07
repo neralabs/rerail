@@ -46,6 +46,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
 pub fn run_rr(path: &std::path::Path, root: &std::path::Path, out: &std::path::Path, options: &serde_json::Value) -> Result<serde_json::Value, String> {
     use super::{logic::{rr, plan::corpus}, typing::file_local::Binding};
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
+    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
@@ -57,6 +58,7 @@ pub fn run_rr(path: &std::path::Path, root: &std::path::Path, out: &std::path::P
         Err(e) => return Err(e.to_string()),
     };
     Ok(serde_json::json!({"diagnostics": rows, "files": report.files, "nodes": report.nodes,
+                         "metadata": metadata,
                          "programInputs": files.iter().map(|file| serde_json::json!({
                              "path": file.path,
                              "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())

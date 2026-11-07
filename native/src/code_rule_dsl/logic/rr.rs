@@ -38,6 +38,24 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     lower::lower(statements)
 }
 
+/// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
+pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+    use syntax::Tok;
+    let mut policies = program.policies.clone();
+    for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
+        let tokens = syntax::tokens(text)?;
+        let Some((Tok::Str(id), _, _)) = tokens.first() else {
+            return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
+        };
+        let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
+            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            _ => None,
+        });
+        policies.push(serde_json::json!({"id": id, "revision": revision}));
+    }
+    Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
+}
+
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
     read_file(path).map(|(program, _)| program)
