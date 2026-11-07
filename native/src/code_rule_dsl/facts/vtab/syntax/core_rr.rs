@@ -670,6 +670,15 @@ impl CoreRows {
         }
     }
 
+    /// A withheld document's one row: its first error (`syntax_error`), at line 1 if the parse flags an error no
+    /// node holds.
+    pub(super) fn withheld(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        let f = &*p.facts;
+        let x = p.extra.as_ref().expect("core.rr's lines");
+        let (l, msg) = first_error(f, &x.lines, &|id| dialect.name(f, id)).unwrap_or((1, "invalid syntax".to_owned()));
+        self.syntax_error.push([i64::from(p.key), i64::from(l), string(&msg) as i64]);
+    }
+
     /// A document's rows: its first error, its source-text spans, and its tokens.
     pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool) {
         let f = &*p.facts;

@@ -259,7 +259,8 @@ struct Extra {
 }
 
 impl Projected {
-    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape) -> Self {
+    /// A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts.
+    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape, withheld: bool) -> Self {
         let f = &*facts;
         let mut p = Projected {
             key,
@@ -275,7 +276,7 @@ impl Projected {
             facts: Arc::clone(&facts),
         };
         let mut next_idx: Vec<u32> = Vec::new();
-        for id in 0..f.len() as u32 {
+        for id in 0..if withheld { 0 } else { f.len() as u32 } {
             if !f.named(id) || (shape == Shape::T && dialect.class(f, id) == Class::Comment) {
                 continue;
             }
@@ -321,8 +322,10 @@ impl Projected {
                 }
             }
             let tokens = spans.len() as u32;
-            spans.push([0, f.source.len() as u32]);
-            spans.extend((1..=lines.count()).map(|l| lines.span(l)));
+            if !withheld {
+                spans.push([0, f.source.len() as u32]);
+                spans.extend((1..=lines.count()).map(|l| lines.span(l)));
+            }
             let matched = spans.len() as u32;
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched }));
         }
@@ -483,8 +486,11 @@ impl Batch {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
             let dialect = &dialects[&tag];
-            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape);
-            if !rx_spans.is_empty() {
+            // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
+            // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
+            let withheld = core && d.facts.syntax_errors;
+            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld);
+            if !rx_spans.is_empty() && !withheld {
                 c.matches(&mut p, &rx_spans, &mut string);
             }
             let key = i64::from(d.key);
@@ -579,7 +585,9 @@ impl Batch {
                     c.node(&p, dialect, local as u32, &mut string, wants_text);
                 }
             }
-            if core {
+            if withheld {
+                c.withheld(&p, dialect, &mut string);
+            } else if core {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens);
                 if wants_digests {
                     c.digests(&p, dialect, &mut string);

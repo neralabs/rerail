@@ -400,7 +400,21 @@ impl Lowerer {
     /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation.
     fn findings(&mut self) {
-        if self.violations.is_empty() {
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        let on: Vec<(String, String, bool)> = self
+            .prog
+            .settings
+            .iter()
+            .filter(|(k, _)| k == "on")
+            .filter_map(|(_, text)| {
+                let words: Vec<&str> = text.split_whitespace().collect();
+                match words.as_slice() {
+                    [what @ ("syntax_error" | "input_error"), "report", code, rest @ ..] => Some(((*what).to_owned(), (*code).to_owned(), rest == ["at", "line", "1"])),
+                    _ => None,
+                }
+            })
+            .collect();
+        if self.violations.is_empty() && on.is_empty() {
             return;
         }
         let policy = self
@@ -439,6 +453,26 @@ impl Lowerer {
                 args.extend(cols.into_iter().skip(1));
                 self.prog.rules.push(Rule { head, body: vec![atom(&place_relation(&f.name), args)] });
             }
+        }
+        // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
+        for (what, code, line_one) in on {
+            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let body = if what == "syntax_error" {
+                let line = if line_one { Term::Wild } else { v("rr_l") };
+                let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+                if line_one {
+                    body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
+                }
+                body
+            } else {
+                vec![atom("input_error", vec![v("rr_p"), Term::Wild, Term::Wild]), Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) }]
+            };
+            for rel in [what.as_str(), "doc"] {
+                if !self.prog.inputs.iter().any(|i| i == rel) && self.prog.decls.contains_key(rel) {
+                    self.prog.inputs.push(rel.to_owned());
+                }
+            }
+            self.prog.rules.push(Rule { head, body });
         }
     }
 

@@ -726,6 +726,38 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `core.rr`: a document that does not parse is withheld (no facts but its `doc`, path and `syntax_error` rows), and
+/// `.on syntax_error report CODE at line 1` reports it.
+#[test]
+fn documents_that_do_not_parse_are_withheld_and_reported() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("withheld");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("good.py"), "x = 1\n").unwrap();
+    std::fs::write(dir.join("bad.py"), "y = 2\ndef (:\n").unwrap();
+    let rule = dir.join("w.rr");
+    std::fs::write(&rule, r#"
+.policy "t:withheld" revision 1
+.on syntax_error report BAD000 at line 1
+.violation ASSIGN(at: node) "an assignment"
+ASSIGN(n) :- kind(n, "assignment").
+.decl lines(d: number, k: number)
+lines(d, k) :- line_count(d, k).
+.decl err(d: number)
+err(d) :- syntax_error(d, _, _).
+.output lines, err
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let mut v: Vec<String> = read("violation").lines().map(str::to_owned).collect();
+    v.sort();
+    assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1"]);
+    assert_eq!(read("lines").lines().count(), 1, "the withheld document has no lines");
+    assert_eq!(read("err").lines().count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `dfs_first` and `dfs_first_memo` through rules: the first target by edge order from each root, the ord of the
 /// root's edge that starts the path, and the memo variant over its roots in order.
 #[test]
