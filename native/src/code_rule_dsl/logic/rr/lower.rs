@@ -120,6 +120,8 @@ struct Lowerer {
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
     siblings: Vec<Lit>,
+    /// The relations the clause being lowered writes: a context leaves their atoms out where it can (`context`).
+    heads: BTreeSet<String>,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -607,6 +609,7 @@ impl Lowerer {
             })
         }
         self.top_is_var = binds_top(body);
+        self.heads = heads.iter().map(|h| h.rel.clone()).collect();
         // An aggregate in a head's argument (`cc(f, 1 + count : { … })`) is a variable the body binds.
         let mut heads = heads.to_vec();
         let mut body = body.to_vec();
@@ -1605,7 +1608,13 @@ impl Lowerer {
                 .collect()
         };
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
-        let (first, bound) = Self::bound_context(context(false));
+        // So do atoms of the clause's own heads, where the rest binds the variables: through one, the aggregate
+        // would sit in the head's recursion (`la_cb(n, e) :- …, la_cb(s, v), count : { la_vis(n, x, s2, …) } = 0`).
+        // The context then holds more rows than the rule, which joins it with its own literals.
+        let heads = self.heads.clone();
+        let own = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if heads.contains(rel));
+        let (first, bound) = Self::bound_context(context(false).into_iter().filter(|l| !own(l)).collect());
+        let (first, bound) = if vars.iter().all(|v| bound.contains(v)) { (first, bound) } else { Self::bound_context(context(false)) };
         let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;

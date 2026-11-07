@@ -336,6 +336,22 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(p.rules.iter().find(|r| r.head.rel == "cv").unwrap().head.args[1], Term::Top);
 }
 
+/// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
+/// aggregate would sit in the head's recursion (lazy-analyzer.rr's `la_cb`).
+#[test]
+fn a_context_leaves_out_the_clause_head() {
+    let p = parse(concat!(
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl cb(n: node)\n.output cb\n",
+        "cb(n) :- seed(n).\n",
+        "cb(n) :- e(n, x, s), cb(n), count : { e(n, x, s2), s2 > s } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
+}
+
 /// What is not lowered yet says so by name.
 #[test]
 fn unlowered_constructs_are_named() {
