@@ -82,7 +82,7 @@ def run(args):
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
         if native:
-            last = {'type_safety_patterns': 'message', 'forwardref': 'code'}[case['check']]
+            last = {'type_safety_patterns': 'message', 'forwardref': 'code', 'data_layer_compat_aliases': 'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last]))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:

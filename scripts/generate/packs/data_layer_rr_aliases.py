@@ -30,8 +30,12 @@ alias_import(a, s, @nfkc(name), @nfkc(original)) :- kind(s, "import_from_stateme
 alias_import(a, s, @nfkc(name), @nfkc(original)) :- kind(s, "import_statement"), field(s, "name", a),
     kind(a, "aliased_import"), field(a, "alias", nm), text(nm, name), field(a, "name", v),
     child(v, leaf, i), !child(v, _, i + 1), text(leaf, original).
+// `(A)` is a Name target. `(A,)` is a tuple target and does not qualify.
+.decl alias_target(t: node, n: node)
+alias_target(t, t) :- kind(t, "identifier").
+alias_target(t, n) :- kind(t, "tuple_pattern"), !op(t, ","), child(t, c, _), !kind(c, "comment"), alias_target(c, n).
 .decl alias_assignment(t: node, s: node, name: symbol, original: symbol)
-alias_assignment(t, s, @nfkc(name), original) :- asgstmt(s, _), assign_target(s, target), unparen(target, t),
+alias_assignment(t, s, @nfkc(name), original) :- asgstmt(s, _), assign_target(s, target), alias_target(target, t),
     kind(t, "identifier"), text(t, name), assign_value(s, value), alias_leaf(value, original).
 '''
     for code, rel in [('DLA001', 'alias_import'), ('DLA002', 'alias_assignment')]:

@@ -1049,7 +1049,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
-      "sha256": "2e37bd3b806a31034fbe543e44ff4d72262dcd71f475c8d33e5c2b92eb1aabb6",
+      "sha256": "9d76cdd125d7ad8776204e5ff67cf1dfa4042fd0f9dd01c1c58e86cbff78751a",
       "origin": "authored",
       "upstreamPath": "scripts/lint_data_layer_compat_aliases.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1448,7 +1448,7 @@
       "legacySha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
-      "ruleSha256": "2e37bd3b806a31034fbe543e44ff4d72262dcd71f475c8d33e5c2b92eb1aabb6"
+      "ruleSha256": "9d76cdd125d7ad8776204e5ff67cf1dfa4042fd0f9dd01c1c58e86cbff78751a"
     },
     {
       "check": "layer_violations",
