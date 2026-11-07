@@ -26,7 +26,11 @@ def codes(modules):
                 if isinstance(function,(staticmethod,classmethod)):function=function.__func__
                 if isinstance(function,property):function=function.fget
                 if inspect.isfunction(function) and function.__module__==module.__name__:
-                    passive=inspect.isclass(value) and is_dataclass(value)
+                    # Dataclass collectors also contain detector code. Only generated storage
+                    # methods are passive; source-defined methods must pass the semantic guard.
+                    storage = inspect.isclass(value) and (is_dataclass(value) or
+                        (issubclass(value, tuple) and isinstance(getattr(value, '_fields', None), tuple)))
+                    passive = storage and function.__name__.startswith('__') and function.__code__.co_filename == '<string>'
                     result[function.__code__]=(check,function.__qualname__,passive)
     return result
 
