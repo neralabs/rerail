@@ -27,7 +27,7 @@ use super::{
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -142,6 +142,27 @@ impl ContentStore {
         all.push(HashKey::blake3(content));
         all.extend_from_slice(aliases);
         self.put_source(bytes, &all)
+    }
+
+    /// Every path-dependent result under `plan` at `fact_schema` whose source is one of `sources`: (source,
+    /// path, entry), decompressed, by path.
+    pub fn facts_results_of_plan(&self, plan: [u8; 32], fact_schema: u32, sources: &HashSet<i64>) -> StoreResult<Vec<(SourceId, String, Vec<u8>)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT source_id,path,codec_id,raw_length,frame FROM facts_results \
+             WHERE plan_digest=?1 AND fact_schema=?2 AND path<>?3 ORDER BY path",
+        )?;
+        let rows = statement.query_map(params![&plan[..], i64::from(fact_schema), CONTENT_PURE], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, Vec<u8>>(4)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (source, path, codec, raw_length, frame) = row?;
+            if sources.contains(&source) {
+                out.push((SourceId(source), path, decode(codec, raw_length, frame)?));
+            }
+        }
+        Ok(out)
     }
 
     /// Every memo row of `key`'s content, content-pure and at `key.path`, for `key.fact_schema`.

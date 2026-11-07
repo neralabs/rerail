@@ -193,6 +193,38 @@ impl ContentStore {
         })
     }
 
+    /// Records the relations a memo plan's entries hold rows of, each with its declared columns (JSON).
+    pub fn record_corpus_relations(&self, plan: [u8; 32], relations: &[(String, String)]) -> StoreResult<()> {
+        self.immediate_transaction(|tx| {
+            let mut put = tx.prepare_cached("INSERT OR REPLACE INTO corpus_plan_relations(plan_digest, relation, columns) VALUES (?1, ?2, ?3)")?;
+            for (relation, columns) in relations {
+                put.execute(params![&plan[..], relation, columns])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The newest run of `root` (as recorded, canonical): its memo plan, the sources it read, and the relations
+    /// its plan's entries hold rows of with their declared columns (JSON). `None` if the root has no run.
+    pub fn corpus_run_of(&self, root: &str) -> StoreResult<Option<([u8; 32], Vec<i64>, Vec<(String, String)>)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let run: Option<(Vec<u8>, Vec<u8>)> = connection
+            .query_row(
+                "SELECT m.plan_digest, m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
+                 WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT 1",
+                [root],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((plan, sources)) = run else { return Ok(None) };
+        let plan: [u8; 32] = plan.try_into().map_err(|_| StoreError::Corrupt("a corpus manifest's plan is not 32 bytes".into()))?;
+        let relations = connection
+            .prepare_cached("SELECT relation, columns FROM corpus_plan_relations WHERE plan_digest = ?1 ORDER BY relation")?
+            .query_map([&plan[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some((plan, decode_ids(&sources)?, relations)))
+    }
+
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
     /// memo plan `plan`, at unix second `now`. True if the manifest is new: a run matching an earlier manifest of its
     /// root only moves that one's last run.
@@ -441,6 +473,7 @@ impl ContentStore {
             )?;
             if (n as i64) < PLAN_ROWS_PER_PASS {
                 tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
+                tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
             }
             Ok(n)
         })?;

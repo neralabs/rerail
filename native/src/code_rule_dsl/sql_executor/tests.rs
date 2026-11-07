@@ -516,3 +516,43 @@ a(x) :- b(x).
     let err = executor.run(cycle.into(), "python".into(), None).unwrap_err().to_string();
     assert!(err.contains("no recursion through SQL"), "{err}");
 }
+
+/// A corpus run's per-file memo is readable from a session without evaluating anything: the run's exported
+/// relations under their declared columns, and each file's document key with its path.
+#[test]
+fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
+    // A text no other test parses, so this run writes its own memo entries.
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sql-corpus");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), format!("{marker}def f():\n    pass\n")).unwrap();
+    std::fs::write(dir.join("b.py"), format!("{marker}def f():\n    pass\ndef g():\n    pass\n")).unwrap();
+    let rule = dir.join("dup.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl dup(x: symbol)
+dup(x) :- def(a, x), def(b, x), a != b.
+.output dup
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(report.memo, (0, 0), "the run memoises every file");
+    let store = std::env::var("RERAIL_TAPE_CACHE").map_or_else(|_| std::env::temp_dir().join("rerail-tape-cache.sqlite"), std::path::PathBuf::from);
+    let mut executor = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).unwrap();
+    let bound: Value = serde_json::from_str(&executor.bind_corpus(dir.to_string_lossy().into_owned(), None).unwrap()).unwrap();
+    assert_eq!(bound, json!({"files": 2, "relations": {"def": 3}}));
+    // A node names its document (`n >> 32`), which `corpus_document` maps to the file's path.
+    assert_eq!(
+        rows(&executor, "SELECT sym_text(d.path), sym_text(x) FROM def JOIN corpus_document d ON d.doc = n >> 32 ORDER BY 1, 2"),
+        json!([["a.py", "f"], ["b.py", "f"], ["b.py", "g"]])
+    );
+    // The bound rows are ordinary inputs: rules run over them.
+    executor
+        .run(".decl def(n: node, x: symbol)\n.input def\n.decl shared(x: symbol)\nshared(x) :- def(a, x), def(b, x), a != b.\n.output shared\n".into(), "python".into(), None)
+        .unwrap();
+    assert_eq!(rows(&executor, "SELECT sym_text(x) FROM rr_rel_shared"), json!([["f"]]));
+    assert!(executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["nope".into()])).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

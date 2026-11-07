@@ -18,7 +18,7 @@ const SCHEMA: u32 = 3;
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Entry {
+pub(in crate::code_rule_dsl) struct Entry {
     /// The document key the rows were made under (`doc_keys`): their node ids are `key << 32 | index`.
     pub key: i64,
     /// The document's nodes (for the run's report).
@@ -92,6 +92,26 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
+}
+
+/// The newest run of `root`: its memo plan's relations (each with its declared columns, as `[name, type]` pairs)
+/// and every file's entry, by stored path. `None` if the root has no recorded run.
+#[allow(clippy::type_complexity)]
+pub(in crate::code_rule_dsl) fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMap<String, Vec<(String, String)>>, Vec<(String, Entry)>)>> {
+    let Some((plan, sources, relations)) = store.corpus_run_of(root)? else { return Ok(None) };
+    let relations = relations
+        .into_iter()
+        .map(|(rel, columns)| {
+            serde_json::from_str(&columns).map(|c| (rel, c)).map_err(|e| StoreError::Corrupt(format!("corpus relation columns: {e}")))
+        })
+        .collect::<StoreResult<_>>()?;
+    let sources: HashSet<i64> = sources.into_iter().collect();
+    let entries = store
+        .facts_results_of_plan(plan, SCHEMA, &sources)?
+        .into_iter()
+        .map(|(_, path, bytes)| decode(&bytes).map(|e| (path, e)))
+        .collect::<StoreResult<_>>()?;
+    Ok(Some((relations, entries)))
 }
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.

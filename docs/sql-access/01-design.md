@@ -74,8 +74,23 @@ session's relation, for every input and derived relation whose width matches its
 logically nullary relation has one column, `present`. The derived view wins over an input of the
 same name from another program.
 
-**Not built yet:** everything below, which is the target. That covers the memo frames,
-cross-file relations, staleness, materialisation and the decoding functions.
+**Built (step 3): a corpus run's memo frames, through `bindCorpus(root, relations?)`.**
+- A corpus run records, per memo plan, the relations its entries hold rows of, with their declared
+  columns, in the additive table `corpus_plan_relations`. It is collected with the plan.
+- `bindCorpus` finds the root's newest manifest and reads that plan's entries for the manifest's
+  sources. It binds each relation as an input fact under its own name and `.decl` columns, plus
+  `corpus_document(doc, path)`.
+- Nothing is evaluated. The bound rows are ordinary inputs, so SQL and rules both read them. A
+  node's document is `n >> 32`.
+
+Limits of step 3:
+- **The memo holds only what the file-local part hands on:** the exports. File-local outputs are
+  memoised as text lines and are not bound yet. Cross-file relations are not framed.
+- **Rows are decoded into the session when bound,** not read lazily per document. A source that
+  decodes one frame per document constraint (`doc_column`, `lookup_in`) is the next form.
+
+**Not built yet:** the remainder below, which is the target. That covers lazy per-document reads,
+cross-file relations, staleness, the overlay, materialisation and the decoding functions.
 
 - **Storage is the frames the engine already writes**, read per (relation, document) and merged
   with the in-memory overlay. Nothing new is written for SQL's sake.

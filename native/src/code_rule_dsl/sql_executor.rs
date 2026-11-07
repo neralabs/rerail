@@ -294,6 +294,56 @@ impl CodeRuleSqlExecutor {
         Ok(())
     }
 
+    /// Bind the relations of the newest corpus run of `root` from the rows its per-file memo already wrote
+    /// (`docs/sql-access/01-design.md` §2, option C): each as an input fact under its own name and declared
+    /// columns, plus `corpus_document(doc, path)` from each file's document key to its stored path. Nothing is
+    /// evaluated. `relations` limits which are bound; a name the run's memo does not hold is an error.
+    #[napi]
+    pub fn bind_corpus(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
+        let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
+        let (declared, entries) = plan::corpus::memo::read_run(&self.store, &canonical)
+            .map_err(error)?
+            .ok_or_else(|| error(format!("{root}: no corpus run is recorded for this root")))?;
+        let wanted: Vec<String> = match relations {
+            Some(names) => {
+                if let Some(missing) = names.iter().find(|n| !declared.contains_key(*n)) {
+                    return Err(error(format!("{missing}: not a relation of the run's memo")));
+                }
+                names
+            }
+            None => declared.keys().cloned().collect(),
+        };
+        let mut counts = serde_json::Map::new();
+        for rel in &wanted {
+            let decl = &declared[rel];
+            let types: Option<Vec<&str>> = decl
+                .iter()
+                .map(|(_, ty)| match ty.as_str() {
+                    "sym" => Some("symbol"),
+                    "int" => Some("number"),
+                    "node" | "loc" => Some(ty.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let rows: BTreeSet<&[i64]> = entries
+                .iter()
+                .filter_map(|(_, e)| e.rows.get(rel))
+                .flat_map(|(width, values)| values.chunks((*width).max(1)))
+                .collect();
+            counts.insert(rel.clone(), json!(rows.len()));
+            self.bind_relation(
+                json!({"name": rel, "columns": catalog::view_columns(decl), "types": types, "rows": rows}).to_string(),
+            )?;
+        }
+        let paths: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+        let atoms = self.store.intern_atoms(&paths).map_err(error)?;
+        let documents: Vec<Value> = entries.iter().zip(atoms).map(|((_, e), path)| json!([e.key, path])).collect();
+        self.bind_relation(
+            json!({"name": "corpus_document", "columns": ["doc", "path"], "types": ["number", "symbol"], "rows": documents}).to_string(),
+        )?;
+        serde_json::to_string(&json!({"files": entries.len(), "relations": counts})).map_err(error)
+    }
+
     /// Clear generated results while keeping bound facts and connection-local extensions.
     #[napi]
     pub fn reset(&mut self) -> Result<()> {

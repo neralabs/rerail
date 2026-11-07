@@ -348,6 +348,14 @@ After every run, removal and reset, the session rebuilds a catalog of its retain
 For example, `SELECT src, dst FROM rr_rel_reach` reads `reach`, whose own columns are `c0, c1`. The `rr_` prefix is reserved.
 Design: `docs/sql-access/01-design.md`.
 
+### A corpus run's rows
+
+`bindCorpus(root, relations?)` binds the relations that the newest corpus run of `root` memoised per file:
+- each relation is read from the frames the run wrote, under its declared columns;
+- `corpus_document(doc, path)` maps each document key to its file; a node's document is `n >> 32`.
+
+Nothing is evaluated: SQL and rules read the bound rows as inputs.
+
 ### SQL producers
 
 A relation can take its rows from a SQL query:
