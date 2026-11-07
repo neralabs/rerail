@@ -420,6 +420,11 @@ enum Place {
     Docof,
 }
 
+/// Every batch built in a test, by its documents' keys, held weakly: a run releases its batches when it returns
+/// (`logic::rr::tests`), so a chunk's facts are not kept by a binding past it.
+#[cfg(test)]
+pub(crate) static BATCHES: parking_lot::Mutex<Vec<(Vec<u32>, std::sync::Weak<Batch>)>> = parking_lot::Mutex::new(Vec::new());
+
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`).
@@ -649,7 +654,10 @@ impl Batch {
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
         let locs = offsets(&|p| p.locs() as usize);
-        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, py }), relations, (strings, atoms)))
+        let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, py });
+        #[cfg(test)]
+        BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
+        Ok((batch, relations, (strings, atoms)))
     }
 
     fn offsets(&self, view: View) -> &[usize] {

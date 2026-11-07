@@ -798,6 +798,14 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
     for chunk_nodes in [60, 400] {
         assert_eq!(run(chunk_nodes), whole, "chunks of {chunk_nodes} nodes");
     }
+    // Every chunk's batch (its facts) is released when the run returns: no binding keeps one.
+    let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|f| f.ends_with(".py")).collect();
+    files.sort();
+    let keys: std::collections::BTreeSet<u32> = crate::code_rule_dsl::logic::plan::corpus::memo::doc_keys(&files).into_iter().map(|k| k as u32).collect();
+    let batches = crate::code_rule_dsl::facts::vtab::syntax::BATCHES.lock();
+    let ours: Vec<_> = batches.iter().filter(|(k, _)| k.iter().any(|k| keys.contains(k))).collect();
+    assert!(ours.len() >= 6, "the runs' batches were recorded: {}", ours.len());
+    assert!(ours.iter().all(|(_, b)| b.upgrade().is_none()), "a released batch is still held");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
