@@ -1,6 +1,7 @@
 """Translate all ownership clauses; canonical syntax is a shared native input."""
 import json,re
 from data_layer_rr_text import module,character_class
+from data_layer_rr_plan_ownership_graph import supplied_ast
 
 
 def plan_scope_ownership(source,target,header):
@@ -44,6 +45,7 @@ pso_hidden(d) :- path_part(d, name), (name = ".git" ; name = ".venv" ; name = "v
 pso_raw(d, t) :- pso_native(), pso_document(d, _), source(d, sp), text(sp, t).
 .decl pso_enabled(d: number)
 pso_enabled(d) :- pso_raw(d, t), pso_trigger(trigger), contains(trigger, t).
+pso_enabled(d) :- pso_document(d, _), option("entryPoint", entry), (entry = "lint" ; entry = "_lint_file" ; entry = "_source_facts" ; entry = "collector").
 .decl pso_valid(d: number)
 pso_valid(d) :- pso_enabled(d), !syntax_error(d, _, _).
 .decl pso_node(n: node, d: number, line: number, ordinal: number)
@@ -148,4 +150,4 @@ pso_issue(d, strlen(@replace_all(@slice(text, 0, at), "[^\\n]", "")) + 1, code, 
     text+=r'''
 pso_issue(d, 1, "PSO000", cat(message, " (", filename, ", line ", to_string(line), ")"), 0, 0, 0, 0) :- pso_document(d, _), pso_enabled(d), syntax_error(d, line, message), file_name(d, filename).
 '''
-    return text
+    return text+supplied_ast()

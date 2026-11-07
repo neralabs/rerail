@@ -25,7 +25,11 @@ def ast_input(tree):
     annotations=[];pending=[tree];index=0
     while pending:
         node=pending.pop()
-        if isinstance(node,ast.expr):annotations.append((index,ast.unparse(node)))
+        field=options['astFields'][index]
+        parent=int(options['astParents'][index])
+        parent_kind=options['astKinds'][parent] if parent>=0 else ''
+        if isinstance(node,ast.Call) or (field=='func' and parent_kind=='Call') or (field=='annotation' and parent_kind in {'arg','AnnAssign'}):
+            annotations.append((index,ast.unparse(node)))
         pending.extend(reversed(list(ast.iter_child_nodes(node))));index+=1
     transport=('def _pso_transport('+', '.join(f'e{i}: {text}' for i,text in annotations)+'):\n    pass\n') if annotations else 'pass\n'
     return options,transport
@@ -50,7 +54,7 @@ def install(suite,module):
 
 
 def ordered(rows):
-    return sorted(rows,key=lambda r:(r['path'],r['line'],r['code'],r['parameters']['event'],r['parameters']['rank'],r['parameters']['witness']))
+    return sorted(rows,key=lambda r:(r['path'],r['line'],r['code'],r['parameters']['stage'],r['parameters']['event'],r['parameters']['rank'],r['parameters']['witness']))
 
 
 def scan(suite,entry,module,values):

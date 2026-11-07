@@ -15,7 +15,8 @@ DISABLED = '.policy "disabled-control" revision 1\n.language python\n.violation 
 
 def auxiliary_output(check, row):
     """Only these transport outputs can remain in a disabled backend detector."""
-    allowed = {'async_sync_boundary': {'BS_COUNT', 'BS_CATEGORY'},
+    allowed = {'plan_scope_ownership': {'PSO_FILE'},
+               'async_sync_boundary': {'BS_COUNT', 'BS_CATEGORY'},
                'backend_coupling': {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'},
                'backend_type_strings': {'BTS_CONFIG', 'BTS_SKIP', 'BTS_FILE', 'BTS_SKIPPED'},
                'unresolved_forward_refs': {'UF_CONFIG', 'UF_HELPER_TRUE', 'UF_READ_ERROR', 'UF_CLI_FILE'},
@@ -24,6 +25,10 @@ def auxiliary_output(check, row):
 
 
 def disable_policy(check, source):
+    if check=='plan_scope_ownership':
+        disabled,count=re.subn(r'(?m)^(Ownership\d+\([^\n]*?\)\s*:-)',r'\1 1 = 0,',source)
+        if count!=14:raise ValueError('Ownership mutation requires every diagnostic output')
+        return disabled
     if check == 'async_sync_boundary':
         disabled, count = re.subn(r'(?m)^(bs_detect\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
         if count != 3:
