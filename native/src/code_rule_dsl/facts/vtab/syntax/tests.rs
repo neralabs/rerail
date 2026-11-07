@@ -264,6 +264,7 @@ fn within_holds_exactly_the_contained_pairs() {
                     && match mode {
                         within::Mode::Tree => lb < la && la <= lb + zb,
                         within::Mode::Span => sb <= sa && ea <= eb,
+                        within::Mode::Axis(_) => unreachable!("the axes have their own test"),
                     };
                 if holds {
                     expected.insert((id(a), id(b)));
@@ -285,6 +286,64 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
+    }
+}
+
+/// The kind-set axes (`within::Axis`: `nearest`, `inside`, `has`) hold exactly the pairs a brute-force walk of each
+/// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
+#[test]
+fn the_kind_set_axes_hold_exactly_their_pairs() {
+    use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
+    let store = ContentStore::open(&temp("axes")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size) and kind atom of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        (p.key, local, p.size[local] as usize)
+    };
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
+        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+    };
+    // Nested kinds: the root's, and two from inside the documents.
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let member = |r: usize| set.contains(&kind(r));
+    let below = |n: usize, a: usize| {
+        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        dn == da && la < ln && ln <= la + za
+    };
+    for axis in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set);
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            for a in 0..nodes {
+                let holds = below(n, a)
+                    && match axis {
+                        within::Axis::Inside => member(a),
+                        within::Axis::Has => member(n),
+                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
+                    };
+                if holds {
+                    expected.insert((id(n), id(a)));
+                }
+            }
+        }
+        assert!(!expected.is_empty());
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect());
+        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..source.len()).collect()), expected);
+        assert_eq!(source.len(), expected.len());
+        assert_eq!(source.estimated_len(), expected.len(), "an axis's rows are counted from the tree");
+        let stats = source.statistics().unwrap();
+        assert!(stats.iter().all(|(_, rows, ndv, _, _)| *rows == expected.len() as i64 && *ndv <= *rows));
     }
 }
 

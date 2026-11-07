@@ -1559,3 +1559,12 @@ one. An unchanged corpus therefore reruns the typing program's rounds.
 
 **Closure:** the rows are kept as a derivation (03 §14, `content_store::derivation`), valid while the program and
 the files its rounds read are unchanged, and a run with a valid derivation reads them instead.
+
+## O87. The device's nearest is off the corpus path
+
+Since decision 0053, the corpus runner's kind-set axes are made per looked-up node on the host (`within::Axis`).
+The file-local FIX on Metal (pointer jumping, `typing::file_local::nearest` with `Binding::Metal`) now runs only for
+typing's file-local part. A join that scans an axis makes every node's rows on the host, one climb each.
+
+**Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
+where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
