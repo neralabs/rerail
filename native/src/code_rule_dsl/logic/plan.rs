@@ -3709,11 +3709,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // and a gate's relations stay to the end).
     let last = last_reads(prog, &sccs, &run.views);
     let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps))).cloned().collect();
+    let mut unindexed: BTreeSet<String> = BTreeSet::new();
     for (at, scc) in sccs.iter().enumerate() {
         let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
         if !done.is_empty() {
             super::native::component::release(db, &done);
             done.iter().for_each(|r| { run.native_rels.remove(r); });
+        }
+        // One that stays but that no later stratum reads keeps its rows only.
+        let read_out: Vec<String> = run.native_rels.iter().filter(|r| stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
+        if !read_out.is_empty() {
+            super::native::component::unindex(db, &read_out);
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");

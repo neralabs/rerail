@@ -955,6 +955,26 @@ pub fn release(conn: &Connection, tables: &[String]) {
     }
 }
 
+/// Drops the indexes of native relations `tables` that stay to the run's end (outputs, kept relations) but that no
+/// later stratum reads: their rows are read once more, in order, and their per-column indexes were most of their
+/// size. A relation shared with a reader still open keeps them.
+pub fn unindex(conn: &Connection, tables: &[String]) {
+    let at = scope(conn);
+    let mut derived = DERIVED.lock().unwrap();
+    for t in tables {
+        if let Some(rel) = derived.get_mut(&(at, t.clone())).and_then(Arc::get_mut) {
+            rel.chains = Vec::new();
+            *rel.idx.get_mut().unwrap() = HashMap::default();
+        }
+    }
+}
+
+/// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
+pub fn forget_derived(conn: &Connection) {
+    let at = scope(conn);
+    DERIVED.lock().unwrap().retain(|(s, _), _| *s != at);
+}
+
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;

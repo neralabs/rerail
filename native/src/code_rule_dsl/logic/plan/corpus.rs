@@ -1194,6 +1194,8 @@ pub(crate) fn run_with_options(
             }
         }
         db.execute_batch("COMMIT")?;
+        // The chunk's native relations are written to `x`: none is read again.
+        crate::code_rule_dsl::logic::native::component::forget_derived(&db);
         if memoised && attributable {
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             for (d, path, source_id, _) in &chunk_docs {
