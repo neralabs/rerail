@@ -115,3 +115,4 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `gate/data-layer/packs/data-layer/candidates/rr/connection-caches.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |

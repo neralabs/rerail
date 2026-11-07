@@ -1,0 +1,1596 @@
+{
+  "format": "rerail.rr-fresh-cases/v1",
+  "cases": [
+    {
+      "id": "regex-0",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "́backend == 'sqlite'"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "́backend == 'sqlite'"
+      }
+    },
+    {
+      "id": "regex-1",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "²backend == 'sqlite'"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "²backend == 'sqlite'"
+      }
+    },
+    {
+      "id": "regex-2",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "xbackend in (backend in ('sqlite'))"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "xbackend in (backend in ('sqlite'))"
+      }
+    },
+    {
+      "id": "regex-3",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "‌backend in (backend in ('sqlite'))"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "‌backend in (backend in ('sqlite'))"
+      }
+    },
+    {
+      "id": "regex-4",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "'sqlite' in ²class_name"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "'sqlite' in ²class_name"
+      }
+    },
+    {
+      "id": "regex-5",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "'sqlite' in ́class_name"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "'sqlite' in ́class_name"
+      }
+    },
+    {
+      "id": "regex-6",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == 'sqlite'backend == 'mysql'"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == 'sqlite'backend == 'mysql'"
+      }
+    },
+    {
+      "id": "regex-7",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dialect.name\tin\t('mysql')"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "dialect.name\tin\t('mysql')"
+      }
+    },
+    {
+      "id": "regex-8",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == 'sqlite'; ́backend == 'dolt'; ²backend == 'mongo'"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == 'sqlite'; ́backend == 'dolt'; ²backend == 'mongo'"
+      }
+    },
+    {
+      "id": "regex-9",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "'postgres' in xclass_name; __class__.__name__.lower()"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "'postgres' in xclass_name; __class__.__name__.lower()"
+      }
+    },
+    {
+      "id": "regex-10",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dialect.name == \"postgres\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "dialect.name == \"postgres\""
+      }
+    },
+    {
+      "id": "regex-11",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dialect.name in (\"mysql\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "dialect.name in (\"mysql\")"
+      }
+    },
+    {
+      "id": "regex-12",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend_type == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend_type == \"sqlite\""
+      }
+    },
+    {
+      "id": "regex-13",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == \"postgres\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == \"postgres\""
+      }
+    },
+    {
+      "id": "regex-14",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend in (\"sqlite\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend in (\"sqlite\")"
+      }
+    },
+    {
+      "id": "regex-15",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\"sqlite\" in class_name"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\"sqlite\" in class_name"
+      }
+    },
+    {
+      "id": "regex-16",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\"sqlite\" in type(conn).__name__"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\"sqlite\" in type(conn).__name__"
+      }
+    },
+    {
+      "id": "regex-17",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "conn.__class__.__name__.lower()"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "conn.__class__.__name__.lower()"
+      }
+    },
+    {
+      "id": "tabs-membership",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dialect.name\tin\t(\"mysql\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "dialect.name\tin\t(\"mysql\")"
+      }
+    },
+    {
+      "id": "tabs-equality",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend\t==\t\"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend\t==\t\"sqlite\""
+      }
+    },
+    {
+      "id": "tabs-backend-membership",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend\tin\t(\"sqlite\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend\tin\t(\"sqlite\")"
+      }
+    },
+    {
+      "id": "unicode-class-prefix",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\"sqlite\" in ²class_name"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\"sqlite\" in ²class_name"
+      }
+    },
+    {
+      "id": "new-unicode-prefix",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "Ᲊbackend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "Ᲊbackend == \"sqlite\""
+      }
+    },
+    {
+      "id": "combining-mid-tuple",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend in (\"á\", \"sqlite\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend in (\"á\", \"sqlite\")"
+      }
+    },
+    {
+      "id": "number-mid-tuple",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend in (\"²\", \"sqlite\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend in (\"²\", \"sqlite\")"
+      }
+    },
+    {
+      "id": "nested-rejected-outer",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "xbackend in (backend in (\"sqlite\"))"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "xbackend in (backend in (\"sqlite\"))"
+      }
+    },
+    {
+      "id": "adjacent-occurrences",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == \"sqlite\"backend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == \"sqlite\"backend == \"mysql\""
+      }
+    },
+    {
+      "id": "many-occurrences",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; "
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; backend == \"sqlite\"; "
+      }
+    },
+    {
+      "id": "pattern-order",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend_type == \"sqlite\"; dialect.name == \"postgres\"; conn.__class__.__name__.lower()"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend_type == \"sqlite\"; dialect.name == \"postgres\"; conn.__class__.__name__.lower()"
+      }
+    },
+    {
+      "id": "multiline",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\n\n  backend == \"sqlite\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\n\n  backend == \"sqlite\"\n"
+      }
+    },
+    {
+      "id": "comment",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# backend == \"sqlite\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "# backend == \"sqlite\"\n"
+      }
+    },
+    {
+      "id": "indented-comment",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\t\u001f# backend == \"sqlite\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\t\u001f# backend == \"sqlite\"\n"
+      }
+    },
+    {
+      "id": "inline-comment",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = 1 # backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "x = 1 # backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "string-content",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "doc = \"dialect.name == 'postgres'\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "doc = \"dialect.name == 'postgres'\""
+      }
+    },
+    {
+      "id": "invalid-python",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "print \"legacy\"; dialect.name == \"postgres\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "print \"legacy\"; dialect.name == \"postgres\""
+      }
+    },
+    {
+      "id": "invalid-nul",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\u0000 backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\u0000 backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "bom",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "﻿backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "﻿backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "empty",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": ""
+      }
+    },
+    {
+      "id": "clean",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "x = 1\n"
+      }
+    },
+    {
+      "id": "url",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "url = \"postgresql://localhost\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "url = \"postgresql://localhost\""
+      }
+    },
+    {
+      "id": "wrong-backend",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == \"not-a-backend\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == \"not-a-backend\""
+      }
+    },
+    {
+      "id": "case-sensitive",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "Backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "Backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "tab-trigger-comment",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# backend ==\nbackend\t== \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "# backend ==\nbackend\t== \"sqlite\""
+      }
+    },
+    {
+      "id": "unicode-prefix-column",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "😀é: backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "😀é: backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "unicode-snippet-cap",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "long-snippet",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "strip-snippet",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\u001f\t  backend == \"sqlite\"  \u001f"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\u001f\t  backend == \"sqlite\"  \u001f"
+      }
+    },
+    {
+      "id": "long-source",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\nbackend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\nbackend == \"sqlite\""
+      }
+    },
+    {
+      "id": "separator-0",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\nbackend == \"sqlite\"\nbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\nbackend == \"sqlite\"\nbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-1",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\r\nbackend == \"sqlite\"\r\nbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\r\nbackend == \"sqlite\"\r\nbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-2",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\rbackend == \"sqlite\"\rbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\rbackend == \"sqlite\"\rbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-3",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\u000bbackend == \"sqlite\"\u000bbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\u000bbackend == \"sqlite\"\u000bbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-4",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\fbackend == \"sqlite\"\fbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\fbackend == \"sqlite\"\fbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-5",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\u001cbackend == \"sqlite\"\u001cbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\u001cbackend == \"sqlite\"\u001cbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-6",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\u001dbackend == \"sqlite\"\u001dbackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\u001dbackend == \"sqlite\"\u001dbackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-7",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean\u001ebackend == \"sqlite\"\u001ebackend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean\u001ebackend == \"sqlite\"\u001ebackend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-8",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "cleanbackend == \"sqlite\"backend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "cleanbackend == \"sqlite\"backend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-9",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean backend == \"sqlite\" backend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean backend == \"sqlite\" backend == \"mysql\""
+      }
+    },
+    {
+      "id": "separator-10",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean backend == \"sqlite\" backend == \"mysql\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "clean backend == \"sqlite\" backend == \"mysql\""
+      }
+    },
+    {
+      "id": "file-read",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "file-non-python",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a.txt",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.txt"
+        }
+      }
+    },
+    {
+      "id": "api-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "api/a.py"
+        }
+      }
+    },
+    {
+      "id": "layer-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1234_example/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l1234_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "test-path",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/tests/a.py"
+        }
+      }
+    },
+    {
+      "id": "test-name",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/test_a.py"
+        }
+      }
+    },
+    {
+      "id": "conform",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/conform/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/conform/a.py"
+        }
+      }
+    },
+    {
+      "id": "test-suffix",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a_test.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a_test.py"
+        }
+      }
+    },
+    {
+      "id": "enum-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1400_types/__init__.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l1400_types/__init__.py"
+        }
+      }
+    },
+    {
+      "id": "specific-enum-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/common/l2050_sql_types/backend_type.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/common/l2050_sql_types/backend_type.py"
+        }
+      }
+    },
+    {
+      "id": "security",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/security-a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/security-a.py"
+        }
+      }
+    },
+    {
+      "id": "markdown",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a.md",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.md"
+        }
+      }
+    },
+    {
+      "id": "provided-content-is-authority",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "clean"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend == \"sqlite\""
+      }
+    },
+    {
+      "id": "missing-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "bytesHex": "fffe"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "directory-file",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "impl/a.py/keep",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "relative-test-path",
+      "check": "backend_type_strings",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "tests/a.py",
+          "source": "backend == \"sqlite\""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "tests/a.py",
+          "relative": true
+        }
+      },
+      "cwd": "fixture"
+    },
+    {
+      "id": "skip-0",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "conform/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-1",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "/tests/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-2",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "tests/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-3",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "x_test.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-4",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "test_a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-5",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "conftest.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-6",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "x.yaml/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-7",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "x.YAML/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-8",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "security-a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-9",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-10",
+      "check": "backend_type_strings",
+      "entry": "should_skip_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "folder/test_zone/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "finder-empty",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [],
+      "arguments": {
+        "paths": []
+      }
+    },
+    {
+      "id": "finder-duplicates",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [
+        {
+          "path": "a.py",
+          "source": ""
+        },
+        {
+          "path": "deep/b.py",
+          "source": ""
+        },
+        {
+          "path": "notes.txt",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          },
+          {
+            "path": "a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finder-hidden",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [
+        {
+          "path": ".hidden/a.py",
+          "source": ""
+        },
+        {
+          "path": "tests/b.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ]
+      }
+    },
+    {
+      "id": "finder-path-order",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [
+        {
+          "path": "a.py",
+          "source": ""
+        },
+        {
+          "path": "a/b.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ]
+      }
+    },
+    {
+      "id": "finder-directory-py",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [
+        {
+          "path": "folder.py/keep",
+          "source": ""
+        },
+        {
+          "path": "real.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ]
+      }
+    },
+    {
+      "id": "finder-non-py",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [
+        {
+          "path": "notes.txt",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "notes.txt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finder-missing",
+      "check": "backend_type_strings",
+      "entry": "find_python_files",
+      "files": [],
+      "arguments": {
+        "paths": [
+          {
+            "path": "missing"
+          }
+        ]
+      }
+    },
+    {
+      "id": "classification-dialect-priority",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "backend in (dialect.name == \"mysql\")"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "backend in (dialect.name == \"mysql\")"
+      }
+    },
+    {
+      "id": "classification-backend-priority",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\"sqlite\" in backend_type_class_name"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\"sqlite\" in backend_type_class_name"
+      }
+    },
+    {
+      "id": "classification-substring-fallback",
+      "check": "backend_type_strings",
+      "entry": "check_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\"sqlite\"\tin\ttype(conn)"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "content": "\"sqlite\"\tin\ttype(conn)"
+      }
+    }
+  ]
+}

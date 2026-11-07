@@ -2261,7 +2261,8 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
-    "status": "Root engine exactly matches committed Final shape; nested checkout remains retired",
-    "retiredCheckout": ".rerail/rr-migration-20261106/engine"
+    "status": "Root Final shape engine with a generic repair for Boolean contexts created by demand planning",
+    "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+    "localRepairCommit": "25b580262"
   }
 }
