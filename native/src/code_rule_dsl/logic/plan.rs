@@ -2407,6 +2407,17 @@ impl Run<'_> {
                     let (sc, toks) = atom(l, Some(idx), &mut slots)?;
                     lines.push(format!("{} {sc} {}", if l.neg { "neg" } else { "pos" }, toks.join(" ")));
                 }
+                Literal::Cmp { l: Term::Call(fl, xl), op, r: Term::Call(fr, xr) }
+                    if (*op == "=" || *op == "!=") && fl == "doc" && fr == "doc" && xl.len() == 1 && xr.len() == 1 =>
+                {
+                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
+                    let bound = |t: &Term| matches!(t, Term::Var(v) if slots.contains_key(v));
+                    if !bound(&xl[0]) || !bound(&xr[0]) {
+                        return None;
+                    }
+                    let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
+                    lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
+                }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
                     if let Term::Call(f, args) = r {
                         if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
