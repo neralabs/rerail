@@ -699,3 +699,22 @@ seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
     assert_eq!(rows, expected);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Empty scopes still run global absence checks; they must not become a planning error or an early return.
+#[test]
+fn empty_corpora_run_global_absence_findings() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("emptyrr");
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "empty-contract" revision 1
+.violation Missing(at: span) code "MISSING" "required file is absent"
+Missing(@place("required.py", 1)) :- !doc(_, "required.py", _).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &corpus, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    assert_eq!(result["files"], 0);
+    assert_eq!(result["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(result["diagnostics"][0]["code"], "MISSING");
+    let _ = std::fs::remove_dir_all(dir);
+}
