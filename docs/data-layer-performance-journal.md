@@ -7960,3 +7960,18 @@ Cross-file base retention still needs memory assessment; no repository-scale spe
 The native unit and CLI builds took 48.94 and 17.01 seconds. Compile time is separate from execution.
 Evidence is retained in rr-long-source-native-repair.json.gz, including the external sample and native operator profiles.
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
+
+## 2026-11-07: current guest and typing merge
+
+The integration engine merges Final rerail shape through 34bfb09451f6849be5f0b2e5c447d159a89bc46a.
+Checkpoint e51dddeea8b0ffbdc03d62afc7d143a8cef8019b preserves explicit input batches and typed repository readers.
+Two existing tests caught raw source disappearing on parse failure. Both pass after the merge repair.
+Broken guests retain no tree by default; primary files retain raw text.
+
+All 64 draft policies pass the reader. This is not execution acceptance for all 64.
+All 36 padded reporter comparisons and five original ForwardRef tests pass again.
+Focused suites pass 47 reader tests, 14 syntax-view tests, five locality tests, and 43 tooling tests.
+One reader and one locality profiling test remain ignored. Broad syntax-checker, fixture writer, and GPU suites were not run.
+The final unit and CLI builds took 121 and 62 seconds. Compile time is separate from execution.
+The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
+Evidence is in rr-final-shape-guest-typing-merge.json.gz. No repository cold run or Linear issue was added.

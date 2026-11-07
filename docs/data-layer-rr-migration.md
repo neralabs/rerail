@@ -618,3 +618,21 @@ All five focused locality tests pass; one profiling test remains ignored. GPU-sp
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
 
 - [Failing tests, repairs, all 36 comparisons, and profiles](../fixtures/host/data-layer-port/rr-long-source-native-repair.json.gz).
+
+## Current guest and typing architecture, 7 November
+
+The integration engine merges Final rerail shape through 34bfb09451f6849be5f0b2e5c447d159a89bc46a.
+Its checkpoint is e51dddeea8b0ffbdc03d62afc7d143a8cef8019b.
+The libraries now declare guest documents, shared typing answers, and derived-value operations.
+Native execution keeps the local typed repository readers and explicit input batches.
+The merge initially removed raw source on parse failure. Two existing regressions failed, then passed after repair.
+Broken guest trees remain withheld; primary files retain raw source and line views.
+
+All 64 draft policies pass the current reader. All 36 padded reporter comparisons and five original ForwardRef tests pass again.
+The focused native suites pass 47 reader tests, 14 syntax-view tests, and five locality tests.
+One reader test and one locality profiling test remain ignored. The broad syntax-checker and fixture writer remain excluded.
+All 43 tooling tests pass. These checks do not certify execution parity for every draft or production frontend acceptance.
+The final unit and CLI builds took 121 and 62 seconds. Build time is separate from execution.
+The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
+
+- [Merge failures, native suites, all draft readers, and reporter comparisons](../fixtures/host/data-layer-port/rr-final-shape-guest-typing-merge.json.gz).

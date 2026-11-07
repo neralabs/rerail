@@ -465,7 +465,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
+      "sha256": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -492,8 +492,19 @@
           "before": "af322eea5497debb1e72513fec0f31670d90c4951a6f4964ce56d0081537057f",
           "after": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
           "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        },
+        {
+          "before": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
+          "after": "960e0e4b20860c2e90def7246c94dfe7a46e1d6c6e68e5653f6e179467e48226",
+          "reason": "Merge guest document declarations from Final rerail shape b22763660b6b96c7ee1aeaa08565a5833af25649"
+        },
+        {
+          "before": "960e0e4b20860c2e90def7246c94dfe7a46e1d6c6e68e5653f6e179467e48226",
+          "after": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
+          "reason": "Merge Final rerail shape 34bfb09451f6849be5f0b2e5c447d159a89bc46a: declared typing and derived values"
         }
-      ]
+      ],
+      "upstreamCommit": "34bfb09451f6849be5f0b2e5c447d159a89bc46a"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/boot-lazy-sql.rr",
@@ -578,9 +589,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/calls.rr",
-      "sha256": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
+      "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a",
       "upstreamSha256": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
-      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+      "upstreamCommit": "34bfb09451f6849be5f0b2e5c447d159a89bc46a",
+      "repairs": [
+        {
+          "before": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
+          "after": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a",
+          "reason": "Merge Final rerail shape 34bfb09451f6849be5f0b2e5c447d159a89bc46a: declared typing and derived values"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/compare.rr",
@@ -1142,6 +1160,12 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/types.rr",
+      "origin": "Final rerail shape",
+      "sha256": "b93a1ec08fd31b7bbf8e8387ebb2b0e6321a0114ff8ed8c09896b168a94b336a",
+      "upstreamCommit": "34bfb09451f6849be5f0b2e5c447d159a89bc46a"
     }
   ],
   "rules": [
