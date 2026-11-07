@@ -541,6 +541,29 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes; a Python verdict from a parser that follows CPython's grammar is not built yet (O80).
+/// `syntax_error`'s verdict on a document: its first error's line and message, or none if it parses. Python's comes
+/// from a parser that follows CPython's grammar (Ruff's, `python_error`): tree-sitter recovers from errors, so its tree
+/// cannot say whether CPython accepts the file. The other languages' come from tree-sitter's ERROR and MISSING nodes.
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+    let python = dialect.family == Family::Python;
+    if python {
+        return python_error(&f.source);
+    }
+    if !f.syntax_errors {
+        return None;
+    }
+    first_error(f, &Lines::new(&f.source, python), &|id| dialect.name(f, id)).or_else(|| Some((1, "invalid syntax".to_owned())))
+}
+
+/// The first error (by position) of CPython's grammar on `src`, Ruff's parser: its line, as `src_line` counts
+/// lines, and the parser's message. Version-specific syntax (a `match` before 3.10) is accepted.
+pub(super) fn python_error(src: &str) -> Option<(u32, String)> {
+    use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
+    let parsed = parse_unchecked(src, ParseOptions::from(Mode::Module));
+    let e = parsed.errors().iter().min_by_key(|e| e.location.start())?;
+    Some((Lines::new(src, true).line(u32::from(e.location.start())), e.error.to_string()))
+}
+
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors {
         return None;
@@ -670,13 +693,9 @@ impl CoreRows {
         }
     }
 
-    /// A withheld document's one row: its first error (`syntax_error`), at line 1 if the parse flags an error no
-    /// node holds.
-    pub(super) fn withheld(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
-        let f = &*p.facts;
-        let x = p.extra.as_ref().expect("core.rr's lines");
-        let (l, msg) = first_error(f, &x.lines, &|id| dialect.name(f, id)).unwrap_or((1, "invalid syntax".to_owned()));
-        self.syntax_error.push([i64::from(p.key), i64::from(l), string(&msg) as i64]);
+    /// A withheld document's one row: its first error (`verdict`).
+    pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
+        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
     }
 
     /// A document's rows: its first error, its source-text spans, and its tokens.
@@ -684,9 +703,6 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
-        if let Some((l, msg)) = first_error(f, &x.lines, &|id| dialect.name(f, id)) {
-            self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
-        }
         let source = p.len() + x.tokens;
         self.source.push([key, p.global(source)]);
         for l in 1..=x.lines.count() {
@@ -880,6 +896,16 @@ impl CoreRows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
+    /// `match` statement is not; the line is the first error's.
+    #[test]
+    fn python_syntax_errors_follow_cpythons_grammar() {
+        assert_eq!(python_error("x = 1\n"), None);
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+    }
 
     #[test]
     fn lines_follow_each_languages_terminators() {

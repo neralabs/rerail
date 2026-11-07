@@ -1461,8 +1461,10 @@ tokens have no field.
   is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
   (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict. A document with one is
-  withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
+- `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
+  last on the pinned toolchain; 2026-11-07), not tree-sitter's; compile-time errors CPython's compiler raises after
+  parsing (`return` outside a function) are not checked, and its cost on the full corpus is not measured yet. A
+  document with one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
   [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document.
 - `static_value` is `value`: file-local constants are not followed.
 - `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its

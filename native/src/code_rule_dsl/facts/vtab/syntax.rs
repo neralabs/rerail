@@ -488,7 +488,8 @@ impl Batch {
             let dialect = &dialects[&tag];
             // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
-            let withheld = core && d.facts.syntax_errors;
+            let error = if core { core_rr::verdict(&d.facts, dialect) } else { None };
+            let withheld = error.is_some();
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld);
             if !rx_spans.is_empty() && !withheld {
                 c.matches(&mut p, &rx_spans, &mut string);
@@ -585,8 +586,8 @@ impl Batch {
                     c.node(&p, dialect, local as u32, &mut string, wants_text);
                 }
             }
-            if withheld {
-                c.withheld(&p, dialect, &mut string);
+            if let Some(error) = &error {
+                c.withheld(&p, error, &mut string);
             } else if core {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens);
                 if wants_digests {
