@@ -423,9 +423,28 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
             (docs, first, rust)
         }
         None => {
-            let (python, rs) = corpus_files(root)?;
-            let rust = rs.len() > python.len();
-            let files = if rust { rs } else { python };
+            let (files, rust) = if let Some(supplied) = options.get("inputFiles") {
+                let supplied = supplied.as_array().ok_or_else(|| Error::Plan("inputFiles must be a list of relative document paths".to_owned()))?;
+                let files = supplied.iter().map(|value| {
+                    let path = value.as_str().ok_or_else(|| Error::Plan("inputFiles must contain strings".to_owned()))?;
+                    if path.is_empty() || Path::new(path).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                        return Err(Error::Plan(format!("inputFiles: invalid relative path {path:?}")));
+                    }
+                    Ok(path.to_owned())
+                }).collect::<Result<Vec<_>>>()?;
+                let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
+                let rust = match language {
+                    Some("python") => false,
+                    Some("rust") => true,
+                    Some(other) => return Err(Error::Plan(format!("explicit input batch: unsupported corpus language {other:?}"))),
+                    None => files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2,
+                };
+                (files, rust)
+            } else {
+                let (python, rs) = corpus_files(root)?;
+                let rust = rs.len() > python.len();
+                (if rust { rs } else { python }, rust)
+            };
             // A document's key is a function of its path (decision 0050), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
