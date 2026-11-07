@@ -237,6 +237,78 @@ pub(crate) fn document_column(relation: &str) -> Option<usize> {
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
 const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
 
+use std::collections::BTreeMap;
+
+/// The value tapes of a rule (decision 0058 §4, O96) and where they stand. A value is made in the chunk of the
+/// document whose row gave its text, and is that document's: `parse_of(x, g, t)`'s t stands with the one atom that
+/// binds x (two atoms binding x join two documents on a string, which is no one document's), and `splice_of(_, n,
+/// _, t3)`'s t3 with node n.
+struct ValueTapes {
+    /// Each value tape (its class's first variable) and the body index of the atom that gave its text.
+    by_binder: BTreeMap<String, usize>,
+    /// Each spliced tape's node and tape.
+    splices: Vec<(String, String)>,
+    /// Each variable's class under the rule's `a = b`.
+    class: BTreeMap<String, String>,
+}
+
+impl ValueTapes {
+    /// `v`'s value tape, when it is one.
+    fn canonical(&self, v: &str) -> Option<String> {
+        let c = self.class.get(v).cloned().unwrap_or_else(|| v.to_owned());
+        (self.by_binder.contains_key(&c) || self.splices.iter().any(|(_, t)| *t == c)).then_some(c)
+    }
+}
+
+fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    // `t = rr_tape1`: one class, named by its least variable.
+    let mut class: BTreeMap<String, String> = BTreeMap::new();
+    let find = |class: &BTreeMap<String, String>, v: &str| {
+        let mut v = v.to_owned();
+        while let Some(p) = class.get(&v).filter(|p| **p != v) {
+            v = p.clone();
+        }
+        v
+    };
+    for l in &rule.body {
+        if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+            let (a, b) = (find(&class, a), find(&class, b));
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            class.insert(hi, lo.clone());
+            class.entry(lo.clone()).or_insert(lo);
+        }
+    }
+    let vars: Vec<String> = class.keys().cloned().collect();
+    let class: BTreeMap<String, String> = vars.into_iter().map(|v| (v.clone(), find(&class, &v))).collect();
+    let canon = |v: &str| class.get(v).cloned().unwrap_or_else(|| v.to_owned());
+    let mut out = ValueTapes { by_binder: BTreeMap::new(), splices: Vec::new(), class: class.clone() };
+    for l in &rule.body {
+        let Literal::Atom(a) = l else { continue };
+        if a.neg {
+            continue;
+        }
+        match (a.rel.as_str(), a.args.as_slice()) {
+            ("parse_of", [Term::Var(x), _, Term::Var(t)]) => {
+                let x = canon(x);
+                let binders: Vec<usize> = rule
+                    .body
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| matches!(l, Literal::Atom(b) if !b.neg && !CHUNK_VALUES.contains(&b.rel.as_str()) && b.rel != "tape_of" && b.args.iter().any(|t| matches!(t, Term::Var(v) if canon(v) == x))))
+                    .map(|(i, _)| i)
+                    .collect();
+                if let [b] = binders[..] {
+                    out.by_binder.insert(canon(t), b);
+                }
+            }
+            ("splice_of", [_, Term::Var(n), _, Term::Var(t3)]) => out.splices.push((n.clone(), canon(t3))),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
 /// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0052).
@@ -328,7 +400,12 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
             // Each read relation's location variables; the rule's locations must form one component.
             let mut groups: Vec<BTreeSet<String>> = Vec::new();
-            for literal in &rule.body {
+            let placed = value_tapes(rule);
+            let tape = |v: &str| format!("rr_value_tape:{v}");
+            for (n, t) in &placed.splices {
+                groups.push(BTreeSet::from([n.clone(), tape(t)]));
+            }
+            for (index, literal) in rule.body.iter().enumerate() {
                 let atom = match literal {
                     Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
                     Literal::Ast { .. } => return false,
@@ -348,7 +425,23 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
                     return false;
                 }
                 let columns = if derived.contains(atom.rel.as_str()) { locations[&atom.rel].clone() } else { base_locations(&atom.rel) };
-                let vars: BTreeSet<String> = columns.iter().filter_map(|&c| if let Some(Term::Var(v)) = atom.args.get(c) { Some(v.clone()) } else { None }).collect();
+                let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| if let Some(Term::Var(v)) = atom.args.get(c) { Some(v.clone()) } else { None }).collect();
+                // A value's text binder whose location is a wildcard (`q(_, x)`, as simplification leaves an
+                // existence check) still reads one document's row: the value's tape stands there.
+                let binder = matches!(literal, Literal::Atom(_)) && placed.by_binder.values().any(|b| *b == index);
+                if vars.is_empty() && binder && !columns.is_empty() {
+                    vars.insert(format!("rr_value_binder:{index}"));
+                }
+                if !vars.is_empty() {
+                    // A value's tape stands with the atom that gave its text, and `tape_of(d, t)` puts d there too.
+                    vars.extend(placed.by_binder.iter().filter(|(_, b)| **b == index).map(|(t, _)| tape(t)));
+                    if atom.rel == "tape_of"
+                        && let Some(Term::Var(t)) = atom.args.get(1)
+                        && let Some(t) = placed.canonical(t)
+                    {
+                        vars.insert(tape(&t));
+                    }
+                }
                 if vars.is_empty() {
                     // A read with no location variable (`field(_, "left", _)`'s rows, a count over them): any file's.
                     return false;

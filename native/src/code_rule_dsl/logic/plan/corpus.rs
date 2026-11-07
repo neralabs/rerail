@@ -187,6 +187,8 @@ pub(crate) struct Report {
     pub(crate) text: (usize, usize, f64),
     /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
     pub(crate) typing_runs: bridge::Runs,
+    /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
+    pub(crate) memo: (usize, usize),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1040,6 +1042,8 @@ pub(crate) fn run_with_options(
         // Guests (decision 0055): the embed slice runs over the chunk, the guests it asks for are parsed, and the
         // batch is built again with them, until a round asks for none new. The batch bound below holds them.
         let mut host_of: HashMap<i64, i64> = HashMap::new();
+        // A value document's files: those whose rules asked for it (decision 0058 §4, O96).
+        let mut askers: HashMap<i64, Vec<i64>> = HashMap::new();
         let sources = match &slice {
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
@@ -1073,13 +1077,19 @@ pub(crate) fn run_with_options(
                     sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 host_of = std::mem::take(&mut made.host_of);
+                askers = made.askers();
                 sources
             }
             _ => sources,
         };
-        let document_of = |v: i64| {
+        // The files a row is attributed to: its document's (a guest's is its host file's), or every file that asked
+        // for its value document. Rows are sets, so a value's rows kept by each of its files restore as one.
+        let owners = |v: i64| -> Vec<i64> {
             let d = memo::document_of(v);
-            host_of.get(&d).copied().unwrap_or(d)
+            match askers.get(&d) {
+                Some(files) => files.clone(),
+                None => vec![host_of.get(&d).copied().unwrap_or(d)],
+            }
         };
         for (rel, source) in sources {
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
@@ -1129,10 +1139,14 @@ pub(crate) fn run_with_options(
             for (rel, lines) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied());
                 for line in lines {
-                    let doc = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(document_of);
-                    match doc.and_then(|d| entries.get_mut(&d)) {
-                        Some(e) => e.lines.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), Vec::new())).1.push(line.clone()),
-                        None => attributable = false,
+                    let files = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(owners).unwrap_or_default();
+                    if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
+                        attributable = false;
+                        continue;
+                    }
+                    for d in files {
+                        let e = entries.get_mut(&d).expect("checked");
+                        e.lines.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), Vec::new())).1.push(line.clone());
                     }
                 }
             }
@@ -1149,15 +1163,14 @@ pub(crate) fn run_with_options(
             };
             let width = rows.columns().len();
             for r in 0..rows.len() {
-                match entries.get_mut(&document_of(rows.value(r, at))) {
-                    Some(e) => {
-                        let held = e.rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new()));
-                        held.1.extend((0..width).map(|c| rows.value(r, c)));
-                    }
-                    None => {
-                        attributable = false;
-                        return;
-                    }
+                let files = owners(rows.value(r, at));
+                if !files.iter().all(|d| entries.contains_key(d)) {
+                    attributable = false;
+                    return;
+                }
+                for d in files {
+                    let held = entries.get_mut(&d).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new()));
+                    held.1.extend((0..width).map(|c| rows.value(r, c)));
                 }
             }
         };
@@ -1419,7 +1432,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed) })
 }
 
 
