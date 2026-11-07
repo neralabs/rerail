@@ -227,6 +227,9 @@ fn modules_and_packages_follow_t() {
     assert_eq!((module("json/__init__.py"), package("json/__init__.py")), ("json".to_owned(), "json".to_owned()));
     assert_eq!((module("json/tool.py"), package("json/tool.py")), ("json.tool".to_owned(), "json".to_owned()));
     assert_eq!((module("shlex.py"), package("shlex.py")), ("shlex".to_owned(), String::new()));
+    // Stubs are named as their modules.
+    assert_eq!((module("os/__init__.pyi"), package("os/__init__.pyi")), ("os".to_owned(), "os".to_owned()));
+    assert_eq!((module("os/path.pyi"), package("os/path.pyi")), ("os.path".to_owned(), "os".to_owned()));
     assert_eq!(module("x/src/a/mod.rs"), "crate.a");
     assert_eq!(module("src/lib.rs"), "crate");
 }

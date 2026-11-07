@@ -254,7 +254,8 @@ pub(crate) fn module(rel: &str) -> String {
         }
         return std::iter::once("crate").chain(parts).collect::<Vec<_>>().join(".");
     }
-    let m = rel.trim_end_matches(".py").replace('/', ".");
+    // A stub (`.pyi`) is named as its module is.
+    let m = rel.strip_suffix(".pyi").or_else(|| rel.strip_suffix(".py")).unwrap_or(rel).replace('/', ".");
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
@@ -262,7 +263,7 @@ pub(crate) fn module(rel: &str) -> String {
 /// module's parent.
 pub(crate) fn package(rel: &str) -> String {
     let m = module(rel);
-    if rel.ends_with("__init__.py") { m } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
+    if rel.ends_with("__init__.py") || rel.ends_with("__init__.pyi") { m } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 
 /// Which of T's rules a kind falls under, by name.
@@ -707,7 +708,7 @@ impl Batch {
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
-            let python = d.path.ends_with(".py");
+            let python = d.path.ends_with(".py") || d.path.ends_with(".pyi");
             let dotted = python || d.path.ends_with(".rs");
             let module = if shape == Shape::Core && !dotted { String::new() } else { module(&d.path) };
             doc.push([key, string(&d.path) as i64, string(&module) as i64]);

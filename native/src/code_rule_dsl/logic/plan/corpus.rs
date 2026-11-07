@@ -1792,9 +1792,10 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
                 continue;
             }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
-            match path.extension().and_then(|e| e.to_str()) {
-                Some("py") => python.push(relative),
-                Some("rs") => rust.push(relative),
+            // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
+            match crate::code_rule_dsl::language::label_of_path(&relative) {
+                Some("python") => python.push(relative),
+                Some("rust") => rust.push(relative),
                 _ => {}
             }
         }
