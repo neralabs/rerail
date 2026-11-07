@@ -165,6 +165,13 @@ impl Tally {
         }
     }
 
+    pub(super) fn merge(&mut self, other: Tally) {
+        self.equal += other.equal;
+        self.total += other.total;
+        let room = show().saturating_sub(self.differences.len());
+        self.differences.extend(other.differences.into_iter().take(room));
+    }
+
     pub(super) fn report(&self, what: &str) {
         println!("  {what}: {} / {} equal", self.equal, self.total);
         for d in &self.differences {
@@ -396,6 +403,90 @@ fn literal_json_parity() {
             println!(" {}: {} files", corpus.name, want.len());
             all.report("expressions of a class with values: literal_json or none");
             valued.report("those with a value on either side");
+        }
+    }
+}
+
+/// `unparse`, `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::printed`) against CPython: at each located
+/// node of each file that parses but an f-string's own pieces (the oracle's `ast` mode), by span and class, the
+/// engine's against `ast.unparse` (an expression, a keyword, an arg, an alias; those with a text on either side
+/// counted apart), the sha256 of `ast.dump`, and a def's hashes as W's worker made them.
+#[test]
+#[ignore]
+fn printed_parity() {
+    use super::printed::{Printed, Want, printed};
+    let want_all = Want { unparse: true, dump: false, dump_sha256: true, body_sha256: true, signature_sha256: true };
+    for python in pythons() {
+        println!("CPython {} ({python})", version(&python));
+        for corpus in corpora() {
+            let want = oracle(&python, "ast", &corpus.files);
+            // nodes, unparse, unparse with a text, dump_sha256, body_sha256, signature_sha256.
+            let tallies: Vec<[Tally; 6]> = corpus
+                .files
+                .par_iter()
+                .filter_map(|(path, shown)| {
+                    let source = std::fs::read(path).ok().and_then(|b| String::from_utf8(b).ok())?;
+                    let rows = want.get(&path.display().to_string())?["n"].as_array()?;
+                    let got = printed(&source, want_all);
+                    let mut engine: BTreeMap<(u32, u32, &str), &Printed> = BTreeMap::new();
+                    for p in &got {
+                        engine.entry((p.start, p.end, p.class)).or_insert(p);
+                    }
+                    let mut t: [Tally; 6] = Default::default();
+                    let mut seen = BTreeSet::new();
+                    for r in rows {
+                        let class = r[2].as_str().unwrap();
+                        let key = (r[0].as_u64().unwrap() as u32, r[1].as_u64().unwrap() as u32, class);
+                        if !seen.insert(key) {
+                            continue;
+                        }
+                        let text = || source.get(key.0 as usize..key.1 as usize).unwrap_or("?").chars().take(160).collect::<String>();
+                        let at = || format!("{shown}@{} {class} {:?}", key.0, text());
+                        let e = engine.get(&key).copied();
+                        t[0].add(e.is_some(), || format!("{}: no engine node", at()));
+                        let Some(e) = e else { continue };
+                        let unparsed = matches!(class, "keyword" | "arg" | "alias") || super::unparse::is_expr(class);
+                        if unparsed {
+                            let (c, g) = (r[3].as_str(), e.unparse.as_deref());
+                            let diff = || format!("{}: CPython {c:?}, engine {g:?}", at());
+                            t[1].add(c == g, diff);
+                            if c.is_some() || g.is_some() {
+                                t[2].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                            }
+                        }
+                        let (c, g) = (r[4].as_str(), e.dump_sha256.as_deref());
+                        t[3].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        if matches!(class, "FunctionDef" | "AsyncFunctionDef") {
+                            let (c, g) = (r[5].as_str(), e.body_sha256.as_deref());
+                            t[4].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                            let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
+                            t[5].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        }
+                    }
+                    for key in engine.keys().filter(|k| !seen.contains(*k)) {
+                        t[0].add(false, || format!("{shown}@{} {}: engine node at no CPython node", key.0, key.2));
+                    }
+                    Some(t)
+                })
+                .collect();
+            let mut total: [Tally; 6] = Default::default();
+            for t in tallies {
+                for (a, b) in total.iter_mut().zip(t) {
+                    a.merge(b);
+                }
+            }
+            println!(" {}: {} files", corpus.name, want.len());
+            let what = [
+                "located nodes (span and class)",
+                "unparse of expressions, keywords, args, aliases: text or none",
+                "those with a text on either side",
+                "dump_sha256",
+                "body_sha256 of defs",
+                "signature_sha256 of defs",
+            ];
+            for (t, w) in total.iter().zip(what) {
+                t.report(w);
+            }
         }
     }
 }

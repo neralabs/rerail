@@ -1143,8 +1143,6 @@ fn an_unbound_relation_is_named() {
     assert!(e.contains("git_tracked is read, and nothing derives it or binds it"), "{e}");
     let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
     assert!(e.contains("str_part is read") && e.contains("CPython"), "{e}");
-    let e = fails(".out-unparse", ".decl v(s: symbol)\nv(@unparse(n)) :- kind(n, \"call\").\n.output v\n");
-    assert!(e.contains("@unparse is called, and it needs CPython"), "{e}");
     let e = fails(".out-mine", ".decl mine(n: node)\n.input mine\n.decl v(n: node)\nv(n) :- mine(n).\n.output v\n");
     assert!(!e.contains("nothing derives it or binds it"), "{e}");
     eprintln!("UNBOUND mine: {e:?}");
@@ -1544,5 +1542,62 @@ vals(k, t, v) :- literal_json(n, v), node(_, n, k, _, _), node_text(n, t).
         ]
         .map(str::to_owned))
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@unparse(n)` is CPython 3.13's `ast.unparse` of the `ast` node at n's span that W's worker reads n's kind as, and
+/// `@py_repr(@unparse(n))` W's `repr_unparse`. The values are CPython 3.13.14's.
+#[test]
+fn unparse_is_ws_python_ast_field() {
+    let source = "def f(a: \"x\", *b: int, c=1) -> dict[str, int]:\n    return a\nx = (a or b) and not c\ny = f\"{x!r:>{w}} {y=}\"\n";
+    let dir = corpus("unparse", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl printed(k: symbol, t: symbol, u: symbol, r: symbol)
+printed(k, t, @unparse(n), @py_repr(@unparse(n))) :- node(_, n, k, _, _), node_text(n, t), k != "identifier", k != "expression_statement".
+.output printed
+"#;
+    let got = run(&dir, program, &["printed"]);
+    let has = |row: &str| got[0].lines().any(|l| l == row);
+    for row in [
+        "type\t\"x\"\t'x'\t\"'x'\"",
+        "type\tint\tint\t'int'",
+        "type\tstr\tstr\t'str'",
+        "type\tdict[str, int]\tdict[str, int]\t'dict[str, int]'",
+        "boolean_operator\t(a or b) and not c\t(a or b) and (not c)\t'(a or b) and (not c)'",
+        "boolean_operator\ta or b\ta or b\t'a or b'",
+        "not_operator\tnot c\tnot c\t'not c'",
+        "string\tf\"{x!r:>{w}} {y=}\"\tf'{x!r:>{w}} y={y!r}'\t\"f'{x!r:>{w}} y={y!r}'\"",
+        "integer\t1\t1\t'1'",
+        "typed_parameter\ta: \"x\"\ta: 'x'\t\"a: 'x'\"",
+    ] {
+        assert!(has(row), "{row:?} in {}", got[0]);
+    }
+    // CPython's `arg` of `*b: int` starts at `b`: tree-sitter's parameter node, with its `*`, is no `arg`'s span.
+    assert!(!got[0].lines().any(|l| l.starts_with("typed_parameter\t*b")), "{}", got[0]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@sha256(@ast_dump(n))` is W's `dump_sha256`, which `dump_sha256(n, h)` gives; `body_sha256` and `signature_sha256`
+/// W's hashes of a def. The values are CPython 3.13.14's.
+#[test]
+fn dumps_are_ws_python_ast_fields() {
+    let source = "def f(a: \"x\", *b: int, c=1) -> dict[str, int]:\n    return a\nx = f(1)\n";
+    let dir = corpus("dumps", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl defs(b: symbol, s: symbol, d: symbol)
+defs(b, s, d) :- body_sha256(f, b), signature_sha256(f, s), d = @sha256(@ast_dump(f)), dump_sha256(f, d).
+.decl calls(d: symbol)
+calls(@ast_dump(n)) :- node(_, n, "call", _, _).
+.output defs, calls
+"#;
+    let got = run(&dir, program, &["defs", "calls"]);
+    assert_eq!(
+        got[0],
+        csv(["747bc3749caaa6d222424d1542da2ee0a312fe508fb3081c65d873c88311bae1\tf162c45775dc52a80bbf80593192690791f38ed2ee5db47bdd0582cf37943108\t86250c1f242392eacdb303a6c1df981f77a09a769fdd196f207f0e2ec43ae458".to_owned()])
+    );
+    assert_eq!(got[1], csv(["Call(func=Name(id='f', ctx=Load()), args=[Constant(value=1)])".to_owned()]));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -15,6 +15,7 @@
 //! such a part that also has a `\N{…}` escape gives no value.
 
 use super::syntax::syntax_error;
+use super::value::{Int, PyStr, float_repr, join, string_part};
 use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{Expr, Number, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
@@ -104,28 +105,6 @@ impl<'a> Visitor<'a> for Walk<'_> {
     }
 }
 
-/// A Python str: UTF-8, or code points where it holds a lone surrogate.
-#[derive(Clone, Debug)]
-enum PyStr {
-    Text(String),
-    Points(Vec<u32>),
-}
-
-impl PyStr {
-    fn points(&self) -> Box<dyn Iterator<Item = u32> + '_> {
-        match self {
-            PyStr::Text(s) => Box::new(s.chars().map(u32::from)),
-            PyStr::Points(p) => Box::new(p.iter().copied()),
-        }
-    }
-    fn order(&self, other: &PyStr) -> Ordering {
-        match (self, other) {
-            (PyStr::Text(a), PyStr::Text(b)) => a.cmp(b),
-            _ => self.points().cmp(other.points()),
-        }
-    }
-}
-
 /// A value `literal_eval` makes.
 #[derive(Clone, Debug)]
 enum Value {
@@ -155,9 +134,9 @@ fn convert(e: &Expr, source: &str) -> Result<Value, Raised> {
         Expr::StringLiteral(s) => {
             let mut parts: Vec<PyStr> = Vec::new();
             for part in s.value.as_slice() {
-                parts.push(string_part(&part.value, &source[part.range()])?);
+                parts.push(string_part(&part.value, &source[part.range()]).ok_or(Raised)?);
             }
-            join(parts)
+            Value::Str(join(parts))
         }
         Expr::BytesLiteral(_) => Value::Bytes,
         Expr::Tuple(t) => Value::Tuple(t.elts.iter().map(|x| convert(x, source)).collect::<Result<_, _>>()?),
@@ -241,97 +220,6 @@ fn number(n: &Number, text: &str) -> Result<Value, Raised> {
         Number::Float(f) => Value::Float(*f),
         Number::Complex { real, imag } => Value::Complex(*real, *imag),
     })
-}
-
-/// One part of a str literal: Ruff's decoded value, or, where Ruff replaced a lone surrogate escape by U+FFFD, the
-/// part decoded here.
-fn string_part(value: &str, text: &str) -> Result<PyStr, Raised> {
-    if !value.contains('\u{fffd}') {
-        return Ok(PyStr::Text(value.to_owned()));
-    }
-    let prefix = text.bytes().take_while(u8::is_ascii_alphabetic).count();
-    if text[..prefix].contains(['r', 'R']) {
-        return Ok(PyStr::Text(value.to_owned()));
-    }
-    let quoted = &text[prefix..];
-    let q = if quoted.starts_with("\"\"\"") || quoted.starts_with("'''") { 3 } else { 1 };
-    let body = &quoted[q..quoted.len() - q];
-    let points = decode(body).ok_or(Raised)?;
-    Ok(if points.iter().any(|p| (0xd800..=0xdfff).contains(p)) { PyStr::Points(points) } else { PyStr::Text(value.to_owned()) })
-}
-
-/// A non-raw str literal's body decoded as CPython does, to code points; `None` for a `\N{…}` escape (no name table).
-fn decode(body: &str) -> Option<Vec<u32>> {
-    let mut out = Vec::with_capacity(body.len());
-    let mut chars = body.chars().peekable();
-    let hex = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>, n: usize| -> Option<u32> {
-        let mut v = 0;
-        for _ in 0..n {
-            v = v * 16 + chars.next()?.to_digit(16)?;
-        }
-        Some(v)
-    };
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(u32::from(c));
-            continue;
-        }
-        let Some(e) = chars.next() else {
-            out.push(u32::from('\\'));
-            break;
-        };
-        match e {
-            '\n' => {}
-            '\r' => {
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-            }
-            '\\' | '\'' | '"' => out.push(u32::from(e)),
-            'a' => out.push(7),
-            'b' => out.push(8),
-            'f' => out.push(12),
-            'n' => out.push(10),
-            'r' => out.push(13),
-            't' => out.push(9),
-            'v' => out.push(11),
-            '0'..='7' => {
-                let mut v = e.to_digit(8)?;
-                for _ in 0..2 {
-                    match chars.peek().and_then(|c| c.to_digit(8)) {
-                        Some(d) => {
-                            v = v * 8 + d;
-                            chars.next();
-                        }
-                        None => break,
-                    }
-                }
-                out.push(v);
-            }
-            'x' => out.push(hex(&mut chars, 2)?),
-            'u' => out.push(hex(&mut chars, 4)?),
-            'U' => out.push(hex(&mut chars, 8)?),
-            'N' => return None,
-            other => {
-                out.push(u32::from('\\'));
-                out.push(u32::from(other));
-            }
-        }
-    }
-    Some(out)
-}
-
-fn join(parts: Vec<PyStr>) -> Value {
-    if parts.iter().all(|p| matches!(p, PyStr::Text(_))) {
-        let mut s = String::new();
-        for p in parts {
-            if let PyStr::Text(t) = p {
-                s.push_str(&t);
-            }
-        }
-        return Value::Str(PyStr::Text(s));
-    }
-    Value::Str(PyStr::Points(parts.iter().flat_map(PyStr::points).collect()))
 }
 
 fn hashable(v: &Value) -> bool {
@@ -509,133 +397,3 @@ fn float_json(f: f64) -> String {
     float_repr(f)
 }
 
-/// `float.__repr__` (CPython's `'r'` format: the shortest digits that round-trip, exponent notation where the
-/// decimal point would fall more than 16 digits right of the first digit or 4 left of it).
-pub(crate) fn float_repr(f: f64) -> String {
-    let sci = format!("{f:e}");
-    let (mantissa, exp) = sci.split_once('e').expect("an exponent");
-    let exp: i32 = exp.parse().expect("an exponent");
-    let (sign, mantissa) = mantissa.strip_prefix('-').map_or(("", mantissa), |m| ("-", m));
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let decpt = exp + 1;
-    let n = digits.len() as i32;
-    if decpt <= -4 || decpt > 16 {
-        let (first, rest) = digits.split_at(1);
-        let e = decpt - 1;
-        let dot = if rest.is_empty() { String::new() } else { format!(".{rest}") };
-        return format!("{sign}{first}{dot}e{}{:02}", if e < 0 { '-' } else { '+' }, e.abs());
-    }
-    if decpt <= 0 {
-        format!("{sign}0.{}{digits}", "0".repeat((-decpt) as usize))
-    } else if decpt >= n {
-        format!("{sign}{digits}{}.0", "0".repeat((decpt - n) as usize))
-    } else {
-        format!("{sign}{}.{}", &digits[..decpt as usize], &digits[decpt as usize..])
-    }
-}
-
-/// A Python int of any size: its sign and its magnitude, in base 10^9 limbs, least significant first.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Int {
-    negative: bool,
-    limbs: Vec<u32>,
-}
-
-const BASE: u64 = 1_000_000_000;
-
-impl Int {
-    fn small(v: i64) -> Self {
-        let mut i = Int { negative: v < 0, limbs: Vec::new() };
-        let mut m = v.unsigned_abs();
-        while m > 0 {
-            i.limbs.push((m % BASE) as u32);
-            m /= BASE;
-        }
-        i
-    }
-
-    /// An int literal's value (`0x1F`, `0o17`, `0b1`, `1_000`).
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        let t: String = text.chars().filter(|c| *c != '_').collect();
-        let lower = t.to_ascii_lowercase();
-        let (radix, digits) = match lower.get(..2) {
-            Some("0x") => (16, &lower[2..]),
-            Some("0o") => (8, &lower[2..]),
-            Some("0b") => (2, &lower[2..]),
-            _ => (10, lower.as_str()),
-        };
-        let mut i = Int { negative: false, limbs: Vec::new() };
-        for c in digits.chars() {
-            let d = c.to_digit(radix)?;
-            // i = i * radix + d
-            let mut carry = u64::from(d);
-            for limb in &mut i.limbs {
-                let v = u64::from(*limb) * u64::from(radix) + carry;
-                *limb = (v % BASE) as u32;
-                carry = v / BASE;
-            }
-            while carry > 0 {
-                i.limbs.push((carry % BASE) as u32);
-                carry /= BASE;
-            }
-        }
-        Some(i)
-    }
-
-    /// The nearest float (`float(i)`), `None` where it overflows.
-    fn to_f64(&self) -> Option<f64> {
-        let f: f64 = self.decimal_unbounded().parse().ok()?;
-        f.is_finite().then_some(f)
-    }
-
-    fn neg(mut self) -> Self {
-        self.negative = !self.negative && !self.limbs.is_empty();
-        self
-    }
-
-    /// The decimal text, `None` past CPython's 4300 digits (`int.__repr__` raises).
-    fn decimal(&self) -> Option<String> {
-        let s = self.decimal_unbounded();
-        (s.len() - usize::from(self.negative) <= 4300).then_some(s)
-    }
-
-    fn decimal_unbounded(&self) -> String {
-        let Some((top, rest)) = self.limbs.split_last() else { return "0".into() };
-        let mut s = String::with_capacity(self.limbs.len() * 9 + 1);
-        if self.negative {
-            s.push('-');
-        }
-        s.push_str(&top.to_string());
-        for limb in rest.iter().rev() {
-            s.push_str(&format!("{limb:09}"));
-        }
-        s
-    }
-
-    fn cmp_magnitude(&self, other: &Int) -> Ordering {
-        self.limbs.len().cmp(&other.limbs.len()).then_with(|| self.limbs.iter().rev().cmp(other.limbs.iter().rev()))
-    }
-
-    fn order(&self, other: &Int) -> Ordering {
-        match (self.negative, other.negative) {
-            (false, true) => Ordering::Greater,
-            (true, false) => Ordering::Less,
-            (false, false) => self.cmp_magnitude(other),
-            (true, true) => other.cmp_magnitude(self),
-        }
-    }
-
-    /// The exact order of this int and float `f` (`None` for NaN).
-    fn cmp_float(&self, f: f64) -> Option<Ordering> {
-        if f.is_nan() {
-            return None;
-        }
-        if f.is_infinite() {
-            return Some(if f > 0.0 { Ordering::Less } else { Ordering::Greater });
-        }
-        let t = f.trunc();
-        let whole = Int::parse(format!("{:.0}", t.abs()).as_str()).expect("digits");
-        let whole = if t < 0.0 { whole.neg() } else { whole };
-        Some(self.order(&whole).then(if f > t { Ordering::Less } else if f < t { Ordering::Greater } else { Ordering::Equal }))
-    }
-}

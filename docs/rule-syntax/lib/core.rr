@@ -395,12 +395,18 @@
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
 // @tree_digest(n): a hash of n's subtree (kinds, fields, token text; no positions), as Python's ast.dump compares.
 .functor tree_digest(n: node): symbol
-// There is no @ast_dump: a repository that stores hashes of ast.dump text (cached_pure_lazy_allowlist) is
-// re-signed once with @tree_digest, which compares the same way without reproducing CPython's text.
-// @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
-// message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
-// parts of trees with relations.
+// @unparse(n): CPython 3.13's ast.unparse of the `ast` node at n's span that n's kind is read as (W's pythonAst
+// worker's KINDS: an `identifier` a Name, a `call` a Call, a `type` any expression, …): `(a or b) and not c` is
+// "(a or b) and (not c)", `f"{x=}"` is "f'x={x!r}'", `1e400` is "1e309". An expression, a keyword argument, a
+// parameter or an import alias; no value for a statement, or where CPython raises (an int of more than 4300 digits).
+// Byte-exact, so it may be a key: `@py_repr(@unparse(n))` is W's `repr_unparse`.
 .functor unparse(n: node): symbol
+// @ast_dump(n): CPython 3.13's ast.dump(node, include_attributes=False) of the `ast` node at n's span that n's kind is
+// read as (any node, statements too): `Call(func=Name(id='f', ctx=Load()))`. @sha256(@ast_dump(n)) is W's
+// dump_sha256, which dump_sha256(n, h) gives without the text. Cost: the text of n's whole subtree.
+.functor ast_dump(n: node): symbol
+// @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
+.functor py_repr(s: symbol): symbol
 
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
@@ -460,9 +466,18 @@
 // key) or json.dumps does (bytes, a set, a complex number, `...`, keys of different kinds, more than 4300 digits).
 // Native over Ruff's tree of the file; no Python runs. Cost: one parse per file and a pass over its expressions.
 .decl literal_json(n: node, v: symbol)
+// W's pythonAst hashes of CPython 3.13's ast.dump(…, include_attributes=False) text (sha256 of its UTF-8, lowercase
+// hex), the node found as @ast_dump finds it: dump_sha256(n, h), of n's dump (@sha256(@ast_dump(n)) without the
+// text); body_sha256(f, h), of def f's ast.Module(body=f.body, type_ignores=[]); signature_sha256(f, h), of
+// `dump(f.args) + "|" + (dump(f.returns) or "None") + "|" + dump(ast.Tuple(elts=f.type_params))`. Native; no Python
+// runs. Cost: one parse per file, its tree's dump written once, a digest per node.
+.decl dump_sha256(n: node, h: symbol)
+.decl body_sha256(f: node, h: symbol)
+.decl signature_sha256(f: node, h: symbol)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
 .input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, literal_json
+.input dump_sha256, body_sha256, signature_sha256
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

@@ -62,7 +62,7 @@ pub(in crate::code_rule_dsl) const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 23] = [
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 28] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -86,6 +86,11 @@ pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 23] = [
     ("cpython_syntax_error", &[2]),
     ("parsed", &[1]),
     ("literal_json", &[1]),
+    ("cpython_unparse", &[1]),
+    ("cpython_ast_dump", &[1]),
+    ("dump_sha256", &[1]),
+    ("body_sha256", &[1]),
+    ("signature_sha256", &[1]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
