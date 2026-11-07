@@ -8,12 +8,12 @@ data-layer port's recorded linter calls. The reader column is the final-shape en
 |---|---:|---:|---|---|
 | connection_mode_split | 390 | 92 | 12 / 13 | yes |
 | legacy_callback_quarantine | 515 | 92 | 11 / 11 | yes |
-| connection_structural_boundaries | 874 | 156 | 14 / 15 | yes |
-| connection_service_architecture | 923 | 333 | 32 / 32 (see below) | yes |
-| graphql_plan_ownership | 446 | 81 | 43 / 50 | yes |
+| connection_structural_boundaries | 874 | 158 | 14 / 15 | yes |
+| connection_service_architecture | 923 | 333 | 32 / 32 | yes |
+| graphql_plan_ownership | 446 | 81 | 50 / 50 | yes |
 | bounded_composed_graph_paths | 387 | 213 | 66 / 66 | yes |
-| graph_lazy_sql_plan | 862 | 160 | 115 / 115 | yes |
-| **total** | 4,397 | 1,127 | 293 / 302 | |
+| graph_lazy_sql_plan | 862 | 162 | 115 / 115 | yes |
+| **total** | 4,397 | 1,131 | 300 / 302 | |
 
 The JSON port of bounded_composed_graph_paths is 380 KB. The `.rr` is 213 lines: it reads physical lines
 (`src_line`), as the linter's `(?m)^` regexes do, and keeps its text shapes (class blocks, four-space methods and
@@ -31,9 +31,7 @@ decorators, field lines).
   plugin) keeps the *last* class of a name, with all its methods. The rule follows fact mode, which
   `test_structural_duplicate_and_base_controls` checks. The two modes disagree on the same file: with two
   `_ConnectionLifecycleMixin` classes, legacy mode reports lines 2 and 3, and fact mode reports line 6.
-- **graphql_plan_ownership, the 7 GPO000 events:** a harness gap. The rule says
-  `.on syntax_error report GPO000 at line 1`, which rrlab does not model (README, "Known gaps": `.on`). Every
-  other event is exact.
+- **graphql_plan_ownership, the 7 GPO000 events** (syntax errors) now match: rrlab compares them by (path, line).
 
 ## Deliberate differences
 
@@ -66,16 +64,14 @@ None remain. Two forms were changed so that they lower:
 
 ## Harness gaps
 
-- rrlab does not model `.on syntax_error report CODE [at line 1]`. It is a small change in `rrlab.py`: one finding
-  per document that has a `syntax_error` row, with the directive's code, at line 1 or at the error's line. It
-  would lift graphql_plan_ownership to 50 / 50, and it would help the other groups that use the directive
-  (bootstrap-cache-health, lazy-adapter-ownership, schema-architecture and others).
+- `.on syntax_error report CODE`: the GPO000 events are compared by (path, line) only, since their recorded
+  codes are none of the rule's.
 - rrlab's lowering refuses `split_dot` with a `_` column (`Underscore in binary relation`).
   connection_mode_split uses a capture instead.
 
 ## Library and core changes
 
-One requested: `pos_arg`, at the end. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
+One requested: `deco_word`, at the end. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
 Name or Attribute, through calls or not), of "a class's methods" (first or last of a name, top-level classes
 only, merged across same-named classes) and of "a docstring-free body". So the rules keep short local helpers,
 with prefixes `cms_`, `lcb_`, `csb_`, `csa_`, `gpo_`, `bcgp_` and `glsp_`. If a later group needs the same
@@ -104,23 +100,23 @@ Before that, the 32 / 32 was scored on a scratch copy whose `pos_arg` had the fa
 runs the small events alike, but the one event over 100 repository files does not finish in 2 minutes in rrlab,
 because of `pos_arg`'s aggregate.
 
-## Library change request: `lib/python/security.rr`, `pos_arg`
+## Second review (connection_structural_boundaries, graph_lazy_sql_plan)
 
-In rrlab's Soufflé the count inside `pos_arg` scans `child` with `in_call_args` per argument: 49 s CPU on 20
-repository files, against 1.8 s when the counted positions are a relation of their own. The rows are the same.
-Replace
+- CSB013 reads bases through parentheses (`unparen`): `_SqlConnectionCore((A), B, C, D, E, F, G)` has 7.
+- graph_lazy_sql_plan uses `deco_word` and `def_walk` from `lib/data-layer/boot-python.rr`. A top-level
+  `type X[T] = …` is now a binding of X. The tree has no node for X inside the `generic_type`, so X is read off
+  its text.
+
+## Library change request: `lib/data-layer/boot-python.rr`, `deco_word`
+
+`deco_word` does not see through parentheses, so `@(pure_lazy)` gives no word, but in `ast` it is a Name.
+graph_lazy_sql_plan keeps one local rule for that case until this lands. Replace the two rules with
 
 ```
-pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
-    in_call_args(a0), i = count : { child(l, b, k), k < j, in_call_args(b) }, unparen(a0, a).
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), kind(e, "identifier"), text(e, x).
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), attr_of(e, _, x).
 ```
 
-with
-
-```
-// arg_at(l, k): child k of argument list l is in `call.args` (counted for pos_arg's index).
-.decl arg_at(l: node, k: number)
-arg_at(l, k) :- child(l, b, k), in_call_args(b).
-pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
-    in_call_args(a0), i = count : { arg_at(l, k), k < j }, unparen(a0, a).
-```
+The `pos_arg` speed-up requested earlier has landed (`arg_at`).

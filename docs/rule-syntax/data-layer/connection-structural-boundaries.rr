@@ -22,6 +22,7 @@
 // Options connectionPath, lifecyclePath, sqlPath move the three l2000/l2200 files, as the linter's tests do.
 
 #include "python/names.rr"
+#include "python/ast.rr"      // unparen
 
 // The linter's symbol lists: CONNECTION_RESIDUAL_SYMBOLS, SQL_RESIDUAL_SYMBOLS, BACKEND_MIXIN_SYMBOLS.
 .decl csb_residual(role: symbol, v: symbol)
@@ -97,9 +98,10 @@ csb_method(c, f, x) :- csb_class(_, c, _), stmt(st, c), defstmt(f, st), kind(f, 
     def_name(f, x).
 // csb_base(c, x): a base of c written as a name or a dotted name, by its last name.
 .decl csb_base(c: node, b: node, x: symbol)
-csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b, _), kind(b, "identifier"), text(b, x).
-csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b, _), kind(b, "attribute"),
-    field(b, "attribute", a), text(a, x).
+csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    kind(b, "identifier"), text(b, x).
+csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    attr_of(b, _, x).
 // csb_connects(f): something inside method f (or its decorators) calls self.connect() or self.connect_async().
 .decl csb_connects(f: node)
 csb_connects(f) :- csb_method(_, f, _), defstmt(f, st), within(c, st), kind(c, "call"), field(c, "function", a),
