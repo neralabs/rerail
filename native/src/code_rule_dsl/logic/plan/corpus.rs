@@ -797,6 +797,32 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
         let digest = { let _d = digest; cross_rounds::digest(&rows) };
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
+        crate::code_rule_dsl::logic::profile::decision(&format!("round {r} hop rows"), || {
+            // Documents whose rows of some hop relation changed since the round before (by the head's first
+            // node column; a relation without one is not counted).
+            let mut changed: BTreeSet<i64> = BTreeSet::new();
+            for (rel, v) in &rows {
+                if types(rel).first().map(String::as_str) != Some("node") {
+                    continue;
+                }
+                let mut now = v.clone();
+                now.sort_unstable();
+                now.dedup();
+                let before = &prev_rows[rel];
+                if &now == before { continue; }
+                let docs = |rs: &[Vec<i64>]| -> BTreeMap<i64, Vec<Vec<i64>>> {
+                    let mut m: BTreeMap<i64, Vec<Vec<i64>>> = BTreeMap::new();
+                    for r in rs { m.entry(r[0] >> 32).or_default().push(r.clone()); }
+                    m
+                };
+                let (a, b) = (docs(&now), docs(before));
+                for d in a.keys().chain(b.keys()) {
+                    if a.get(d) != b.get(d) { changed.insert(*d); }
+                }
+            }
+            let docs: BTreeSet<i64> = rows.values().flatten().map(|r| r[0] >> 32).collect();
+            format!("{}; documents changed {} of {}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
+        });
         if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
             report.pending = r == k + 1 && !report.converged;
