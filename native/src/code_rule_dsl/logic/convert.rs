@@ -889,7 +889,7 @@ pub(in crate::code_rule_dsl) enum Origin {
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
 /// What the converter gives an authored file to read: the scope, the report gate and the options.
-pub(in crate::code_rule_dsl) const GIVEN: [&str; 7] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json"];
+pub(in crate::code_rule_dsl) use super::plan::corpus::GIVEN;
 
 /// The column types of what the converter gives (`GIVEN`), where `rel` is one.
 fn given_types(rel: &str) -> Option<Vec<String>> {
