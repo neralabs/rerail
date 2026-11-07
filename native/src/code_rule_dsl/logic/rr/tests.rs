@@ -785,3 +785,52 @@ Verified(@place("allowlist.json", 1), name) :- candidate(name, message),
     assert_eq!(rows[0]["parameters"]["name"], "original");
 }
 
+/// One repository document can feed several typed selectors without rebuilding per rule or source file.
+#[test]
+fn repository_json_selectors_preserve_typed_rows_and_wildcard_keys() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrjson");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("policy.json"), r#"{"counts":{"a":2,"b":3},"groups":{"g":{"entries":[{"name":"one","limit":4},{"name":"two","limit":5}]}},"title":"kept"}"#).unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:json" revision 1
+.decl counts(k: symbol, n: number)
+.input counts(IO=json, filename = "policy.json", path="/counts")
+.decl entries(group: symbol, name: symbol, limit: number)
+.input entries(IO=json, filename="policy.json", path="/groups/*/entries", records=true)
+.decl title(t: symbol)
+.input title(IO=json, filename="policy.json", path="/title")
+.violation Row(at: span, family: symbol, value: symbol, n: number) "{family}:{value}:{n}"
+Row(@place("policy.json", 1), "count", k, n) :- counts(k, n).
+Row(@place("policy.json", 1), g, name, n) :- entries(g, name, n).
+Row(@place("policy.json", 1), "title", t, 0) :- title(t).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| r["message"].as_str().unwrap()).collect();
+    actual.sort();
+    assert_eq!(actual, ["count:a:2", "count:b:3", "g:one:4", "g:two:5", "title:kept:0"]);
+}
+
+/// A malformed row must not leak an earlier prefix of a policy input into rule execution.
+#[test]
+fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputerrors");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("bad.json"), r#"[1,"wrong type"]"#).unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:input-errors" revision 1
+.decl bad(n: number)
+.input bad(IO=json, filename="bad.json")
+.decl missing(t: symbol)
+.input missing(IO=lines, filename="missing.txt")
+.violation Error(at: span, kind: symbol) "{kind}"
+Error(@place(p, 1), kind) :- input_error(p, kind, _).
+.violation Leaked(at: span) "partial row leaked"
+Leaked(@place("bad.json", 1)) :- bad(_).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (r["path"].as_str().unwrap(), r["message"].as_str().unwrap())).collect();
+    actual.sort();
+    assert_eq!(actual, [("bad.json", "malformed"), ("missing.txt", "missing")]);
+}
