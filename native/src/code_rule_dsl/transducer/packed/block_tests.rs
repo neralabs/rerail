@@ -222,6 +222,9 @@ const BODY_OPCODES: &[&str] = &[
     "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
     "popcnt",
+    // Constants, made where they are used (decision 0047): `movi` and literal-pool loads, and
+    // the output words' one pointer (`i * outputs * 8`).
+    "splat", "vconst", "imul_imm",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -1183,4 +1186,69 @@ fn within_and_delay_equal_reference_on_every_executor() {
 #[test]
 fn within_lowers_to_straight_bit_operations() {
     check_lowering("within", &program("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %2\n  block 0 delay 3\n"));
+}
+
+// --- Cranelift's loop keeps simdjson's shape (decision 0047) ------------------------------------
+
+/// The loop of a compiled block function's machine code: its largest block (the body over one
+/// 64-byte block) and the blocks it branches to that jump back to it (the back edge). The
+/// edge into the loop from a file's row is not counted: it runs once per file.
+pub(super) fn machine_loop(disassembly: &str) -> Vec<String> {
+    let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+    for line in disassembly.lines() {
+        if let Some(label) = line.strip_suffix(':').filter(|l| l.starts_with("block")) {
+            blocks.push((label.trim_start_matches("block").to_owned(), Vec::new()));
+        } else if let Some((_, body)) = blocks.last_mut() {
+            body.push(line.trim().to_owned());
+        }
+    }
+    let (body, lines) = blocks.iter().max_by_key(|(_, l)| l.len()).cloned().expect("a block");
+    let back = format!("b label{body}");
+    let exits = lines.last().cloned().unwrap_or_default();
+    let mut out = lines;
+    for (label, l) in &blocks {
+        let target = exits.split(|c: char| !c.is_alphanumeric()).any(|w| w == format!("label{label}"));
+        if target && l.last().is_some_and(|t| *t == back) {
+            out.extend(l.iter().cloned());
+        }
+    }
+    out
+}
+
+/// A loop's stack loads and stores (spills and reloads), and its vector `mvn`s.
+pub(super) fn loop_costs(lines: &[String]) -> (usize, usize) {
+    let stack = lines.iter().filter(|l| (l.starts_with("ldr") || l.starts_with("str") || l.starts_with("ldp") || l.starts_with("stp")) && l.contains("[sp")).count();
+    let mvn = lines.iter().filter(|l| l.starts_with("mvn v")).count();
+    (stack, mvn)
+}
+
+/// The function's loop-carried values, read from the Cranelift IR: the body block's parameters
+/// after its block index.
+pub(super) fn carried_params(clif: &str) -> usize {
+    let line = clif.lines().find(|l| l.trim_start().starts_with("block2(")).expect("the body block");
+    line.matches(": i64").count() - 1
+}
+
+/// Stage 1 compiles to a loop with no stack traffic and no vector `mvn`: every value and
+/// constant in a register, one carried word per value a carry reads.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn stage1_loop_keeps_values_in_registers() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    let (stack, mvn) = loop_costs(&lines);
+    eprintln!("stage 1 loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
+    assert_eq!((stack, mvn), (0, 0), "stage 1's loop spills or inverts vectors:\n{}", lines.join("\n"));
+    let block = &p.block_programs()[0];
+    let words = carried_words(block) + native.extracts.len();
+    assert_eq!(carried_params(&compiled.clif), words, "one carried word per prev base and per carry");
+}
+
+/// The values a program's `prev`s read, one carried word each, and its other carried operations.
+pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
+    use super::block::BlockOp::*;
+    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
+    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count()
 }

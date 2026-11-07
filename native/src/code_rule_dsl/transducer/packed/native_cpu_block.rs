@@ -8,9 +8,10 @@
 //! byte weighted by its bit, then three rounds of pairwise adds, `addp`); elsewhere
 //! `vhigh_bits` (one `pmovmskb` on x86).
 //!
-//! A file's words in `out` start at its row's `out`: output `k`'s word for block `i` at
-//! `k * blocks + i`; then each extract's popcount over all its blocks, the size of its extract
-//! pass.
+//! A file's words in `out` start at its row's `out`: block `i`'s words together, output `k`'s
+//! at `i * outputs + k` (one pointer in the loop, each store at an immediate offset, as
+//! simdjson's one index array); then each extract's popcount over all its blocks, the size of
+//! its extract pass.
 
 use super::Error;
 use super::block::{BatchFile, BlockRun, extract::positions, mask_tail, padded_by, undelay};
@@ -108,6 +109,7 @@ impl Batch {
             .map(|(row, bytes)| {
                 let (n, base) = (row.blocks as usize, row.out as usize);
                 let out = &self.out[base..base + program.outputs * n + program.extracts.len()];
+                let words_of = |k: usize| -> Vec<u64> { (0..n).map(|i| out[i * program.outputs + k]).collect() };
                 // The function counts whole blocks; the bits past the end (the padding's) come off.
                 let past = |words: &[u64]| match (words.last(), bytes.len() % 64) {
                     (Some(&w), r) if r != 0 => (w >> r).count_ones() as usize,
@@ -118,14 +120,13 @@ impl Batch {
                     .iter()
                     .enumerate()
                     .map(|(e, &k)| {
-                        let words = &out[k * n..(k + 1) * n];
-                        let count = out[program.outputs * n + e] as usize - past(words);
-                        let mut words = words.to_vec();
+                        let mut words = words_of(k);
+                        let count = out[program.outputs * n + e] as usize - past(&words);
                         mask_tail(&mut words, bytes.len());
                         positions(&words, count)
                     })
                     .collect();
-                let outputs = (0..program.outputs).map(|k| undelay(&out[k * n..(k + 1) * n], program.output_delays[k], bytes.len())).collect();
+                let outputs = (0..program.outputs).map(|k| undelay(&words_of(k), program.output_delays[k], bytes.len())).collect();
                 BlockRun { outputs, positions }
             })
             .collect()
@@ -181,6 +182,9 @@ const FRONT: usize = 16;
 
 /// Compile a block program's native IR.
 pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
+    // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
+    // more than the registers hold, and spill them (decision 0047). The body is already
+    // straight-line and deduplicated.
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
@@ -208,10 +212,26 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
         f.append_block_param(body, types::I64);
-        // One loop-carried word per carried instruction: `prev`'s previous word, `toggle`'s
-        // parity (all ones or zero), `after_odd_run`'s and `fill`'s borrow (0 or 1).
-        let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
-        for _ in &carried {
+        // One loop-carried word per value a `prev` reads (its previous word, shared by every
+        // distance), and per other carried instruction: `toggle`'s parity (all ones or zero),
+        // `after_odd_run`'s and `fill`'s borrow (0 or 1). `slot[at]`: instruction `at`'s word.
+        let mut slot: Vec<Option<usize>> = vec![None; native.insts.len()];
+        let mut bases: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
+        let mut carried = 0usize;
+        for (at, inst) in native.insts.iter().enumerate() {
+            slot[at] = match *inst {
+                BlockInst::Prev(a, _) => Some(*bases.entry(a).or_insert_with(|| {
+                    carried += 1;
+                    carried - 1
+                })),
+                _ if inst.carried() => {
+                    carried += 1;
+                    Some(carried - 1)
+                }
+                _ => None,
+            };
+        }
+        for _ in 0..carried {
             f.append_block_param(body, types::I64);
         }
         // One loop-carried popcount per extract, the mask pass's count for the extract pass;
@@ -225,55 +245,6 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.switch_to_block(entry);
         let params = f.block_params(entry).to_vec();
         let (arena, rows, nrows, out_all) = (params[0], params[1], params[2], params[3]);
-        // Constants, made once outside the loop: each compare's splat, each `const`'s word, and
-        // the bitmask's weights.
-        let constants: Vec<Option<Value>> = native
-            .insts
-            .iter()
-            .map(|inst| match *inst {
-                BlockInst::EqByte(byte) => {
-                    let c = f.ins().iconst(types::I8, i64::from(byte));
-                    Some(f.ins().splat(types::I8X16, c))
-                }
-                BlockInst::Const(c) => Some(f.ins().iconst(types::I64, c as i64)),
-                BlockInst::Class { bits, .. } => {
-                    let c = f.ins().iconst(types::I8, i64::from(bits));
-                    Some(f.ins().splat(types::I8X16, c))
-                }
-                BlockInst::Plane(k) | BlockInst::PlaneBefore(k) => {
-                    let c = f.ins().iconst(types::I8, 1i64 << k);
-                    Some(f.ins().splat(types::I8X16, c))
-                }
-                BlockInst::Pair { bits, .. } => {
-                    let c = f.ins().iconst(types::I8, i64::from(bits));
-                    Some(f.ins().splat(types::I8X16, c))
-                }
-                _ => None,
-            })
-            .collect();
-        // Each table's two halves as vector constants, the low-nibble mask, and zero.
-        let tables: Vec<(Value, Value)> = native
-            .tables
-            .iter()
-            .map(|t| {
-                let lo = f.func.dfg.constants.insert(ConstantData::from(&t.lo[..]));
-                let hi = f.func.dfg.constants.insert(ConstantData::from(&t.hi[..]));
-                (f.ins().vconst(types::I8X16, lo), f.ins().vconst(types::I8X16, hi))
-            })
-            .collect();
-        let nibble = {
-            let c = f.ins().iconst(types::I8, 0x0f);
-            f.ins().splat(types::I8X16, c)
-        };
-        let zero16 = {
-            let c = f.ins().iconst(types::I8, 0);
-            f.ins().splat(types::I8X16, c)
-        };
-        let weights = {
-            const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
-            let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
-            f.ins().vconst(types::I8X16, handle)
-        };
         let zero = f.ins().iconst(types::I64, 0);
         let even = f.ins().iconst(types::I64, super::block::carry::EVEN as i64);
         let no_rows = f.ins().icmp_imm(IntCC::Equal, nrows, 0);
@@ -292,25 +263,35 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let from = f.ins().ishl_imm(first_word, 3);
             f.ins().iadd(out_all, from)
         };
-        let output_bases: Vec<Value> = (0..native.outputs.len())
-            .map(|k| {
-                let first = f.ins().imul_imm(blocks, k as i64);
-                let bytes_from = f.ins().ishl_imm(first, 3);
-                f.ins().iadd(out, bytes_from)
-            })
-            .collect();
         let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
+        // The first block's carries are zero, made here: the entry's zero, live across every
+        // row, would be spilled and reloaded once per carried word.
+        let zero = f.ins().iconst(types::I64, 0);
         let first: Vec<cranelift_codegen::ir::BlockArg> =
-            std::iter::repeat_n(zero.into(), carried.len() + native.extracts.len() + 1).collect();
+            std::iter::repeat_n(zero.into(), carried + native.extracts.len() + 1).collect();
         let no_counts: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), native.extracts.len()).collect();
         f.ins().brif(none, exit, &no_counts, body, &first);
 
         // The body: one block, straight-line.
         f.switch_to_block(body);
         let i = f.block_params(body)[0];
-        let carries_in: Vec<Value> = f.block_params(body)[1..1 + carried.len()].to_vec();
-        let counts_in: Vec<Value> = f.block_params(body)[1 + carried.len()..].to_vec();
-        let mut carries_out: Vec<Value> = Vec::with_capacity(carried.len());
+        let carries_in: Vec<Value> = f.block_params(body)[1..1 + carried].to_vec();
+        let counts_in: Vec<Value> = f.block_params(body)[1 + carried..].to_vec();
+        let mut carries_out: Vec<Option<Value>> = vec![None; carried];
+        // Constants are made in the body, where they are used (decision 0047): `movi` for a
+        // splat, a literal-pool load for a table. Hoisted out of the loop, more of them than
+        // the vector registers hold would spill and reload on every block.
+        let splat = |f: &mut FunctionBuilder<'_>, byte: u8| {
+            let c = f.ins().iconst(types::I8, i64::from(byte));
+            f.ins().splat(types::I8X16, c)
+        };
+        let nibble = splat(&mut f, 0x0f);
+        let zero16 = splat(&mut f, 0);
+        let weights = {
+            const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
+            let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
+            f.ins().vconst(types::I8X16, handle)
+        };
         let offset = f.ins().ishl_imm(i, 6);
         let base = f.ins().iadd(bytes, offset);
         let loads = MemFlags::new().with_notrap();
@@ -345,7 +326,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let mut classes_before: Vec<Option<Vec<Value>>> = vec![None; native.tables.len()];
         let lookup = |f: &mut FunctionBuilder<'_>, cache: &mut Vec<Option<Vec<Value>>>, t: usize, low: &[Value], high: &[Value]| {
             if cache[t].is_none() {
-                let (lo, hi) = tables[t];
+                let table = &native.tables[t];
+                let lo = f.func.dfg.constants.insert(ConstantData::from(&table.lo[..]));
+                let hi = f.func.dfg.constants.insert(ConstantData::from(&table.hi[..]));
+                let (lo, hi) = (f.ins().vconst(types::I8X16, lo), f.ins().vconst(types::I8X16, hi));
                 cache[t] = Some(
                     (0..4)
                         .map(|part| {
@@ -360,6 +344,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         };
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
+            let c = slot[at].unwrap_or(0);
             let value = match *inst {
                 // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
                 // shifts so that t = 64 needs no shift by 64 (`block::within`). At a delay `d`,
@@ -390,24 +375,29 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     }
                 }
                 BlockInst::EqByte(_) => {
-                    let splat = constants[at].expect("a splat per compare");
+                    let BlockInst::EqByte(byte) = *inst else { unreachable!() };
+                    let splat = splat(&mut f, byte);
                     let parts: Vec<Value> = chunks.iter().map(|&bytes| f.ins().icmp(IntCC::Equal, bytes, splat)).collect();
                     bitmask(&mut f, &parts, weights)
                 }
                 BlockInst::Class { table, .. } => {
-                    let sel = constants[at].expect("a splat per class");
+                    let BlockInst::Class { bits, .. } = *inst else { unreachable!() };
+                    let sel = splat(&mut f, bits);
                     let bytes = lookup(&mut f, &mut classes, usize::from(table), &low, &high);
                     let parts: Vec<Value> = bytes
                         .iter()
                         .map(|&both| {
                             let picked = f.ins().band(both, sel);
-                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
+                            f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    bitmask(&mut f, &parts, weights)
+                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
+                    let none = bitmask(&mut f, &parts, weights);
+                    f.ins().bnot(none)
                 }
                 BlockInst::Pair { before, table, .. } => {
-                    let sel = constants[at].expect("a splat per pair");
+                    let BlockInst::Pair { bits, .. } = *inst else { unreachable!() };
+                    let sel = splat(&mut f, bits);
                     let back = lookup(&mut f, &mut classes_before, usize::from(before), &low_before, &high_before);
                     let own = lookup(&mut f, &mut classes, usize::from(table), &low, &high);
                     let parts: Vec<Value> = back
@@ -416,52 +406,56 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                         .map(|(&p, &b)| {
                             let both = f.ins().band(p, b);
                             let picked = f.ins().band(both, sel);
-                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
+                            f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    bitmask(&mut f, &parts, weights)
+                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
+                    let none = bitmask(&mut f, &parts, weights);
+                    f.ins().bnot(none)
                 }
                 BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => {
-                    let bit = constants[at].expect("a splat per plane");
+                    let (BlockInst::Plane(k) | BlockInst::PlaneBefore(k)) = *inst else { unreachable!() };
+                    let bit = splat(&mut f, 1u8 << k);
                     let source = if matches!(inst, BlockInst::Plane(_)) { &chunks } else { &befores };
                     let parts: Vec<Value> = source
                         .iter()
                         .map(|&bytes| {
                             let picked = f.ins().band(bytes, bit);
-                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
+                            f.ins().icmp(IntCC::Equal, picked, zero16)
                         })
                         .collect();
-                    bitmask(&mut f, &parts, weights)
+                    // The bytes with no selected bit, then one scalar `not`: no vector `mvn`.
+                    let none = bitmask(&mut f, &parts, weights);
+                    f.ins().bnot(none)
                 }
-                BlockInst::Const(_) => constants[at].expect("a word per const"),
+                BlockInst::Const(c) => f.ins().iconst(types::I64, c as i64),
                 BlockInst::Not(a) => f.ins().bnot(v(a)),
                 BlockInst::And(a, b) => f.ins().band(v(a), v(b)),
                 BlockInst::Or(a, b) => f.ins().bor(v(a), v(b)),
                 BlockInst::Xor(a, b) => f.ins().bxor(v(a), v(b)),
                 BlockInst::AndNot(a, b) => f.ins().band_not(v(a), v(b)),
                 BlockInst::Prev(a, k) => {
-                    let previous = carries_in[carries_out.len()];
                     let up = f.ins().ishl_imm(v(a), i64::from(k));
-                    let halo = f.ins().ushr_imm(previous, 64 - i64::from(k));
-                    carries_out.push(v(a));
+                    let halo = f.ins().ushr_imm(carries_in[c], 64 - i64::from(k));
+                    carries_out[c] = Some(v(a));
                     f.ins().bor(up, halo)
                 }
                 BlockInst::Toggle(a) => {
                     // prefix XOR by six shift-XOR rounds (Cranelift has no carry-less multiply),
                     // then the parity carried in.
-                    let parity = carries_in[carries_out.len()];
+                    let parity = carries_in[c];
                     let mut x = v(a);
                     for k in [1, 2, 4, 8, 16, 32] {
                         let up = f.ins().ishl_imm(x, k);
                         x = f.ins().bxor(x, up);
                     }
                     let y = f.ins().bxor(x, parity);
-                    carries_out.push(f.ins().sshr_imm(y, 63));
+                    carries_out[c] = Some(f.ins().sshr_imm(y, 63));
                     y
                 }
                 BlockInst::AfterOddRun(a) => {
                     // simdjson's find_escaped_branchless (`block::carry::after_odd_run`).
-                    let cin = carries_in[carries_out.len()];
+                    let cin = carries_in[c];
                     let run = v(a);
                     let b = f.ins().band_not(run, cin);
                     let up = f.ins().ishl_imm(b, 1);
@@ -472,13 +466,13 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let invert = f.ins().ishl_imm(sequences, 1);
                     let flipped = f.ins().bxor(even, invert);
                     let escaped = f.ins().band(flipped, follows);
-                    carries_out.push(f.ins().uextend(types::I64, overflow));
+                    carries_out[c] = Some(f.ins().uextend(types::I64, overflow));
                     f.ins().band_not(escaped, run)
                 }
                 BlockInst::Fill(s, e) => {
                     // `block::carry::fill`: the carry into each bit of `s + (s | !e) + cin` is
                     // the fill coming into that byte.
-                    let cin = carries_in[carries_out.len()];
+                    let cin = carries_in[c];
                     let (start, end) = (v(s), v(e));
                     let b = f.ins().bor_not(start, end);
                     let sum = f.ins().iadd(start, b);
@@ -487,16 +481,17 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let into = f.ins().bxor(into, b);
                     let open = f.ins().band_not(into, end);
                     let y = f.ins().bor(start, open);
-                    carries_out.push(f.ins().ushr_imm(y, 63));
+                    carries_out[c] = Some(f.ins().ushr_imm(y, 63));
                     y
                 }
             };
             values.push(value);
         }
+        let stride = 8 * native.outputs.len() as i64;
+        let at = f.ins().imul_imm(i, stride);
+        let address = f.ins().iadd(out, at);
         for (k, &v) in native.outputs.iter().enumerate() {
-            let at = f.ins().ishl_imm(i, 3);
-            let address = f.ins().iadd(output_bases[k], at);
-            f.ins().store(MemFlags::new().with_notrap(), values[usize::from(v)], address, 0);
+            f.ins().store(MemFlags::new().with_notrap(), values[usize::from(v)], address, 8 * k as i32);
         }
         let counts_out: Vec<Value> = native
             .extracts
@@ -510,7 +505,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let next = f.ins().iadd_imm(i, 1);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, blocks);
         let again: Vec<cranelift_codegen::ir::BlockArg> = std::iter::once(next.into())
-            .chain(carries_out.iter().map(|&c| c.into()))
+            .chain(carries_out.iter().map(|&c| c.expect("every carried word is written").into()))
             .chain(counts_out.iter().map(|&c| c.into()))
             .collect();
         let counted: Vec<cranelift_codegen::ir::BlockArg> = counts_out.iter().map(|&c| c.into()).collect();

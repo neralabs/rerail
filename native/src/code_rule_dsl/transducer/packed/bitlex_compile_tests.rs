@@ -605,14 +605,6 @@ fn shape_violations(p: &block::BlockProgram) -> Vec<String> {
     out
 }
 
-/// The carried words a program keeps from block to block: one per value some `prev` reads (every
-/// distance shares it), and one per other carried operation.
-fn carried_words(p: &block::BlockProgram) -> usize {
-    use super::block::BlockOp::*;
-    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
-    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count()
-}
-
 /// JSON's program has simdjson's shape: no alignment carries, no `prev` of `within` or of a
 /// `prev`, no two byte classes combined; and its operations and carried words within budget.
 #[test]
@@ -622,7 +614,7 @@ fn json_compiles_to_simdjsons_shape() {
     let violations = shape_violations(p);
     assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
     let prevs = p.ops.iter().filter(|op| matches!(op, block::BlockOp::Prev(..))).count();
-    let (ops, words) = (p.ops.len(), carried_words(p));
+    let (ops, words) = (p.ops.len(), super::block_tests::carried_words(p));
     eprintln!("json: {ops} operations, {prevs} prevs, {words} carried words, {} outputs", p.outputs.len());
     assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
 }
@@ -636,3 +628,25 @@ const JSON_CARRIED_WORDS: usize = 90;
 fn dump_json_rows() {
     std::fs::write(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP"), rir::disassemble(&json_program(), None)).expect("writes");
 }
+
+/// JSON's Cranelift loop: no vector `mvn`, one carried word per prev base and per carry, and its
+/// stack loads and stores within budget (a ratchet, to reach 0 as the carried words fit).
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn json_loop_keeps_values_in_registers() {
+    let program = json_program();
+    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = super::block_tests::machine_loop(&compiled.disassembly);
+    let (stack, mvn) = super::block_tests::loop_costs(&lines);
+    eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
+    assert_eq!(mvn, 0, "json's loop inverts vectors");
+    assert_eq!(super::block_tests::carried_params(&compiled.clif), super::block_tests::carried_words(&program.block_programs()[0]) + native.extracts.len());
+    assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
+}
+
+/// JSON's loop budgets (ratchets): lower them as the program and the lowering improve, never
+/// raise them. The stack traffic is the spill of 90 carried words and their live values into
+/// 31 registers; the target is stage 1's 0.
+const JSON_LOOP: usize = 2163;
+const JSON_LOOP_STACK: usize = 510;

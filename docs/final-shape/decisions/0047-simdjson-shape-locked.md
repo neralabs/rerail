@@ -59,6 +59,24 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
    - **JSON's budgets are ratchets.** Operations and carried words (one per value a `prev`
      reads, plus one per other carried operation) may only go down. A change that lowers them
      lowers the constants in the same commit.
+6. **Cranelift's loop keeps simdjson's machine shape**
+   (`block_tests::stage1_loop_keeps_values_in_registers`,
+   `bitlex_compile_tests::json_loop_keeps_values_in_registers`):
+   - **One carried word per `prev` base**, shared by every distance, as simdjson's one
+     `prev_in_string` word. The body's block parameters are exactly the carried words plus one
+     count per extract.
+   - **A class test is a scalar `not`.** Each lane is compared with zero, then the 64-bit
+     bitmask is inverted. No vector `mvn` is in the loop.
+   - **Constants are made in the body**, where they are used: `movi` for a splat, a
+     literal-pool load for a table. Hoisted out of the loop, more of them than the vector
+     registers hold would be spilled. For the same reason the mid-end stays off, because its
+     code motion hoists them.
+   - **Outputs are stored through one pointer.** Block `i`'s words sit together
+     (`out[i * outputs + k]`), each store at an immediate offset.
+   - **The first block's zero carries are made per file**, not once for the batch, so they are
+     not kept on the stack across files.
+   - **Stage 1 has no stack loads or stores in its loop.** JSON's loop instructions and stack
+     operations are ratchets.
 
 ## Results so far
 
@@ -68,11 +86,22 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
 | `prev`s | 114 | 62 |
 | carried words | 129 | 90 |
 
+Cranelift's loop, from the machine code (aarch64):
+
+| loop | before | after step 6 |
+|---|---:|---:|
+| stage 1: instructions | 359 | 351 |
+| stage 1: stack loads and stores | 12 | 0 |
+| JSON: instructions | 2314 | 2163 |
+| JSON: stack loads and stores | 692 | 510 |
+| vector `mvn` (both) | many | 0 |
+
+JSON's remaining stack traffic is its 90 carried words and their live values, more than the 31
+registers hold. That is the language's logic, the next item.
+
 Every executor's outputs still equal the evaluator's. The data-layer corpus still gives 771 of
 774 tapes equal to tree-sitter's.
 
 ## Next, under the same guards
 
-- Cranelift: one carried word per `prev` base, a scalar `not` after a class's bitmask, and no
-  stack loads or stores in the loop body.
 - Fewer carried words in the language's own logic, until they fit the registers.
