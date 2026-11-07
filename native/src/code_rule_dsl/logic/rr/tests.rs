@@ -1219,3 +1219,27 @@ fn input_error_directives_survive_public_report_transport() {
     assert_eq!(rows[0]["path"], "missing.txt");
     assert_eq!(rows[0]["line"], 1);
 }
+
+#[test]
+fn nullary_relations_preserve_boolean_set_semantics() {
+    let rows = finding_contract("import example\n", r#"
+.language python
+.decl enabled()
+enabled() :- doc(_, _, _).
+.decl absent()
+absent() :- kind(_, "not_a_real_kind").
+.decl always()
+always().
+.decl marker(x: number)
+marker(1).
+marker(2).
+.decl many()
+many() :- marker(_).
+.violation Boolean(at: span) code "BOOLEAN" "true"
+Boolean(@place(p, 1)) :- doc(_, p, _), enabled(), !absent(), always(), many().
+.violation Bad(at: span) code "BAD" "false"
+Bad(@place(p, 1)) :- doc(_, p, _), absent().
+"#);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["code"], "BOOLEAN");
+}
