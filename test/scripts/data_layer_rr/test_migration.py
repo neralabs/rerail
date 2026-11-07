@@ -16,6 +16,22 @@ def module():
 
 
 class MigrationTests(unittest.TestCase):
+    def test_fresh_shards_keep_global_oracle_indices_and_cover_every_case_once(self):
+        module()
+        from fresh import selected_cases
+        cases = [{'id': str(i)} for i in range(7)]
+        shards = [selected_cases(cases, part, 3) for part in range(3)]
+        merged = sorted(row for shard in shards for row in shard)
+        self.assertEqual(list(enumerate(cases)), merged)
+        self.assertEqual([0, 3, 6], [index for index, _ in shards[0]])
+
+    def test_fresh_shards_reject_an_invalid_partition(self):
+        module()
+        from fresh import selected_cases
+        for part, parts in [(-1, 2), (2, 2), (0, 0), (0, 3)]:
+            with self.subTest(part=part, parts=parts), self.assertRaises(ValueError):
+                selected_cases([{'id': 'a'}, {'id': 'b'}], part, parts)
+
     def test_fresh_arguments_keep_a_path_keyword_dictionary(self):
         module()
         from fresh import arguments

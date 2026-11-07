@@ -1,0 +1,933 @@
+{
+  "format": "rerail.rr-plugin-report-cases/v1",
+  "cases": [
+    {
+      "id": "log_error",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "log_warning",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.warning(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "log_info",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.info(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "other_logger",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    other.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "nested_logger",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    obj.logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "call_parentheses",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    ((logger.error(\"bad\")))\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "callee_parentheses",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    (logger.error)(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver_parentheses",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    (logger).error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "comment_gap",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    # comment\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "pass_gap",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    pass\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "docstring_gap",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    \"gap\"\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "raise_value",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise ValueError()\n"
+        }
+      ]
+    },
+    {
+      "id": "raise_from",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise ValueError() from None\n"
+        }
+      ]
+    },
+    {
+      "id": "raise_inline_comment",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise  # comment\n"
+        }
+      ]
+    },
+    {
+      "id": "two_pairs",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"a\")\n    raise\n    logger.warning(\"b\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "same_line",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\"); raise\n"
+        }
+      ]
+    },
+    {
+      "id": "nested_if",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    if flag:\n        logger.error(\"bad\")\n        raise\n"
+        }
+      ]
+    },
+    {
+      "id": "assigned_log",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    x = logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "returned_log",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def f():\n    try:\n        work()\n    except Exception:\n        return logger.error(\"bad\")\n        raise\n"
+        }
+      ]
+    },
+    {
+      "id": "awaited_log",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "async def f():\n    try:\n        work()\n    except Exception:\n        await logger.error(\"bad\")\n        raise\n"
+        }
+      ]
+    },
+    {
+      "id": "conditional_log",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\") if flag else None\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode_logger",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    # logger.error\n    ｌｏｇｇｅｒ.ｅｒｒｏｒ(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "multiline_call",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\n        \"bad\"\n    )\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "raise_parenthesized_value",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise (error)\n"
+        }
+      ]
+    },
+    {
+      "id": "no_log",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "logger_name_only",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "bare_except",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "star_except",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept* Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "async_handler",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "async def f():\n    try:\n        work()\n    except Exception:\n        logger.error(\"bad\")\n        raise\n"
+        }
+      ]
+    },
+    {
+      "id": "mixed_callback_order",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"a\")\n    raise\n    txn.commit()\n    logger.error(\"b\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "nested_callback_order",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"a\")\n    raise\n    try:\n        work()\n    except Exception:\n        logger.warning(\"inner\")\n        raise\n    txn.commit()\n    logger.error(\"b\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_module",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_function",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_async",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "async def f():\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_class",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "class C:\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_method",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "class C:\n    def f(self):\n        txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_class_inside_function",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    class C:\n        txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_nested_function",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def outer():\n    def inner():\n        txn.commit()\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_lambda",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "x = lambda: txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_default",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f(x=txn.commit()):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_decorator",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "@decorate(txn.commit())\ndef f():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_return",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    return txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_assigned",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "x = txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_annotated",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "x: int = txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_awaited",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "async def f():\n    await txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_yielded",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    yield txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_twice_same_line",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit(); txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_parentheses",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "((txn).commit())\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_callee_parentheses",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "(txn.commit)()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_callable_result",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit()()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_indexed_result",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit()[0]\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_nested_argument",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "print(txn.commit())\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_fstring",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "f\"{txn.commit()}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_attribute",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_other_receiver",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "other.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_nested_receiver",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "ctx.txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_method_unicode",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "# txn.commit\nｔｘｎ.ｃｏｍｍｉｔ()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_function_unicode",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def ｆ():\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_multiline",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "txn.commit(\n)\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_if",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "if flag:\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_match",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "match value:\n    case _:\n        txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_star_except",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "try:\n    work()\nexcept* Exception:\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_comprehension",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "[txn.commit() for i in items]\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_walrus",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "(x := txn.commit())\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_try_finally",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "try:\n    work()\nfinally:\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "api_scope",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "services_scope",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "services/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "prefix_without_boundary",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "apiary/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "outside_scope",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "elsewhere/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "test_directory",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "singular_test_directory",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "test_filename",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "dot_git",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/.git/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "dot_venv",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/.venv/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "venv",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/venv/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "tmp",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "pycache",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/__pycache__/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "node_modules",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/node_modules/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "pytest_cache",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/.pytest_cache/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "wrong_suffix",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.pyi",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "uppercase_suffix",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.PY",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_prefix_without_boundary",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/toolshed/a.py",
+          "source": "txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "commit_outside_owner",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid_python",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\nprint \"invalid\"\n"
+        }
+      ]
+    },
+    {
+      "id": "empty_source",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "id": "bom_source",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "﻿try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "nul_source",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n\u0000\n"
+        }
+      ]
+    },
+    {
+      "id": "non_ast_string",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "text = \"logger.error; raise; txn.commit()\"\n"
+        }
+      ]
+    },
+    {
+      "id": "long_source",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\n# padding\ntry:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "long_line",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\ntry:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    },
+    {
+      "id": "crlf_source",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\r\n    work()\r\nexcept Exception:\r\n    logger.error(\"bad\")\r\n    raise\r\n"
+        }
+      ]
+    },
+    {
+      "id": "multi_file",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"a\")\n    raise\n    txn.commit()\n    logger.error(\"b\")\n    raise\n"
+        },
+        {
+          "path": "services/b.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        },
+        {
+          "path": "elsewhere/c.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
+        }
+      ]
+    }
+  ]
+}
