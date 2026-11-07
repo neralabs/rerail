@@ -51,6 +51,32 @@ pub(super) struct Lines {
 }
 
 impl Lines {
+    /// Python str.splitlines: all eleven Unicode line boundaries; CRLF is one.
+    /// This is a text view, not the coordinate system of parser spans.
+    fn split_python(src: &str) -> impl Iterator<Item = &str> {
+        let mut chars = src.char_indices().peekable();
+        let mut start = 0;
+        std::iter::from_fn(move || {
+            while let Some((at, c)) = chars.next() {
+                if matches!(c, '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}') {
+                    let line = &src[start..at];
+                    start = at + c.len_utf8();
+                    if c == '\r' && chars.peek().is_some_and(|(_, c)| *c == '\n') {
+                        let (at, _) = chars.next().unwrap();
+                        start = at + 1;
+                    }
+                    return Some(line);
+                }
+            }
+            if start < src.len() {
+                let line = &src[start..];
+                start = src.len();
+                Some(line)
+            } else {
+                None
+            }
+        })
+    }
     /// Python ends a line at `\n`, `\r\n` or a lone `\r`; the others at `\n`, a `\r` before it left out of the
     /// line's text. A last line without a terminator counts when it is not empty (Python) or always (the others,
     /// so an empty file has one empty line, as `split('\n')` gives).
@@ -573,6 +599,7 @@ pub(super) struct CoreRows {
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
+    split_line: Vec<[i64; 3]>,
     line_count: Vec<[i64; 2]>,
     str_part: Vec<[i64; 5]>,
     first_token: Vec<[i64; 2]>,
@@ -669,7 +696,7 @@ impl CoreRows {
     }
 
     /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool) {
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -682,6 +709,11 @@ impl CoreRows {
             self.src_line.push([key, l as i64, p.global(source + l as u32)]);
         }
         self.line_count.push([key, x.lines.count() as i64]);
+        if wants_split_lines {
+            for (i, line) in Lines::split_python(&f.source).enumerate() {
+                self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
+            }
+        }
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
                 if i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
@@ -761,6 +793,7 @@ impl CoreRows {
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),
+            ("split_line", make(&["d", "l", "t"], &self.split_line, [false, false, true], atom)),
             ("line_count", pair(&["d", "k"], &self.line_count)),
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("first_token", pair(&["n", "t"], &self.first_token)),

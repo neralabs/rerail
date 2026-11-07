@@ -680,15 +680,15 @@ fn python_split_lines_are_lossless_and_document_local() {
     std::fs::write(dir.join("b.py"), "short").unwrap();
     std::fs::write(dir.join("empty.py"), "").unwrap();
     let program = r#"
-.decl split_line(d: number, l: number, t: symbol)
-.decl doc(d: number, p: symbol, m: symbol)
-.input split_line, doc
 .decl seen(p: symbol, l: number, t: symbol)
 seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
 .output seen
 "#;
+    let policy = dir.join("lines.rr");
+    std::fs::write(&policy, program).unwrap();
+    let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
     let out = dir.join("out");
-    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let actual = std::fs::read_to_string(out.join("seen.csv")).unwrap();
     let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
     let mut expected: Vec<String> = lines.iter().enumerate().map(|(i, t)| format!("a.py\t{}\t{t}", i + 1)).collect();

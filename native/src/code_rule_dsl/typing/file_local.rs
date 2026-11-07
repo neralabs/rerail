@@ -226,7 +226,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
 fn document_column(relation: &str) -> Option<usize> {
     match relation {
         "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
-        "source" | "src_line" | "line_count" | "parsed" => Some(0),
+        "source" | "src_line" | "split_line" | "line_count" | "parsed" => Some(0),
         "docof" => Some(1),
         _ => None,
     }

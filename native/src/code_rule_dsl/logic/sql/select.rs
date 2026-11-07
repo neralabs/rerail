@@ -112,6 +112,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
         "src_line" => &["d", "l", "sp"],
+        "split_line" => &["d", "l", "t"],
         "str_part" => &["lit", "i", "v", "at", "spec"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
