@@ -478,3 +478,107 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let _ = std::fs::remove_dir_all(&direct);
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
+
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`.
+const JEDI_SPANS: &str = "
+.decl rr_jedi_cls(c: node, k: node)
+rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
+.decl rr_jedi_at(n: node, s: number, e: number)
+rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
+rr_jedi_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
+rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
+.output rr_jedi_cls, rr_jedi_at
+";
+
+/// `calls.rr` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
+/// `fixtures/python/calls/generate_corpus.py`; O83). The program runs over `RERAIL_PYTHON_CALLS_ROOT`, a directory
+/// whose tree holds the corpus's paths as the recording names them (`django/...`). Where both decide, the program
+/// agrees when Jedi's definition is among those it names, its class among the classes a class call makes, or, for
+/// an external target, it names no workspace definition.
+#[test]
+#[ignore = "Jedi call targets over a Python corpus (minutes)"]
+fn benchmark_python_calls_program_corpus() {
+    let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
+    let report = corpus::run(&format!("{}\n{JEDI_SPANS}", program("calls")), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at: BTreeMap<String, (usize, usize)> = rows("rr_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
+    let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
+    let mut sources: BTreeMap<String, String> = BTreeMap::new();
+    let mut line_of = |f: &str, s: usize| -> u64 {
+        let src = sources.entry(f.to_owned()).or_insert_with(|| std::fs::read_to_string(root.join(f)).unwrap_or_default());
+        line(src, s.min(src.len()))
+    };
+    let key = |n: &str| (file(n), at[n].0, at[n].1);
+    let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
+    let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
+    for r in rows("call_target") {
+        let (f, s) = (file(&r[1]), at[&r[1]].0);
+        named.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+    }
+    let mut classes: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
+    for r in rows("rr_jedi_cls") {
+        let (f, s) = (file(&r[1]), at[&r[1]].0);
+        classes.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for corpus in recording["corpora"].as_array().unwrap() {
+        for (path, records) in corpus["records"].as_object().unwrap() {
+            for record in records.as_array().unwrap() {
+                let k = (path.clone(), record[0].as_u64().unwrap() as usize, record[1].as_u64().unwrap() as usize);
+                let targets = record[3].as_array().unwrap();
+                *tally.entry("calls").or_default() += 1;
+                let decided: Vec<&Json> = targets.iter().filter(|t| t[0] != "other").collect();
+                if decided.is_empty() {
+                    *tally.entry("jedi undecided").or_default() += 1;
+                    continue;
+                }
+                if open.contains(&k) {
+                    *tally.entry("program unknown, jedi decided").or_default() += 1;
+                    continue;
+                }
+                *tally.entry("both decided").or_default() += 1;
+                let defs = named.get(&k).cloned().unwrap_or_default();
+                let cls = classes.get(&k).cloned().unwrap_or_default();
+                let at_of = |t: &Json| (t[1].as_str().unwrap().to_owned(), t[2].as_u64().unwrap());
+                let ok = decided.iter().any(|t| match t[0].as_str().unwrap() {
+                    "def" => defs.contains(&at_of(t)),
+                    "class" => cls.contains(&at_of(t)),
+                    _ => defs.is_empty() && cls.is_empty(),
+                });
+                let what = if ok {
+                    "agree"
+                } else if defs.is_empty() && cls.is_empty() {
+                    "program no edge, jedi a definition"
+                } else if decided.iter().all(|t| t[0] == "external") {
+                    "program a definition, jedi external"
+                } else {
+                    "program another definition"
+                };
+                *tally.entry(what).or_default() += 1;
+                if what != "agree" {
+                    let list = examples.entry(what).or_default();
+                    if list.len() < 12 {
+                        list.push(format!("{path}:{} jedi {decided:?} program {defs:?} classes {cls:?}", record[2]));
+                    }
+                }
+            }
+        }
+    }
+    for (what, n) in &tally {
+        println!("{n:>8}  {what}");
+    }
+    for (what, list) in &examples {
+        println!("{what}:");
+        for e in list {
+            println!("    {e}");
+        }
+    }
+}
