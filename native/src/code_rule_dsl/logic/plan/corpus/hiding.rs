@@ -107,6 +107,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     // the guest's grammar's and its guest rows are not bounded away. A kind set (`.kindset`) read by `nearest` over
     // such a node is copied as `rr_in_<grammar>_<set>`, with its kinds named in that grammar. To a fixpoint: a copy reads relations too.
     let mut made: BTreeSet<String> = BTreeSet::new();
+    // Each copy's relation and seeded columns, with their grammars.
+    let mut specialized: BTreeMap<String, (String, BTreeMap<usize, String>)> = BTreeMap::new();
     let mut carried;
     loop {
         carried = carry(prog, &base_locations, &seeds, &view);
@@ -147,20 +149,27 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     _ => None,
                 });
                 let Some((c, g)) = spec else { continue };
-                let name = format!("rr_in_{}_{c}_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
+                // A copy read with another column scoped is a copy of the same relation with both seeded, not a copy
+                // of the copy: one per relation and set of seeded columns, so the copies end.
+                let (orig, mut cols) = specialized.get(&a.rel).cloned().unwrap_or_else(|| (a.rel.clone(), BTreeMap::new()));
+                cols.insert(c, g);
+                let name = format!("rr_in_{}{orig}", cols.iter().map(|(c, g)| format!("{}_{c}_", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"))).collect::<String>());
                 if made.insert(name.clone()) {
-                    for r in snapshot.iter().filter(|r| r.head.rel == a.rel) {
+                    for r in snapshot.iter().filter(|r| r.head.rel == orig) {
                         let mut copy = r.clone();
                         copy.head.rel = name.clone();
                         let mut seed = BTreeMap::new();
-                        if let Some(Term::Var(v)) = copy.head.args.get(c) {
-                            seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()) });
+                        for (c, g) in &cols {
+                            if let Some(Term::Var(v)) = copy.head.args.get(*c) {
+                                seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()) });
+                            }
                         }
                         copies.push((copy, seed));
                     }
-                    if let Some(d) = prog.decls.get(&a.rel) {
+                    if let Some(d) = prog.decls.get(&orig) {
                         decls.push((name.clone(), d.clone()));
                     }
+                    specialized.insert(name.clone(), (orig, cols));
                 }
                 a.rel = name;
                 changed = true;
@@ -394,4 +403,28 @@ fn qualify(a: &mut Atom, label: &str) {
 pub(in crate::code_rule_dsl) fn qualified(s: &str) -> Option<(&str, &str)> {
     let (label, name) = s.split_once(':')?;
     (!label.is_empty() && !name.is_empty() && crate::code_rule_dsl::language::dialect_by_label(label).is_some()).then_some((label, name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
+    /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's
+    /// `rr_agg36` nested `rr_in_annotation_1_rr_in_annotation_0_…` without end.
+    #[test]
+    fn a_copy_read_at_another_guest_column_is_one_copy_of_the_relation() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.decl f(b: node)\n.input parsed, e, f\n",
+            ".decl pair(a: node, b: node)\npair(a, b) :- e(a), f(b).\n",
+            ".decl out(r: node)\n.output out\nout(r) :- parsed(_, \"sql\", r), parsed(_, \"sql\", s), pair(r, s).\n",
+        ))
+        .unwrap();
+        hide(&mut p, 1 << 30);
+        let copies: BTreeSet<&str> = p.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| r.starts_with("rr_in_")).collect();
+        assert!(copies.iter().all(|c| c.matches("rr_in_").count() == 1), "{copies:?}");
+        assert!(copies.contains("rr_in_sql_0_sql_1_pair"), "{copies:?}");
+        let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
+        assert!(out.contains("rr_in_sql_0_sql_1_pair("), "{out}");
+    }
 }
