@@ -19,7 +19,9 @@ def main():
         if report:reports.append(dict(id=identity,check='plan_scope_ownership',files=[dict(path=path,source=text)]))
     test=ast.parse((source/'scripts/tests/test_lint_plan_scope_ownership.py').read_text())
     original_cases=next(n.decorator_list[0].args[1] for n in test.body if isinstance(n,ast.FunctionDef) and n.name=='test_rejects_plan_scope_ownership_violations')
-    for code,path,text in ast.literal_eval(original_cases):add('original-'+code,text,path)
+    for code,path,text in ast.literal_eval(original_cases):
+        add('original-'+code,text,path)
+        add('triggered-original-'+code,'# PlanScope\n'+text,path)
     for index,name in enumerate(sorted(original.BASE_SCOPE_RUNNERS)):
         expected='AsyncPlanScope' if name.endswith('_async') else 'SyncPlanScope'
         for tag,params in [('valid',f'scope: {expected}, workflow: W[T]'),('missing',''),('untyped','scope'),
@@ -95,6 +97,8 @@ def main():
     for index,(text,tree) in enumerate([(positive,positive),('not valid python',positive),('# PlanScope\n'+marker+'\n','pass\n'),
       ('# imported_contract = imported_contract_fn\n# else None\n','imported_contract_fn(CtePublicationContract)\n')]):
         add(f'collector-{index}',text,'impl/collector.py',report=False,collector=True,tree=tree)
+    for code,path,tree in ast.literal_eval(original_cases):
+        add('collector-original-'+code,'pass\n',path,report=False,collector=True,tree=tree)
     args.destination.write_text(json.dumps(dict(cases=api),indent=2)+'\n');args.reporters.write_text(json.dumps(dict(cases=reports),indent=2)+'\n')
     print(len(api),'API cases;',len(reports),'reporter cases')
 

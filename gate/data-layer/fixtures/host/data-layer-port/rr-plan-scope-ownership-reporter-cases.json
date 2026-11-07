@@ -11,12 +11,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO001",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\ndef run_read_plan_scope_workflow(scope: Any, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return scope.execute_read_workflow(workflow)\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO002",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "l2000_connection/connection_plan_workflows.py",
           "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    execute = getattr(scope, 'execute_read_workflow')\n    return execute(workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO002",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\ndef run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    execute = getattr(scope, 'execute_read_workflow')\n    return execute(workflow)\n"
         }
       ]
     },
@@ -31,12 +51,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO003",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\ndef run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return scope.fetch(workflow)\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO004",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "conform/versioned_plan_scope_helpers.py",
           "source": "def helper(scope, workflow):\n    return run_read_plan_scope_workflow(scope, workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO004",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/versioned_plan_scope_helpers.py",
+          "source": "# PlanScope\ndef helper(scope, workflow):\n    return run_read_plan_scope_workflow(scope, workflow)\n"
         }
       ]
     },
@@ -51,12 +91,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO005",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "# PlanScope\nclass SyncVersionedPlanScope:\n    def execute_read_workflow(self, workflow):\n        return workflow\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO006",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "l7000_versioned_schema/versioned_connection.py",
           "source": "def nested_versioned_context(scope):\n    return scope.fetch(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO006",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "# PlanScope\ndef nested_versioned_context(scope):\n    return scope.fetch(1)\n"
         }
       ]
     },
@@ -71,12 +131,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO007",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "# PlanScope\ndef lifecycle(txn):\n    return getattr(txn, 'did_publish_branch', False)\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO008",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "l2000_connection/connection_plan_workflows.py",
           "source": "class SyncReadPlanWorkflow:\n    build: Callable[[Any], object]\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO008",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\nclass SyncReadPlanWorkflow:\n    build: Callable[[Any], object]\n"
         }
       ]
     },
@@ -91,12 +171,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO009",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\ndef run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return SyncVersionedPlanScope()\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO010",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "l7000_versioned_schema/versioned_connection.py",
           "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO010",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "# PlanScope\ndef random_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
         }
       ]
     },
@@ -111,6 +211,16 @@
       ]
     },
     {
+      "id": "triggered-original-PSO011",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/versioned_plan_scope_helpers.py",
+          "source": "# PlanScope\ndef helper(txn, scope):\n    if not txn.is_committed and not txn.is_rolled_back and not txn.did_publish_branch:\n        scope.commit()\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO012",
       "check": "plan_scope_ownership",
       "files": [
@@ -121,12 +231,32 @@
       ]
     },
     {
+      "id": "triggered-original-PSO012",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/l2000_connection/test_plan_scope_fetch.py",
+          "source": "# PlanScope\nasync def test_bad(conn):\n    return await run_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow(session_id=1, build=lambda txn: None),\n    )\n"
+        }
+      ]
+    },
+    {
       "id": "original-PSO013",
       "check": "plan_scope_ownership",
       "files": [
         {
           "path": "l2070_batching/executor.py",
           "source": "def compile(imported_contract_fn):\n    imported_contract = imported_contract_fn('x') if callable(imported_contract_fn) else None\n"
+        }
+      ]
+    },
+    {
+      "id": "triggered-original-PSO013",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "# PlanScope\ndef compile(imported_contract_fn):\n    imported_contract = imported_contract_fn('x') if callable(imported_contract_fn) else None\n"
         }
       ]
     },
