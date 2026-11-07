@@ -38,6 +38,7 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      ".rerail/**",
       "fixtures/**",
       "packs/*/upstream/**",
       "packs/*/candidates/**",
