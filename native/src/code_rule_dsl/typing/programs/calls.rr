@@ -751,9 +751,9 @@ pv(c, "inst", k) :- callee(c, e), pv(e, "cls", k).
 .decl cfn(c: node, e: node, f: node)
 cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), !ovlfn(f).
 cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), cwild(c).
-cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), !method(f, _), cpos(c, n), ffit(c, f, n).
-cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), method(f, _), !attr_of(e, _, _), cpos(c, n), ffit(c, f, n).
-cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), method(f, _), attr_of(e, _, _), cpos(c, m), pred(n, m), ffit(c, f, n).
+cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), !method(f, _), cposk(c, n, w), ffit(f, n, w).
+cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), method(f, _), !attr_of(e, _, _), cposk(c, n, w), ffit(f, n, w).
+cfn(c, e, f) :- callee(c, e), pv(e, "fn", f), ovlfn(f), method(f, _), attr_of(e, _, _), cposk(c, m, w), pred(n, m), ffit(f, n, w).
 .decl ovlfn(f: node)
 ovlfn(f) :- ovlstmt(st), field(st, "definition", f).
 .decl cwild(c: node)
@@ -767,11 +767,17 @@ ckw(c) :- kind(c, "call"), field(c, "arguments", as), child(as, a, _), kind(a, "
 .decl cpos(c: node, n: number)
 cpos(c, 0) :- kind(c, "call"), field(c, "arguments", as), kind(as, "argument_list"), !posarg(c, _, _), !cwild(c).
 cpos(c, n) :- posarg(c, j, _), !posarg(c, n, _), pred(n, j), !cwild(c).
-// ffit(c, f, n): n positional arguments fit overload f: at least its required ones and none of its keyword-only ones
-// required (unless keywords may give them), at most its positional ones (unless it takes `*args`).
-.decl ffit(c: node, f: node, n: number)
-ffit(c, f, n) :- cpos(c, _), ovlfn(f), slot(n), fneed(f, r), r <= n, fcap(f, p), n <= p, !ckw(c), !fkwreq(f).
-ffit(c, f, n) :- cpos(c, _), ovlfn(f), slot(n), ckw(c), fcap(f, p), n <= p.
+// cposk(c, n, w): c has n positional arguments, and keywords (w = 1) or none (w = 0).
+.decl cposk(c: node, n: number, w: number)
+cposk(c, n, 1) :- cpos(c, n), ckw(c).
+cposk(c, n, 0) :- cpos(c, n), !ckw(c).
+// ffit(f, n, w): n positional arguments, with keywords (w = 1) or without, fit overload f: at least its required ones
+// and none of its keyword-only ones
+// required (unless keywords may give them), at most its positional ones (unless it takes `*args`). Per overload, not
+// per call: a call's fit is a lookup.
+.decl ffit(f: node, n: number, w: number)
+ffit(f, n, 0) :- ovlfn(f), slot(n), fneed(f, r), r <= n, fcap(f, p), n <= p, !fkwreq(f).
+ffit(f, n, 1) :- ovlfn(f), slot(n), fcap(f, p), n <= p.
 .decl slot(n: number)
 slot(0). slot(1). slot(2). slot(3). slot(4). slot(5). slot(6). slot(7). slot(8). slot(9).
 // An overload's parameters by position (`self` counted, `/` not), before any `*`, `*args` or `**kw`.
