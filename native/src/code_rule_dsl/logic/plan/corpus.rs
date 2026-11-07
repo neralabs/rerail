@@ -420,6 +420,35 @@ impl<T> Ran<T> {
     }
 }
 
+/// A run's hold on its memo plan (`ContentStore::hold_corpus_plan`) and on each source it stores or finds
+/// (`ContentStore::hold_sources`), released when the run ends; a run that dies leaves them to lapse with their lease.
+struct HeldPlan<'a> {
+    store: &'a ContentStore,
+    owner: String,
+}
+
+impl<'a> HeldPlan<'a> {
+    /// The lease: longer than a run, short enough that a dead run's hold does not keep a plan for long.
+    const LEASE_SECS: i64 = 6 * 3600;
+
+    fn new(store: &'a ContentStore, plan: [u8; 32]) -> std::result::Result<Self, crate::content_store::StoreError> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let owner = format!("corpus-run:{}:{}:{}", std::process::id(), now.as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let lease = now.as_secs() as i64 + Self::LEASE_SECS;
+        store.hold_corpus_plan(plan, &owner, lease)?;
+        store.hold_sources(&owner, lease)?;
+        Ok(HeldPlan { store, owner })
+    }
+}
+
+impl Drop for HeldPlan<'_> {
+    fn drop(&mut self) {
+        // The manifest names the plan now, or the run failed: either way the hold is done. A failed release lapses.
+        let _ = self.store.release_pins(&self.owner);
+    }
+}
+
 fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
@@ -805,6 +834,9 @@ pub(crate) fn run_with_options(
     // A cross-file part that reads base relations takes their rows from the chunks it evaluates: a memoised file has
     // none to give, so such a run is not memoised (all base reads are pushed into the chunks when they can be).
     let memoised = memoised && stored.is_empty();
+    // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
+    // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
+    let _held = if memoised { Some(HeldPlan::new(store, memo::plan_digest(&memo_program)).map_err(|e| Error::Plan(e.to_string()))?) } else { None };
     if !stored.is_empty() && tapes.is_some() && t.is_none() {
         crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
@@ -932,7 +964,13 @@ pub(crate) fn run_with_options(
             let built = match &tapes {
                 // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
                 // tape and source frames are not linked.
-                Some(cache) if cfg!(feature = "tape-cache") => core::build_cached_as(&file, cache, source_id),
+                // A source collected since it was read is stored again with its tape (O95), under the id it has now.
+                Some(cache) if cfg!(feature = "tape-cache") => core::build_cached_source(&file, cache, source_id).map(|(built, id)| {
+                    if source_id.is_some() {
+                        source_id = id;
+                    }
+                    built
+                }),
                 Some(_) => unreachable!("no tape cache without `tape-cache`"),
                 None => core::build(&file),
             };

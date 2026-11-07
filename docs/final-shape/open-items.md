@@ -1841,6 +1841,36 @@ process-wide.
 source a writer holds), with a test that runs parallel writers against one store; or the cache is made per run.
 A run can also name its store, so a test can hold one of its own.
 
+**Closed (2026-11-07).** A run's sources, tapes and memo rows become live only when its manifest is recorded, at
+the end of the run. Until then, collectors of other runs could take them from under it. There were four such
+races; each now has a fix in the store:
+
+- **A run's sources and tapes.** A run holds them (`ContentStore::hold_sources`). Each source the run's handle
+  stores or finds by hash is pinned under the run's owner and lease. So is each tape it stores. The pin is taken in
+  the same transaction as the write or lookup, so no pass can come between. A run that dies leaves its pins to
+  lapse with their lease (6 h). A cold insert gets its pin within its existing write. A source found by hash takes
+  one write. A stat-index hit takes none.
+- **A tape of a collected source.** `put_source_and_tape` stores or finds the source and stores its tape in one
+  transaction. `core::build_cached_source` returns the source's id as it is after that write.
+- **The run's memo plan.** The plan digest is the same across processes, so an earlier, evicted manifest could
+  leave it dead, its rows being deleted while this run writes them. The run holds the plan
+  (`hold_corpus_plan`), which makes it live; a decision keeps a held plan live.
+- **A stale decision.** `keep_corpus_runs` read its manifests outside the transaction that applied the decision,
+  so a plan recorded in between was marked dead. Now the decision is read, made and applied in one transaction.
+
+`put_facts_memo` still writes nothing for a source that is gone, as a last guard (that file is evaluated again next
+time). The runner's `HeldPlan` takes both holds when a run is memoised, and releases them when the run ends, after
+its manifest. Tests:
+
+- `a_source_collected_before_its_tape_is_stored_again_with_it`;
+- `a_held_source_survives_collection_until_released`;
+- `a_held_plan_stays_live_until_its_run_releases_it`;
+- `parallel_writers_and_a_collector_share_one_store`.
+
+`value_documents_are_memoised_with_the_files_that_asked` passed in 12 of 12 parallel `logic::rr::` runs (it had
+failed in 3 of 3 before). The guests' fallback (`guests.cache_failed`) stays, for a store that refuses a write for
+another reason.
+
 ## O96. Chunks that read value documents are not memoised
 
 Decision 0058's value documents (`@parse`, `@splice`) belong to no file. A chunk whose outputs hold a row that
@@ -1917,3 +1947,10 @@ the extra demand's work twice.
 **Closure:** lowering a demand is idempotent: a printed program carries its demands as already made, and reading
 it back adds none. The skip is then removed. Or `.rdl` programs are removed (step 31), and the round-trip test
 stays for `.rr`.
+
+**Closed (2026-11-07).** The reader notes which demand relations a text declares itself (`rr_embed_req`,
+`rr_parse_req`, `rr_splice_req`, `rr_dir_req`, `rr_file_req`). A printed program declares the demands it was lowered
+with, so reading it back makes none of them again. A constant world request (`file_line("setup.cfg", …)`) is lowered
+as a fact, the form a bodiless clause reads back as. The `.rdl` comparison drops the demands the `.rdl` reader does
+not make (`without_requests`, which now covers the value demands too), and the skip of `calls.rdl` is removed.
+Test: `a_program_with_demands_prints_back_as_itself`.

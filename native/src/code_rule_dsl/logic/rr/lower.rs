@@ -129,6 +129,9 @@ struct Lowerer {
     /// The relations declared `must, may`, and the rules a `must` or `may` head wrote (by index).
     three: BTreeSet<String>,
     modal: BTreeMap<usize, String>,
+    /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
+    /// it was lowered with, so reading it back makes none again.
+    printed_demands: BTreeSet<String>,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -181,6 +184,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             }
         }
     }
+    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d)).map(|d| (*d).to_owned()).collect();
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -832,6 +836,9 @@ impl Lowerer {
     /// The corpus runner runs these rules first, makes what is asked for and rebinds the batch with it. A given
     /// variable nothing else binds asks for nothing.
     fn demand(&mut self, req: &str, given: &[(STerm, &str)], out: &STerm, guests: bool) -> Result<(), Error> {
+        if self.printed_demands.contains(req) {
+            return Ok(());
+        }
         let vars: Vec<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).collect();
         if given.iter().any(|(t, _)| !matches!(t, STerm::Var(_) | STerm::Str(_))) {
             return Ok(());
@@ -961,14 +968,19 @@ impl Lowerer {
     /// the atom gives. The corpus runner answers the requests and runs the rules again (`corpus::world`). A key
     /// nothing else binds asks for nothing: the atom reads what other rules asked for.
     fn world_demand(&mut self, demand: &str, args: &[STerm]) -> Result<(), Error> {
+        if self.printed_demands.contains(demand) {
+            return Ok(());
+        }
         let Some(key) = args.first() else { return Ok(()) };
         let head = |key: Term| Atom { rel: demand.to_owned(), args: vec![key], neg: false, gated: false };
         self.prog.decls.insert(demand.to_owned(), vec![("k".to_owned(), "sym".to_owned())]);
         let s = match key {
+            // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
             STerm::Str(k) => {
-                let rule = Rule { head: head(Term::Str(k.clone())), body: Vec::new() };
-                if !self.prog.rules.contains(&rule) {
-                    self.prog.rules.push(rule);
+                let row = vec![Value::Str(k.clone())];
+                let rows = self.prog.facts.entry(demand.to_owned()).or_default();
+                if !rows.contains(&row) {
+                    rows.push(row);
                 }
                 return Ok(());
             }
@@ -2032,6 +2044,9 @@ fn groups(re: &str) -> Vec<String> {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
+/// The relations a guest or value read asks through (`demand`).
+const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
+
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 

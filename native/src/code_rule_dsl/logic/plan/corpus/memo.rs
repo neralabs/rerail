@@ -83,7 +83,8 @@ pub(super) fn off() {
 pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
     off();
     let hash = HashKey::sha256(text.as_bytes());
-    match store.source_by_hash(hash)? {
+    // Held (O95): a source the run finds is pinned with it, as one it stores is.
+    match store.held_source_by_hash(hash)? {
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }

@@ -397,7 +397,8 @@ fn wrapped(text: String, place: Placement) -> (String, Placement) {
 /// gives no facts.
 fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(core::Facts, u32)>, String> {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
-    // The cache is shared by every run on the machine; a failed write there (O95) parses without it.
+    // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
+    // parses without it. A source collected under the run is stored again with its tape (O95).
     let built = match cache.map(|cache| core::build_cached(&file, cache)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
