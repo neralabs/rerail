@@ -31,10 +31,12 @@ pub(in crate::code_rule_dsl) enum Unit {
     Cell,
     /// A candidate order the planner priced.
     Candidate,
+    /// A byte of a source or tape read, hashed, compressed or written (content addressing).
+    Byte,
 }
 
 impl Unit {
-    pub(super) const ALL: [Unit; 7] = [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Candidate];
+    pub(super) const ALL: [Unit; 8] = [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Byte, Unit::Candidate];
 
     pub(super) fn name(self) -> &'static str {
         match self {
@@ -45,6 +47,7 @@ impl Unit {
             Unit::Value => "value",
             Unit::Cell => "cell",
             Unit::Candidate => "candidate",
+            Unit::Byte => "byte",
         }
     }
 
@@ -53,18 +56,32 @@ impl Unit {
         match self {
             Unit::VmStep => "SQLite, in memory: a filtered scan and an indexed join over 200k rows, the faster per step",
             Unit::JoinRow => "a probe of a hash table of 1M keys (foldhash), random keys",
-            Unit::SourceByte => "tree-sitter parsing 256 KB of Python alone",
+            Unit::SourceByte => "none: tree-sitter is the roof (only a memo hit avoids it); its rate is shown",
             Unit::Node => "writing 32 bytes per node and interning one value of it in a hash table (1M nodes)",
             Unit::Value => "inserting values into a hash set of distinct values (1M, half repeated)",
             Unit::Cell => "reading and writing 8 bytes per cell, sequentially (memory bandwidth)",
             Unit::Candidate => "none: the planner's own rate is shown, with no roof",
+            Unit::Byte => "SHA-256 of 64 MB in memory (the content key every stored byte needs)",
         }
     }
 }
 
-/// Nanoseconds per unit at the roof, by unit (`None`: no roof).
+/// Nanoseconds per unit at the roof, by unit (`None`: no roof). On a thread of the highest quality of service, so
+/// that on a machine with performance and efficiency cores it runs where the engine's busy threads do.
 pub(super) fn calibrate() -> BTreeMap<Unit, Option<f64>> {
-    Unit::ALL.iter().map(|&u| (u, roof(u))).collect()
+    std::thread::spawn(|| {
+        #[cfg(target_os = "macos")]
+        unsafe {
+            unsafe extern "C" {
+                fn pthread_set_qos_class_self_np(qos: u32, priority: i32) -> i32;
+            }
+            // QOS_CLASS_USER_INTERACTIVE
+            pthread_set_qos_class_self_np(0x21, 0);
+        }
+        Unit::ALL.iter().map(|&u| (u, roof(u))).collect()
+    })
+    .join()
+    .unwrap_or_default()
 }
 
 fn best(runs: usize, mut f: impl FnMut() -> (f64, u64)) -> f64 {
@@ -89,7 +106,7 @@ fn roof(u: Unit) -> Option<f64> {
             let mut per = f64::INFINITY;
             for q in ["SELECT count(*) FROM t WHERE c = 3", "SELECT count(*) FROM t t1 JOIN t t2 ON t2.b = t1.a WHERE t1.a < 2000"] {
                 let mut st = db.prepare(q).ok()?;
-                per = per.min(best(3, || {
+                per = per.min(best(5, || {
                     st.reset_status(rusqlite::StatementStatus::VmStep);
                     let t = Instant::now();
                     let _: i64 = st.query_row([], |r| r.get(0)).unwrap_or(0);
@@ -105,7 +122,7 @@ fn roof(u: Unit) -> Option<f64> {
             for i in 0..n {
                 map.insert(mix(i), i as u32);
             }
-            Some(best(3, || {
+            Some(best(5, || {
                 let t = Instant::now();
                 let mut hit = 0u64;
                 for i in 0..n {
@@ -115,31 +132,13 @@ fn roof(u: Unit) -> Option<f64> {
                 (t.elapsed().as_secs_f64(), n)
             }))
         }
-        Unit::SourceByte => {
-            use ast_grep_language::LanguageExt;
-            let grammar = crate::code_rule_dsl::language::GrammarDialect::Python.get_ts_language();
-            let mut parser = tree_sitter::Parser::new();
-            parser.set_language(&grammar).ok()?;
-            let mut src = String::new();
-            let mut i = 0;
-            while src.len() < 256 << 10 {
-                let _ = write!(
-                    src,
-                    "class C{i}(Base):\n    \"\"\"Doc {i}.\"\"\"\n\n    def f{i}(self, a, b=2, *args, **kw):\n        if a and not b:\n            return [x * {i} for x in range(a)]\n        self.v{i} = {{\"k\": a, \"s\": str(b)}}\n        return g(a, b) if kw else None\n\n\nimport os.path as p{i}\n\n"
-                );
-                i += 1;
-            }
-            Some(best(3, || {
-                let t = Instant::now();
-                let tree = parser.parse(&src, None);
-                std::hint::black_box(&tree);
-                (t.elapsed().as_secs_f64(), src.len() as u64)
-            }))
-        }
+        // A synthetic sample parses slower per byte than real code (fewer comments and blank lines), so it is no
+        // roof for it.
+        Unit::SourceByte => None,
         Unit::Node => {
             let n = 1usize << 20;
             let mut buf = vec![0u64; 4 * n];
-            Some(best(3, || {
+            Some(best(5, || {
                 let mut set: hashbrown::HashMap<u64, u32, foldhash::fast::FixedState> = hashbrown::HashMap::with_capacity_and_hasher(n / 4, Default::default());
                 let t = Instant::now();
                 for i in 0..n {
@@ -156,7 +155,7 @@ fn roof(u: Unit) -> Option<f64> {
             let words = 1usize;
             let n = (64usize << 20) / 8;
             let mut buf = vec![0u64; n];
-            Some(best(3, || {
+            Some(best(5, || {
                 let t = Instant::now();
                 for (i, w) in buf.iter_mut().enumerate() {
                     *w = i as u64;
@@ -167,7 +166,7 @@ fn roof(u: Unit) -> Option<f64> {
         }
         Unit::Value => {
             let n = 1usize << 20;
-            Some(best(3, || {
+            Some(best(5, || {
                 let mut set: hashbrown::HashSet<u64, foldhash::fast::FixedState> = hashbrown::HashSet::with_capacity_and_hasher(n / 2, Default::default());
                 let t = Instant::now();
                 for i in 0..n as u64 {
@@ -175,6 +174,15 @@ fn roof(u: Unit) -> Option<f64> {
                 }
                 std::hint::black_box(&set);
                 (t.elapsed().as_secs_f64(), n as u64)
+            }))
+        }
+        Unit::Byte => {
+            use sha2::Digest;
+            let buf = vec![7u8; 64 << 20];
+            Some(best(5, || {
+                let t = Instant::now();
+                std::hint::black_box(sha2::Sha256::digest(&buf));
+                (t.elapsed().as_secs_f64(), buf.len() as u64)
             }))
         }
         Unit::Candidate => None,

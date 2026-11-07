@@ -677,10 +677,12 @@ pub(crate) fn run_with_options(
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
             let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
             drop(read);
             let mut source_id = None;
             if memoised || recording {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
+                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
                 let id = memo::source(store, &source).map_err(|e| Error::Plan(e.to_string()))?;
                 source_id = Some(id);
             }

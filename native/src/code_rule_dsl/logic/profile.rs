@@ -603,10 +603,12 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         for ((p, _), steps) in &native {
             let run = format!("{p}/engine run (joins)");
             let at = if own.contains_key(&run) { run } else { p.clone() };
-            *charged.entry((at.clone(), Unit::JoinRow)).or_default() += work(steps);
+            // A join's work: the rows into each step, and the rows its last step makes.
+            let made = steps.last().map_or(0, |s| s.1);
+            *charged.entry((at.clone(), Unit::JoinRow)).or_default() += work(steps) + made;
             let j = joins.entry(at).or_default();
-            j.0 += work(steps);
-            j.1 += steps.last().map_or(0, |s| s.1);
+            j.0 += work(steps) + made;
+            j.1 += made;
         }
         roofline::report(&mut r, &own, &charged, &joins);
     }

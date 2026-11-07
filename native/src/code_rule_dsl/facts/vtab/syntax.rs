@@ -1077,6 +1077,7 @@ pub(crate) fn with_nearest(
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
     for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
         let mut r = Relation::new(&["s"]);
         rows.into_iter().for_each(|s| r.push(&[s]));

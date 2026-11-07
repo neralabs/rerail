@@ -88,6 +88,7 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source.as_bytes();
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
     let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
         Some(id) => id,
         None => cache.put_source(bytes, &[]).map_err(e)?,
@@ -108,13 +109,16 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
             let image = image?;
             drop(parse);
             let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
-            cache.put_tape(source_id, tag, gv, fv, &image.primary.to_bytes()?).map_err(e)?;
+            let tape = image.primary.to_bytes()?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            cache.put_tape(source_id, tag, gv, fv, &tape).map_err(e)?;
             image.primary
         }
     };
     let image = FileImage { primary, derived: Vec::new() };
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
     let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
     drop(restore);
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());

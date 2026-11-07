@@ -269,6 +269,93 @@ body is no larger than its own work. A positive read can connect the body, so cu
 than the reader. The candidate rule: cut a positive read only when a kept positive atom that is derived or
 constant-filtered binds all its variables. This is for a decision (an extension of 0046), not done here.
 
+### 2e. The roofline: every span against what its work needs (2026-11-06)
+
+The profile now has a roofline section (`logic/profile/roofline.rs`). Each span is charged with its work in units
+of one kind. SQL statements charge their VM steps and native joins their rows (into every step, plus the rows the
+last step makes). The rest are charged where the work is done: bytes read, hashed or stored; nodes built; values
+measured; cells solved; candidates priced. When the profile is written, short loops measure this machine's best
+time per unit: the roof. For each span the report then gives:
+
+- the roof time (units times the roof);
+- the excess (own CPU less the roof time);
+- for a join, the amplification (rows of work per row it made);
+- the CPU that no counter explains.
+
+Tree-sitter has no roof: it is the roof, and only a memo hit avoids it. Planning has none either; the report shows
+its rate.
+
+Runs: the full corpus (9,010 files, 28.2M nodes), the 94 converted rules of the checks with no hand-written rule,
+one combined run. Store as in decision 0051. The cold run is a fresh store. The warm run is the same tree again.
+The incremental run comes after 20 files each gained a function. Instructions are user and system, and the load
+was 18–27.
+
+| Run | Instructions | CPU (phases) | Peak RSS | Chunks |
+|---|---|---|---|---|
+| cold | 804e9 | 56.8 s | 447 MB | 104 |
+| warm | 20.9e9 | 1.40 s | 175 MB | 0 |
+| incremental (20 files) | 28.0e9 | 1.55 s | 229 MB | 1 |
+
+Cold, by kind of work. A span counts under its main kind; "of roof" is roof time over own CPU:
+
+| Kind | Units | Own s | ns/unit | Roof ns | Of roof | Excess s |
+|---|---|---|---|---|---|---|
+| join row | 121M | 13.5 | 111 | 5.4 | 4.8% | 12.9 |
+| node | 74.9M | 6.8 | 91 | 4.7 | 5.1% | 6.5 |
+| byte | 797M | 6.0 | 7.5 | 0.34 | 4.6% | 5.7 |
+| candidate | 1.10M | 4.3 | 3,943 | – | – | 4.3 |
+| VM step | 131M | 2.3 | 17 | 3.2 | 19% | 1.8 |
+| value | 13.4M | 1.2 | 91 | 4.0 | 4.4% | 1.2 |
+| cell | 534M | 1.0 | 1.9 | 0.07 | 3.9% | 1.0 |
+| (tree-sitter) | 138 MB | 8.4 | 61/byte | – | – | – |
+| (no counter) | | 12.9 | | | | |
+
+Where the cold run's excess is, with its cause where the profile names it:
+
+1. **Node sets copied per program, 5–6 s.** The converter's matcher relations make kind sets and their complements
+   for every node, and each program has its own copies:
+   - `p33_m147(n) :- node(_, n, _, _, _), !p33_m146(n)` holds 18.4M rows;
+   - `p53_m131`, a subtree under nodes of one kind, holds 11.4M rows;
+   - `p53_m676` and `p61_m107` each copy all 6.0M identifiers.
+
+   These cost about 100 ns a row against a 5 ns probe. A kind set belongs to the batch's kind index, a complement
+   to an anti-join where it is read (decision 0046), and a subtree to `within` (decision 0048).
+2. **Tape work, 7.6 s.** Encoding the tape costs 140 ns a node against a 4.7 ns roof (3.8 s). Storing it costs 2.1 s
+   for 246 MB. Facts from the tape and the tape restore cost 1.8 s more.
+3. **Content keys, 3.0 s.** Each source is read (0.9 s), hashed and stored for the memo (1.9 s, 14 ns a byte against
+   0.34 for SHA-256), then hashed again for the tape cache (0.28 s). One key per source would do.
+4. **Planning, 4.3 s.** 1.1M candidate orders are priced at 3.9 µs each, over 104 chunks.
+5. **Batch, 4.6 s.** Project and intern: 92 ns a node. Text tests: 1.1M strings at 1 µs each. Nearest: 1.9 ns a
+   cell, against 0.07 sequential; 1.6 s more of it has no counter.
+6. **Recursion through `child`, 0.7 s.** `p33_m25(n) :- p33_u19(v), child(n, v, _)` runs 911 waves for 64k rows,
+   11 µs a row. A climb is a tree axis (`core.rr`: tape arithmetic, never Datalog recursion).
+7. **No counter: 12.9 s.** The largest pieces are engine open (load inputs, build indexes, about 3 s over many
+   strata), statistics and plan (1.0 s), memo remember (0.4 s), tape parse less tree-sitter (0.6 s) and digest
+   (0.3 s).
+
+Warm and incremental runs are small: 1.0–1.3 s of own CPU. Reading every source to key it is 0.4 s (2.9 ns a byte).
+The memo lookup is 0.2 s. Preparing 94 programs and creating 560 export tables (`stats`) is 0.35 s. The 20 edited
+files cost 0.15 s beyond a warm run. Reading by size and mtime first would take away most of the warm cost.
+
+**The hand-written rules** (`docs/rule-syntax/data-layer`, `RERAIL_MEASURE_HAND=only`) cannot run on the full corpus
+yet. Six of them lower and run together. Three read `input_error` (O80), and one does not lower. On s200 (200 files,
+530k nodes) the six cost:
+
+- 39 s of CPU, against 2.1 s for the 94 converted rules on the same files;
+- 1.8 GB of peak RSS, over the 1 GB budget;
+- 1.59M SQL statements.
+
+The profile names three causes:
+
+- **The included library runs once per program.** Each rule includes `python/names.rr`, `imports.rr` and
+  `calls.rr`, and `combine` prefixes every relation that is not `core.rr`'s. So 18.4 s of the 26.5 s in strata is in
+  69 strata repeated up to six times. The value cycles (`base`, `pv`, `found`) alone are 10.2 s over five copies.
+  Sharing relations whose definitions are equal, recursive ones included, would remove about 15 s.
+- **The cross-file rounds** (`typing::cross_rounds`, k = 2) run the whole cross-file program again each round. They
+  write the hop relations one row per statement (`INSERT OR IGNORE INTO x.*__prev VALUES (?)`): the 1.59M statements.
+- **Per-node exports.** Twelve file-local exports (`fl…_violation`, `fl…_wstart`) hold about 349k rows on 200 files,
+  most of a row per node. Each chunk copies them into SQLite at 20–28 ns a VM step.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
