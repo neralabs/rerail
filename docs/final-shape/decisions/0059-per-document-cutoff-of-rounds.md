@@ -1,6 +1,7 @@
 # 0059: A round reruns only the documents whose inputs changed
 
-Status: proposed (2026-11-07). Step 1 built and measured: a document is too coarse; the unit is revised to the node (6)
+Status: withdrawn (2026-11-07), replaced by 0060. Step 1 was built and measured. Its measurements are 0060's
+evidence: no cut of the rounds pays for itself, and the rounds go instead.
 
 ## Intro
 
