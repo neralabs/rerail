@@ -112,7 +112,9 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1
 .btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .btn:hover { background: var(--code-bg); }
 .btn.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-.tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; align-items: center; }
+.tabs-gap { flex: 1; }
+#full { margin-inline: 6px; padding: 2px 8px; font-size: 12px; }
 .tab { border: 0; background: none; padding: 5px 10px; border-radius: 6px 6px 0 0; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .tab[aria-selected="true"] { color: var(--ink); background: var(--tint); box-shadow: inset 0 -2px 0 var(--accent); }
 .tab .n { font: 500 11px var(--font-mono); margin-left: 5px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -282,6 +284,8 @@ kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-
         <button class="tab" role="tab" data-v="plans">Join plans<span class="n" id="n-plans"></span></button>
         <button class="tab" role="tab" data-v="sql">SQL<span class="n" id="n-sql"></span></button>
         <button class="tab" role="tab" data-v="profile">Profile</button>
+        <span class="tabs-gap"></span>
+        <button class="btn" id="full" type="button" disabled title="Run from scratch: compile the rule and evaluate every file, so Join plans, SQL and Profile show every step">Full run</button>
       </div>
     </div>
     <div class="out" id="out">
@@ -520,6 +524,7 @@ const abs = (path) => new URL(path, location.href).href;
 const SHIM = abs("explorer/shim/index.js");
 const LOAD = { type: "load", shim: SHIM, engine: abs("explorer/engine.js"), wasm: abs("explorer/rerail-engine.wasm"), bytes: ENGINE_BYTES };
 let backend = null, where = "";
+// pending: a run asked for while one runs (true), or a full run ("full").
 let ready = false, running = false, pending = false, seq = 0, timer = 0;
 const mb = (n) => (n / 1e6).toFixed(1);
 const STAGES = {
@@ -549,7 +554,7 @@ const ticker = setInterval(() => (ready ? clearInterval(ticker) : tick()), 1000)
 function engineReady(how) {
   ready = true; where = how;
   $("prog").hidden = true;
-  $("run").disabled = false;
+  $("run").disabled = false; $("full").disabled = false;
   runNow();
 }
 function loadFailed(message) {
@@ -565,7 +570,8 @@ async function startHere(why) {
     const shim = await import(SHIM);
     const runner = await import(LOAD.engine);
     const module = await runner.loadEngine(LOAD.wasm, ENGINE_BYTES, onStage);
-    backend = { run: (request) => runner.explore(shim, module, request) };
+    let engine = await runner.engineFor(shim, module, null);
+    backend = { run: async (request) => { engine = await runner.engineFor(shim, module, engine); return runner.explore(engine, request); } };
     engineReady(`on the page's thread (${why})`);
   } catch (error) {
     loadFailed(String(error && error.message ? error.message : error));
@@ -597,21 +603,25 @@ function startWorker() {
 onStage("worker");
 startWorker();
 
-function schedule() { clearTimeout(timer); timer = setTimeout(runNow, 450); }
-function runNow() {
+// A run starts as an edit lands: the engine keeps the rule compiled and every other file's rows (decision 0063), so a
+// run costs what the edit changed. Edits made while one runs are taken together by the next. A full run (the button
+// beside the output tabs) compiles the rule and evaluates every file afresh, so the explain views show every step.
+function schedule() { clearTimeout(timer); timer = setTimeout(() => runNow(), 16); }
+function runNow(full = false) {
   clearTimeout(timer);
   if (!ready || !rule) return;
-  if (running) { pending = true; return; }
+  if (running) { pending = full || pending === "full" ? "full" : true; return; }
   pending = false; running = true;
   const mine = ++seq;
-  setState("busy", "Running", "Running the rule over " + Object.keys(sources).length + " files…");
+  setState("busy", "Running", (full ? "A full run of the rule over " : "Running the rule over ") + Object.keys(sources).length + " files…");
   const id = rule.id;
   const parts = Object.fromEntries(Object.entries(rule.files).filter(([n]) => n !== `${id}.rr`));
-  backend.run({ id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib }).then(
-    (result) => { running = false; if (mine === seq) show(result); if (pending) runNow(); },
-    (error) => { running = false; setState("fail", "Stopped", String(error.message || error)); if (pending) runNow(); });
+  backend.run({ id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib, full }).then(
+    (result) => { running = false; if (mine === seq) show(result); if (pending) runNow(pending === "full"); },
+    (error) => { running = false; setState("fail", "Stopped", String(error.message || error)); if (pending) runNow(pending === "full"); });
 }
-$("run").addEventListener("click", runNow);
+$("run").addEventListener("click", () => runNow());
+$("full").addEventListener("click", () => runNow(true));
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runNow(); } });
 function setState(kind, label, text) { $("state").className = "state " + kind; $("state").textContent = label; $("sum").textContent = text; }
 
@@ -664,7 +674,7 @@ function show(result) {
   const secs = (result.ms / 1000).toFixed(2);
   if (result.code !== 0) setState("fail", "Stopped", "The engine stopped; see Findings for why.");
   else setState(f.rows.length ? "found" : "ok", f.rows.length ? `${f.rows.length} found` : "Clean",
-    `${files || "?"} files, ${nodes || "?"} nodes · ran in ${secs} s${where.startsWith("on the page") ? " · " + where : ""}`);
+    `${files || "?"} files, ${nodes || "?"} nodes · ${result.full ? "full run" : "ran"} in ${secs} s${where.startsWith("on the page") ? " · " + where : ""}`);
 
   // Findings
   let h = "";
@@ -700,34 +710,51 @@ function show(result) {
     pick(rels[0][0]);
   }
 
-  // Program
+  // The other views: counts now, contents when shown (each run would otherwise rebuild views no one is looking at).
   const pl = result.program ? result.program.split("\n").length : 0;
   $("n-program").textContent = pl ? `${pl} lines` : "";
-  $("v-program").innerHTML = result.program
-    ? `<p class="note">The rule as the engine ran it: <code>core.rr</code> and every file it includes, lowered and printed back as one program.</p><div class="ed" id="prog-ed" style="max-height:none"></div>`
-    : `<div class="callout"><b>The rule did not read as a program.</b><pre>${esc(result.programError || "no message")}</pre></div>`;
-  if (result.program) editor($("prog-ed"), hlRR, { readonly: true }).value = result.program;
+  views = { result, plans: tsv(result.profile["native.tsv"] || "").slice(1).sort((a, b) => +b[1] - +a[1]), sql: tsv(result.profile["sql.tsv"] || "").slice(1).sort((a, b) => +b[3] - +a[3]) };
+  $("n-plans").textContent = views.plans.length || "";
+  $("n-sql").textContent = views.sql.length || "";
+  drawn = new Set();
+  draw(shownView());
+}
 
-  // Join plans (native.tsv): the engine's own joins, by work.
-  const plans = tsv(result.profile["native.tsv"] || "").slice(1).sort((a, b) => +b[1] - +a[1]);
-  $("n-plans").textContent = plans.length || "";
-  $("v-plans").innerHTML = plans.length
-    ? `<p class="note">Each stratum the engine joined natively: where it ran, the work it did, the rows in and out at each step, and the join order it chose (<code>seed</code> scans the first literal; <code>delta</code> is the recursive step).</p><table class="t"><thead><tr><th>Stratum</th><th>Work</th><th>Rows in:out</th><th>Plan</th></tr></thead><tbody>${plans.map(([s, w, io, p]) => `<tr><td class="m wrap">${esc(s.replace(/\/native$/, ""))}</td><td class="r">${esc(w)}</td><td class="m">${esc((io || "").replaceAll(",", " "))}</td><td class="m wrap">${esc(p || "")}</td></tr>`).join("")}</tbody></table>`
-    : `<p class="note">No native joins in this run.</p>`;
-
-  // SQL (sql.tsv): statements by VM steps.
-  const sql = tsv(result.profile["sql.tsv"] || "").slice(1).sort((a, b) => +b[3] - +a[3]);
-  $("n-sql").textContent = sql.length || "";
-  $("v-sql").innerHTML = sql.length
-    ? `<p class="note">Every SQLite statement the run made, by virtual-machine steps (a measure of work that does not depend on the machine). Full-scan steps and sorts point at a missing index.</p><table class="t"><thead><tr><th>Where</th><th>Runs</th><th>VM steps</th><th>Full scan</th><th>Sorts</th><th>Statement</th></tr></thead><tbody>${sql.slice(0, 400).map(([s, runs, , vm, full, sorts, , text]) => `<tr><td class="m wrap">${esc(s)}</td><td class="r">${esc(runs)}</td><td class="r">${esc(vm)}</td><td class="r">${esc(full)}</td><td class="r">${esc(sorts)}</td><td class="m wrap">${esc(text || "")}</td></tr>`).join("")}</tbody></table>`
-    : `<p class="note">No SQL statements recorded.</p>`;
-
-  // Profile: phases as bars, then the engine's decisions as it reports them.
-  const txt = result.profile["profile.txt"] || "";
-  const phases = [...txt.matchAll(/^\s+([\d.]+) s\s+(\S+(?: \(worker\))?)\s+rss/gm)].map((m) => [m[2], +m[1]]);
-  const max = Math.max(0.001, ...phases.map((p) => p[1]));
-  $("v-profile").innerHTML = (phases.length ? `<h3 class="sub">CPU by phase</h3><div class="phases">${phases.map(([n, s]) => `<div class="ph"><span>${esc(n)}</span><span class="bar"><i style="width:${(100 * s / max).toFixed(1)}%"></i></span><span class="ms">${(s * 1000).toFixed(0)} ms</span></div>`).join("")}</div><p class="note">The browser has no per-thread CPU clock, so these are elapsed times on the page's engine thread.</p>` : "") +
-    `<h3 class="sub">The engine's report</h3><pre class="text">${esc(txt.replace(/^[^]*?(?=== Decisions)/, "") || result.report)}</pre>`;
+let views = null, drawn = new Set(), programShown = null;
+const shownView = () => (document.querySelector("#out-tabs .tab[aria-selected=true]") || {}).dataset?.v;
+// Draws view `name` from the last run, once per run; the program only when its text changed.
+function draw(name) {
+  if (!views || drawn.has(name)) return;
+  drawn.add(name);
+  const { result, plans, sql } = views;
+  const how = result.full
+    ? `<p class="note how">A full run: the rule compiled and every file evaluated, so every step is here.</p>`
+    : `<p class="note how">An incremental run${result.memo ? ` (${esc(result.memo)})` : ""}: what an earlier run kept is not shown. <b>Full run</b>, above, shows every step.</p>`;
+  if (name === "program") {
+    if (programShown === (result.program || result.programError)) return;
+    programShown = result.program || result.programError;
+    $("v-program").innerHTML = result.program
+      ? `<p class="note">The rule as the engine ran it: <code>core.rr</code> and every file it includes, lowered and printed back as one program.</p><div class="ed" id="prog-ed" style="max-height:none"></div>`
+      : `<div class="callout"><b>The rule did not read as a program.</b><pre>${esc(result.programError || "no message")}</pre></div>`;
+    if (result.program) editor($("prog-ed"), hlRR, { readonly: true }).value = result.program;
+  } else if (name === "plans") {
+    // Join plans (native.tsv): the engine's own joins, by work.
+    $("v-plans").innerHTML = how + (plans.length
+      ? `<p class="note">Each stratum the engine joined natively: where it ran, the work it did, the rows in and out at each step, and the join order it chose (<code>seed</code> scans the first literal; <code>delta</code> is the recursive step).</p><table class="t"><thead><tr><th>Stratum</th><th>Work</th><th>Rows in:out</th><th>Plan</th></tr></thead><tbody>${plans.map(([s, w, io, p]) => `<tr><td class="m wrap">${esc(s.replace(/\/native$/, ""))}</td><td class="r">${esc(w)}</td><td class="m">${esc((io || "").replaceAll(",", " "))}</td><td class="m wrap">${esc(p || "")}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">No native joins in this run.</p>`);
+  } else if (name === "sql") {
+    // SQL (sql.tsv): statements by VM steps.
+    $("v-sql").innerHTML = how + (sql.length
+      ? `<p class="note">Every SQLite statement the run made, by virtual-machine steps (a measure of work that does not depend on the machine). Full-scan steps and sorts point at a missing index.</p><table class="t"><thead><tr><th>Where</th><th>Runs</th><th>VM steps</th><th>Full scan</th><th>Sorts</th><th>Statement</th></tr></thead><tbody>${sql.slice(0, 400).map(([s, runs, , vm, full, sorts, , text]) => `<tr><td class="m wrap">${esc(s)}</td><td class="r">${esc(runs)}</td><td class="r">${esc(vm)}</td><td class="r">${esc(full)}</td><td class="r">${esc(sorts)}</td><td class="m wrap">${esc(text || "")}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">No SQL statements recorded.</p>`);
+  } else if (name === "profile") {
+    // Profile: phases as bars, then the engine's decisions as it reports them.
+    const txt = result.profile["profile.txt"] || "";
+    const phases = [...txt.matchAll(/^\s+([\d.]+) s\s+(\S+(?: \(worker\))?)\s+rss/gm)].map((m) => [m[2], +m[1]]);
+    const max = Math.max(0.001, ...phases.map((p) => p[1]));
+    $("v-profile").innerHTML = how + (phases.length ? `<h3 class="sub">CPU by phase</h3><div class="phases">${phases.map(([n, s]) => `<div class="ph"><span>${esc(n)}</span><span class="bar"><i style="width:${(100 * s / max).toFixed(1)}%"></i></span><span class="ms">${(s * 1000).toFixed(0)} ms</span></div>`).join("")}</div><p class="note">The browser has no per-thread CPU clock, so these are elapsed times on the page's engine thread.</p>` : "") +
+      `<h3 class="sub">The engine's report</h3><pre class="text">${esc(txt.replace(/^[^]*?(?=== Decisions)/, "") || result.report)}</pre>`;
+  }
 }
 
 $("v-findings").addEventListener("click", (e) => {
@@ -748,6 +775,7 @@ $("out-tabs").addEventListener("click", (e) => {
   if (!b) return;
   for (const t of document.querySelectorAll("#out-tabs .tab")) t.setAttribute("aria-selected", t === b);
   for (const v of document.querySelectorAll(".out .view")) v.classList.toggle("on", v.id === "v-" + b.dataset.v);
+  draw(b.dataset.v);
 });
 
 // ---------------------------------------------------------------- start

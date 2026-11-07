@@ -316,12 +316,15 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg` and
-    // `syntax_error`.
+    // A base relation's location columns: node columns, the document column of `node`, `doc`, `pkg` and
+    // `syntax_error`, and `docof(n, d)`'s document.
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         if let Some(column) = document_column(rel) {
             columns.push(column);
+        }
+        if rel == "docof" && !columns.contains(&1) {
+            columns.push(1);
         }
         columns
     };

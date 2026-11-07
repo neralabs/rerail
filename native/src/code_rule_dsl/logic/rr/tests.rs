@@ -1224,7 +1224,9 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let run = |chunk_nodes: usize| {
         let out = dir.join(format!("out{chunk_nodes}"));
-        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        // Every file evaluated in every run: a memo hit would not be chunked (decision 0063 memoises base rows too).
+        let options = serde_json::json!({ "memo": "off" });
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes, &Default::default(), &options).unwrap();
         ["called", "violation"].map(|rel| {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
             rows.sort();

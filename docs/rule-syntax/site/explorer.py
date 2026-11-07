@@ -3,11 +3,13 @@ python.json and rerail-engine.wasm), from explorer/.
 
     python3 docs/rule-syntax/site/explorer.py
 
-The page runs the engine in the browser (native/wasm/README.md). It needs the Python-only browser build first:
+The page runs the engine in the browser (native/wasm/README.md), instantiated once and called at each edit: it needs
+the Python-only long-lived (reactor) build first ("A long-lived engine" there):
 
     . native/wasm/env.sh
-    cargo build --release -p rerail-engine --bin rerail-engine --target wasm32-wasip1 \\
-      --no-default-features --features headless,lang-python
+    CARGO_TARGET_DIR=target/wasm-reactor \\
+    CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="${CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS/crt1-command.o/crt1-reactor.o}" \\
+      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python
 
 python.json holds every hand-written Python pack rule (its .rr, its part files, its description) and the library
 files they include, transitively: the page mounts them where `logic` looks for them (/lib, and beside the rule). It
@@ -25,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 RS = os.path.join(ROOT, "docs", "rule-syntax")
 LIB = os.path.join(RS, "lib")
-WASM = os.path.join(ROOT, "target", "wasm32-wasip1", "release", "rerail-engine.wasm")
+WASM = os.path.join(ROOT, "target", "wasm-reactor", "wasm32-wasip1", "release", "rerail_engine.wasm")
 INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"', re.M)
 
 

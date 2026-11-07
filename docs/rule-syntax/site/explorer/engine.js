@@ -1,9 +1,9 @@
-// One `rerail-engine` command over an in-memory filesystem: the browser build (native/wasm/README.md) under WASI
+// `rerail-engine` commands over an in-memory filesystem: the browser build (native/wasm/README.md) under WASI
 // preview 1, as `@bjorn3/browser_wasi_shim` provides it. `shim` is that module, passed in so the page (served beside the page)
 // and a test (from a local copy) run the same code.
 //
 // A mount is a plain object: a name maps to a string (a text file), a Uint8Array (a file) or another object (a
-// directory). After the run, every mount is read back the same way, so the caller sees what the engine wrote.
+// directory). After a run, a directory is read back the same way, so the caller sees what the engine wrote.
 
 const encoder = new TextEncoder();
 
@@ -25,54 +25,90 @@ function fromTree(shim, directory) {
   return entries;
 }
 
-// Runs `args` (after the program name) with `env` and `mounts` ({"/w": {...}}), on a fresh instance of `module`
-// (a compiled WebAssembly.Module): each run starts from clean memory. Returns the exit code, stdout and stderr lines,
-// the run's wall time and the mounts as the run left them.
-export async function command(shim, module, args, env, mounts) {
-  const outBytes = [], errBytes = [];
-  const collect = (chunks) => new shim.ConsoleStdout((bytes) => chunks.push(bytes.slice()));
-  const lines = (chunks) => {
-    const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-    let at = 0;
-    for (const c of chunks) { all.set(c, at); at += c.length; }
-    const text = new TextDecoder().decode(all);
-    return text === "" ? [] : text.replace(/\n$/, "").split("\n");
-  };
-  const preopens = Object.entries(mounts).map(([path, entries]) => new shim.PreopenDirectory(path, toTree(shim, entries)));
-  const fds = [
-    new shim.OpenFile(new shim.File([])),
-    collect(outBytes),
-    collect(errBytes),
-    ...preopens,
-  ];
-  const wasi = new shim.WASI(["rerail-engine", ...args], Object.entries(env).map(([k, v]) => `${k}=${v}`), fds);
-  // The in-memory filesystem has no symbolic links, so readlink answers what a disk does for a file that is not one
-  // (EINVAL), rather than the shim's "not supported": libc's realpath, behind Rust's canonicalize, reads every
-  // component's link and stops at the first error that is not EINVAL.
-  const ERRNO_INVAL = 28;
-  wasi.wasiImport.path_readlink = () => ERRNO_INVAL;
-  // The few `napi_*` imports still linked come from napi types' drops, which a CLI run never calls.
-  const imports = { wasi_snapshot_preview1: wasi.wasiImport };
-  for (const wanted of WebAssembly.Module.imports(module)) {
-    if (wanted.module === "wasi_snapshot_preview1" || wanted.kind !== "function") continue;
-    (imports[wanted.module] ??= {})[wanted.name] = () => {
-      throw new Error(`the engine called ${wanted.module}.${wanted.name}, which the browser build does not provide`);
-    };
+// The engine, instantiated once (native/wasm/README.md, "A long-lived engine": the reactor build) and called once per
+// command line, so what one run leaves the next finds: the rule programs it read, and its corpus session (decision
+// 0063: the store, the program compiled, each file's file-local rows), so a run after an edit evaluates what the
+// edit changed. Its filesystem is its own for its life: `/w` (the run's rule and files), `/lib` (the rule library)
+// and `/s` (the session's store); `mount` replaces a directory's contents and `read` reads them back.
+export class Engine {
+  constructor(shim, module, env) {
+    this.shim = shim;
+    this.module = module;
+    this.out = [];
+    this.err = [];
+    this.dirs = { "/w": new shim.PreopenDirectory("/w", new Map()), "/lib": new shim.PreopenDirectory("/lib", new Map()), "/s": new shim.PreopenDirectory("/s", new Map()) };
+    const fds = [
+      new shim.OpenFile(new shim.File([])),
+      new shim.ConsoleStdout((bytes) => this.out.push(bytes.slice())),
+      new shim.ConsoleStdout((bytes) => this.err.push(bytes.slice())),
+      ...Object.values(this.dirs),
+    ];
+    this.wasi = new shim.WASI(["rerail-engine"], Object.entries({ RERAIL_SESSION: "/s", ...env }).map(([k, v]) => `${k}=${v}`), fds);
+    // The in-memory filesystem has no symbolic links, so readlink answers what a disk does for a file that is not
+    // one (EINVAL), rather than the shim's "not supported": libc's realpath, behind Rust's canonicalize, reads every
+    // component's link and stops at the first error that is not EINVAL.
+    const ERRNO_INVAL = 28;
+    this.wasi.wasiImport.path_readlink = () => ERRNO_INVAL;
+    this.instance = null;
+    this.dead = false;
   }
-  const instance = await WebAssembly.instantiate(module, imports);
-  const started = performance.now();
-  let code;
-  try {
-    code = wasi.start(instance);
-  } catch (error) {
-    // A trap (a Rust panic aborts) or an import above: the run stopped; what it wrote so far is still read back.
-    errBytes.push(encoder.encode(`\n${error && error.message ? error.message : error}\n`));
-    code = -1;
+
+  async start() {
+    // The few `napi_*` imports still linked come from napi types' drops, which a command never calls.
+    const imports = { wasi_snapshot_preview1: this.wasi.wasiImport };
+    for (const wanted of WebAssembly.Module.imports(this.module)) {
+      if (wanted.module === "wasi_snapshot_preview1" || wanted.kind !== "function") continue;
+      (imports[wanted.module] ??= {})[wanted.name] = () => {
+        throw new Error(`the engine called ${wanted.module}.${wanted.name}, which the browser build does not provide`);
+      };
+    }
+    this.instance = await WebAssembly.instantiate(this.module, imports);
+    if (!this.instance.exports.rerail_command) throw new Error("this engine build is not the long-lived (reactor) build");
+    this.wasi.initialize(this.instance);
+    return this;
   }
-  const ms = performance.now() - started;
-  const after = {};
-  for (const preopen of preopens) after[preopen.prestat_name] = fromTree(shim, preopen.dir);
-  return { code, stdout: lines(outBytes), stderr: lines(errBytes), ms, mounts: after };
+
+  // Replaces the contents of `dir` ("/w" or "/lib") with `entries`.
+  mount(dir, entries) {
+    const d = this.dirs[dir].dir;
+    d.contents = toTree(this.shim, entries);
+    for (const entry of d.contents.values()) if (entry instanceof this.shim.Directory) entry.parent = d;
+  }
+
+  read(dir) {
+    return fromTree(this.shim, this.dirs[dir].dir);
+  }
+
+  // Runs `args` (after the program name). Returns the exit code, stdout and stderr lines and the run's wall time. A
+  // trap leaves the instance unusable (`dead`): the caller starts another.
+  command(args) {
+    this.out = [];
+    this.err = [];
+    const e = this.instance.exports;
+    const line = encoder.encode(args.map((a) => a + "\0").join(""));
+    const at = e.rerail_alloc(line.length);
+    new Uint8Array(e.memory.buffer, at, line.length).set(line);
+    const started = performance.now();
+    let code;
+    try {
+      code = e.rerail_command(at, line.length);
+      e.rerail_free(at, line.length);
+    } catch (error) {
+      this.dead = true;
+      this.err.push(encoder.encode(`\n${error && error.message ? error.message : error}\n`));
+      code = -1;
+    }
+    const ms = performance.now() - started;
+    return { code, stdout: lines(this.out), stderr: lines(this.err), ms };
+  }
+}
+
+function lines(chunks) {
+  const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.length; }
+  const text = new TextDecoder().decode(all);
+  return text === "" ? [] : text.replace(/\n$/, "").split("\n");
 }
 
 // Downloads and compiles the engine, telling `progress` how far it got: ("download", bytes so far, bytes in all),
@@ -119,19 +155,26 @@ export function nest(flat) {
 }
 
 // A rule run as the explorer shows it: the rule (with its part files) beside its includes in /lib, the sources under
-// /w/src, outputs under /w/out and the run's profile under /w/prof; then the program it ran, flattened.
-export async function explore(shim, module, { id, rr, parts, sources, lib: libFiles }) {
-  const lib = nest(libFiles);
+// /w/src, outputs under /w/out and the run's profile under /w/prof; then the program it ran, flattened (kept while
+// the rule's files are the same: the library does not change under a page).
+export function explore(engine, { id, rr, parts, sources, lib: libFiles, full = false }) {
+  if (engine.lib !== libFiles) {
+    engine.mount("/lib", nest(libFiles));
+    engine.lib = libFiles;
+  }
   const rule = { [`${id}.rr`]: rr, ...parts };
   // A few rules include their part files as the repository lays them out ("../packs/python/<id>.<part>.rr",
   // from the rule's folder), so the parts are also mounted there.
   const packs = { python: { ...parts } };
-  const env = { RERAIL_RR_LIB: "/lib", RERAIL_PROFILE: "/w/prof" };
-  const run = await command(shim, module, ["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out"], env,
-    { "/w": { rule, packs, src: sources, out: {}, prof: {} }, "/lib": lib });
-  const flat = await command(shim, module, ["flatten", `/w/rule/${id}.rr`], { RERAIL_RR_LIB: "/lib" },
-    { "/w": { rule, packs }, "/lib": lib });
-  const w = run.mounts["/w"];
+  engine.mount("/w", { rule, packs, src: sources, out: {}, prof: {} });
+  // A full run (`--full`) compiles and evaluates afresh, outside the session, so its profile shows every step.
+  const run = engine.command(["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out", ...(full ? ["--full"] : [])]);
+  const key = JSON.stringify([id, rr, parts]);
+  if (engine.flat?.key !== key && !engine.dead) {
+    const flat = engine.command(["flatten", `/w/rule/${id}.rr`]);
+    engine.flat = { key, program: flat.code === 0 ? flat.stdout.join("\n") : "", error: flat.stderr.join("\n") };
+  }
+  const w = engine.read("/w");
   const text = (bytes) => (bytes instanceof Uint8Array ? new TextDecoder().decode(bytes) : "");
   const out = {};
   for (const [name, bytes] of Object.entries(w.out || {})) {
@@ -140,8 +183,15 @@ export async function explore(shim, module, { id, rr, parts, sources, lib: libFi
   const prof = {};
   for (const [name, bytes] of Object.entries(w.prof || {})) prof[name] = text(bytes);
   return {
-    code: run.code, ms: run.ms, report: run.stdout.join("\n"), error: run.stderr.join("\n"),
+    code: run.code, ms: run.ms, report: run.stdout.join("\n"), error: run.stderr.join("\n"), full,
+    memo: (run.stdout.join("\n").match(/\d+ of \d+ files? from the per-file memo/) || [""])[0],
     relations: out, profile: prof,
-    program: flat.code === 0 ? flat.stdout.join("\n") : "", programError: flat.stderr.join("\n"),
+    program: engine.flat?.program ?? "", programError: engine.flat?.error ?? "",
   };
+}
+
+// An engine for `explore`, started on `module`: the same one while it lives, another after a trap.
+export async function engineFor(shim, module, current) {
+  if (current && !current.dead) return current;
+  return new Engine(shim, module, { RERAIL_RR_LIB: "/lib", RERAIL_PROFILE: "/w/prof" }).start();
 }
