@@ -698,6 +698,26 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered() {
+    // `for x in s`: x is `s.__iter__().__next__()`; `with c as z`: z is `c.__enter__()`. Their `async` forms call other
+    // methods (`__aiter__`, `__aenter__`): their targets stay unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protocols");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "class V:\n    def run(self) -> int: ...\nclass It:\n    def __next__(self) -> V: ...\nclass Seq:\n    def __iter__(self) -> It: ...\nclass Cm:\n    def __enter__(self) -> V: ...\ndef f(s: Seq, c: Cm) -> None:\n    for x in s:\n        x.run()\n    with c as z:\n        z.run()\nasync def h(s: Seq, c: Cm) -> None:\n    async for x in s:\n        x.run()\n    async with c as z:\n        z.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 2, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

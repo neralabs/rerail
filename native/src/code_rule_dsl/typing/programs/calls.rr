@@ -69,6 +69,12 @@ rdefn(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm,
 rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), !py_dead_at(f).
 .decl rasg(s: node, x: symbol, r: node, a: node)
 rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope), !py_dead_at(a).
+// `for x in it`: x is bound to the loop target's value, `it.__iter__().__next__()` (implicit calls, `icall`); `with e
+// as x`: to the alias's, `e.__enter__()`. Not their `async` forms (`__aiter__`, `__aenter__`).
+rasg(s, x, l, a) :- kind(a, "for_statement"), !op(a, "async"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
+    !py_dead_at(a).
+rasg(s, x, t, a) :- kind(a, "with_statement"), !op(a, "async"), child(a, wc, _), child(wc, w, _), kind(w, "with_item"), field(w, "value", p),
+    kind(p, "as_pattern"), field(p, "alias", t), child(t, i, 0), kind(i, "identifier"), text(i, x), nearest(a, s, scope), !py_dead_at(a).
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
@@ -80,12 +86,16 @@ patkind("parenthesized_expression"). patkind("tuple"). patkind("list"). patkind(
 .decl tgt(t: node)
 tgt(l) :- kind(a, "assignment"), field(a, "left", l), !kind(l, "identifier").
 tgt(l) :- kind(a, "augmented_assignment"), field(a, "left", l).
-tgt(l) :- kind(a, "for_statement"), field(a, "left", l).
+tgt(l) :- kind(a, "for_statement"), field(a, "left", l), !kind(l, "identifier").
+tgt(l) :- kind(a, "for_statement"), op(a, "async"), field(a, "left", l).
 tgt(l) :- kind(a, "for_in_clause"), field(a, "left", l).
 tgt(l) :- kind(a, "named_expression"), field(a, "name", l).
 tgt(l) :- kind(l, "as_pattern_target").
 tgt(c) :- tgt(t), kind(t, k), patkind(k), child(t, c, _).
-tgt(c) :- tgt(t), kind(t, "as_pattern_target"), child(t, c, _).
+tgt(c) :- tgt(t), kind(t, "as_pattern_target"), child(t, c, _), !wtgt(t).
+// A `with` alias bound by `rasg`.
+.decl wtgt(t: node)
+wtgt(t) :- rasg(_, _, t, a), kind(a, "with_statement").
 .decl rotgt(s: node, x: symbol)
 rotgt(s, x) :- tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, scope).
 
@@ -479,6 +489,10 @@ pv(c, k, v) :- callee(c, e), attr_of(e, _, _), pv(e, "fn", f), method(f, _), rpv
 // `o.__getitem__(i)`. A class's subscript (`list[int]`, a generic alias) is no call of it.
 .decl icall(c: node, o: node, a: symbol)
 icall(c, o, "__getitem__") :- vpos(c), kind(c, "subscript"), field(c, "value", o).
+// A loop's statement holds its iterator, its target the iterator's next value; a `with` alias the value entered.
+icall(a, it, "__iter__") :- rasg(_, _, l, a), kind(a, "for_statement"), field(a, "right", it).
+icall(l, a, "__next__") :- rasg(_, _, l, a), kind(a, "for_statement").
+icall(t, e, "__enter__") :- rasg(_, _, t, a), kind(a, "with_statement"), kind(t, "as_pattern_target"), field(p, "alias", t), child(p, e, 0).
 vroot(o) :- icall(_, o, _).
 need_attr(k, a) :- icall(_, o, a), pv(o, "inst", k).
 // ifn(c, f): the method an implicit call runs.
@@ -670,7 +684,7 @@ tracked("identifier"). tracked("attribute"). tracked("call"). tracked("parenthes
 tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
 // Values that are no workspace callable and whose methods are no workspace definition: literals and operators on them.
 tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
-tracked("none"). tracked("subscript"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
+tracked("none"). tracked("subscript"). tracked("for_statement"). tracked("as_pattern_target"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
 tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
 .decl iattr(c: node, a: symbol)
 iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).
