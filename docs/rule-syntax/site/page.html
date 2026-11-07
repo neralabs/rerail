@@ -112,6 +112,8 @@ ul.tight { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 68
 .pill.native { color: var(--t-builtin); border-color: currentColor; }
 .pill.datalog { color: var(--accent-2); border-color: currentColor; }
 .pill.atom { color: var(--t-builtin); border-color: currentColor; }
+.pill.hand { color: var(--accent-2); border-color: currentColor; font-weight: 600; }
+.pill.gen { color: var(--muted); border-style: dashed; }
 .pill.mode-block { color: var(--accent); border-color: currentColor; }
 .pill.mode-steer { color: var(--accent-2); border-color: currentColor; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -617,6 +619,7 @@ function buildPacks() {
   for (const p of PACKS) {
     const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.dataset.pack = p.name;
     b.innerHTML = `${esc(p.name)}<span class="n">${p.count}</span>`;
+    if (p.hand) b.title = `${p.hand} hand-written, ${p.count - p.hand} generated`;
     b.setAttribute("aria-pressed", "false");
     b.addEventListener("click", () => selectPack(p.name));
     chips.appendChild(b);
@@ -639,7 +642,8 @@ function listPack(selectId) {
   const frag = document.createDocumentFragment();
   for (const r of shown) {
     const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.id = r.id;
-    el.innerHTML = `<span class="id">${esc(r.id)}</span><span class="meta"><span class="pill mode-${r.m}">${r.m}</span><span>${r.jl.toLocaleString()} → ${r.rl.toLocaleString()} lines</span>${r.u ? `<span class="pill atom" title="Matcher terms kept as ast(…) atoms">${r.u} atom${r.u > 1 ? "s" : ""}</span>` : ""}</span>`;
+    const size = r.h ? `${r.jl.toLocaleString()} → ${lineCount(r.h).toLocaleString()} lines` : `${r.jl.toLocaleString()} → ${r.rl.toLocaleString()} lines`;
+    el.innerHTML = `<span class="id">${esc(r.id)}</span><span class="meta"><span class="pill mode-${r.m}">${r.m}</span>${r.h ? `<span class="pill hand" title="Written and reviewed by hand">hand-written</span>` : `<span class="pill gen" title="Machine translation of the JSON, not reviewed">generated</span>`}<span>${size}</span>${!r.h && r.u ? `<span class="pill atom" title="Matcher terms kept as ast(…) atoms">${r.u} atom${r.u > 1 ? "s" : ""}</span>` : ""}</span>`;
     el.addEventListener("click", () => showRule(r));
     el.addEventListener("keydown", e => { if (e.key === "Enter") showRule(r); });
     frag.appendChild(el);
@@ -648,14 +652,32 @@ function listPack(selectId) {
   const pick = shown.find(r => r.id === selectId) || shown[0];
   showRule(pick);
 }
-function showRule(r) {
+function showRule(r, view) {
   $("#pack-list").querySelectorAll(".item").forEach(i => i.setAttribute("aria-selected", i.dataset.id === r.id));
   const jtext = pretty(r.j);
-  $("#pack-bar").innerHTML = `<h2>${esc(r.id)}</h2><p>${esc(r.d || "")}</p>`;
-  panes($("#pack-panes"), [
-    { title: "Today: rerail.policy/v1 JSON", meta: `${lineCount(jtext).toLocaleString()} lines · ${kb(jtext.length)}`, text: jtext, lang: "json" },
-    { title: "Generated .rr", meta: `${lineCount(r.r).toLocaleString()} lines · ${kb(r.r.length)}${r.u ? ` · ${r.u} matcher atom${r.u > 1 ? "s" : ""}` : ""}`, text: r.r, lang: "rr" },
-  ]);
+  const json = { title: "Today: rerail.policy/v1 JSON", meta: `${lineCount(jtext).toLocaleString()} lines · ${kb(jtext.length)}`, text: jtext, lang: "json" };
+  const gen = { title: "Generated .rr: machine output, not reviewed", meta: `${lineCount(r.r).toLocaleString()} lines · ${kb(r.r.length)}${r.u ? ` · ${r.u} matcher atom${r.u > 1 ? "s" : ""}` : ""}`, text: r.r, lang: "rr" };
+  const pane = (title, text) => ({ title, meta: `${lineCount(text).toLocaleString()} lines · ${kb(text.length)}`, text, lang: "rr" });
+  const views = r.h
+    ? [{ label: "Hand-written .rr", panes: [pane("Hand-written .rr", r.h), json] },
+       ...Object.entries(r.hx || {}).map(([k, t]) => ({ label: `${k}.rr`, panes: [pane(`${r.id}.${k}.rr`, t)] })),
+       { label: "Generated .rr", panes: [json, gen] }]
+    : [{ label: "Generated .rr", panes: [json, gen] }];
+  const k = Math.min(view || 0, views.length - 1);
+  const note = r.h
+    ? "Written by hand on the libraries (see Libraries), and reviewed against the JSON and the tool it ports. The generated tab shows what the translator makes of the same JSON."
+    : "No hand-written version yet. The .rr is the translator's construct-by-construct lowering of the JSON. It is meant to keep the JSON's meaning, but nobody has reviewed it, and it is not how a person would write the rule.";
+  $("#pack-bar").innerHTML = `<h2>${esc(r.id)}</h2><p>${esc(r.d || "")}</p><p class="note" style="padding:0">${esc(note)}</p>${views.length > 1 ? `<div class="tabs" role="tablist"></div>` : ""}`;
+  if (views.length > 1) {
+    const tabs = $("#pack-bar .tabs");
+    views.forEach((v, i) => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+      b.textContent = v.label; b.setAttribute("aria-selected", i === k);
+      b.addEventListener("click", () => showRule(r, i));
+      tabs.appendChild(b);
+    });
+  }
+  panes($("#pack-panes"), views[k].panes);
 }
 
 // ---------- data-layer view ----------

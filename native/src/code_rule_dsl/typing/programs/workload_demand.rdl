@@ -9,14 +9,12 @@
 .decl text(n: node, s: sym)
 .decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
-.input doc, node, child, field, text, intval, op
+.input doc, node, child, field, text, intval, op, kind, docof
 
 .kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
 
 .decl kind(n: node, k: sym)
-kind($n, $k) :- node(_, $n, $k, _, _).
 .decl docof(n: node, d: int)
-docof($n, $d) :- node($d, $n, _, _, _).
 .decl modnode(d: int, m: node)
 modnode($d, $m) :- node($d, $m, "module", _, _).
 .decl finding(rule: sym, n: node)

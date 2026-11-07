@@ -314,8 +314,6 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
     Ok(all)
 }
 
-/// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
-#[allow(clippy::too_many_arguments)]
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
 /// passes until one finds nothing twice or 200 ms have gone (`RERAIL_CORPUS_GC=off`: none). The history's high-water
 /// mark is `RERAIL_CORPUS_HISTORY_MB` (default 512), the low-water mark three quarters of it.
@@ -375,7 +373,26 @@ fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_stor
     ContentStore::open(&path).map(Some)
 }
 
+/// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
+    run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
+}
+
+/// `run_typed` with the policy's options (`rerail.policy/v1` `options`), which `core.rr`'s `option` and `option_item`
+/// give the rules (`facts::repository`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_with_options(
+    programs: &[&str],
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -508,6 +525,10 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
     });
     let (local, cross) = (part(split.local), part(split.cross));
+    // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
+    // itself (decision 0046); relations no rule reads are not made.
+    let projection = syntax::Projection::of(&prog, read.clone());
+    crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
     let t_stats = match &t {
@@ -542,7 +563,22 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     // read back, 0.75 s on Python.)
     let decodes = cross.program.outputs.iter().any(|o| o == "finding");
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
-    for rel in &split.base {
+    // The repository inputs (`facts::repository`) the program reads: made once, bound once beside every chunk's.
+    let repository: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>)> = {
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
+        let reads = |r: &str| read.contains(r) && prog.inputs.iter().any(|i| i == r);
+        crate::code_rule_dsl::facts::repository::relations(&store, root, &files, options, &reads)
+            .map_err(|e| Error::Plan(e.to_string()))?
+            .into_iter()
+            .filter(|(name, _)| reads(name))
+            .map(|(name, r)| {
+                let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(r);
+                let measured = syntax::statistics(source.as_ref());
+                (name.to_owned(), source, measured)
+            })
+            .collect()
+    };
+    for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n", "start"],
@@ -580,6 +616,14 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
+    for (rel, source, _) in &repository {
+        modules.bind(&db, rel, Arc::clone(source))?;
+    }
+    let repository_stats = |stats: &mut super::Stats| {
+        for (rel, _, measured) in &repository {
+            stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+        }
+    };
     let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
@@ -689,7 +733,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
             add(&mut parse, t);
             t = thread_usage();
             let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding).map_err(|e| Error::Plan(e.to_string()));
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
@@ -757,6 +801,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
         nodes += chunk_nodes_built;
         chunks += 1;
         let mut stats = t_stats.clone();
+        repository_stats(&mut stats);
         if own {
             let chunk = match &own_once {
                 Some((first, measured)) if *first > 0 => measured.scaled(chunk_nodes_built as f64 / *first as f64),
@@ -796,7 +841,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
                     measured
                 }
             };
-            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel == syntax::WITHIN || rel == syntax::SPAN_WITHIN || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || crate::code_rule_dsl::logic::front::is_transduced(&rel) || rel == syntax::WITHIN || rel == syntax::SPAN_WITHIN || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.estimated_len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
@@ -907,6 +952,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
         own_totals.apply(&mut cross_stats);
     }
     totals.apply(&mut cross_stats);
+    repository_stats(&mut cross_stats);
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.

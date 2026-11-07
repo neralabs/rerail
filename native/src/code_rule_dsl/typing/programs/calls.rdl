@@ -18,7 +18,7 @@
 .decl text(n: node, s: sym)
 .decl op(n: node, s: sym)
 .decl pkg(d: int, p: sym)
-.input doc, node, child, field, text, op, pkg
+.input doc, node, child, field, text, op, pkg, kind, docof
 
 .kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
 // What a name in a scope sees when its own scope does not bind it: class scopes are skipped.
@@ -26,9 +26,7 @@
 .kindset fdef = "function_definition"
 
 .decl kind(n: node, k: sym)
-kind($n, $k) :- node(_, $n, $k, _, _).
 .decl docof(n: node, d: int)
-docof($n, $d) :- node($d, $n, _, _, _).
 .decl modnode(d: int, m: node)
 modnode($d, $m) :- node($d, $m, "module", _, _).
 .decl modname(m: node, q: sym)

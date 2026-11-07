@@ -448,9 +448,19 @@ pub(in crate::code_rule_dsl) struct Model {
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
     inputs: Inputs,
+    /// The relations the program's rules derive. Their columns are `c0`, `c1`, … even where an input of the
+    /// same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
+    derived: HashSet<String>,
 }
 
-/// T's input column names; a derived relation's columns are `c0`, `c1`, ….
+impl Model {
+    /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
+    fn col(&self, rel: &str, col: usize) -> String {
+        if self.derived.contains(rel) { format!("c{col}") } else { sql_col(rel, col) }
+    }
+}
+
+/// An input's column names (`sql::select::input_columns`); any other relation's columns are `c0`, `c1`, ….
 pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
@@ -465,11 +475,16 @@ fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
-        Literal::Agg { var, over, atom, .. } => {
+        Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
             if let Some(o) = over {
                 need.remove(o);
+            }
+            if let AggOp::Join { by, .. } = op {
+                by.iter().for_each(|b| {
+                    need.remove(b);
+                });
             }
             need.is_subset(bound)
         }
@@ -686,7 +701,7 @@ impl Model {
                 let k = constant(&a.args[c]);
                 if let Some(k) = &k
                     && prog.inputs.contains(&a.rel)
-                    && let Some(f) = stats.const_freq(&a.rel, &sql_col(&a.rel, c), k)
+                    && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
                 {
                     return f as f64;
                 }
@@ -775,7 +790,7 @@ impl Model {
                 if rcols.len() != 1 || bcols.len() != 1 {
                     continue;
                 }
-                let (rname, bname) = (sql_col(&a.rel, rcols[0]), sql_col(&a.rel, bcols[0]));
+                let (rname, bname) = (self.col(&a.rel, rcols[0]), self.col(&a.rel, bcols[0]));
                 if !stats.indexes.get(&a.rel).into_iter().flatten().any(|ix| ix.len() >= 2 && ix[0] == bname && ix[1] == rname) {
                     continue;
                 }
@@ -1139,7 +1154,7 @@ impl Model {
                 let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
                     (0..a.args.len())
                         .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
-                        .map(|c| sql_col(&a.rel, c))
+                        .map(|c| self.col(&a.rel, c))
                         .collect()
                 };
                 let source = |rel: &str| -> String {
@@ -1205,7 +1220,7 @@ impl Model {
         let mut rows = base;
         for (c, t) in a.args.iter().enumerate() {
             if let Some(k) = constant(t) {
-                rows *= self.stats.const_freq(&a.rel, &sql_col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
+                rows *= self.stats.const_freq(&a.rel, &self.col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
             }
         }
         let card = rows.round_ties_even().max(1.0);
@@ -1235,6 +1250,7 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
+    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {
@@ -1280,7 +1296,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs });
+        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -1301,7 +1317,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs })
+    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
@@ -1310,8 +1326,13 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "op_at" | "tape" | "line" => &[&["n"]],
+        "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
+        "first_token" | "last_token" => &[&["n"]],
+        "token_before" | "token_after" => &[&["x"]],
+        "next_sibling" => &[&["a"], &["b"]],
+        "source" | "src_line" | "line_count" => &[&["d"]],
+        "str_part" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0048).
         "within" => &[&["n"], &["a"]],
@@ -1319,7 +1340,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
-        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
+        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         _ => &[],
@@ -1418,6 +1439,9 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
                 ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
                 ("div", [x, y]) => bin(Op::Divide, x.clone(), y.clone()),
+                // Soufflé's `max(a, b)` and `min(a, b)`: SQL's scalar `max` and `min`.
+                ("max", [x, y]) => call("max", vec![x.clone(), y.clone()]),
+                ("min", [x, y]) => call("min", vec![x.clone(), y.clone()]),
                 // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
                 ("strlen", [x]) => length(&text_of(atoms, x)),
                 ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
@@ -1426,7 +1450,11 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
-                ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
+                // `@dot("", y)` is `y` (`core.rr`).
+                ("cat", [x, y]) => Expr::Case {
+                    branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
+                    fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
+                },
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -1544,12 +1572,12 @@ impl Model {
             alias += 1;
             format!("t{alias}")
         };
-        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: Option<&str>| -> Result<Vec<Expr>> {
+        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: &[&str]| -> Result<Vec<Expr>> {
             a.args
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if Some(v.as_str()) == skip))
-                .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
+                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
+                .map(|(c, t)| Ok(eq(col(al, &self.col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
         };
         let subquery = |what: Expr, relation: Relation, al: String, predicates: Vec<Expr>| Select {
@@ -1586,13 +1614,13 @@ impl Model {
                         frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
                         conds.push(Expr::Between {
-                            input: Box::new(col(&al, &sql_col(&l.rel, rc))),
+                            input: Box::new(col(&al, &self.col(&l.rel, rc))),
                             low: Box::new(col(&ra, "lo")),
                             high: Box::new(col(&ra, "hi")),
                         });
                     }
                     for (c, t) in l.args.iter().enumerate() {
-                        let column = col(&al, &sql_col(&l.rel, c));
+                        let column = col(&al, &self.col(&l.rel, c));
                         match t {
                             Term::Var(v) => match env.get(v) {
                                 Some(e) => conds.push(eq(column, e.clone())),
@@ -1608,7 +1636,7 @@ impl Model {
                 }
                 Literal::Atom(l) => {
                     let al = a_name();
-                    let conds = neg_conds(l, &al, &env, None)?;
+                    let conds = neg_conds(l, &al, &env, &[])?;
                     let query = subquery(integer(1), self.relation(prog, &l.rel, false), al, conds);
                     wh.push(Expr::Exists { negated: true, query: Box::new(query) });
                 }
@@ -1667,12 +1695,34 @@ impl Model {
                 }
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
-                    let conds = neg_conds(atom, &al, &env, over.as_deref())?;
+                    // The aggregated variable and a `join`'s ordering ones are the body's own (where the rule does not
+                    // bind them): not correlated.
+                    let mut local: Vec<&str> = over.iter().map(String::as_str).collect();
+                    if let AggOp::Join { by, .. } = op {
+                        local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
+                    }
+                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let column = |v: &str| {
+                        let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
+                        let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
+                        (col(&al, &self.col(&atom.rel, c)), symbol)
+                    };
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => {
-                            let c = atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
-                            call(if *op == AggOp::Min { "min" } else { "max" }, vec![col(&al, &sql_col(&atom.rel, c))])
+                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
+                        // Soufflé's sum is 0 over no rows.
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
+                        (AggOp::Join { by, sep }, Some(o)) => {
+                            let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
+                            let mut args = vec![string(sep), text(column(o))];
+                            for b in by {
+                                args.push(match env.get(b) {
+                                    Some(e) => e.clone(),
+                                    None => text(column(b)),
+                                });
+                            }
+                            self.inputs.symbol_of(call("coalesce", vec![call("rr_join", args), string("")]))
                         }
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
@@ -2244,6 +2294,27 @@ impl Run<'_> {
     /// A probe's planned body as a native join spec (sqlite-ext `setfix.rs`, "native join probes", T's `join_spec`),
     /// or `None` where a literal has no native step (an aggregate other than `count`, a descent, a document range,
     /// top): that probe stays SQL.
+    /// `join_spec` for a whole body: `None` too when a head variable is bound by none of its steps (the native join
+    /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
+    fn whole_join_spec(&self, h: &Atom, order: &[Step], at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<String> {
+        let mut bound = BTreeSet::new();
+        for s in order {
+            let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
+            match &s.lit {
+                Literal::Atom(l) if !l.neg => l.args.iter().for_each(&mut add),
+                Literal::Cmp { l, op, r } if *op == "=" => { add(l); add(r) }
+                Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone())); add(&Term::Var(a.clone())) }
+                Literal::Agg { var, .. } => add(&Term::Var(var.clone())),
+                _ => {}
+            }
+        }
+        let head_vars = h.args.iter().flat_map(|t| match t { Term::Call(_, a) => a.iter().collect::<Vec<_>>(), t => vec![t] });
+        if head_vars.filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).any(|v| !bound.contains(v)) {
+            return None;
+        }
+        self.join_spec(h, order, at, ri, scc, native_rels)
+    }
+
     fn join_spec(
         &self,
         h: &Atom,
@@ -2302,7 +2373,7 @@ impl Run<'_> {
                     a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
                 }))
             });
-            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => sql_col(rel, c) };
+            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
@@ -2465,7 +2536,7 @@ impl Run<'_> {
             let ((order, _, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
+            let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
                 return Ok(false);
             };
@@ -2485,7 +2556,7 @@ impl Run<'_> {
                 let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
+                let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
                     return Ok(false);
                 };
@@ -2493,7 +2564,7 @@ impl Run<'_> {
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
                 let ((whole, _, _), _) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
-                let wspec = if whole[0].at != ai { self.join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
+                let wspec = if whole[0].at != ai { self.whole_join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
                 let mut line = format!("join {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&spec));
                 if let Some(w) = wspec {
                     line += &format!(" {}", hex(&w));
@@ -2563,7 +2634,7 @@ impl Run<'_> {
                 e.2 = x.map(|x| delta_sources(x, &new, at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
-                    .join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
+                    .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
                 self.fx().reprobe(&name, seeds.len() + k, "join", &hex(&spec))?;
                 probes[k].2 = new;
@@ -2885,7 +2956,7 @@ impl Run<'_> {
                 Literal::Atom(a) => a.rel.clone(),
                 _ => unreachable!(),
             };
-            if join && let Some(spec) = self.join_spec(&r.head, order, Some(*at), &ri, scc, &none) {
+            if join && let Some(spec) = self.whole_join_spec(&r.head, order, Some(*at), &ri, scc, &none) {
                 lines.push(format!("join {} {} {}", ri[&r.head.rel], ri[&rel], hex(&spec)));
                 continue;
             }
@@ -2921,7 +2992,7 @@ impl Run<'_> {
                     continue;
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
-                let spec = if join { self.join_spec(&r.head, &new, Some(nat), &ri, scc, &none) } else { None };
+                let spec = if join { self.whole_join_spec(&r.head, &new, Some(nat), &ri, scc, &none) } else { None };
                 let (kind, body) = match spec {
                     Some(spec) => ("join", hex(&spec)),
                     None => {
@@ -3121,7 +3192,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
-        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
+        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| model.col(&a.rel, c)) } else { None }).collect();
         model.view_src.insert(rel.to_owned(), (a.rel.clone(), cols));
         if let ([Term::Var(h0), Term::Var(h1)], [Term::Var(d), Term::Var(n), rest @ ..]) = (h.args.as_slice(), a.args.as_slice())
             && a.rel == "node"

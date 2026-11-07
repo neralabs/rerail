@@ -88,6 +88,39 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
         return Ok((program.clone(), files.clone()));
     }
     let (statements, files) = program(path)?;
+    // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
+    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let engine: std::collections::BTreeSet<&String> = statements
+        .iter()
+        .filter(|(file, _)| *file == core)
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
+        .collect();
+    for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {
+        for (item, line) in statements {
+            let names: Vec<&String> = match item {
+                syntax::Item::Decl { name, .. } => vec![name],
+                syntax::Item::Clause { heads, .. } => heads.iter().map(|h| &h.rel).collect(),
+                _ => Vec::new(),
+            };
+            if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
+                return Err(Error::Syntax(format!("{}:{line}: {name} is core.rr's: a program reads it and cannot declare or derive it", file.display())));
+            }
+        }
+    }
+    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places.
+    for (file, statements) in &statements {
+        for (item, line) in statements {
+            let names: Vec<&String> = match item {
+                syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => vec![name],
+                syntax::Item::Clause { heads, .. } => heads.iter().map(|h| &h.rel).collect(),
+                _ => Vec::new(),
+            };
+            if let Some(name) = names.into_iter().find(|n| n.starts_with(super::front::RESERVED)) {
+                return Err(Error::Syntax(format!("{}:{line}: {name}: names starting `{}` are the engine's", file.display(), super::front::RESERVED)));
+            }
+        }
+    }
     let program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
     Ok((program, files))

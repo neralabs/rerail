@@ -14,7 +14,7 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
-.input doc, node, child, field, text, op
+.input doc, node, child, field, text, op, kind
 
 .decl iscope(kind: symbol)
 iscope("source_file"). iscope("mod_item"). iscope("block").
@@ -28,7 +28,6 @@ fdef("function_item").
 implk("impl_item"). implk("trait_item").
 
 .decl kind(n: node, k: symbol)
-kind(n, k) :- node(_, n, k, _, _).
 .decl nm(n: node, x: symbol)
 nm(n, x) :- field(n, "name", i), text(i, x).
 
