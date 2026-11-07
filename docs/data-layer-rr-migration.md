@@ -18,7 +18,8 @@ Merge `2bf167c90` takes those changes without restoring an older planner or exec
 Merge its committed engine, frontend, libraries, build files, and locks into this root.
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
-The canonical printer also supplies call-receiver text for the unfinished `async_patterns` translation.
+The canonical printer also supplies call-receiver text for `async_patterns`.
+The generic `project.rr` input supplies the caller's root spelling once per run, without path resolution or a directory scan.
 These generic extensions use the modern engine's existing relation and demand interfaces.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.
@@ -60,8 +61,11 @@ It separates imported bytes from local repairs. It does not claim that a commit 
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory contains **71 target drafts and 29 absent translations**. None has full acceptance yet.
-The 71st draft, `async_patterns`, is unfinished. Three configured-path parity regressions remain open;
-its full supplemental acceptance has not been rerun on the merged engine.
+The 71st draft, `async_patterns`, passes all 11 original tests, 158 supplemental API cases, and 136 configured reporter cases.
+The corpus includes 125 positive API cases and 98 positive reporter cases. All three absolute-path regressions now pass.
+Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-supplemental-contracts.json.gz) retain complete values and positive mutation controls.
+Production and persistent-workspace acceptance remain outstanding.
 The 70th draft, `conn_or_txn_union`, passes all five original cases, 83 supplemental API cases, and 94 configured reporter cases.
 The supplemental corpus includes 56 positive API cases and 60 positive reporter cases.
 Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-direct-contracts.json.gz)

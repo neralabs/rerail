@@ -8350,3 +8350,46 @@ This alignment does not recertify prior ports on every API or claim that the asy
 No full repository cold run was performed. No Linear ticket was created.
 
 Evidence: [Final shape alignment and focused validation](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-a2c9-alignment.json.gz).
+
+## 2026-11-07 — Exact async patterns on the modern root engine
+
+The 71st draft now passes its focused native acceptance corpus. The inventory remains 71 drafts and 29 absent translations.
+Full migration acceptance remains false. Final shape remains at `a2c9ee123`; all native changes use the active repository root.
+
+The rule preserves temporal query/session aliases, nested async and sync scopes, decorator inheritance, transaction parameters, fallback markers, and canonical receiver messages.
+Rule decisions remain Datalog. The native printer supplies typed expression text without a Python process.
+The supplied-AST adapter transports caller inputs separately from raw source. It does not run the detector in Python.
+
+The acceptance ladder caught these faults:
+
+- Fallback windows needed finite query facts to bind their radius and search fragment.
+- Parenthesized receiver expressions needed unwrapping, while actual call nodes needed distinct identities.
+- Absolute collector paths inherited exclusions and API/implementation context from the repository root.
+- Repository metadata needed ordinary SQL text tests. The per-file vocabulary does not contain those values.
+- The external file adapter needed the native exclusion result before it opened a file.
+
+Test commit `f916331eb` fails with `no columns for workspace_root` on the aligned engine.
+The modern repository producer now supplies that generic fact once per run. It does not scan or canonicalize the root.
+The regression preserves two different caller spellings across repeated runs, even when neither directory exists.
+The three configured root-path cases now pass. Test commit `79980c9b4` captures the file-access ordering defect.
+Commit `283fe69a0` corrects that adapter ordering through the native predicate.
+
+Final validation uses frozen root CLI SHA-256 `d69a3de9a29acc4238095f4e94f449a18fd8e062e3768e4f6c0114932358fdc0`.
+The receipts record the full executable hash and source commit.
+
+- All 11 unchanged original cases pass. Twelve native calls preserve twelve complete API values, including eight positive returns.
+- All 158 supplemental API cases pass: 125 positives, 31 clean cases, and two exact exception results.
+- All 136 configured reporter cases pass: 98 positives and 38 clean cases.
+- An original positive rejects a disabled detector. Seven independent reporter controls reject disabled diagnostic families.
+- All 71 drafts pass the reader. All 62 focused reader/runtime tests and 107 printer comparisons pass.
+- All 58 migration tooling tests and both authoring gate tests pass.
+
+Each supplemental corpus uses 16 disjoint shards, with two workers. The slowest shard took 26 seconds.
+No case was omitted or counted twice. The two ignored native tests are upstream file-writing utilities.
+The whole-library checker and full engine suite were not run. No full repository cold run was performed.
+No CPU or memory improvement is claimed. Canonical printing can repeat for each prepared file batch.
+
+Evidence: [direct original contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-direct-contracts.json.gz)
+and [supplemental contracts, regressions, and family controls](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-supplemental-contracts.json.gz).
+Production integration and persistent-workspace contracts remain required. No Linear ticket was created.
+The next missing translation is `async_sync_boundary`.

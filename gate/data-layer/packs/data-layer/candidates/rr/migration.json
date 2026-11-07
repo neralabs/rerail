@@ -2371,7 +2371,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "a2c9ee1231fd2be9d8ecc505a3170c67ca5134a3",
-    "status": "Root Final shape engine with generic Boolean-context, Python diagnostic/traversal, and canonical expression-printing extensions",
+    "status": "Root Final shape engine with generic Boolean-context, Python diagnostic/traversal, canonical expression text, and run-root metadata extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2389,6 +2389,7 @@
       "native/src/code_rule_dsl/facts/vtab/syntax.rs",
       "native/src/code_rule_dsl/logic/sql/select.rs",
       "native/src/code_rule_dsl/logic/strings.rs"
-    ]
+    ],
+    "rootMetadataCommit": "7b44f4813"
   }
 }
