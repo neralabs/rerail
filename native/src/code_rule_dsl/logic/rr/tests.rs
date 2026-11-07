@@ -63,6 +63,22 @@ Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, 
     assert_eq!(rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["column"].as_i64().unwrap())).collect::<Vec<_>>(), [(1, 8), (2, 3)]);
 }
 
+/// Word runs are decoded code points, including non-scalar delimiters and adjacent literals.
+#[test]
+fn python_constant_word_runs_preserve_surrogate_boundaries() {
+    let rows = finding_contract(r#"x = "\ud800json" "_ok\udfffroute_partition"
+y = f"json{x}json"
+z = "notjson \N{LATIN SMALL LETTER J}son"
+"#, r#"
+.language python
+.violation Word(at: node, ordinal: number, word: symbol) "{word}"
+Word(at, i, w) :- str_part_word(_, i, w, at, _).
+"#);
+    let mut words: Vec<_> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["ordinal"].as_i64().unwrap(), r["parameters"]["word"].as_str().unwrap())).collect();
+    words.sort();
+    assert_eq!(words, [(1, 0, "json_ok"), (1, 0, "route_partition"), (2, 0, "json"), (2, 1, "json"), (3, 0, "json"), (3, 0, "notjson")]);
+}
+
 /// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
 #[test]
 fn native_python_syntax_verdict_keeps_raw_source_available() {
