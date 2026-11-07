@@ -1,0 +1,45 @@
+nodes 5396512, files 2049, kinds 109, max depth 34, device Apple M5 Max
+
+Q1 fn has Yield, stopBy nested scope (EXISTS)
+  roots 72480, targets 1781, nodes touched 4929644, CPU 1-thread interval   92.266 ms
+  (a) stack DFS, CSR, cap 64         GPU median    3.149 ms  dispatches 1  mismatches 135 (stack overflows 135, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    0.875 ms  dispatches 1  mismatches 0 
+  (b3) postings + owner column       GPU median    0.021 ms  dispatches 2  mismatches 0 
+  (f) SIMD-group scan + anc column   GPU median    0.148 ms  dispatches 1  mismatches 0 (anc column build    0.206 ms, once per prune set per batch)
+  (d) frontier waves, indirect       GPU median    2.583 ms  dispatches 70  mismatches 0 (non-empty waves 32, peak frontier 684867, overflow 0)
+
+Q2 fn has Return, stopBy nested scope (EXISTS)
+  roots 72480, targets 25558, nodes touched 4528751, CPU 1-thread interval   68.024 ms
+  (a) stack DFS, CSR, cap 64         GPU median    1.344 ms  dispatches 1  mismatches 127 (stack overflows 127, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    0.853 ms  dispatches 1  mismatches 0 
+  (b3) postings + owner column       GPU median    0.020 ms  dispatches 2  mismatches 0 
+  (f) SIMD-group scan + anc column   GPU median    0.107 ms  dispatches 1  mismatches 0 (anc column build    0.143 ms, once per prune set per batch)
+  (d) frontier waves, indirect       GPU median    1.606 ms  dispatches 70  mismatches 0 (non-empty waves 26, peak frontier 562710, overflow 0)
+
+Q3 count Call in fn, stopBy end (COUNT)
+  roots 72480, targets 420719, nodes touched 5305864, CPU 1-thread interval   18.538 ms
+  (a) stack DFS, CSR, cap 64         GPU median    1.858 ms  dispatches 1  mismatches 142 (stack overflows 142, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    2.053 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.050 ms  dispatches 1  mismatches 0 
+  (f) SIMD-group scan + anc column   GPU median    0.451 ms  dispatches 1  mismatches 0 (anc column build    0.633 ms, once per prune set per batch)
+  (d) frontier waves, indirect       GPU median    2.331 ms  dispatches 70  mismatches 0 (non-empty waves 32, peak frontier 733298, overflow 0)
+
+Q4 Module has Lambda, stopBy end (COUNT, huge roots)
+  roots 2049, targets 2227, nodes touched 5394463, CPU 1-thread interval   18.084 ms
+  (a) stack DFS, CSR, cap 64         GPU median    5.377 ms  dispatches 1  mismatches 467 (stack overflows 467, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median   10.556 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.005 ms  dispatches 1  mismatches 0 
+  (f) SIMD-group scan + anc column   GPU median    0.856 ms  dispatches 1  mismatches 0 (anc column build    0.137 ms, once per prune set per batch)
+  (d) frontier waves, indirect       GPU median    2.547 ms  dispatches 70  mismatches 0 (non-empty waves 34, peak frontier 697171, overflow 0)
+
+Q5 every Call has Lambda, stopBy end (COUNT, 420k nested roots)
+  roots 420719, targets 2227, nodes touched 3467914, CPU 1-thread interval  138.794 ms
+  (a) stack DFS, CSR, cap 64         GPU median    0.256 ms  dispatches 1  mismatches 25 (stack overflows 25, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    0.114 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.026 ms  dispatches 1  mismatches 0 
+  (f) SIMD-group scan + anc column   GPU median    0.203 ms  dispatches 1  mismatches 0 (anc column build    0.159 ms, once per prune set per batch)
+  (d) frontier waves, indirect       GPU median    0.903 ms  dispatches 70  mismatches 0 (non-empty waves 18, peak frontier 852231, overflow 0)
+
+Q6 every Call inside Try, stopBy scope (ancestor)
+  roots 420719, targets 7738, nodes touched 1196188, CPU 1-thread interval    3.704 ms
+  (e) parent walk                    GPU median    0.119 ms  dispatches 1  mismatches 0 

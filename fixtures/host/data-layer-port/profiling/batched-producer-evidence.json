@@ -1,0 +1,649 @@
+{
+  "format": "rerail.batched-producer-evidence/v1",
+  "baselineCommit": "c4bd76bfc98d06803585a36df6f18c156437bfa2",
+  "landingReference": "ce7d2da32",
+  "workload": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 5,
+    "bytes": 1026452,
+    "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043"
+  },
+  "backend": "cpu-reference",
+  "build": {
+    "optimization": 1,
+    "dependencyOptimization": 3,
+    "codegenUnits": 256,
+    "lto": "thin",
+    "features": [
+      "code-rule-profile"
+    ],
+    "allocator": "system-malloc-shim",
+    "sourceSha256": {
+      "native/src/code_rule_dsl/budget.rs": "39ccbe51cefed99554228d8bd51fcc2c7276bd259736a178806cbaa9b8d76fda",
+      "native/src/code_rule_dsl/eval/mod.rs": "fe3b63116207c8ebb3206c701d6d6e69745a546f628722cb8eaa5682fb210fa7",
+      "native/src/code_rule_dsl/relational.rs": "9a429e986c0f64a67a9ee8c467777a415f5417cef0604a2054d0fa324170501c",
+      "native/src/code_rule_dsl/relational/producer.rs": "bebfcc312db95305c64bf915fe1da67a9c86fb344322816b9284b4dd1d32830d",
+      "native/src/code_rule_dsl/relational/syntax.rs": "6076117bc6f59b6fac8c476635c48736bb025fd064149edf12ae6b6dfc46e9f8",
+      "native/src/code_rule_dsl/relational/syntax/packed.rs": "88fe334253b0db990a8e05f156209756db4f563a6670f66ce8e3807af4f6235c",
+      "native/src/code_rule_dsl/relational/table.rs": "3758b35bde464f57725e3ec2037097da25a8ce2a6a10d6a6b24a8df0a728fbcf",
+      "native/src/code_rule_dsl/workspace/api.rs": "4a648a46ff1bbf6e48cc515c6ede6477b26f5067bcc4928d39002ed7e839e11c",
+      "native/src/code_rule_dsl/workspace/global.rs": "f5cf0195a545b07316794faf09a30b0dc5d9c41a2f6bfd87fad954be16118be5"
+    }
+  },
+  "shapeChecks": [
+    {
+      "files": 1,
+      "roots": 1,
+      "policies": 1,
+      "workspace": false,
+      "insertBatch": 32,
+      "dependent": false,
+      "findings": 2,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 1,
+          "inputDocumentsAdded": 1,
+          "relations": 2,
+          "roots": 2,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 1,
+      "roots": 100,
+      "policies": 1,
+      "workspace": false,
+      "insertBatch": 1,
+      "dependent": false,
+      "findings": 200,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 1,
+          "inputDocumentsAdded": 1,
+          "relations": 2,
+          "roots": 200,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 100,
+      "roots": 1,
+      "policies": 1,
+      "workspace": false,
+      "insertBatch": 256,
+      "dependent": false,
+      "findings": 200,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 100,
+          "inputDocumentsAdded": 100,
+          "relations": 200,
+          "roots": 200,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 1,
+      "roots": 1,
+      "policies": 2,
+      "workspace": true,
+      "insertBatch": 32,
+      "dependent": false,
+      "findings": 4,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 1,
+          "inputDocumentsAdded": 1,
+          "relations": 4,
+          "roots": 4,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 1,
+      "roots": 100,
+      "policies": 2,
+      "workspace": true,
+      "insertBatch": 1,
+      "dependent": false,
+      "findings": 400,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 1,
+          "inputDocumentsAdded": 1,
+          "relations": 4,
+          "roots": 400,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 100,
+      "roots": 1,
+      "policies": 2,
+      "workspace": true,
+      "insertBatch": 256,
+      "dependent": false,
+      "findings": 400,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 100,
+          "inputDocumentsAdded": 100,
+          "relations": 400,
+          "roots": 400,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 1,
+      "roots": 1,
+      "policies": 100,
+      "workspace": true,
+      "insertBatch": 32,
+      "dependent": false,
+      "findings": 200,
+      "stages": [
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 1,
+          "inputDocumentsAdded": 1,
+          "relations": 200,
+          "roots": 200,
+          "stages": 3
+        }
+      ]
+    },
+    {
+      "files": 2,
+      "roots": 2,
+      "policies": 1,
+      "workspace": false,
+      "insertBatch": 32,
+      "dependent": true,
+      "findings": 8,
+      "stages": [
+        "count",
+        "scan",
+        "scatter",
+        "count",
+        "scan",
+        "scatter"
+      ],
+      "waves": [
+        {
+          "backend": "cpu",
+          "documents": 2,
+          "inputDocumentsAdded": 2,
+          "relations": 4,
+          "roots": 8,
+          "stages": 3
+        },
+        {
+          "backend": "cpu",
+          "documents": 2,
+          "inputDocumentsAdded": 0,
+          "relations": 4,
+          "roots": 8,
+          "stages": 3
+        }
+      ]
+    }
+  ],
+  "productionWave": [
+    {
+      "runPhase": "cold",
+      "rule": "",
+      "clause": "",
+      "path": null,
+      "phase": "producer-wave",
+      "name": "subtrees",
+      "calls": 1,
+      "wallMs": 6.443667,
+      "cpuMs": 6.442209,
+      "cpuMeasuredCalls": 1,
+      "maxWallMs": 6.443667,
+      "counters": {
+        "documents": 5,
+        "inputDocumentsAdded": 5,
+        "relations": 6,
+        "roots": 78911,
+        "stages": 3
+      }
+    }
+  ],
+  "traceLeafCpuMs": {
+    "syntax-prepare": 13.802541,
+    "syntax-owners": 7.098541999999999,
+    "producer-stage": 5.515166,
+    "producer-publish": 607.7381660000001,
+    "sql-materialize": 1514.382177,
+    "sql-index": 256.119494
+  },
+  "medians": {
+    "before": {
+      "cpuMs": {
+        "cold": 2898.124,
+        "edit": 1191.7050000000002,
+        "unchanged": 1.851,
+        "compile": 71.795
+      },
+      "peakRssBytes": 599949312
+    },
+    "after": {
+      "cpuMs": {
+        "cold": 2553.211,
+        "edit": 1036.357,
+        "unchanged": 1.6139999999999999,
+        "compile": 76.329
+      },
+      "peakRssBytes": 683458560
+    }
+  },
+  "runs": {
+    "before": [
+      {
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 67.656,
+            "systemMs": 9.948
+          },
+          "cold": {
+            "userMs": 2859.347,
+            "systemMs": 120.109
+          },
+          "unchanged": {
+            "userMs": 1.166,
+            "systemMs": 0.739
+          },
+          "edit": {
+            "userMs": 1167.766,
+            "systemMs": 23.939
+          }
+        },
+        "coldMs": 3075.006834,
+        "editedFileMs": 1251.2008329999999,
+        "peakRssBytes": 599949312,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 68.157,
+            "systemMs": 3.638
+          },
+          "cold": {
+            "userMs": 2802.863,
+            "systemMs": 95.261
+          },
+          "unchanged": {
+            "userMs": 1.114,
+            "systemMs": 0.737
+          },
+          "edit": {
+            "userMs": 1180.557,
+            "systemMs": 22.846
+          }
+        },
+        "coldMs": 2867.593542,
+        "editedFileMs": 1275.5464580000003,
+        "peakRssBytes": 604389376,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 64.683,
+            "systemMs": 3.96
+          },
+          "cold": {
+            "userMs": 2744.401,
+            "systemMs": 86.598
+          },
+          "unchanged": {
+            "userMs": 1.101,
+            "systemMs": 0.532
+          },
+          "edit": {
+            "userMs": 1037.145,
+            "systemMs": 17.402
+          }
+        },
+        "coldMs": 2746.91,
+        "editedFileMs": 1064.5155410000002,
+        "peakRssBytes": 557957120,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    ],
+    "after": [
+      {
+        "nativeSha256": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 67.437,
+            "systemMs": 8.892
+          },
+          "cold": {
+            "userMs": 2459.982,
+            "systemMs": 93.229
+          },
+          "unchanged": {
+            "userMs": 0.991,
+            "systemMs": 0.623
+          },
+          "edit": {
+            "userMs": 989.23,
+            "systemMs": 19.819
+          }
+        },
+        "coldMs": 2493.618208,
+        "editedFileMs": 1029.8402919999999,
+        "peakRssBytes": 683458560,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "nativeSha256": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 74.548,
+            "systemMs": 4.065
+          },
+          "cold": {
+            "userMs": 2920.879,
+            "systemMs": 106.871
+          },
+          "unchanged": {
+            "userMs": 1.219,
+            "systemMs": 0.888
+          },
+          "edit": {
+            "userMs": 1082.993,
+            "systemMs": 22.107
+          }
+        },
+        "coldMs": 3034.931709,
+        "editedFileMs": 1128.286125,
+        "peakRssBytes": 685342720,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "nativeSha256": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "allocator": "system-malloc-shim",
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 56.196,
+            "systemMs": 2.601
+          },
+          "cold": {
+            "userMs": 2357.02,
+            "systemMs": 80.351
+          },
+          "unchanged": {
+            "userMs": 0.914,
+            "systemMs": 0.637
+          },
+          "edit": {
+            "userMs": 1016.815,
+            "systemMs": 19.542
+          }
+        },
+        "coldMs": 2380.63975,
+        "editedFileMs": 1058.118458,
+        "peakRssBytes": 667041792,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    ]
+  },
+  "comparisons": [
+    {
+      "phases": {
+        "cold": {
+          "baselineMs": 3075.006834,
+          "experimentMs": 2493.618208,
+          "wallSpeedup": 1.2331506178992417,
+          "baselineCpuMs": 2979.456,
+          "experimentCpuMs": 2553.211
+        },
+        "unchanged": {
+          "baselineMs": 2.1461249999997563,
+          "experimentMs": 1.480750000000171,
+          "wallSpeedup": 1.449349991558,
+          "baselineCpuMs": 1.9049999999999998,
+          "experimentCpuMs": 1.6139999999999999
+        },
+        "edit": {
+          "baselineMs": 1251.2008329999999,
+          "experimentMs": 1029.8402919999999,
+          "wallSpeedup": 1.2149464754094124,
+          "baselineCpuMs": 1191.7050000000002,
+          "experimentCpuMs": 1009.049
+        }
+      },
+      "baselinePeakRssBytes": 599949312,
+      "experimentPeakRssBytes": 683458560,
+      "changedSettings": {},
+      "changedPolicies": {},
+      "changedNative": {
+        "baseline": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "experiment": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e"
+      },
+      "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    {
+      "phases": {
+        "cold": {
+          "baselineMs": 2867.593542,
+          "experimentMs": 3034.931709,
+          "wallSpeedup": 0.9448626252433412,
+          "baselineCpuMs": 2898.124,
+          "experimentCpuMs": 3027.75
+        },
+        "unchanged": {
+          "baselineMs": 1.72979099999975,
+          "experimentMs": 2.0642499999999018,
+          "wallSpeedup": 0.8379755359088445,
+          "baselineCpuMs": 1.851,
+          "experimentCpuMs": 2.107
+        },
+        "edit": {
+          "baselineMs": 1275.5464580000003,
+          "experimentMs": 1128.286125,
+          "wallSpeedup": 1.1305168341053562,
+          "baselineCpuMs": 1203.403,
+          "experimentCpuMs": 1105.1
+        }
+      },
+      "baselinePeakRssBytes": 604389376,
+      "experimentPeakRssBytes": 685342720,
+      "changedSettings": {},
+      "changedPolicies": {},
+      "changedNative": {
+        "baseline": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "experiment": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e"
+      },
+      "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    {
+      "phases": {
+        "cold": {
+          "baselineMs": 2746.91,
+          "experimentMs": 2380.63975,
+          "wallSpeedup": 1.1538537067609662,
+          "baselineCpuMs": 2830.999,
+          "experimentCpuMs": 2437.371
+        },
+        "unchanged": {
+          "baselineMs": 1.5464170000000195,
+          "experimentMs": 1.4563749999997526,
+          "wallSpeedup": 1.061826109347031,
+          "baselineCpuMs": 1.633,
+          "experimentCpuMs": 1.5510000000000002
+        },
+        "edit": {
+          "baselineMs": 1064.5155410000002,
+          "experimentMs": 1058.118458,
+          "wallSpeedup": 1.0060457153465518,
+          "baselineCpuMs": 1054.547,
+          "experimentCpuMs": 1036.357
+        }
+      },
+      "baselinePeakRssBytes": 557957120,
+      "experimentPeakRssBytes": 667041792,
+      "changedSettings": {},
+      "changedPolicies": {},
+      "changedNative": {
+        "baseline": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "experiment": "e002fca70b20ca7d0265f36aa630f940ce6a4ac21f0eea0e84c2fc1c75df565e"
+      },
+      "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    }
+  ],
+  "validation": {
+    "nativeTests": 406,
+    "pythonTests": 52,
+    "rustGuards": 3,
+    "rustContextTests": 1,
+    "oracleCases": 200,
+    "oraclePositive": 135,
+    "oracleClean": 65,
+    "productionComparisons": 219,
+    "productionPositive": 130,
+    "productionClean": 89,
+    "transitions": 57,
+    "allPassed": true,
+    "profiles": [
+      "verified-native",
+      "verified-shape",
+      "python-final",
+      "verified-clippy",
+      "clippy-production",
+      "typecheck-final",
+      "checked-oracle-0",
+      "checked-oracle-1",
+      "checked-oracle-2",
+      "checked-oracle-3",
+      "checked-oracle-4",
+      "checked-production-0",
+      "checked-production-1",
+      "checked-production-2",
+      "checked-production-3",
+      "staged-check-ci"
+    ],
+    "rustProfiles": [
+      "unit-guards-cached",
+      "unit-context"
+    ]
+  },
+  "limits": {
+    "packedInputBytes": 67108864,
+    "packedOutputBytes": 268435456,
+    "producerPassesPerBatch": 100,
+    "oversize": "explicit failure; automatic capacity partitioning is not implemented"
+  },
+  "limitations": [
+    "CPU passes are not GPU kernel launches or a GPU throughput measurement.",
+    "The GPU backend and its physical launch/readback counters remain future work.",
+    "Measurements use five pinned files and a shared host, not a full-repository scalability test.",
+    "More simultaneously ready SQL sessions increase peak RSS.",
+    "Historical or failed pilots are excluded from timing medians."
+  ],
+  "artifacts": ".rerail/profiles/gpu-batch"
+}

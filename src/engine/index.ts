@@ -88,6 +88,7 @@ export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
+  RESULT_PAGE_BYTES,
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,

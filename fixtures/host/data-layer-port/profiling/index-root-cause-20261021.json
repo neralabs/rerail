@@ -1,0 +1,2551 @@
+{
+  "format": "rerail.index-root-cause/v1",
+  "baseCommit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+  "sourceFiles": {
+    "native/src/code_rule_dsl/matcher/anchors/sql/candidates.rs": "4e67222fdda5234e7c50def47081ea4698aab14f924daf75eea43958c93a494c",
+    "native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs": "bdef0da71a77054bdda8436a1a3339a58de6511e18b073cdca2d17dfc76888c1",
+    "native/src/code_rule_dsl/matcher/anchors/sql/execute.rs": "df2c54cb0028536f966c00fe466cbccc6492555e27f529f2a3f382a80f101373",
+    "native/src/code_rule_dsl/matcher/anchors/sql/functions.rs": "17258811002f85d62b29c7c314d88e20f869e915caa62eb47c3b4e7a6295be18",
+    "native/src/code_rule_dsl/matcher/anchors/sql/lower.rs": "dbc6a25e52d55a9d7c283ce1fc043ea75ad05d9d51d96b86dcd9ab3acac2117a",
+    "native/src/code_rule_dsl/matcher/anchors/sql/lower_tests.rs": "5bc0c2e70397147defd0da4d103c95f0eb84ab399dca7c37d00178121f40de98",
+    "native/src/code_rule_dsl/matcher/anchors/sql/mod.rs": "1fcd95787ce4969f97d79637a80f04fb277fb1573167b1e3ea1ea8c0177fe500",
+    "native/src/code_rule_dsl/matcher/anchors/sql/plans.rs": "fdf20fdbf5627f893770d845b1de5a4644007ec9cfef4e063afd3c11f1ae06f8",
+    "native/src/code_rule_dsl/matcher/anchors/sql/reader.rs": "b51036f4506c44e43b83f82a3524150e98d2d77d8309b9777af05b329e2ee6f3",
+    "native/src/code_rule_dsl/matcher/anchors/sql/schema.sql": "ad4db6a4eeca27fd0f7bc7ba46abe25922f18f8c1a5ce23ea85653820eae8cb4",
+    "native/src/code_rule_dsl/matcher/anchors/sql/store.rs": "b88d119a5b2695c8650f0e4f5903fde6977990926d026be14a6c501d6a6d8823",
+    "native/src/code_rule_dsl/matcher/anchors/sql/tests.rs": "a303e8f14ff2ed4fb15277eaab73dac2062c4490851be87e4e3b30dc6b54a8d4",
+    "native/src/code_rule_dsl/tape/index.rs": "c606b4b3ac223ce9ebd0942bbb8d41ffd1d86cf0d59967010e5fdaec8e00bcf4",
+    "benchmark/sql-profile/summary.mjs": "f59fe6316d669d4e5ee7b07b7bb78800042af78fd6cd9b9919de2c184e2cf1ae",
+    "native/Cargo.toml": "5bbe5499ca20ff239906dec9682216f566de67006567438a646bebb7a519e0fd",
+    "native/src/code_rule_dsl/budget.rs": "3ffac6a7fa107c527e219b527a35d74cf8203ffc46ef63da4f3608cc9964320b",
+    "native/src/code_rule_dsl/eval/mod.rs": "d5d1b4a4c1e27c2bd5985343221c0820a10c5ec9dfb32e5529142d695f2d0de9",
+    "native/src/code_rule_dsl/eval/query.rs": "67ffaaa00fba2fba334d65c6d064240db28f5ecf167db3ced197910679db6a84",
+    "native/src/code_rule_dsl/matcher/anchors.rs": "f19d263a4ee388f4a1cfe0f44ae395d20d0a39aaf509d64558b4fb5662e510ff",
+    "native/src/code_rule_dsl/matcher/anchors/semantic.rs": "26d801a6d3adfb4a56201fdc7cb9ef440ce59a5da888f13d8ce20acaee3db14d",
+    "native/src/code_rule_dsl/matcher/anchors/tests.rs": "593af49154c137a062fea1a4cf0cfd59f3438daffcdf2c6276ebfd37b5883576",
+    "native/src/code_rule_dsl/matcher/mod.rs": "9c9ae989cbeebb28d68fb87c6e0e47126eac161dd9294cb822386b85cebd8193",
+    "native/src/code_rule_dsl/profile.rs": "b56c7b1d5e75d9ae00884da136add5e2436c1d536f1087216c2316202c57936d",
+    "native/src/code_rule_dsl/relational.rs": "af5bd3a35a954999fe05cff79943f38eabf5b7fcc44f8da573563a628d0b5632",
+    "native/src/code_rule_dsl/relational/database.rs": "feaefb449cc6f4f1bb1564b35aeee2332582c7a5150a225d2d47c6f55833bb73",
+    "native/src/code_rule_dsl/tape.rs": "1906be9a774f1742788345555d58a620993be626b4d76270c37181bd0b294af6",
+    "native/src/code_rule_dsl/workspace/api.rs": "954615b0718717d79e167ae61c9ed1ffd433d2be45c5873b5c9e3839a89272c5",
+    "native/src/code_rule_dsl/workspace/context_tests.rs": "71314ab209bd5cf84ca5bf584de400730832b5b3b8abfa1a4d77c049a535896d",
+    "native/src/code_rule_dsl/workspace/documents.rs": "f66b085751008871c9179ceca74064dad9a73a01a6d5cac159f3dc43a30db8c4",
+    "native/src/code_rule_dsl/workspace/evaluate.rs": "e9db619b7b4fb3bfcabc4b39534a389757467b0acbbbd90f985837299d3a7d2c",
+    "native/src/code_rule_dsl/workspace/global.rs": "bf1b5efe8acbbc51eab70452d7ec46716222618c336d173dfc25ed1abe438058",
+    "native/src/code_rule_dsl/workspace/ingest.rs": "ba24afb425d5f5914a6a424269100e8ab71c56a9e03f825592b4a1eb4dc179ad",
+    "native/src/code_rule_dsl/workspace/mod.rs": "71fb09a7da4c27175e668aa5a51e00bae0c939d4694b2debecb476feda5ae0b2",
+    "native/src/code_rule_dsl/workspace/tests.rs": "4c52b3175f0d94efbb8fd1134e7bd5e0de513376bd17d65290f3bcedae0e6e2a",
+    "native/src/lib.rs": "a34fe3f47ce6479c0b5a738a34c3a04a03bc2ea91c577ec8169f8850fbe904b1",
+    "scripts/profiling/report.py": "43e7da2076ebd5386c3757a157f1b17ef5db394688d79cc5f2086d26bb35e299",
+    "test/scripts/sql-profile.test.mjs": "6682ed678f3a3a2a120ae1af5665ee32f3f8e2703742114430552e909c5a42c5"
+  },
+  "reference": {
+    "files": {
+      "bench/tape_store.py": {
+        "path": "/Users/jeremy/orca/workspaces/nera-data-layer-12/JF-Issues-Found/tmp/ast-index-spike/bench/tape_store.py",
+        "sha256": "27a3b6e860e9c7bec9158a76e8c4e7536bfb8999244a28a274fd62aa2694044e"
+      },
+      "bench/sql_rec.py": {
+        "path": "/Users/jeremy/orca/workspaces/nera-data-layer-12/JF-Issues-Found/tmp/ast-index-spike/bench/sql_rec.py",
+        "sha256": "cf1b6129f43d9a5530ad8cf8d8d4581b37d4d5cb0d4aef9778f2447722435447"
+      }
+    },
+    "valueIndex": "bench/tape_store.py:1480-1499: vidx postings and persisted case-exact vlex vocabulary; vcov records coverage",
+    "regexSeeding": "bench/sql_rec.py:1410-1480: match vocabulary terms as a SQL relation, name and reuse predicate hits, then locate their postings",
+    "rustEquivalent": "native/src/code_rule_dsl/matcher/anchors.rs: FileAnchorIndex.values and text_cache cache values and text selections",
+    "portedScope": "Current SQL schema has positional kind FTS and packed tape; no vidx/vlex value access path"
+  },
+  "findings": [
+    {
+      "cause": "Missing value/vocabulary access path",
+      "proof": "Kind candidates reach nera_equal/nera_matches, which decode source text on each occurrence. The reference indexes values and matches distinct terms before seeking their postings.",
+      "actualRule": "data-layer-serverplan-target-architecture: literal identifier regex ^(?:step_tags)$ occurs in multiple AST branches."
+    },
+    {
+      "cause": "Repeated SQL set operations and overmaterialization",
+      "proof": "710 CTEs in one baseline final statement, 536 dynamic sorts in that statement; 164171085 VM steps and 2174 sorts over the complete two-batch candidate pipeline.",
+      "fixed": "Hash-cons identical generated relations and reuse implied/canonical intersections. Preserve exactness metadata separately. Fix A EXCEPT A under nested negation."
+    },
+    {
+      "cause": "Repeated packed-span decoding",
+      "proof": "2858925 BLOB reads and 519033 text extractions over 340517 indexed AST nodes. Most read bytes are repeated span blocks. CSE alone leaves most text decoding intact.",
+      "next": "Use value/vocabulary postings first, then share demanded decoded properties through SQL rather than repeatedly invoking scalar decoders."
+    },
+    {
+      "cause": "Misleading SQL lifetime clocks",
+      "proof": "An internal FTS cursor remains open across other statements. Its captured lifetime is 14.5 CPU seconds although the complete profiled cold phase uses 2.5466 CPU seconds. These are not additive exclusive execution costs.",
+      "fixed": "Direct timers around prepare/materialize/results/index/cleanup; report suppresses CPU priorities when statement lifetime totals cannot reconcile with the apply CPU budget."
+    }
+  ],
+  "apiAttribution": {
+    "before-api": {
+      "trial": {
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "conformance/data-layer/suite.ts",
+          "--recording",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+          "--output",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/before-api/parity.json",
+          "--allocator",
+          "unspecified",
+          "--policies",
+          "packs/data-layer/candidates/rules",
+          "--batch-files",
+          "32",
+          "--cold-only"
+        ],
+        "elapsedSeconds": 12.440662375011016,
+        "exitCode": 0,
+        "timedOut": false,
+        "deadlineSeconds": 115.0,
+        "source": {
+          "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+          "dirty": true,
+          "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/instrumented-baseline-opt0.node",
+          "nativeSha256": "31ec3e0035a66e7786b67f7d9344973c5760cffef7832bf6d2327c86288e39f3"
+        },
+        "host": {
+          "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+          "cpu": "arm",
+          "python": "3.15.0",
+          "logicalCpus": 18,
+          "loadAverageStart": [
+            61.82275390625,
+            67.82568359375,
+            65.3408203125
+          ],
+          "loadAverageEnd": [
+            59.3798828125,
+            66.98583984375,
+            65.083984375
+          ]
+        },
+        "artifact": ".rerail/profiles/index-root-cause-20261021/before-api/profile.json",
+        "cpuSecondsByPhase": {
+          "compile": 0.057406000000000006,
+          "cold": 3.9141
+        },
+        "nativeSha256": "31ec3e0035a66e7786b67f7d9344973c5760cffef7832bf6d2327c86288e39f3",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "peakRssBytes": 482328576,
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": [],
+        "stdoutSha256": "06726bc749edbee5d4cc6793830594230d1e6c00276ad91999ad228107a55111",
+        "stderrSha256": "718f5999b5d3b987c1116c40d0b176270c99bd128856687b2040f2aad6d3d029"
+      },
+      "cpuMsByPhase": {
+        "anchor-batch": 2982.172084,
+        "anchor-results": 917.243167,
+        "anchor-lower": 54.403126,
+        "anchor-schema": 0.733252,
+        "anchor-explain": 0.009208000000000001,
+        "anchor-release": 3.701913,
+        "anchor-prepare": 35.466415,
+        "anchor-index": 23.86392,
+        "anchor-materialize": 1918.970545
+      },
+      "vmSteps": 164171085,
+      "sorts": 2174,
+      "fullscanSteps": 13397052,
+      "batches": [
+        {
+          "runPhase": "cold",
+          "cpuMs": 2306.133042,
+          "emittedRows": 8823,
+          "failed": false,
+          "materializations": 40,
+          "reader": {
+            "blob_opens": 472,
+            "bytes": [
+              5913408,
+              24528,
+              32,
+              42791,
+              66368820,
+              2490282,
+              6805089
+            ],
+            "child_steps": 284577,
+            "handle_clears": 38,
+            "reads": [
+              985568,
+              3066,
+              4,
+              42791,
+              415047,
+              415047,
+              415047
+            ],
+            "texts": 415047
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        },
+        {
+          "runPhase": "cold",
+          "cpuMs": 676.039042,
+          "emittedRows": 2940,
+          "failed": false,
+          "materializations": 40,
+          "reader": {
+            "blob_opens": 552,
+            "bytes": [
+              1554108,
+              0,
+              0,
+              11379,
+              16591682,
+              623916,
+              1832007
+            ],
+            "child_steps": 76107,
+            "handle_clears": 38,
+            "reads": [
+              259018,
+              0,
+              0,
+              11379,
+              103986,
+              103986,
+              103986
+            ],
+            "texts": 103986
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        }
+      ]
+    },
+    "after-api": {
+      "trial": {
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "conformance/data-layer/suite.ts",
+          "--recording",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+          "--output",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/after-api/parity.json",
+          "--allocator",
+          "unspecified",
+          "--policies",
+          "packs/data-layer/candidates/rules",
+          "--batch-files",
+          "32",
+          "--cold-only"
+        ],
+        "elapsedSeconds": 16.86672679198091,
+        "exitCode": 0,
+        "timedOut": false,
+        "deadlineSeconds": 115.0,
+        "source": {
+          "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+          "dirty": true,
+          "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/algebra-opt0.node",
+          "nativeSha256": "d3e7a6f006087604e5dcb3057d13b92f68cd7f737888106fe7de6201574cb028"
+        },
+        "host": {
+          "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+          "cpu": "arm",
+          "python": "3.15.0",
+          "logicalCpus": 18,
+          "loadAverageStart": [
+            47.5546875,
+            54.83837890625,
+            60.0419921875
+          ],
+          "loadAverageEnd": [
+            47.6767578125,
+            54.5166015625,
+            59.83642578125
+          ]
+        },
+        "artifact": ".rerail/profiles/index-root-cause-20261021/after-api/profile.json",
+        "cpuSecondsByPhase": {
+          "compile": 0.058862000000000005,
+          "cold": 3.4762470000000003
+        },
+        "nativeSha256": "d3e7a6f006087604e5dcb3057d13b92f68cd7f737888106fe7de6201574cb028",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "peakRssBytes": 444170240,
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": [],
+        "stdoutSha256": "14201db51f2f612ba3ab7fbea5c5dbaf411edbabeb03df0291398f6d284dab30",
+        "stderrSha256": "eb05b565479fec6c9e516cce07236acdc62d1ddfc57f458e75f2cbdf4fa9b409"
+      },
+      "cpuMsByPhase": {
+        "anchor-batch": 2564.574333,
+        "anchor-results": 793.4192499999999,
+        "anchor-lower": 41.069292000000004,
+        "anchor-schema": 0.754004,
+        "anchor-explain": 0.015292,
+        "anchor-release": 3.976127,
+        "anchor-prepare": 26.750415,
+        "anchor-index": 25.534627,
+        "anchor-materialize": 1627.321627
+      },
+      "vmSteps": 111766482,
+      "sorts": 1292,
+      "fullscanSteps": 8230608,
+      "batches": [
+        {
+          "runPhase": "cold",
+          "cpuMs": 1990.605917,
+          "emittedRows": 8823,
+          "failed": false,
+          "materializations": 35,
+          "reader": {
+            "blob_opens": 446,
+            "bytes": [
+              5617476,
+              26032,
+              32,
+              40007,
+              66240683,
+              2485476,
+              6774108
+            ],
+            "child_steps": 254873,
+            "handle_clears": 34,
+            "reads": [
+              936246,
+              3254,
+              4,
+              40007,
+              414246,
+              414246,
+              414246
+            ],
+            "texts": 414246
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        },
+        {
+          "runPhase": "cold",
+          "cpuMs": 573.968416,
+          "emittedRows": 2940,
+          "failed": false,
+          "materializations": 35,
+          "reader": {
+            "blob_opens": 526,
+            "bytes": [
+              1481502,
+              0,
+              0,
+              10716,
+              16553691,
+              622488,
+              1823456
+            ],
+            "child_steps": 68702,
+            "handle_clears": 34,
+            "reads": [
+              246917,
+              0,
+              0,
+              10716,
+              103748,
+              103748,
+              103748
+            ],
+            "texts": 103748
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        }
+      ]
+    },
+    "after-opt1-api": {
+      "trial": {
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "conformance/data-layer/suite.ts",
+          "--recording",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+          "--output",
+          "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/after-opt1-api/parity.json",
+          "--allocator",
+          "unspecified",
+          "--policies",
+          "packs/data-layer/candidates/rules",
+          "--batch-files",
+          "32",
+          "--cold-only"
+        ],
+        "elapsedSeconds": 7.4576021670072805,
+        "exitCode": 0,
+        "timedOut": false,
+        "deadlineSeconds": 115.0,
+        "source": {
+          "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+          "dirty": true,
+          "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/algebra-opt1.node",
+          "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d"
+        },
+        "host": {
+          "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+          "cpu": "arm",
+          "python": "3.15.0",
+          "logicalCpus": 18,
+          "loadAverageStart": [
+            58.109375,
+            56.76025390625,
+            59.61181640625
+          ],
+          "loadAverageEnd": [
+            59.3017578125,
+            57.02978515625,
+            59.68994140625
+          ]
+        },
+        "artifact": ".rerail/profiles/index-root-cause-20261021/after-opt1-api/profile.json",
+        "cpuSecondsByPhase": {
+          "compile": 0.04795,
+          "cold": 1.884829
+        },
+        "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "peakRssBytes": 405569536,
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": [],
+        "stdoutSha256": "1fbcee5ca43a513da451315661dc9a73be0b829fac5f657143089e916f1b2316",
+        "stderrSha256": "8b9a4e0f8ad8e99257097fa660573000afe2aea1b87e7e46e3db529941442907"
+      },
+      "cpuMsByPhase": {
+        "anchor-batch": 1463.390958,
+        "anchor-results": 438.48429200000004,
+        "anchor-lower": 13.103292,
+        "anchor-schema": 0.49037600000000003,
+        "anchor-explain": 0.002541,
+        "anchor-release": 2.912502,
+        "anchor-prepare": 29.267962,
+        "anchor-index": 22.939167,
+        "anchor-materialize": 894.166458
+      },
+      "vmSteps": 111766482,
+      "sorts": 1292,
+      "fullscanSteps": 8230608,
+      "batches": [
+        {
+          "runPhase": "cold",
+          "cpuMs": 1091.344708,
+          "emittedRows": 8823,
+          "failed": false,
+          "materializations": 35,
+          "reader": {
+            "blob_opens": 446,
+            "bytes": [
+              5617476,
+              26032,
+              32,
+              40007,
+              66240683,
+              2485476,
+              6774108
+            ],
+            "child_steps": 254873,
+            "handle_clears": 34,
+            "reads": [
+              936246,
+              3254,
+              4,
+              40007,
+              414246,
+              414246,
+              414246
+            ],
+            "texts": 414246
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        },
+        {
+          "runPhase": "cold",
+          "cpuMs": 372.04625,
+          "emittedRows": 2940,
+          "failed": false,
+          "materializations": 35,
+          "reader": {
+            "blob_opens": 526,
+            "bytes": [
+              1481502,
+              0,
+              0,
+              10716,
+              16553691,
+              622488,
+              1823456
+            ],
+            "child_steps": 68702,
+            "handle_clears": 34,
+            "reads": [
+              246917,
+              0,
+              0,
+              10716,
+              103748,
+              103748,
+              103748
+            ],
+            "texts": 103748
+          },
+          "readerColumns": [
+            "rec",
+            "parentOverflow",
+            "sizeOverflow",
+            "flags",
+            "spans",
+            "checkpoints",
+            "source"
+          ]
+        }
+      ]
+    }
+  },
+  "matchedProduction": {
+    "positive": {
+      "versions": {
+        "before": {
+          "cpuSeconds": 2.2156100000000003,
+          "peakRssBytes": 411500544,
+          "selectionCpuSeconds": 1.800907708,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/before-1/profile.json",
+              "cpuSeconds": 2.2173890000000003,
+              "rssBytes": 393658368,
+              "selectionCpuSeconds": 1.792365288,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/before-2/profile.json",
+              "cpuSeconds": 2.2087559999999997,
+              "rssBytes": 411500544,
+              "selectionCpuSeconds": 1.800907708,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/before-3/profile.json",
+              "cpuSeconds": 2.2156100000000003,
+              "rssBytes": 425738240,
+              "selectionCpuSeconds": 1.804336638,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            }
+          ]
+        },
+        "after": {
+          "cpuSeconds": 1.782582,
+          "peakRssBytes": 429916160,
+          "selectionCpuSeconds": 1.400443342,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/after-1/profile.json",
+              "cpuSeconds": 1.782582,
+              "rssBytes": 433225728,
+              "selectionCpuSeconds": 1.400443342,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/after-2/profile.json",
+              "cpuSeconds": 1.673356,
+              "rssBytes": 395149312,
+              "selectionCpuSeconds": 1.314829587,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/positive/after-3/profile.json",
+              "cpuSeconds": 1.810873,
+              "rssBytes": 429916160,
+              "selectionCpuSeconds": 1.41674501,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              }
+            }
+          ]
+        }
+      },
+      "cpuDeltaPercent": -19.54441440506227,
+      "memoryDeltaPercent": 4.4752349100175115
+    },
+    "quality": {
+      "versions": {
+        "before": {
+          "cpuSeconds": 2.948047,
+          "peakRssBytes": 631898112,
+          "selectionCpuSeconds": 0.354553052,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/before-1/profile.json",
+              "cpuSeconds": 2.948047,
+              "rssBytes": 631898112,
+              "selectionCpuSeconds": 0.360323291,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/before-2/profile.json",
+              "cpuSeconds": 3.048795,
+              "rssBytes": 644759552,
+              "selectionCpuSeconds": 0.354553052,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/before-3/profile.json",
+              "cpuSeconds": 2.936002,
+              "rssBytes": 622952448,
+              "selectionCpuSeconds": 0.352069497,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            }
+          ]
+        },
+        "after": {
+          "cpuSeconds": 2.984114,
+          "peakRssBytes": 641613824,
+          "selectionCpuSeconds": 0.334330587,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/after-1/profile.json",
+              "cpuSeconds": 2.841438,
+              "rssBytes": 629194752,
+              "selectionCpuSeconds": 0.334330587,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/after-2/profile.json",
+              "cpuSeconds": 2.984114,
+              "rssBytes": 641613824,
+              "selectionCpuSeconds": 0.328207245,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            },
+            {
+              "path": ".rerail/profiles/index-root-cause-20261021/matched/quality/after-3/profile.json",
+              "cpuSeconds": 2.987034,
+              "rssBytes": 650231808,
+              "selectionCpuSeconds": 0.341901755,
+              "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              }
+            }
+          ]
+        }
+      },
+      "cpuDeltaPercent": 1.2234201150795876,
+      "memoryDeltaPercent": 1.5375440779921146
+    }
+  },
+  "externalSample": {
+    "trial": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/positive-external/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "elapsedSeconds": 6.50700629199855,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true,
+        "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/verified-final.node",
+        "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646"
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          95.1923828125,
+          71.79248046875,
+          55.84619140625
+        ],
+        "loadAverageEnd": [
+          90.0517578125,
+          71.115234375,
+          55.7001953125
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/positive-external/profile.json",
+      "cpuSecondsByPhase": {
+        "compile": 0.043757,
+        "cold": 2.3117889999999996
+      },
+      "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+      "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+      "policyDigests": {
+        "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+        "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+      },
+      "peakRssBytes": 407404544,
+      "expected": 61,
+      "actual": 61,
+      "falsePositives": [],
+      "falseNegatives": [],
+      "failures": [],
+      "incrementalDifferences": [],
+      "stdoutSha256": "8b0c5e4b594e4a685e40adf928b32e9d3bbf874859f47e0ca1ce463faf4a1b3b",
+      "stderrSha256": "82aa4370fee6d4658bcfe2ebedd163ca6da44835a6a8549322cedd1d5bb50bf3"
+    },
+    "activeNativeSamples": 1569,
+    "classification": {
+      "other": 1043,
+      "BLOB decode": 219,
+      "sort/compare": 278,
+      "FTS": 29
+    },
+    "classificationNote": "Exclusive stack categories over one two-second sampling window. FTS classification wins before BLOB and sorting; other includes VM dispatch and generic B-tree work. Not an exact whole-process CPU split.",
+    "selfTop12": [
+      {
+        "symbol": "sqlite3VdbeExec (verified-final.node)",
+        "samples": 489,
+        "percent": 31.17
+      },
+      {
+        "symbol": "pread (libsystem_kernel.dylib)",
+        "samples": 138,
+        "percent": 8.8
+      },
+      {
+        "symbol": "sqlite3VdbeRecordCompareWithSkip (verified-final.node)",
+        "samples": 104,
+        "percent": 6.63
+      },
+      {
+        "symbol": "getPageNormal (verified-final.node)",
+        "samples": 70,
+        "percent": 4.46
+      },
+      {
+        "symbol": "sqlite3BtreeInsert (verified-final.node)",
+        "samples": 61,
+        "percent": 3.89
+      },
+      {
+        "symbol": "_platform_memmove (libsystem_platform.dylib)",
+        "samples": 51,
+        "percent": 3.25
+      },
+      {
+        "symbol": "vdbeSorterCompareInt (verified-final.node)",
+        "samples": 51,
+        "percent": 3.25
+      },
+      {
+        "symbol": "sqlite3VdbeSerialGet (verified-final.node)",
+        "samples": 43,
+        "percent": 2.74
+      },
+      {
+        "symbol": "_RNvMs3_NtNtNtNtNtCsfOtEzLIT2ye_13rerail_engine13code_rule_dsl7matcher7anchors3sql6readerNtB5_6Reader4blob (verified-final.node)",
+        "samples": 31,
+        "percent": 1.98
+      },
+      {
+        "symbol": "pwrite (libsystem_kernel.dylib)",
+        "samples": 29,
+        "percent": 1.85
+      },
+      {
+        "symbol": "sqlite3MemCompare (verified-final.node)",
+        "samples": 28,
+        "percent": 1.78
+      },
+      {
+        "symbol": "blobReadWrite (verified-final.node)",
+        "samples": 27,
+        "percent": 1.72
+      }
+    ],
+    "artifact": ".rerail/profiles/index-root-cause-20261021/positive-external/sample-1.txt"
+  },
+  "staticRedundancy": {
+    "perStatement": [
+      [
+        46,
+        0,
+        0
+      ],
+      [
+        51,
+        8,
+        1
+      ],
+      [
+        54,
+        0,
+        0
+      ],
+      [
+        57,
+        7,
+        5
+      ],
+      [
+        60,
+        7,
+        4
+      ],
+      [
+        63,
+        7,
+        2
+      ],
+      [
+        66,
+        12,
+        6
+      ],
+      [
+        69,
+        7,
+        4
+      ],
+      [
+        72,
+        12,
+        6
+      ],
+      [
+        75,
+        12,
+        6
+      ],
+      [
+        78,
+        15,
+        6
+      ],
+      [
+        81,
+        0,
+        0
+      ],
+      [
+        84,
+        14,
+        8
+      ],
+      [
+        87,
+        14,
+        8
+      ],
+      [
+        90,
+        0,
+        0
+      ],
+      [
+        93,
+        8,
+        3
+      ],
+      [
+        96,
+        14,
+        6
+      ],
+      [
+        99,
+        9,
+        6
+      ],
+      [
+        102,
+        7,
+        2
+      ],
+      [
+        105,
+        7,
+        5
+      ],
+      [
+        108,
+        9,
+        4
+      ],
+      [
+        111,
+        13,
+        7
+      ],
+      [
+        114,
+        0,
+        0
+      ],
+      [
+        117,
+        0,
+        0
+      ],
+      [
+        120,
+        0,
+        0
+      ],
+      [
+        123,
+        0,
+        0
+      ],
+      [
+        126,
+        7,
+        5
+      ],
+      [
+        129,
+        9,
+        5
+      ],
+      [
+        132,
+        10,
+        7
+      ],
+      [
+        135,
+        6,
+        4
+      ],
+      [
+        138,
+        6,
+        4
+      ],
+      [
+        141,
+        7,
+        5
+      ],
+      [
+        144,
+        8,
+        1
+      ],
+      [
+        147,
+        6,
+        4
+      ],
+      [
+        150,
+        6,
+        4
+      ],
+      [
+        153,
+        7,
+        5
+      ],
+      [
+        156,
+        6,
+        4
+      ],
+      [
+        159,
+        6,
+        4
+      ],
+      [
+        162,
+        7,
+        5
+      ],
+      [
+        165,
+        9,
+        4
+      ],
+      [
+        167,
+        250,
+        97
+      ],
+      [
+        168,
+        0,
+        0
+      ],
+      [
+        169,
+        8,
+        1
+      ],
+      [
+        170,
+        0,
+        0
+      ],
+      [
+        171,
+        7,
+        5
+      ],
+      [
+        172,
+        7,
+        4
+      ],
+      [
+        173,
+        7,
+        2
+      ],
+      [
+        174,
+        12,
+        6
+      ],
+      [
+        175,
+        7,
+        4
+      ],
+      [
+        176,
+        12,
+        6
+      ],
+      [
+        177,
+        12,
+        6
+      ],
+      [
+        178,
+        15,
+        6
+      ],
+      [
+        179,
+        0,
+        0
+      ],
+      [
+        180,
+        14,
+        8
+      ],
+      [
+        181,
+        14,
+        8
+      ],
+      [
+        182,
+        0,
+        0
+      ],
+      [
+        183,
+        8,
+        3
+      ],
+      [
+        184,
+        14,
+        6
+      ],
+      [
+        185,
+        9,
+        6
+      ],
+      [
+        186,
+        7,
+        2
+      ],
+      [
+        187,
+        7,
+        5
+      ],
+      [
+        188,
+        9,
+        4
+      ],
+      [
+        189,
+        13,
+        7
+      ],
+      [
+        190,
+        0,
+        0
+      ],
+      [
+        191,
+        0,
+        0
+      ],
+      [
+        192,
+        0,
+        0
+      ],
+      [
+        193,
+        0,
+        0
+      ],
+      [
+        194,
+        7,
+        5
+      ],
+      [
+        195,
+        9,
+        5
+      ],
+      [
+        196,
+        10,
+        7
+      ],
+      [
+        197,
+        6,
+        4
+      ],
+      [
+        198,
+        6,
+        4
+      ],
+      [
+        199,
+        7,
+        5
+      ],
+      [
+        200,
+        8,
+        1
+      ],
+      [
+        201,
+        6,
+        4
+      ],
+      [
+        202,
+        6,
+        4
+      ],
+      [
+        203,
+        7,
+        5
+      ],
+      [
+        204,
+        6,
+        4
+      ],
+      [
+        205,
+        6,
+        4
+      ],
+      [
+        206,
+        7,
+        5
+      ],
+      [
+        207,
+        9,
+        4
+      ],
+      [
+        208,
+        250,
+        97
+      ]
+    ],
+    "note": "Static statement occurrences, not dynamic execution counts. Recognizes only intersections of identical named sets."
+  },
+  "checks": {
+    "algebra-red": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=0",
+        "test",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib",
+        "code_rule_dsl::matcher::anchors::sql::lower::tests",
+        "--",
+        "--nocapture"
+      ],
+      "elapsedSeconds": 99.6590551249974,
+      "exitCode": 101,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          68.67822265625,
+          79.2822265625,
+          67.677734375
+        ],
+        "loadAverageEnd": [
+          54.72216796875,
+          71.076171875,
+          65.74755859375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/algebra-red/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "9e571088e5e9cd36e87f68be9cc8ecd0f6b6321a7197d2ac4fa15ec1a9f09e20",
+      "stderrSha256": "5479fb9dfdf5422b5905eafc6ef807366b4ef9394b1e3d220a7d4c0482e1ae46",
+      "expectedFailure": true,
+      "purpose": "TDD: reproduce missing relation reuse and redundant intersections before the implementation"
+    },
+    "algebra-green-run": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-ab5e3b5985ab6a14",
+        "code_rule_dsl::matcher::anchors",
+        "--nocapture"
+      ],
+      "elapsedSeconds": 8.077841374994023,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          46.58642578125,
+          57.4091796875,
+          61.4130859375
+        ],
+        "loadAverageEnd": [
+          44.697265625,
+          56.837890625,
+          61.18798828125
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/algebra-green-run/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "aad8b86f7b178d58cd56943f75edd9a1235345196a1e73f98bc921fd6fa05ecc",
+      "stderrSha256": "4acbcc8eb92c08be49a1e5f4dcf2f2e72e0f5df3f14b17bfe08de75a9718b4ac",
+      "nativeTestsPassed": 49
+    },
+    "verified-unit-build-retry": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=0",
+        "test",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib",
+        "--no-run"
+      ],
+      "elapsedSeconds": 87.51622395799495,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          58.85986328125,
+          57.37060546875,
+          59.0712890625
+        ],
+        "loadAverageEnd": [
+          57.19775390625,
+          58.1552734375,
+          59.25146484375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/verified-unit-build-retry/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "60d42f5e13d9721fda7bb943f536b594cfc7737ce8374a053c410cd31fb4ca64"
+    },
+    "native-dsl": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-ab5e3b5985ab6a14",
+        "code_rule_dsl::",
+        "--skip",
+        "code_rule_dsl::workspace",
+        "--nocapture"
+      ],
+      "elapsedSeconds": 96.91887412499636,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          47.50341796875,
+          55.0966796875,
+          57.9482421875
+        ],
+        "loadAverageEnd": [
+          52.16650390625,
+          54.244140625,
+          57.27880859375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/native-dsl/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "db1aa8de9abd2b2c7abc0b7b879446b8ab11024473b62797e712ae0772839f37",
+      "stderrSha256": "4f39c1bca79fc3f991e06eba1833567a36732a1c3492d66cb834da619d88720d",
+      "nativeTestsPassed": 1202
+    },
+    "native-workspace": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-ab5e3b5985ab6a14",
+        "code_rule_dsl::workspace",
+        "--nocapture"
+      ],
+      "elapsedSeconds": 56.55411854101112,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          50.30908203125,
+          54.06103515625,
+          57.0078125
+        ],
+        "loadAverageEnd": [
+          47.1708984375,
+          52.76513671875,
+          56.33642578125
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/native-workspace/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "b43002d2a0a653c12aa2c5257d983d291a1968e1c9193fe48d44dcf5c906520e",
+      "stderrSha256": "851d65037c42ad85210aa2478fe0608bee7388ef2d457487702e2e7082439ba3",
+      "nativeTestsPassed": 194
+    },
+    "clippy-profile": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "elapsedSeconds": 71.23102129099425,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          47.50341796875,
+          55.0966796875,
+          57.9482421875
+        ],
+        "loadAverageEnd": [
+          50.5400390625,
+          54.02099609375,
+          57.28662109375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/clippy-profile/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "893394197362e402c161109364d38d25d0a35db4e060900f06ea6e160f740f6f"
+    },
+    "clippy-production": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "elapsedSeconds": 40.73639750000439,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          48.7626953125,
+          53.677734375,
+          56.85498046875
+        ],
+        "loadAverageEnd": [
+          49.00244140625,
+          53.361328125,
+          56.60498046875
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/clippy-production/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "5dfde5f2f380a56dd4e9fa34ecb3c8d65a9c8793ff0af2a753e9b45a9e912ac7"
+    },
+    "public": {
+      "command": [
+        "npx",
+        "vitest",
+        "run",
+        "test/engine/native/relational-evidence.test.ts",
+        "test/engine/native/relational-syntax.test.ts",
+        "test/engine/native/relational-reachability.test.ts",
+        "test/engine/native/relational-batch.test.ts",
+        "test/engine/native/relational-completed.test.ts",
+        "test/engine/native/relational-deferred.test.ts",
+        "test/engine/native/native-code-rule-dsl-runtime.test.ts",
+        "test/engine/native/data-layer-batch-five-capabilities.test.ts",
+        "test/engine/native/data-layer-batch-four-capabilities.test.ts",
+        "test/engine/native/data-layer-capabilities.test.ts"
+      ],
+      "elapsedSeconds": 8.23891499999445,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true,
+        "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/algebra-opt1.node",
+        "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d"
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          52.54931640625,
+          58.32275390625,
+          59.83056640625
+        ],
+        "loadAverageEnd": [
+          50.23828125,
+          57.63720703125,
+          59.5693359375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/public/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "6b2fd911ae31ff2f2ced1295f07cb3cf4f093b7e32c4670e89aaeb13b530ecdb",
+      "stderrSha256": "60f2725fc1d86c0b8db07da67f89f2d2d22a5aaefc5f8cb10b27076ccc140865"
+    },
+    "source-replay": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/replay.ts",
+        "--recording",
+        ".rerail/profiles/cpu-memory-20261021/source-smoke-recording.json",
+        "--output",
+        ".rerail/profiles/index-root-cause-20261021/source-replay/replay.json"
+      ],
+      "elapsedSeconds": 9.28787937501329,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true,
+        "nativePath": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/index-root-cause-20261021/algebra-opt1.node",
+        "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d"
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          51.3037109375,
+          57.96875,
+          59.69677734375
+        ],
+        "loadAverageEnd": [
+          50.23828125,
+          57.63720703125,
+          59.5693359375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/source-replay/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "75ea5b1d95f2bb89b9cd3aeddef6fbf08a67cd7128df2257b643c77e4bcf74d7",
+      "stderrSha256": "f7a502bfe4e92b5a19c7ada7ba4f9334236891537aec9678993f795da3d5da5c"
+    },
+    "profiler-tests-final": {
+      "command": [
+        "npm",
+        "run",
+        "test:profiling"
+      ],
+      "elapsedSeconds": 8.8690549590101,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          47.5546875,
+          54.83837890625,
+          60.0419921875
+        ],
+        "loadAverageEnd": [
+          48.083984375,
+          54.71142578125,
+          59.93603515625
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/profiler-tests-final/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "bb9ef5c7b72e04d49394984d3f9313fe167fa71a749c6b639b75e10b3ae49290",
+      "stderrSha256": "db20d73ee6e25495157c192f8f09b28396ddc990960cccb19780ded11749ad9e"
+    },
+    "check-final": {
+      "command": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "elapsedSeconds": 38.44648787501501,
+      "exitCode": 0,
+      "timedOut": false,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          45.103515625,
+          52.13134765625,
+          56.06884765625
+        ],
+        "loadAverageEnd": [
+          43.9443359375,
+          50.87841796875,
+          55.423828125
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/check-final/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "b18aeb10ba05ea6e6678deaef10e04dc53c74be75b7f2847e2724931ce6bf63a",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "buildLimitAttempts": {
+    "instrumented-build": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=1",
+        "build",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib"
+      ],
+      "elapsedSeconds": 112.01355933301966,
+      "exitCode": -9,
+      "timedOut": true,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          104.82763671875,
+          76.81494140625,
+          60.23828125
+        ],
+        "loadAverageEnd": [
+          91.8271484375,
+          79.1953125,
+          63.1240234375
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/instrumented-build/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "b8cb4fe32c819451e9126d14707b48b73a5cdb6b67beda0e6ca327bbad780911"
+    },
+    "instrumented-build-2": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=1",
+        "build",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib"
+      ],
+      "elapsedSeconds": 112.01145308298874,
+      "exitCode": -9,
+      "timedOut": true,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          104.57275390625,
+          85.6201171875,
+          66.8994140625
+        ],
+        "loadAverageEnd": [
+          75.77978515625,
+          81.77197265625,
+          67.6982421875
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/instrumented-build-2/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "b8cb4fe32c819451e9126d14707b48b73a5cdb6b67beda0e6ca327bbad780911"
+    },
+    "verified-unit-build": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=0",
+        "test",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib",
+        "--no-run"
+      ],
+      "elapsedSeconds": 112.01135795898153,
+      "exitCode": -9,
+      "timedOut": true,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          58.109375,
+          56.76025390625,
+          59.61181640625
+        ],
+        "loadAverageEnd": [
+          71.2939453125,
+          60.6279296875,
+          60.69775390625
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/verified-unit-build/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "b8cb4fe32c819451e9126d14707b48b73a5cdb6b67beda0e6ca327bbad780911"
+    },
+    "verified-unit-build-64": {
+      "command": [
+        "cargo",
+        "--config",
+        "profile.release.lto=false",
+        "--config",
+        "profile.release.package.rerail-engine.opt-level=0",
+        "--config",
+        "profile.release.package.rerail-engine.codegen-units=64",
+        "test",
+        "--release",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--lib",
+        "--no-run"
+      ],
+      "elapsedSeconds": 112.00980900001014,
+      "exitCode": -9,
+      "timedOut": true,
+      "deadlineSeconds": 115.0,
+      "source": {
+        "commit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+        "dirty": true
+      },
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.15.0",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          52.54931640625,
+          58.32275390625,
+          59.83056640625
+        ],
+        "loadAverageEnd": [
+          51.2392578125,
+          55.7392578125,
+          58.61962890625
+        ]
+      },
+      "artifact": ".rerail/profiles/index-root-cause-20261021/verified-unit-build-64/profile.json",
+      "cpuSecondsByPhase": {},
+      "nativeSha256": null,
+      "workloadSha256": null,
+      "policyDigests": null,
+      "peakRssBytes": null,
+      "expected": null,
+      "actual": null,
+      "falsePositives": null,
+      "falseNegatives": null,
+      "failures": null,
+      "incrementalDifferences": null,
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "b8cb4fe32c819451e9126d14707b48b73a5cdb6b67beda0e6ca327bbad780911"
+    }
+  },
+  "sourceCorpus": {
+    "coverage": [
+      {
+        "check": "serverplan_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 1,
+        "clean": 1
+      }
+    ],
+    "missingCoverage": [],
+    "nativeCalls": 20,
+    "hostGuardCalls": 0,
+    "nativeCoverage": [
+      {
+        "check": "serverplan_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 1,
+        "clean": 1
+      }
+    ],
+    "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+    "dimensions": [
+      "multiplicity",
+      "relative path",
+      "line",
+      "diagnostic code",
+      "backend comparison column",
+      "diagnostic category where recorded"
+    ],
+    "format": "rerail.data-layer-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "recordings": [
+      ".rerail/profiles/cpu-memory-20261021/source-smoke-recording.json"
+    ],
+    "collectedTests": 933,
+    "replayedCalls": 20,
+    "positiveCalls": 10,
+    "cleanCalls": 10,
+    "retainedCalls": [],
+    "uncapturedTests": [
+      "scripts/tests/test_lint_serverplan_bypass.py::test_signed_allowlist_is_valid_and_empty",
+      "scripts/tests/test_lint_serverplan_steps.py::test_step023_live_blockers_are_cleared",
+      "scripts/tests/test_lint_serverplan_steps.py::test_linter_name_is_string",
+      "scripts/tests/test_lint_serverplan_steps.py::test_root_points_at_repo_root",
+      "scripts/tests/test_lint_serverplan_steps.py::test_step_dirs_is_tuple_of_paths",
+      "scripts/tests/test_lint_serverplan_steps.py::test_step_dirs_cover_l2070_l7300_l9700",
+      "scripts/tests/test_lint_serverplan_steps.py::test_step_dirs_all_exist_or_not",
+      "scripts/tests/test_lint_serverplan_steps.py::test_object_manipulation_methods_is_frozenset",
+      "scripts/tests/test_lint_serverplan_steps.py::test_postop_manipulation_methods_is_frozenset",
+      "scripts/tests/test_lint_serverplan_steps.py::test_can_batch_false_allowlist_is_empty_frozenset",
+      "scripts/tests/test_lint_serverplan_steps.py::test_lifecycle_runtime_state_allowlist_is_empty_frozenset",
+      "scripts/tests/test_lint_serverplan_steps.py::test_allowlist_signature_is_nonempty_string",
+      "scripts/tests/test_lint_serverplan_steps.py::test_runtime_state_attrs_covers_txn_and_conn",
+      "scripts/tests/test_lint_serverplan_steps.py::test_callback_runtime_authority_attrs_superset_of_runtime_state",
+      "scripts/tests/test_lint_serverplan_steps.py::test_callback_runtime_authority_helpers_contains_active_pipeline_helper",
+      "scripts/tests/test_lint_serverplan_steps.py::test_authority_type_names_includes_read_write_transactions",
+      "scripts/tests/test_lint_serverplan_steps.py::test_legacy_side_effect_tag_allowlist_is_empty_frozenset",
+      "scripts/tests/test_lint_serverplan_steps.py::test_verify_allowlists_passes_with_current_signature",
+      "scripts/tests/test_lint_serverplan_steps.py::test_verify_allowlists_fails_if_signature_tampered",
+      "scripts/tests/test_lint_serverplan_steps.py::test_violation_str_includes_code_and_line",
+      "scripts/tests/test_lint_serverplan_steps.py::test_violation_str_uses_relative_path_when_absolute",
+      "scripts/tests/test_lint_serverplan_steps.py::test_violation_str_leaves_relative_path_alone",
+      "scripts/tests/test_lint_serverplan_steps.py::test_violation_stores_all_fields",
+      "scripts/tests/test_lint_serverplan_steps.py::test_cli_main_is_callable",
+      "scripts/tests/test_lint_serverplan_steps.py::test_main_signature_failure_returns_one",
+      "scripts/tests/test_lint_serverplan_steps.py::test_main_unknown_flag_exits",
+      "scripts/tests/test_lint_serverplan_state_tripwires.py::test_plugin_factory_does_not_scan_project_sources",
+      "scripts/tests/test_lint_serverplan_state_tripwires.py::test_state_tripwire_trigger_ignores_unrelated_compile_names",
+      "scripts/tests/test_lint_serverplan_state_tripwires.py::test_reachable_function_selection_reuses_collected_call_facts",
+      "scripts/tests/test_lint_serverplan_quality.py::test_rule_descriptions_contain_spq001",
+      "scripts/tests/test_lint_serverplan_quality.py::test_all_rule_ids_follow_pattern",
+      "scripts/tests/test_lint_serverplan_quality.py::test_control_flow_step_types_contains",
+      "scripts/tests/test_lint_serverplan_quality.py::test_runtime_execution_ir_types_contains",
+      "scripts/tests/test_lint_serverplan_quality.py::test_runtime_result_keywords_contains",
+      "scripts/tests/test_lint_serverplan_quality.py::test_executor_runtime_helpers_contains",
+      "scripts/tests/test_lint_serverplan_quality.py::test_framework_collector_preserves_standalone_rule_scopes",
+      "scripts/tests/test_lint_serverplan_quality.py::test_pre_op_runtime_helpers_contains",
+      "scripts/tests/test_lint_serverplan_quality.py::test_ordered_semantic_inventory_has_closed_categories_and_exact_identities",
+      "scripts/tests/test_lint_serverplan_quality.py::test_strategy_size_threshold_is_positive",
+      "scripts/tests/test_lint_serverplan_quality.py::test_root_is_a_directory",
+      "scripts/tests/test_lint_serverplan_quality.py::test_step_dirs_paths_under_root",
+      "scripts/tests/test_lint_serverplan_quality.py::test_core_plan_files_paths_under_root",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lifecycle_files_paths_under_root",
+      "scripts/tests/test_lint_serverplan_quality.py::test_violation_str_renders",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_add_tracks_count",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_set_count_creates_rule",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_counts_sorted",
+      "scripts/tests/test_lint_serverplan_quality.py::test_rule_result_default_empty_violations",
+      "scripts/tests/test_lint_serverplan_quality.py::test_parse_file_missing_returns_none",
+      "scripts/tests/test_lint_serverplan_quality.py::test_parse_file_returns_module",
+      "scripts/tests/test_lint_serverplan_quality.py::test_find_classes_and_functions",
+      "scripts/tests/test_lint_serverplan_quality.py::test_class_functions_only_returns_direct_methods",
+      "scripts/tests/test_lint_serverplan_quality.py::test_base_names_simple_and_attribute_and_subscript",
+      "scripts/tests/test_lint_serverplan_quality.py::test_single_non_docstring_stmt",
+      "scripts/tests/test_lint_serverplan_quality.py::test_return_literal_bool_true",
+      "scripts/tests/test_lint_serverplan_quality.py::test_return_literal_bool_none_for_non_bool",
+      "scripts/tests/test_lint_serverplan_quality.py::test_raises_named_match",
+      "scripts/tests/test_lint_serverplan_quality.py::test_raises_named_miss",
+      "scripts/tests/test_lint_serverplan_quality.py::test_call_name_on_name_and_attribute",
+      "scripts/tests/test_lint_serverplan_quality.py::test_expr_mentions_names_finds_type",
+      "scripts/tests/test_lint_serverplan_quality.py::test_expr_mentions_names_tuple",
+      "scripts/tests/test_lint_serverplan_quality.py::test_is_abstract_method_decorator",
+      "scripts/tests/test_lint_serverplan_quality.py::test_is_abstract_method_ellipsis_body_not_matched",
+      "scripts/tests/test_lint_serverplan_quality.py::test_is_abstract_method_pass_body",
+      "scripts/tests/test_lint_serverplan_quality.py::test_method_body_statement_count_excludes_docstring",
+      "scripts/tests/test_lint_serverplan_quality.py::test_compile_raises_type_error_true",
+      "scripts/tests/test_lint_serverplan_quality.py::test_compile_raises_type_error_false_when_not_raising",
+      "scripts/tests/test_lint_serverplan_quality.py::test_get_class_level_returns_int",
+      "scripts/tests/test_lint_serverplan_quality.py::test_get_class_level_missing",
+      "scripts/tests/test_lint_serverplan_quality.py::test_rule_descriptions_values_are_non_empty_strings",
+      "scripts/tests/test_lint_serverplan_quality.py::test_rule_descriptions_rules_sorted_naturally",
+      "scripts/tests/test_lint_serverplan_quality.py::test_control_flow_step_types_frozenset_shape",
+      "scripts/tests/test_lint_serverplan_quality.py::test_step_dirs_all_paths",
+      "scripts/tests/test_lint_serverplan_quality.py::test_core_plan_files_all_paths",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lifecycle_files_all_paths",
+      "scripts/tests/test_lint_serverplan_quality.py::test_runtime_result_keywords_identifiers",
+      "scripts/tests/test_lint_serverplan_quality.py::test_executor_runtime_helpers_identifiers",
+      "scripts/tests/test_lint_serverplan_quality.py::test_pre_op_runtime_helpers_identifiers",
+      "scripts/tests/test_lint_serverplan_quality.py::test_violation_fields_cardinality",
+      "scripts/tests/test_lint_serverplan_quality.py::test_violation_str_relative_path_when_under_root",
+      "scripts/tests/test_lint_serverplan_quality.py::test_violation_str_accepts_non_absolute_path",
+      "scripts/tests/test_lint_serverplan_quality.py::test_rule_result_violations_is_independent_list",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_rules_is_independent_dict",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_add_appends_violation_list",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_counts_keys_sorted_alphabetically",
+      "scripts/tests/test_lint_serverplan_quality.py::test_lint_results_total_on_empty_is_zero",
+      "scripts/tests/test_lint_serverplan_quality.py::test_find_classes_nested_class_also_returned",
+      "scripts/tests/test_lint_serverplan_quality.py::test_find_functions_includes_async",
+      "scripts/tests/test_lint_serverplan_quality.py::test_class_functions_excludes_nested_functions",
+      "scripts/tests/test_lint_serverplan_quality.py::test_base_names_empty_when_no_bases",
+      "scripts/tests/test_lint_serverplan_quality.py::test_single_non_docstring_stmt_two_stmts_returns_none",
+      "scripts/tests/test_lint_serverplan_quality.py::test_return_literal_bool_false",
+      "scripts/tests/test_lint_serverplan_quality.py::test_return_literal_bool_non_return_returns_none",
+      "scripts/tests/test_lint_serverplan_quality.py::test_raises_named_with_call_form",
+      "scripts/tests/test_lint_serverplan_quality.py::test_raises_named_with_no_raise_returns_false",
+      "scripts/tests/test_lint_serverplan_quality.py::test_call_name_returns_none_for_lambda_call",
+      "scripts/tests/test_lint_serverplan_quality.py::test_expr_mentions_names_subscript_form",
+      "scripts/tests/test_lint_serverplan_quality.py::test_method_body_statement_count_empty_body",
+      "scripts/tests/test_lint_serverplan_quality.py::test_get_class_level_non_integer_return_is_none",
+      "scripts/tests/test_lint_serverplan_quality.py::test_compile_raises_type_error_class_without_compile_is_false",
+      "scripts/tests/test_lint_serverplan_quality.py::test_parse_file_empty_file",
+      "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set",
+      "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/browser/sqljs_sqlite3.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l1000_cache/backends/sqlite.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/base_server_plan.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/execution_guard.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/operations.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/sql_server_plan.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2200_sql_dialect/sql_connection.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2510_delta_storage/manager.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/permission_validation.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/versioning_validation.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/data_validation.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/executor.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_aggregation.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_pagination.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_read_ops.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_write_ops.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7050_backend_operations/sql_backend_operations.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7100_versioned_operations/versioned_operations.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sql_sparse_versioned_write_query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_cross_branch/sql_cross_branch_query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_raw_exec_mixin.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7350_revision_graph/revision_graph.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l9700_sql_graph_query/sql_graph_query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/l1595_llm_cache/write_back_queue.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/sqlite/native_async_wrapper.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_file_matches_even_with_absolute_prefix",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/connection.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/connection.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/tests/test_something.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/common/l7300_sql_versioned_transactions/tests/test_x.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/introspector.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/validator.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/fts/native.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/vector/native.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mariadb/sql_batch.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/transaction.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/versioned_write_transaction.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/graph_query.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/deferred.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/doltdb/merge_strategy.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/backend_operations.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query_instrumentation.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mongodb/test_something.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/some_random_module.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/fts_manager.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/helpers.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/foo/bar.py]",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_exports_expected_entries",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_execution_patterns_exported",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_nontrivial",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_valid_regex",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_valid_regex",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_has_impl_prefix",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_python",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_signature_is_str",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_nonmatching_file",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_empty_path",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_on_empty_dir",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_non_py_files_ignored",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_is_callable",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_entries_are_unique",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list_of_str",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_escape_open_paren",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_start_with_dot",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_contain_anchor_or_slash",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_and_inequality",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_is_mutable",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_regex_pattern_match_on_full_path",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_partial_name_inside_allowed_pattern",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_requires_impl_path_boundary",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_impl_common_tests_pattern",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_test_prefix_pattern",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_allowlist_verification_failure_returns_one",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_missing_impl_dir_returns_one",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_exports_main",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_module_docstring_present",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields_extra",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_by_value",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_violation_mutable_by_default",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_nonempty",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_strings",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_compile",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_unique",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set_type",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_strings",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_end_py",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash_extra",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_under_impl",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list_type",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_compile",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_start_with_impl",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_returns_bool",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_random_impl_file",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_connection_py",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_tests_subdir",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_test_prefix",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_fts_dir",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_vector_dir",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_introspector",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_non_impl_path",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_returns_list",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_ignores_non_py_files",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_help_exits_zero",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_returns_int",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_clean_prints_success",
+      "scripts/tests/test_lint_impl_direct_execution.py::test_main_update_baseline_returns_zero",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_flags_new_export_cursor_file_in_inventory_check",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_verify_allowlists_warns_only_while_unsigned",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_verify_allowlists_enforces_once_signed",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_verify_allowlists_fails_closed_when_signature_needs_signing",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_surface_predicate_and_decorator_allowlists_are_signed_inputs",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_verify_allowlists_fails_closed_when_signed_and_verifier_unavailable",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_fails_when_signed_allowlist_verification_fails",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_linter_name_constant",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_wrappers_module_constant",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_txn_methods_frozen",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_cursor_methods_frozen",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_versioning_compat_wrappers_frozen",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_wrapper_import_allowlist_frozen",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_skip_dirs_contents",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_graph_fallback_scope_is_sql_graph_query",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_allowlists_signature_is_str",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_violation_frozen",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_violation_equality",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_exact_match",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_descendant",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_sibling_not_matched",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_prefix_without_slash",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_cursor_name",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_conn_name",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_unrelated_name",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_attribute_chain",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_call",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_subscript",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_constant_returns_empty",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_mixin_is_none",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_plan_mixin_is_none",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_not_is_comparison",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_not_is_none",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_non_mixin_receiver",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_scan_file_content_syntax_error_raises",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_empty_paths",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_only_allowlisted",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_produces_leg_001_code",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_iter_python_files_skips_skip_dirs",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_no_violations",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_with_violations",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_verbose_extra_context",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_clean_returns_zero",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_check_with_violations_returns_one",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_default_with_violations_returns_zero",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_get_allowlists_for_signing_returns_dict_of_lists",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_filecollector_initial_state_all_empty",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_empty_rel_path",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_under_scope_is_prefix_of_path",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_connection_alias_is_matched",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_db_matches",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_nested_attribute_chain",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_ignores_unrelated_files",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_result_is_sorted_by_path",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_bare_filename_matches",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_help_exits_zero",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_unknown_flag_raises_system_exit",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_check_clean_returns_zero",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_verbose_with_violations_prints_extra_context",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_sign_allowlist_short_circuits",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_main_sign_allowlist_returns_one_on_failure",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_banner_includes_count",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_non_verbose_omits_extra_context",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_get_allowlists_for_signing_expected_keys",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_module_has_docstring",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_linter_name_matches_module_stem",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_txn_methods_specific_members",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_cursor_methods_specific_members",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_versioning_compat_wrappers_count",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_versioning_compat_wrappers_all_identifiers",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_wrapper_import_allowlist_all_python_files",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_wrapper_import_allowlist_uses_forward_slashes",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_legacy_delegate_allowlist_is_frozenset",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_exact_file_name_allowlists_keys_are_basenames",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_exact_file_name_allowlists_values_are_frozensets",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_skip_dirs_is_frozenset",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_skip_dirs_all_strings",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_txn_scope_allowlists_is_dict",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_txn_scope_allowlist_values_are_frozensets",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_raw_cursor_scope_allowlists_is_dict",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_violation_repr_contains_code",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_violation_fields_accessible",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_violation_is_hashable",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_name",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_simple_attribute",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_receiver_tokens_on_nested_call_chain",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_raw_conn_matches",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_raw_connection_matches",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_looks_like_cursor_receiver_cursor_substring_matches",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_ignores_multi_comparator",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_ignores_constant_other_than_none",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_is_graph_fallback_guard_attribute_reference",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_returns_list",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_leg001_message_includes_filename",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_check_exact_file_inventory_allowed_path_produces_no_violation",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_iter_python_files_returns_list",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_iter_python_files_skips_git",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_iter_python_files_empty_directory_returns_empty",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_iter_python_files_ignores_non_py",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_scan_repo_returns_list",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_scan_repo_flags_read_error",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_uses_separator_of_equals",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_print_report_prints_file_line_code_format",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_get_allowlists_for_signing_values_are_sorted_lists",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_get_allowlists_for_signing_exact_file_entries_use_colon",
+      "scripts/tests/test_lint_legacy_execution_surfaces.py::test_get_allowlists_for_signing_raw_txn_entries_use_colon"
+    ],
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "compilationMs": 1578.2022900000004,
+    "elapsedMs": 6947.572542
+  },
+  "limitations": [
+    "API before/after causal measurements use matched opt-level=0 engine builds, with SQLite dependencies unchanged. They establish work counts and attribution, not production CPU totals.",
+    "Production comparisons use opt-level=1 before/after builds, three serial fresh processes per version and workload, matching policy/workload digests and passing parity.",
+    "Whole repository and ten-rule performance is not established by these bounded controls.",
+    "Value indexing is identified and motivated here; it has not been implemented.",
+    "Intermediate relation reuse improves CPU on the positive control but does not resolve memory or decoding costs."
+  ]
+}

@@ -1,0 +1,1988 @@
+{
+  "format": "rerail.shared-syntax-performance/v1",
+  "baselineRevision": "f52817fc4ac535981413facfc6537bc8f07b06ec",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "workload": {
+    "selection": "fixtures/host/data-layer-port/profiling/quality-five.json",
+    "files": 5,
+    "bytes": 1026452,
+    "sha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043"
+  },
+  "build": {
+    "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+    "features": [
+      "code-rule-profile"
+    ],
+    "engineOptLevel": 1,
+    "dependencyOptLevel": 3,
+    "codegenUnits": 256,
+    "lto": "thin",
+    "allocator": "system-malloc-shim",
+    "platform": "macOS arm64"
+  },
+  "controls": {
+    "baseline": "Preceding evidence extraction, SQL fact construction and normalized forest",
+    "normalized": "Shared syntax facts, integer identities, corrected indexed SQL normalization and existing forest",
+    "candidate": "Shared syntax facts and direct parser subtree enumeration"
+  },
+  "runs": {
+    "baseline": [
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 396.36,
+            "systemMs": 28.156
+          },
+          "cold": {
+            "userMs": 12551.539,
+            "systemMs": 335.657
+          },
+          "unchanged": {
+            "userMs": 10.696,
+            "systemMs": 1.085
+          },
+          "edit": {
+            "userMs": 3332.969,
+            "systemMs": 47.571
+          }
+        },
+        "coldMs": 22736.099250000003,
+        "unchangedFileMs": 13.007499999999709,
+        "editedFileMs": 6146.937249999999,
+        "peakRssBytes": 981729280,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 407.804,
+            "systemMs": 23.536
+          },
+          "cold": {
+            "userMs": 12192.739,
+            "systemMs": 426.021
+          },
+          "unchanged": {
+            "userMs": 10.005,
+            "systemMs": 0.909
+          },
+          "edit": {
+            "userMs": 3187.943,
+            "systemMs": 79.951
+          }
+        },
+        "coldMs": 24339.732833,
+        "unchangedFileMs": 11.173541000000114,
+        "editedFileMs": 8539.573333,
+        "peakRssBytes": 981712896,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 443.61,
+            "systemMs": 34.128
+          },
+          "cold": {
+            "userMs": 12003.395,
+            "systemMs": 401.196
+          },
+          "unchanged": {
+            "userMs": 10.251,
+            "systemMs": 1.269
+          },
+          "edit": {
+            "userMs": 3174.353,
+            "systemMs": 52.014
+          }
+        },
+        "coldMs": 23069.590500000002,
+        "unchangedFileMs": 11.91833300000144,
+        "editedFileMs": 8772.66175,
+        "peakRssBytes": 940670976,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    ],
+    "normalized": [
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:7ed4be55ae867ab1c8662b6e557b95e421b639313d55e92d4076213decaa1294"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 72.738,
+            "systemMs": 4.566
+          },
+          "cold": {
+            "userMs": 3660.502,
+            "systemMs": 81.848
+          },
+          "unchanged": {
+            "userMs": 1.326,
+            "systemMs": 0.92
+          },
+          "edit": {
+            "userMs": 1668.885,
+            "systemMs": 28.15
+          }
+        },
+        "coldMs": 5633.196459000001,
+        "unchangedFileMs": 2.420083999999406,
+        "editedFileMs": 3557.8785829999997,
+        "peakRssBytes": 509476864,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:7ed4be55ae867ab1c8662b6e557b95e421b639313d55e92d4076213decaa1294"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 71.926,
+            "systemMs": 5.191
+          },
+          "cold": {
+            "userMs": 3513.426,
+            "systemMs": 128.48
+          },
+          "unchanged": {
+            "userMs": 1.419,
+            "systemMs": 0.782
+          },
+          "edit": {
+            "userMs": 1619.702,
+            "systemMs": 52.629
+          }
+        },
+        "coldMs": 8017.949625000001,
+        "unchangedFileMs": 3.5923750000001746,
+        "editedFileMs": 3274.9963750000006,
+        "peakRssBytes": 468795392,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:7ed4be55ae867ab1c8662b6e557b95e421b639313d55e92d4076213decaa1294"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 76.681,
+            "systemMs": 7.159
+          },
+          "cold": {
+            "userMs": 3467.75,
+            "systemMs": 105.673
+          },
+          "unchanged": {
+            "userMs": 1.307,
+            "systemMs": 1.037
+          },
+          "edit": {
+            "userMs": 1608.156,
+            "systemMs": 21.867
+          }
+        },
+        "coldMs": 9675.772792,
+        "unchangedFileMs": 3.0088749999995343,
+        "editedFileMs": 4353.262042,
+        "peakRssBytes": 508084224,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    ],
+    "candidate": [
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 77.096,
+            "systemMs": 5.677
+          },
+          "cold": {
+            "userMs": 3167.243,
+            "systemMs": 114.191
+          },
+          "unchanged": {
+            "userMs": 1.304,
+            "systemMs": 0.904
+          },
+          "edit": {
+            "userMs": 1293.395,
+            "systemMs": 35.663
+          }
+        },
+        "coldMs": 4662.694084,
+        "unchangedFileMs": 2.2518749999999272,
+        "editedFileMs": 2412.6912920000004,
+        "peakRssBytes": 562888704,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 74.448,
+            "systemMs": 5.601
+          },
+          "cold": {
+            "userMs": 3021.819,
+            "systemMs": 137.24
+          },
+          "unchanged": {
+            "userMs": 1.367,
+            "systemMs": 1.048
+          },
+          "edit": {
+            "userMs": 1244.641,
+            "systemMs": 35.036
+          }
+        },
+        "coldMs": 7031.040290999999,
+        "unchangedFileMs": 2.9453340000000026,
+        "editedFileMs": 3513.328875000001,
+        "peakRssBytes": 600489984,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      },
+      {
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "nativeSha256": "e42c2865d02dccc228a2a99cff0c5e130a091178eb756865bf80dc9f09536453",
+        "allocator": "system-malloc-shim",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 88.367,
+            "systemMs": 6.988
+          },
+          "cold": {
+            "userMs": 3081.277,
+            "systemMs": 110.826
+          },
+          "unchanged": {
+            "userMs": 1.381,
+            "systemMs": 0.82
+          },
+          "edit": {
+            "userMs": 1254.365,
+            "systemMs": 29.789
+          }
+        },
+        "coldMs": 6826.220542,
+        "unchangedFileMs": 3.6511669999999867,
+        "editedFileMs": 3402.777666,
+        "peakRssBytes": 558399488,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    ]
+  },
+  "medians": {
+    "baseline": {
+      "cpuMs": {
+        "compile": 431.34,
+        "cold": 12618.76,
+        "unchanged": 11.52,
+        "edit": 3267.8940000000002
+      },
+      "coldWallMs": 23069.590500000002,
+      "peakRssBytes": 981712896
+    },
+    "normalized": {
+      "cpuMs": {
+        "compile": 77.304,
+        "cold": 3641.906,
+        "unchanged": 2.246,
+        "edit": 1672.331
+      },
+      "coldWallMs": 8017.949625000001,
+      "peakRssBytes": 508084224
+    },
+    "candidate": {
+      "cpuMs": {
+        "compile": 82.773,
+        "cold": 3192.103,
+        "unchanged": 2.208,
+        "edit": 1284.154
+      },
+      "coldWallMs": 6826.220542,
+      "peakRssBytes": 562888704
+    }
+  },
+  "traces": {
+    "baseline": {
+      "leafCalls": {
+        "sql-reach-prepare": 6,
+        "sql-materialize": 437,
+        "input-extract": 355,
+        "sql-index": 590,
+        "sql-reach-walk": 6,
+        "sql-reach-index": 6,
+        "sql-input": 376,
+        "sql-release": 774,
+        "sql-analyze": 371,
+        "sql-validate": 443,
+        "sql-result": 15
+      },
+      "leafCpuMs": {
+        "sql-reach-prepare": 1297.6004999999998,
+        "sql-materialize": 3586.757322999995,
+        "input-extract": 1865.1962460000004,
+        "sql-index": 1641.6313809999995,
+        "sql-reach-walk": 223.688708,
+        "sql-reach-index": 119.909251,
+        "sql-input": 387.06587499999966,
+        "sql-release": 74.9529999999999,
+        "sql-analyze": 50.911046999999975,
+        "sql-validate": 84.70760699999994,
+        "sql-result": 0.51996
+      },
+      "topMaterializations": [
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 266.083625,
+          "cpuMs": 242.66775,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 266.083625,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1509761,
+            "workBefore": 1592571
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 354.84775,
+          "cpuMs": 241.41225,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 354.84775,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1329545,
+            "workBefore": 1412355
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 321.5155,
+          "cpuMs": 235.259625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 321.5155,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67772,
+            "sorts": 2,
+            "vmSteps": 23750776,
+            "workAfter": 1496768,
+            "workBefore": 1867873
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 252.75325,
+          "cpuMs": 222.158208,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 252.75325,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1414229,
+            "workBefore": 1497039
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 214.815417,
+          "cpuMs": 199.221458,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 214.815417,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67772,
+            "sorts": 2,
+            "vmSteps": 19345426,
+            "workAfter": 1581229,
+            "workBefore": 1883501
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 208.679292,
+          "cpuMs": 180.943792,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 208.679292,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67750,
+            "sorts": 1,
+            "vmSteps": 16363459,
+            "workAfter": 1676547,
+            "workBefore": 1932226
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 114.956208,
+          "cpuMs": 108.326417,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 114.956208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29622,
+            "sorts": 2,
+            "vmSteps": 10379464,
+            "workAfter": 1780199,
+            "workBefore": 1942378
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "scoped_nodes",
+          "calls": 1,
+          "wallMs": 108.433834,
+          "cpuMs": 107.272208,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 108.433834,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1097,
+            "sorts": 0,
+            "vmSteps": 4022025,
+            "workAfter": 331775,
+            "workBefore": 394623
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 136.061208,
+          "cpuMs": 97.892875,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 136.061208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 2315950,
+            "workAfter": 1706871,
+            "workBefore": 1743058
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 97.734458,
+          "cpuMs": 93.953625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 97.734458,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 2315950,
+            "workAfter": 1785412,
+            "workBefore": 1821599
+          }
+        }
+      ],
+      "rebuiltSyntaxTables": [
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 354.84775,
+          "cpuMs": 241.41225,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 354.84775,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1329545,
+            "workBefore": 1412355
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 321.5155,
+          "cpuMs": 235.259625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 321.5155,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67772,
+            "sorts": 2,
+            "vmSteps": 23750776,
+            "workAfter": 1496768,
+            "workBefore": 1867873
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 266.083625,
+          "cpuMs": 242.66775,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 266.083625,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1509761,
+            "workBefore": 1592571
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 252.75325,
+          "cpuMs": 222.158208,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 252.75325,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 5299816,
+            "workAfter": 1414229,
+            "workBefore": 1497039
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 214.815417,
+          "cpuMs": 199.221458,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 214.815417,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67772,
+            "sorts": 2,
+            "vmSteps": 19345426,
+            "workAfter": 1581229,
+            "workBefore": 1883501
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 208.679292,
+          "cpuMs": 180.943792,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 208.679292,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67750,
+            "sorts": 1,
+            "vmSteps": 16363459,
+            "workAfter": 1676547,
+            "workBefore": 1932226
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 136.061208,
+          "cpuMs": 97.892875,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 136.061208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 2315950,
+            "workAfter": 1706871,
+            "workBefore": 1743058
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 114.956208,
+          "cpuMs": 108.326417,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 114.956208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29622,
+            "sorts": 2,
+            "vmSteps": 10379464,
+            "workAfter": 1780199,
+            "workBefore": 1942378
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 97.734458,
+          "cpuMs": 93.953625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 97.734458,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 2315950,
+            "workAfter": 1785412,
+            "workBefore": 1821599
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 90.617167,
+          "cpuMs": 76.839458,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 90.617167,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29600,
+            "sorts": 1,
+            "vmSteps": 7150499,
+            "workAfter": 1858650,
+            "workBefore": 1970376
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 65.565583,
+          "cpuMs": 64.018708,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 65.565583,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 2315950,
+            "workAfter": 1743702,
+            "workBefore": 1779889
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 65.163292,
+          "cpuMs": 63.53325,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 65.163292,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29622,
+            "sorts": 2,
+            "vmSteps": 8453908,
+            "workAfter": 1816980,
+            "workBefore": 1949072
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 41.819208,
+          "cpuMs": 38.174916,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 41.819208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11270,
+            "sorts": 2,
+            "vmSteps": 3948792,
+            "workAfter": 1916328,
+            "workBefore": 1978027
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 34.454875,
+          "cpuMs": 31.936208,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 34.454875,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11248,
+            "sorts": 1,
+            "vmSteps": 2720197,
+            "workAfter": 1946225,
+            "workBefore": 1988728
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 34.39825,
+          "cpuMs": 32.38725,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 34.39825,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 10429,
+            "sorts": 2,
+            "vmSteps": 2865422,
+            "workAfter": 1935827,
+            "workBefore": 1980599
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 33.389625,
+          "cpuMs": 33.386291,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 33.389625,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 880817,
+            "workAfter": 1918255,
+            "workBefore": 1932018
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 30.676959,
+          "cpuMs": 30.677667,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 30.676959,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 880817,
+            "workAfter": 1888344,
+            "workBefore": 1902107
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 26.624959,
+          "cpuMs": 26.147917,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 26.624959,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11270,
+            "sorts": 2,
+            "vmSteps": 3216058,
+            "workAfter": 1930365,
+            "workBefore": 1980615
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 24.738625,
+          "cpuMs": 24.042333,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 24.738625,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 880817,
+            "workAfter": 1902392,
+            "workBefore": 1916155
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 23.835958,
+          "cpuMs": 23.836625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 23.835958,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 10430,
+            "sorts": 0,
+            "vmSteps": 826557,
+            "workAfter": 1906383,
+            "workBefore": 1919297
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 12.105542,
+          "cpuMs": 12.106791,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 12.105542,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 881087,
+            "workAfter": 1438840,
+            "workBefore": 1452606
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 12.058125,
+          "cpuMs": 11.729916,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 12.058125,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 881087,
+            "workAfter": 1618610,
+            "workBefore": 1632376
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 11.676,
+          "cpuMs": 11.127666,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 11.676,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 67773,
+            "sorts": 0,
+            "vmSteps": 881087,
+            "workAfter": 1523301,
+            "workBefore": 1537067
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 10.131208,
+          "cpuMs": 10.131875,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 10.131208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3613,
+            "sorts": 2,
+            "vmSteps": 1032350,
+            "workAfter": 1977645,
+            "workBefore": 1993775
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 9.852583,
+          "cpuMs": 9.422125,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 9.852583,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3614,
+            "sorts": 0,
+            "vmSteps": 283196,
+            "workAfter": 1967828,
+            "workBefore": 1972253
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 8.520375,
+          "cpuMs": 8.440958,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 8.520375,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3613,
+            "sorts": 2,
+            "vmSteps": 1267327,
+            "workAfter": 1973127,
+            "workBefore": 1992928
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 6.04425,
+          "cpuMs": 5.436833,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 6.04425,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 385137,
+            "workAfter": 1832899,
+            "workBefore": 1838916
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 6.015292,
+          "cpuMs": 5.308833,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 6.015292,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 385137,
+            "workAfter": 1754457,
+            "workBefore": 1760474
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 5.460875,
+          "cpuMs": 5.156084,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 5.460875,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1666,
+            "sorts": 2,
+            "vmSteps": 475966,
+            "workAfter": 1989685,
+            "workBefore": 1997121
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 5.0855,
+          "cpuMs": 5.083125,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 5.0855,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3614,
+            "sorts": 0,
+            "vmSteps": 283196,
+            "workAfter": 1963294,
+            "workBefore": 1967719
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 4.076333,
+          "cpuMs": 3.979833,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 4.076333,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 29623,
+            "sorts": 0,
+            "vmSteps": 385137,
+            "workAfter": 1791238,
+            "workBefore": 1797255
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 1,
+          "wallMs": 3.904958,
+          "cpuMs": 3.905209,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 3.904958,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1666,
+            "sorts": 2,
+            "vmSteps": 584406,
+            "workAfter": 1987595,
+            "workBefore": 1996726
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 3.502125,
+          "cpuMs": 3.502875,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 3.502125,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1667,
+            "sorts": 0,
+            "vmSteps": 130701,
+            "workAfter": 1984566,
+            "workBefore": 1986609
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 1,
+          "wallMs": 2.55975,
+          "cpuMs": 2.541625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 2.55975,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1667,
+            "sorts": 0,
+            "vmSteps": 130701,
+            "workAfter": 1982469,
+            "workBefore": 1984512
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 1.975709,
+          "cpuMs": 1.976416,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 1.975709,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 146561,
+            "workAfter": 1906075,
+            "workBefore": 1908365
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 1.961833,
+          "cpuMs": 1.962791,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 1.961833,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 146561,
+            "workAfter": 1935963,
+            "workBefore": 1938253
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 1.863,
+          "cpuMs": 1.863458,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 1.863,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 10430,
+            "sorts": 0,
+            "vmSteps": 135588,
+            "workAfter": 1925545,
+            "workBefore": 1927663
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 1.537375,
+          "cpuMs": 1.485625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 1.537375,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 11271,
+            "sorts": 0,
+            "vmSteps": 146561,
+            "workAfter": 1920112,
+            "workBefore": 1922402
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 1.020833,
+          "cpuMs": 0.877584,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 1.020833,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3614,
+            "sorts": 0,
+            "vmSteps": 47020,
+            "workAfter": 1973850,
+            "workBefore": 1974584
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "l2070_batching/conditional_step.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 0.465625,
+          "cpuMs": 0.465708,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 0.465625,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3614,
+            "sorts": 0,
+            "vmSteps": 47020,
+            "workAfter": 1969332,
+            "workBefore": 1970066
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 0.330875,
+          "cpuMs": 0.331167,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 0.330875,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1667,
+            "sorts": 0,
+            "vmSteps": 21709,
+            "workAfter": 1987531,
+            "workBefore": 1987870
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "phase": "sql-materialize",
+          "name": "edges",
+          "calls": 1,
+          "wallMs": 0.265666,
+          "cpuMs": 0.263041,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 0.265666,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1667,
+            "sorts": 0,
+            "vmSteps": 21709,
+            "workAfter": 1985441,
+            "workBefore": 1985780
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "leafCalls": {
+        "sql-reach-walk": 6,
+        "sql-reach-index": 6,
+        "sql-materialize": 373,
+        "sql-index": 464,
+        "sql-validate": 379,
+        "input-extract": 43,
+        "syntax-prepare": 5,
+        "sql-release": 398,
+        "sql-input": 45,
+        "syntax-owners": 15,
+        "sql-analyze": 329,
+        "sql-result": 15
+      },
+      "leafCpuMs": {
+        "sql-reach-walk": 318.317333,
+        "sql-reach-index": 396.617543,
+        "sql-materialize": 1536.4240439999999,
+        "sql-index": 248.78424700000014,
+        "sql-validate": 79.19442199999985,
+        "input-extract": 58.668580999999996,
+        "syntax-prepare": 27.404251000000002,
+        "sql-release": 41.23033400000005,
+        "sql-input": 2.651629000000001,
+        "syntax-owners": 7.696333999999999,
+        "sql-analyze": 34.20149299999997,
+        "sql-result": 0.6031669999999999
+      },
+      "topMaterializations": [
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "self_stores",
+          "calls": 1,
+          "wallMs": 177.052542,
+          "cpuMs": 161.400625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 177.052542,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 3066,
+            "sorts": 0,
+            "vmSteps": 8105665,
+            "workAfter": 1258089,
+            "workBefore": 1426401
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "scoped_nodes",
+          "calls": 1,
+          "wallMs": 111.521167,
+          "cpuMs": 93.68625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 111.521167,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1097,
+            "sorts": 0,
+            "vmSteps": 3830955,
+            "workAfter": 1280005,
+            "workBefore": 1346772
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "integer_returns",
+          "calls": 1,
+          "wallMs": 71.061208,
+          "cpuMs": 71.061709,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 71.061208,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 1298,
+            "sorts": 273,
+            "vmSteps": 8758689,
+            "workAfter": 1615019,
+            "workBefore": 1752337
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "py_names",
+          "calls": 1,
+          "wallMs": 90.158375,
+          "cpuMs": 63.566417,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 90.158375,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 0,
+            "sorts": 0,
+            "vmSteps": 2407449,
+            "workAfter": 1379350,
+            "workBefore": 1437879
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "scope_owners",
+          "calls": 1,
+          "wallMs": 68.20675,
+          "cpuMs": 59.821834,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 68.20675,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 0,
+            "sorts": 0,
+            "vmSteps": 3694931,
+            "workAfter": 1118906,
+            "workBefore": 1186954
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "py_names",
+          "calls": 1,
+          "wallMs": 62.302,
+          "cpuMs": 57.380416,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 62.302,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 0,
+            "sorts": 0,
+            "vmSteps": 2086659,
+            "workAfter": 1886322,
+            "workBefore": 1939838
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          "phase": "sql-materialize",
+          "name": "methods",
+          "calls": 1,
+          "wallMs": 45.347875,
+          "cpuMs": 44.03425,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 45.347875,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 138347,
+            "sorts": 0,
+            "vmSteps": 3686302,
+            "workAfter": 1929322,
+            "workBefore": 1993362
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "phase": "sql-materialize",
+          "name": "scoped_nodes",
+          "calls": 1,
+          "wallMs": 124.392292,
+          "cpuMs": 39.045375,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 124.392292,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 243,
+            "sorts": 0,
+            "vmSteps": 1668460,
+            "workAfter": 1703002,
+            "workBefore": 1732079
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "branch_variables",
+          "calls": 1,
+          "wallMs": 40.775167,
+          "cpuMs": 38.600625,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 40.775167,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 4364,
+            "sorts": 3,
+            "vmSteps": 685434,
+            "workAfter": 1426409,
+            "workBefore": 1614895
+          }
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "path": null,
+          "phase": "sql-materialize",
+          "name": "calls",
+          "calls": 1,
+          "wallMs": 41.493209,
+          "cpuMs": 37.446459,
+          "cpuMeasuredCalls": 1,
+          "maxWallMs": 41.493209,
+          "counters": {
+            "autoIndexRows": 0,
+            "failed": 0,
+            "fullscanSteps": 0,
+            "sorts": 0,
+            "vmSteps": 872817,
+            "workAfter": 1914530,
+            "workBefore": 1953426
+          }
+        }
+      ],
+      "rebuiltSyntaxTables": []
+    }
+  },
+  "external": {
+    "tool": "macOS sample",
+    "captures": 2,
+    "captureSeconds": 1,
+    "activeNativeSamples": 859,
+    "self": [
+      {
+        "symbol": "sqlite3VdbeExec (rerail-shared-syntax-release.node)",
+        "samples": 111,
+        "percent": 12.92
+      },
+      {
+        "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail-shared-syntax-release.node)",
+        "samples": 65,
+        "percent": 7.57
+      },
+      {
+        "symbol": "_platform_memmove (libsystem_platform.dylib)",
+        "samples": 59,
+        "percent": 6.87
+      },
+      {
+        "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+        "samples": 49,
+        "percent": 5.7
+      },
+      {
+        "symbol": "_RNvXs3_NtNtNtCs2Ouz6tREAku_13rerail_engine13code_rule_dsl10relational6syntaxNtB5_5UnionNtB5_6Source6column (rerail-shared-syntax-release.node)",
+        "samples": 49,
+        "percent": 5.7
+      },
+      {
+        "symbol": "write (libsystem_kernel.dylib)",
+        "samples": 31,
+        "percent": 3.61
+      },
+      {
+        "symbol": "_xzm_free (libsystem_malloc.dylib)",
+        "samples": 26,
+        "percent": 3.03
+      },
+      {
+        "symbol": "_RNvXs1_NtNtNtCs2Ouz6tREAku_13rerail_engine13code_rule_dsl10relational5tableNtB5_6CursorNtNtCsf4O9jhTeA8U_8rusqlite4vtab10VTabCursor6filter (rerail-shared-syntax-release.node)",
+        "samples": 17,
+        "percent": 1.98
+      },
+      {
+        "symbol": "sqlite3VdbeRecordUnpack (rerail-shared-syntax-release.node)",
+        "samples": 16,
+        "percent": 1.86
+      },
+      {
+        "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+        "samples": 16,
+        "percent": 1.86
+      },
+      {
+        "symbol": "vdbeSorterSort (rerail-shared-syntax-release.node)",
+        "samples": 15,
+        "percent": 1.75
+      },
+      {
+        "symbol": "vdbeSorterCompareText (rerail-shared-syntax-release.node)",
+        "samples": 14,
+        "percent": 1.63
+      },
+      {
+        "symbol": "sqlite3VdbeSerialGet (rerail-shared-syntax-release.node)",
+        "samples": 14,
+        "percent": 1.63
+      },
+      {
+        "symbol": "_RNvXs3_NtNtNtCs2Ouz6tREAku_13rerail_engine13code_rule_dsl10relational6syntaxNtB5_5UnionNtB5_6Source6lookup (rerail-shared-syntax-release.node)",
+        "samples": 14,
+        "percent": 1.63
+      },
+      {
+        "symbol": "sqlite3BtreeInsert (rerail-shared-syntax-release.node)",
+        "samples": 13,
+        "percent": 1.51
+      },
+      {
+        "symbol": "_RINvNtCsf4O9jhTeA8U_8rusqlite4vtab11rust_columnNtNtNtNtCs2Ouz6tREAku_13rerail_engine13code_rule_dsl10relational5table6CursorEBR_ (rerail-shared-syntax-release.node)",
+        "samples": 13,
+        "percent": 1.51
+      },
+      {
+        "symbol": "balance (rerail-shared-syntax-release.node)",
+        "samples": 12,
+        "percent": 1.4
+      },
+      {
+        "symbol": "_RNvXs3_NtNtCsaTNopw4qKPP_4core4hash3sipINtB5_6HasherNtB5_11Sip13RoundsENtB7_6Hasher5writeCs2Ouz6tREAku_13rerail_engine (rerail-shared-syntax-release.node)",
+        "samples": 10,
+        "percent": 1.16
+      },
+      {
+        "symbol": "sqlite3BtreeIndexMoveto (rerail-shared-syntax-release.node)",
+        "samples": 10,
+        "percent": 1.16
+      },
+      {
+        "symbol": "_platform_memset (libsystem_platform.dylib)",
+        "samples": 10,
+        "percent": 1.16
+      }
+    ],
+    "subsystems": [
+      {
+        "symbol": "sqlite",
+        "samples": 815,
+        "percent": 94.88
+      },
+      {
+        "symbol": "profiling",
+        "samples": 33,
+        "percent": 3.84
+      },
+      {
+        "symbol": "other-native",
+        "samples": 7,
+        "percent": 0.81
+      },
+      {
+        "symbol": "relational-host",
+        "samples": 4,
+        "percent": 0.47
+      }
+    ],
+    "note": "Short diagnostic captures during cold execution with tracing enabled; excluded from timing medians."
+  },
+  "validation": {
+    "nativeTests": 286,
+    "pythonTests": 52,
+    "oracleCases": 200,
+    "oraclePositive": 135,
+    "oracleClean": 65,
+    "productionComparisons": 219,
+    "productionPositive": 130,
+    "productionClean": 89,
+    "transitions": 57,
+    "allPassed": true,
+    "profiles": [
+      "release-tests",
+      "release-python",
+      "release-check",
+      "release-clippy",
+      "release-clippy-production",
+      "release-oracle-0",
+      "release-oracle-1",
+      "release-oracle-2",
+      "release-oracle-3",
+      "release-oracle-4",
+      "release-production-0",
+      "release-production-1",
+      "release-production-2",
+      "release-production-3"
+    ],
+    "tdd": [
+      "typed SQL normalization failed before correction",
+      "direct descendant to indexed SQL join failed at 15000 work units before affinity correction; passes after correction"
+    ]
+  },
+  "artifacts": {
+    "root": ".rerail/profiles/shared-syntax",
+    "measurementPrefixes": [
+      "release-baseline",
+      "release-normalized",
+      "release-candidate"
+    ],
+    "detailed": [
+      "release-baseline-trace",
+      "release-candidate-trace",
+      "release-candidate-sampled"
+    ]
+  },
+  "limitations": [
+    "Five-file pinned workload on a shared host; CPU is the primary comparison.",
+    "No full-repository scalability or production allocator claim.",
+    "Direct descendants materialize path-qualified rows and two SQLite indexes; they use more RSS than the normalized control.",
+    "Structural metadata reservation sizes are estimates, not measured allocations.",
+    "Failed pilots, older binaries and sampled runs are excluded from medians."
+  ]
+}

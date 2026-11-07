@@ -1,0 +1,250 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "batch": 1,
+  "state": "candidate ports; recorded detection parity passed; integration not certified",
+  "oracle": {
+    "python": "3.13.12",
+    "pytest": "9.0.2",
+    "collected": 567,
+    "passed": 564,
+    "skipped": 3,
+    "root_conftest_present": true,
+    "loaded_sources_verified": 1493,
+    "source_mismatches": []
+  },
+  "corpus": {
+    "calls": 317,
+    "positive": 234,
+    "clean": 83,
+    "expected_findings": 297,
+    "retained_calls": 22,
+    "uncaptured_tests": 301,
+    "checks": [
+      {
+        "check": "removed_compat_surfaces",
+        "clauses": 3,
+        "calls": 4,
+        "positive": 3,
+        "clean": 1
+      },
+      {
+        "check": "versioned_lifecycle_legacy_surfaces",
+        "clauses": 1,
+        "calls": 3,
+        "positive": 1,
+        "clean": 2
+      },
+      {
+        "check": "no_api_root_imports",
+        "clauses": 2,
+        "calls": 4,
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "backend_type_strings",
+        "clauses": 13,
+        "calls": 60,
+        "positive": 43,
+        "clean": 17
+      },
+      {
+        "check": "hasattr_async",
+        "clauses": 2,
+        "calls": 33,
+        "positive": 19,
+        "clean": 14
+      },
+      {
+        "check": "no_source_inspection",
+        "clauses": 5,
+        "calls": 72,
+        "positive": 54,
+        "clean": 18
+      },
+      {
+        "check": "serverplan_name_inference",
+        "clauses": 4,
+        "calls": 8,
+        "positive": 7,
+        "clean": 1
+      },
+      {
+        "check": "no_blanket_grammar_bypass",
+        "clauses": 3,
+        "calls": 121,
+        "positive": 97,
+        "clean": 24
+      },
+      {
+        "check": "serverplan_grammar_surface",
+        "clauses": 7,
+        "calls": 7,
+        "positive": 6,
+        "clean": 1
+      },
+      {
+        "check": "permission_error",
+        "clauses": 1,
+        "calls": 5,
+        "positive": 2,
+        "clean": 3
+      }
+    ],
+    "diagnostic_counts": {
+      "removed_compat_surfaces/RCS001": 5,
+      "versioned_lifecycle_legacy_surfaces/VLL001": 1,
+      "no_api_root_imports/NARI001": 2,
+      "backend_type_strings/BT002": 34,
+      "backend_type_strings/BT001": 2,
+      "backend_type_strings/BT003": 5,
+      "backend_type_strings/BT004": 4,
+      "backend_type_strings/BT005": 3,
+      "hasattr_async/hasattr": 17,
+      "hasattr_async/getattr": 7,
+      "no_source_inspection/NSI001": 62,
+      "serverplan_name_inference/SPNI001": 2,
+      "serverplan_name_inference/SPNI002": 3,
+      "serverplan_name_inference/SPNI003": 1,
+      "serverplan_name_inference/SPNI004": 1,
+      "no_blanket_grammar_bypass/NGB001": 139,
+      "serverplan_grammar_surface/SPG-helper_definition": 1,
+      "serverplan_grammar_surface/SPG-helper_attribute": 1,
+      "serverplan_grammar_surface/SPG-direct_helper_definition": 1,
+      "serverplan_grammar_surface/SPG-ddl_import": 1,
+      "serverplan_grammar_surface/SPG-ddl_escape": 1,
+      "serverplan_grammar_surface/SPG-SYNTAX": 1,
+      "permission_error/builtin_permission_error": 3
+    }
+  },
+  "scoring_dimensions": [
+    "multiplicity",
+    "path",
+    "line",
+    "code",
+    "column for backend_type_strings"
+  ],
+  "strict_gate": {
+    "false_positives": 0,
+    "false_negatives": 0,
+    "engine_failures": 0,
+    "stateless_workspace_differences": 0
+  },
+  "sentinels": {
+    "empty_detector_false_negatives": 297,
+    "always_reports_false_positives": 1284
+  },
+  "repository_measurement": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 9010,
+    "bytes": 137896473,
+    "oracleMs": 9356.041084000026,
+    "oracleWorkers": 4,
+    "policyDigests": {
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46"
+    },
+    "compilationMs": 53.22474999999997,
+    "coldMs": 11037.557916,
+    "unchangedFileMs": 3.1868330000015703,
+    "editedFileMs": 15.947625000000698,
+    "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+    "expected": 0,
+    "actual": 0,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "allocator": "system-malloc-shim",
+    "nativeSha256": "60de1359ccac3dd1dd75e4e9c9df7a119e1ed46ac83724cfbc370d669a8e1c3f",
+    "nativeWorkers": 4
+  },
+  "worker_phase_seconds": {
+    "parseNs": 9.951,
+    "tapeEncodeNs": 3.22,
+    "tapeDecodeRestoreNs": 1.332,
+    "anchorIndexNs": 1.664,
+    "anchorSelectionNs": 0.365,
+    "regexNs": 4.987,
+    "astMatchNs": 0.195,
+    "manifestCandidateLookupNs": 2.258
+  },
+  "limits": [
+    "Messages, CLI rendering, and enforcement integration are not certified by location/code replay.",
+    "301 tests do not invoke a recorded boundary and remain visible for adapter or contract review.",
+    "Python ast and tree-sitter acceptance and decoded-string locations need further edge-case coverage.",
+    "The allocator is a system malloc shim; these timings do not certify production jemalloc throughput."
+  ],
+  "oracle_verified_supplements": [
+    {
+      "check": "serverplan_grammar_surface",
+      "expected": [
+        [
+          "SPG-ddl_escape",
+          1
+        ],
+        [
+          "SPG-direct_helper_attribute",
+          2
+        ]
+      ],
+      "purpose": "Parameter declaration versus annotation reference; direct helper attribute"
+    },
+    {
+      "check": "backend_type_strings",
+      "expected": [
+        [
+          "BT000",
+          1,
+          1
+        ]
+      ],
+      "purpose": "Literal-spacing fallback diagnostic"
+    },
+    {
+      "check": "removed_compat_surfaces",
+      "expected": [
+        [
+          "RCS001",
+          1
+        ],
+        [
+          "RCS001",
+          2
+        ]
+      ],
+      "purpose": "Name and attribute occurrences"
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "expected": [
+        [
+          "VLL001",
+          3
+        ]
+      ],
+      "purpose": "Decorated async method on a sparse transaction subclass"
+    },
+    {
+      "check": "no_source_inspection",
+      "expected": [],
+      "purpose": "Production scope excludes pytest cache directories"
+    }
+  ],
+  "validation": {
+    "focused_tests_passed": 233,
+    "focused_pack_checks_passed": 7,
+    "structure_checks_passed": 25,
+    "dsl_reference_differences": 0,
+    "rust_clippy_all_targets": "passed with code-rule-profile and warnings denied",
+    "typescript": "three errors in untouched files with the borrowed dependency installation"
+  }
+}
