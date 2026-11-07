@@ -36,12 +36,12 @@ nari_file(d) :- doc(d, path, _), !option("entryPoint", _), file_name(d, f), suff
     !nari_hidden(d), !nari_framework_hidden(d),
     (prefix("impl/", path) ; prefix("data_layer/", path) ; prefix("_internal/", path) ;
      match("l__DIGITS__{4}_[^/\n][^/]*/[\s\S]*", path)).
-.decl nari_api_gate()
-nari_api_gate() :- !option("entryPoint", "check_file_content").
-nari_api_gate() :- option("entryPoint", "check_file_content"), option("providedSource", s),
+.decl nari_api_gate(d: number)
+nari_api_gate(d) :- nari_file(d), !option("entryPoint", "check_file_content").
+nari_api_gate(d) :- nari_file(d), option("entryPoint", "check_file_content"), option("providedSource", s),
     (contains("from api", s) ; contains("import api", s)).
 .decl nari_active(d: number)
-nari_active(d) :- nari_file(d), nari_api_gate(), !syntax_error(d, _, _), source(d, sp), text(sp, s),
+nari_active(d) :- nari_api_gate(d), !syntax_error(d, _, _), source(d, sp), text(sp, s),
     (contains("from api import", s) ; contains("import api", s)).
 .decl nari_dotted(n: node, name: symbol)
 nari_dotted(n, name) :- kind(n, "dotted_name"), name = join x by i sep "." : {
