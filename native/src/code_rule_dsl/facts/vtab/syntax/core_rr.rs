@@ -546,6 +546,9 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 /// cannot say whether CPython accepts the file. The other languages' come from tree-sitter's ERROR and MISSING nodes.
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
     let python = dialect.family == Family::Python;
+    // Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's too, as for the other
+    // languages: it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`).
+    #[cfg(feature = "python-syntax-error")]
     if python {
         return python_error(&f.source);
     }
@@ -557,6 +560,7 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
 
 /// The first error (by position) of CPython's grammar on `src`, Ruff's parser: its line, as `src_line` counts
 /// lines, and the parser's message. Version-specific syntax (a `match` before 3.10) is accepted.
+#[cfg(feature = "python-syntax-error")]
 pub(super) fn python_error(src: &str) -> Option<(u32, String)> {
     use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
     let parsed = parse_unchecked(src, ParseOptions::from(Mode::Module));
@@ -900,6 +904,7 @@ mod tests {
     /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
     /// `match` statement is not; the line is the first error's.
     #[test]
+    #[cfg(feature = "python-syntax-error")]
     fn python_syntax_errors_follow_cpythons_grammar() {
         assert_eq!(python_error("x = 1\n"), None);
         assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);

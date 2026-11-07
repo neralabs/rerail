@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 # Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
 # language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
 # `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
-default = ["all-languages"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
 all-languages = ["lang-blade", "lang-javascript", "lang-php", "lang-python", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-javascript = []
@@ -25,6 +25,15 @@ lang-vue = []
 # Rust and register nothing, so a binary links only what it calls rather than the addon's whole API (workspace
 # service, editor, suppressions, embeddings, git). Never on for the addon `npm run build` makes.
 headless = ["napi-derive/noop"]
+# The CLI's `dump` (rules in the earlier JSON/YAML form, compiled and printed as `rir`): off, the CLI links no
+# part of that compiler (the addon still has it).
+dump-cli = []
+# `syntax_error` on Python from a parser that follows CPython's grammar (Ruff's, with its 0.8 MB Unicode name table);
+# off, Python's verdict is tree-sitter's, as the other languages' are.
+python-syntax-error = ["dep:ruff_python_parser"]
+# The corpus runner's persistent store (`RERAIL_TAPE_CACHE`): tapes kept across runs, the per-file memo, run records
+# and their collection, in zstd frames. Off (the browser build), every run parses every file.
+tape-cache = []
 code-rule-profile = []
 # P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
@@ -76,7 +85,7 @@ fallible-iterator = "0.3"
 rustc-hash = "=2.1.3"
 # `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
 # recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
-ruff_python_parser = "=0.0.10"
+ruff_python_parser = { version = "=0.0.10", optional = true }
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
 sha2 = "0.10"

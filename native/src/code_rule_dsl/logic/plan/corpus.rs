@@ -389,6 +389,7 @@ impl<T> Ran<T> {
 }
 
 fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+    memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let fresh = store
@@ -539,7 +540,9 @@ pub(crate) fn run_with_options(
     // every file), and the run's atoms and each file's memoised rows (decision 0052): atoms are never given out again,
     // so a memoised row's symbols mean the same in every run. The run's SQL works in `store.sqlite`, on the same
     // atoms. Without the store, or reproducing T, the atoms are the run's own.
-    let tapes = tape_cache().map_err(|e| Error::Plan(e.to_string()))?;
+    // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
+    // compiler can see it, so the memo, the run record and their zstd frames are not linked.
+    let tapes = if cfg!(feature = "tape-cache") { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
     let own_store;
     let store: &ContentStore = match &tapes {
         Some(cache) if t.is_none() => {
@@ -767,7 +770,10 @@ pub(crate) fn run_with_options(
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
-                Some(cache) => core::build_cached(&file, cache),
+                // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
+                // tape and source frames are not linked.
+                Some(cache) if cfg!(feature = "tape-cache") => core::build_cached(&file, cache),
+                Some(_) => unreachable!("no tape cache without `tape-cache`"),
                 None => core::build(&file),
             };
             let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {

@@ -1176,7 +1176,8 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        if grammar.lang == GrammarDialect::Blade {
+        // A build without `lang-blade` routes no file to Blade (`GrammarDialect::built`), so Forte is not linked.
+        if cfg!(feature = "lang-blade") && grammar.lang == GrammarDialect::Blade {
             return match Self::encode_template(grammar, source, budget) {
                 Ok(image) => Some(Ok(image)),
                 // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
