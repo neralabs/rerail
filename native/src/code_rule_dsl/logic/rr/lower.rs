@@ -1202,7 +1202,11 @@ impl Lowerer {
     ///   texts the rule asks about, a context relation of its other literals (`front::Native::MatchAll`). Without
     ///   groups, `match_all` is a search.
     fn text_matches(&mut self, rel: &str, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
-        let [STerm::Str(re), s] = args else { return Err(Error::Syntax(format!("{rel} takes a regex string and a text"))) };
+        let (re, s, positions) = match args {
+            [STerm::Str(re), s] => (re, s, &[][..]),
+            [STerm::Str(re), s, _, _, _] if rel == "match_all" => (re, s, &args[2..5]),
+            _ => return Err(Error::Syntax(format!("{rel} takes a regex string and a text; symbol match_all also accepts ordinal, start, end"))),
+        };
         let gs = groups(re);
         let all = rel == "match_all";
         // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
@@ -1210,6 +1214,9 @@ impl Lowerer {
         if let STerm::Var(v) = s
             && (self.span_container(v).is_some() || all && self.node_typed(v))
         {
+            if !positions.is_empty() {
+                return Err(Error::Syntax("match_all ordinal, start, end outputs require a symbol text".to_owned()));
+            }
             let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
             self.rx_span_input();
             let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg: false, gated: false });
@@ -1223,28 +1230,38 @@ impl Lowerer {
         if !all {
             return self.captures(args);
         }
-        if gs.is_empty() {
+        if gs.is_empty() && positions.is_empty() {
             return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(1) }]]);
         }
         let STerm::Var(v) = s else { return not_yet(format!("match_all over a computed text, {s:?} (bind it to a variable first)")) };
         // The texts asked about: the rule's other literals, those that read no capture (they are bound by the matches).
         let saved = self.siblings.clone();
-        let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| gs.contains(x));
+        let mut produced = gs.clone();
+        for term in positions { if let STerm::Var(v) = term { produced.push(v.clone()); } }
+        let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
         let ctx = self.context(std::slice::from_ref(v));
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        let cols = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
+        let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
+        if !positions.is_empty() {
+            cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
+        }
         self.prog.decls.insert(name.clone(), cols);
         // Its one rule orders it after the context; the evaluator makes its rows.
         let x = |n: &str| Term::Var(n.to_owned());
         let mut body = vec![Literal::Atom(Atom { rel: ctx.rel.clone(), args: vec![x("s")], neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
-        let head_args = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        if !positions.is_empty() {
+            // The native producer replaces these seed values. They establish dependency and numeric types.
+            head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
+        }
         self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body });
-        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel, pattern: re.clone(), groups: gs.clone() });
-        let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone()))).collect();
+        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel, pattern: re.clone(), groups: gs.clone(), positions: !positions.is_empty() });
+        let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone())))
+            .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
     }
 

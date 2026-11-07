@@ -1543,8 +1543,52 @@ Bare(@place("a.py", 1), i, a, b) :- sample(s), match_all("x", s, i, a, b).
     assert_eq!(wanted(&rows, "MATCH"), [(0, 2, 4), (1, 5, 7)]);
     assert_eq!(wanted(&rows, "BARE"), [(0, 2, 3), (1, 3, 4), (2, 5, 6), (3, 6, 7)]);
     assert!(rows.iter().filter(|r| r["code"] == "MATCH").all(|r| r["parameters"]["capture"] == "xx"));
-    let printed = print(&parse(rule).unwrap()).unwrap();
-    let roundtrip = finding_contract("", &printed);
+    let printed = complete_rule(rule);
+    let roundtrip = lowered_findings(&printed);
     assert_eq!(wanted(&roundtrip, "MATCH"), wanted(&rows, "MATCH"));
     assert_eq!(wanted(&roundtrip, "BARE"), wanted(&rows, "BARE"));
+}
+
+/// Coalescing may rename a shared context, but a native producer must still read that context's rows.
+#[test]
+fn native_regex_inputs_follow_program_namespaces_and_shared_contexts() {
+    let rule = |code: &str, sample: &str, pattern: &str| format!(r#"
+.language python
+.decl sample(s: symbol)
+sample("{sample}").
+.violation Found(at: span, ordinal: number) code "{code}" "found"
+Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
+"#);
+    let a = complete_rule(&rule("A", "xx xx", "xx"));
+    let b = complete_rule(&rule("B", "yy yy", "yy"));
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    assert_eq!(combined.natives.len(), 2);
+    for native in combined.natives.values() {
+        for input in native.reads() { assert!(combined.decls.contains_key(input), "{input}"); }
+    }
+    let rows = lowered_findings(&print(&combined).unwrap());
+    assert_eq!(rows.iter().filter(|r| r["code"] == "A").count(), 2, "{rows:?}");
+    assert_eq!(rows.iter().filter(|r| r["code"] == "B").count(), 2, "{rows:?}");
+}
+
+/// Printed engine programs use reserved helper names; run through the internal text boundary used by run_rr.
+fn complete_rule(program: &str) -> String {
+    let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("public.rr");
+    std::fs::write(&path, program).unwrap();
+    let (program, _) = read_file(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    print(&program).unwrap()
+}
+
+fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("lowered-findings");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "").unwrap();
+    let out = root.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &root, None, &out, "program",
+        crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = std::fs::read_to_string(out.join("rr_diagnostic.csv")).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    std::fs::remove_dir_all(root).unwrap();
+    rows
 }

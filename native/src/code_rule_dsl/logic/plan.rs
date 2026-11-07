@@ -2184,10 +2184,13 @@ impl Run<'_> {
 
     /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
     fn native_relation(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
+        let reads: Vec<String> = native.reads().into_iter().map(str::to_owned).collect();
+        self.ensure(&reads)?;
+        self.materialize(&reads)?;
         use crate::code_rule_dsl::logic::front::Native;
         let (edge, target, roots) = match native {
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
-            Native::MatchAll { input, pattern, groups } => return self.match_all(rel, input, pattern, groups),
+            Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
@@ -2219,7 +2222,7 @@ impl Run<'_> {
 
     /// `match_all` over symbols (`front::Native::MatchAll`): each distinct text of `input`, and each match's groups.
     /// Symbols are atoms (interned by `sym_atom`) or text, as the run stores them.
-    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String]) -> Result<usize> {
+    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String], positions: bool) -> Result<usize> {
         let re = regex::Regex::new(pattern).map_err(|e| Error::Plan(format!("match_all: bad regex {pattern:?}: {e}")))?;
         let atoms = self.model.inputs.atoms.is_some();
         let c = self.model.col(input, 0);
@@ -2230,16 +2233,22 @@ impl Run<'_> {
             rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
         };
         let captures: Vec<_> = texts.iter().flat_map(|(v, t)| {
-            crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t).into_iter().map(move |row| (v, row))
+            use crate::code_rule_dsl::logic::native::match_all;
+            let rows: Vec<_> = if positions {
+                match_all::occurrences(&re, groups, t).into_iter().map(|(row, at)| (row, Some(at))).collect()
+            } else {
+                match_all::rows(&re, groups, t).into_iter().map(|row| (row, None)).collect()
+            };
+            rows.into_iter().map(move |(row, at)| (v, row, at))
         }).collect();
         let mut ids = if atoms {
-            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row)| row.iter().copied()))?.into_iter()
+            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row, _)| row.iter().copied()))?.into_iter()
         } else { Vec::new().into_iter() };
-        let rows = captures.into_iter().map(|(v, row)| {
+        let rows = captures.into_iter().map(|(v, row, at)| {
             std::iter::once(v.clone()).chain(row.into_iter().map(|g| {
                 if atoms { SqlValue::Integer(ids.next().expect("one atom per capture")) }
                 else { SqlValue::Text(g.to_owned()) }
-            })).collect()
+            })).chain(at.into_iter().flatten().map(SqlValue::Integer)).collect()
         }).collect();
         let before = self.db.total_changes();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
