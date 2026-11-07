@@ -476,7 +476,7 @@ pub(crate) fn run_with_options(
 ) -> Result<Report> {
     // A program that reads the file system or loads documents runs in rounds of its requests first (`world`).
     let world_round = options.get(world::OPTION).and_then(|v| v.as_str()).map(str::to_owned);
-    // The run's settings, as `env` facts (t21 E4): `<root>/.rerail/env`, then the `env` option's `key=value`s (the
+    // The run's settings, as `env` facts (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the
     // command line's `--env`). A round of `discover` has them already.
     let with_settings: Vec<String>;
     let programs: &[&str] = if world_round.is_none() {

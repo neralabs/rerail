@@ -163,10 +163,10 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// The run's settings (t21 E4): `key=value` lines of `<root>/.rerail/env` (blank lines and `#` comments
+/// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
 /// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
 pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
-    let file = root.join(".rerail/env");
+    let file = root.join("rerail.env");
     let text = if file.exists() { std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))? } else { String::new() };
     let lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| (l, file.display().to_string()));
     let mut settings: Vec<(String, String)> = Vec::new();
@@ -192,7 +192,7 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
     }
     let quote = super::logic::rr::quote;
     let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
-    format!("{program}\n// The run's settings (--env, .rerail/env).\n{facts}")
+    format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
 }
 
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
@@ -239,8 +239,8 @@ mod settings_tests {
     #[test]
     fn settings_become_env_facts_for_a_program_that_declares_env() {
         let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
-        std::fs::create_dir_all(root.join(".rerail")).unwrap();
-        std::fs::write(root.join(".rerail/env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
         let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);

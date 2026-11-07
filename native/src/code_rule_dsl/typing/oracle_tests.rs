@@ -514,7 +514,7 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
 
 #[test]
 fn imports_resolve_into_a_library_and_load_its_stubs() {
-    // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/.rerail/env says `lib =
+    // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
     // ../lib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The rules
     // walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
