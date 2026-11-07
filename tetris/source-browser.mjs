@@ -1,4 +1,5 @@
 import { renderSourceLines } from './rr-source.mjs';
+import { driver } from './transport.mjs';
 
 export class SourceBrowser {
   constructor() {
@@ -29,9 +30,7 @@ export class SourceBrowser {
     try {
       if (!this.files.length) {
         document.getElementById('source-browser-status').textContent = 'Loading committed .rr sources…';
-        const response = await fetch('/sources');
-        if (!response.ok) throw new Error('Could not load the source catalog');
-        const catalog = await response.json(); this.files = catalog.files;
+        const catalog = await driver.sourceList(); this.files = catalog.files;
         document.getElementById('source-browser-revision').textContent = catalog.revision.slice(0, 9);
       }
       this.drawFiles();
@@ -62,9 +61,7 @@ export class SourceBrowser {
     const request = ++this.request;
     try {
       document.getElementById('source-browser-status').textContent = 'Loading ' + path;
-      const response = await fetch('/sources?path=' + encodeURIComponent(path));
-      if (!response.ok) throw new Error('Could not load ' + path);
-      const file = await response.json();
+      const file = await driver.readSource(path);
       if (request !== this.request) return;
       this.current = file; this.lines = file.text.split('\n');
       renderSourceLines(this.code, file.text);

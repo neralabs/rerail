@@ -1,6 +1,7 @@
 // The browser captures facts and applies the engine's screen projection. No game rules.
 import { EvaluationView } from './evaluation.mjs';
 import { SourceBrowser } from './source-browser.mjs';
+import { driver } from './transport.mjs';
 const grids = new Map(['board', 'preview'].map(area => [area, document.getElementById(area)]));
 const cells = new Map();
 const byId = id => document.getElementById(id);
@@ -101,9 +102,7 @@ function enqueue(callback) {
 }
 function send(relation, value) {
   return enqueue(async () => {
-    const response = await fetch('/facts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relation, value }) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? 'Could not evaluate event');
+    const result = await driver.dispatch(relation, value);
     render(result);
     return result;
   });
@@ -119,10 +118,7 @@ function sendKey(code, repeat = false) {
 async function setGraph(open) {
   byId('watch-engine').disabled = true;
   try {
-    await enqueue(async () => {
-      const response = await fetch('/trace', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: open }) });
-      if (!response.ok) throw new Error('Could not change native tracing');
-    });
+    await enqueue(() => driver.setTracing(open));
     byId('evaluation-panel').hidden = !open;
     byId('watch-engine').setAttribute('aria-expanded', String(open));
     document.body.classList.toggle('graph-open', open);
@@ -176,7 +172,8 @@ byId('browse-current-source').addEventListener('click', () => {
   sourceBrowser.open({ path: 'game.rr', line: evaluation.sourceSpans?.get(rule)?.start });
 });
 
-render(await fetch('/facts').then(response => response.json()));
+try { render(await driver.latest()); }
+catch (error) { report(error); throw error; }
 // Manual time is also enforced by the rules, so stale timer facts cannot advance it.
 let previous = performance.now();
 async function tick() {

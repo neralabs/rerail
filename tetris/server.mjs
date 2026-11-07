@@ -11,6 +11,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html']],
   ['/style.css', ['style.css', 'text/css']],
   ['/browser.mjs', ['browser.mjs', 'text/javascript']],
+  ['/transport.mjs', ['transport.mjs', 'text/javascript']],
   ['/evaluation.mjs', ['evaluation.mjs', 'text/javascript']],
   ['/rr-source.mjs', ['rr-source.mjs', 'text/javascript']],
   ['/source-browser.mjs', ['source-browser.mjs', 'text/javascript']],
