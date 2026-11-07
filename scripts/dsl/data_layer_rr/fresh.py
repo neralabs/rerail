@@ -23,7 +23,7 @@ def arguments(values, root):
     def convert(value):
         if isinstance(value, dict) and set(value) == {'path', 'relative'} and value['relative'] is True:
             return Path(value['path'])
-        if isinstance(value, dict) and set(value) == {'path'}:
+        if isinstance(value, dict) and set(value) == {'path'} and isinstance(value['path'], str):
             return root / value['path']
         if isinstance(value, list):
             return [convert(item) for item in value]
