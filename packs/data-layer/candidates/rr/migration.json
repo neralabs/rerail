@@ -1167,7 +1167,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "sha256": "db770f831d90fc4f40589d8e373c1949933be0f4511f4a2579fc8658b3d541d8",
+      "sha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_api_root_imports.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1206,7 +1206,7 @@
       "legacySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "ruleSha256": "db770f831d90fc4f40589d8e373c1949933be0f4511f4a2579fc8658b3d541d8"
+      "ruleSha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675"
     },
     {
       "check": "backend_type_strings",

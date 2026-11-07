@@ -21,7 +21,7 @@ def no_api_root_imports(source, target, header):
         # Only match positions are needed; no capture is optional.
         regex = regex.replace('(?P<indent_ignored>[ \\t]*)', '[ \\t]*')
         text += f'.decl nari_regex_{i}(t: symbol, ordinal: number, start: number, end: number)\n'
-        text += f'nari_regex_{i}(t, i, a, b) :- nari_piece(_, _, t, _, _, _), match_all({json.dumps(regex)}, t, i, a, b).\n'
+        text += f'nari_regex_{i}(t, i, a, b) :- nari_piece(_, _, t, _, _), match_all({json.dumps(regex)}, t, i, a, b).\n'
     text += r'''
 .decl nari_hidden(d: number)
 nari_hidden(d) :- path_part(d, p), (p = "tests" ; p = "test").
@@ -59,21 +59,33 @@ nari_alias(i, j, "*") :- nari_module(i), child(i, a, j), kind(a, "wildcard_impor
     "Deprecated root api import ({names}); use data_layer.* or explicit api.lXXXX_* imports"
 RootImport(i, rank, 0, 0, names) :- nari_module(i), docof(i, d), nari_active(d), visit_index(i, rank),
     names = join name by index sep ", " : { nari_alias(i, index, name) }.
-.decl nari_piece(n: node, piece: number, value: symbol, base_line: number, column: number, rank: number)
-nari_piece(n, piece, value, base, column, rank) :- str_part(n, piece, value, _, _),
-    str_part_start(n, piece, base, column), docof(n, d), nari_active(d), visit_index(n, rank).
-.decl nari_text(n: node, piece: number, l: number, rank: number, pattern: number, occurrence: number)
+.decl nari_piece(n: node, piece: number, value: symbol, base_line: number, column: number)
+nari_piece(n, piece, value, base, column) :- str_part(n, piece, value, _, _),
+    str_part_start(n, piece, base, column), docof(n, d), nari_active(d).
+.decl nari_text(n: node, piece: number, l: number, pattern: number, occurrence: number)
 '''
     for i in range(2):
         # A match may consume the preceding newline. The indent starts after that newline.
         text += f'''nari_text(n, piece, base + strlen(@replace_all(@slice(t, 0, a), "[^\\\\n]", "")) + adjust,
-    rank, {i + 1}, occurrence) :- nari_piece(n, piece, t, base, _, rank), nari_regex_{i}(t, occurrence, a, b),
+    {i + 1}, occurrence) :- nari_piece(n, piece, t, base, _), nari_regex_{i}(t, occurrence, a, b),
     (@slice(t, a, a + 1) = "\\n", adjust = 1 ; @slice(t, a, a + 1) != "\\n", adjust = 0).
 '''
     text += r'''
+// Constants inside an interpolation precede the following outer Constant. A literal's own CST
+// descendants provide this order; scan only matched literals, never all nodes in their file.
+.decl nari_matched_piece(n: node, piece: number)
+nari_matched_piece(n, piece) :- nari_text(n, piece, _, _, _).
+.decl nari_part_anchor(n: node, piece: number, a: node)
+nari_part_anchor(n, piece, n) :- nari_matched_piece(n, piece).
+nari_part_anchor(n, piece, a) :- nari_matched_piece(n, piece), within(a, n).
+.decl nari_part_before(n: node, piece: number, rank: number)
+nari_part_before(n, piece, rank) :- nari_part_anchor(n, piece, a), str_part_start(n, piece, l, c),
+    line(a, first), col(a, column), (first < l ; first = l, column <= c), visit_index(a, rank).
+.decl nari_part_rank(n: node, piece: number, rank: number)
+nari_part_rank(n, piece, rank) :- nari_matched_piece(n, piece), rank = max r : { nari_part_before(n, piece, r) }.
 .violation RootExample(at: span, ordinal: number, piece: number, pattern: number, occurrence: number) code "NARI001"
     "String literal or doc example uses deprecated root api import; use data_layer.* or explicit api.lXXXX_* imports"
-RootExample(@place(path, l), rank, piece, pattern, occurrence) :- nari_text(n, piece, l, rank, pattern, occurrence),
-    docof(n, d), doc(d, path, _).
+RootExample(@place(path, l), rank, piece, pattern, occurrence) :- nari_text(n, piece, l, pattern, occurrence),
+    nari_part_rank(n, piece, rank), docof(n, d), doc(d, path, _).
 '''
     return text.replace('__DIGITS__', json.dumps(digits)[1:-1])

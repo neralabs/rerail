@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **62 target drafts and 38 absent translations**. None has full acceptance yet.
+The current inventory contains **65 target drafts and 35 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -636,3 +636,38 @@ The final unit and CLI builds took 121 and 62 seconds. Build time is separate fr
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
 
 - [Merge failures, native suites, all draft readers, and reporter comparisons](../fixtures/host/data-layer-port/rr-final-shape-guest-typing-merge.json.gz).
+
+## API root imports and regex occurrences, 7 November
+
+The API-import draft preserves real imports and examples inside decoded string constants.
+It preserves aliases, normalized identifiers, relative-import gates, duplicate findings, and source traversal order.
+The content API keeps its source argument as a gate and reads the actual file, as the pinned implementation does.
+Configured scope follows dynamic production roots. Explicit-file scope retains its separate test-directory contract.
+
+All four unchanged original tests pass, with four native calls and four complete API-return comparisons.
+Every original case calls native code. No original case is skipped, deselected, or classified as host-only.
+All 50 supplemental API cases pass: 35 positive and 15 clean.
+All 49 reporter cases pass: 34 positive and 15 clean. The import and example positive controls both reject disabled detection.
+The added cases first exposed consumed-newline locations and constants inside nested f-strings arriving in the wrong order.
+The repaired ordering query uses descendants of matched literals and the existing AST visit ranks.
+
+The port required occurrence IDs and character offsets from the batched symbol regex producer.
+The five-argument match_all form retains equal captures as separate occurrences and counts Unicode scalar positions.
+Its first execution also exposed native inputs becoming stale when the planner merged equal contexts.
+Producer inputs now follow coalescing and policy namespaces, retain their dependencies, and materialize before native consumption.
+Two round-trip fixtures initially omitted the public core boundary. Their failures remain recorded and are not test passes.
+All 49 focused reader tests and nine simplifier tests pass. One reader test remains ignored.
+The engine checkpoint is b95deaf706d7c991e8294074c06139bd2036b270, with Final rerail shape through 34bfb0945.
+The final unit and CLI builds took 45.15 and 38.17 seconds. Compile time is separate from execution.
+
+All 65 drafts pass the current reader. This does not certify execution parity for every draft.
+All 43 tooling tests and four format tests pass. Structure retains only the three pre-existing directory-size findings.
+Regex occurrence producers remain cross-file operators. These focused tests do not certify repository-scale CPU or memory cost.
+The inventory is 65 drafts and 35 absent translations. Full migration acceptance remains false.
+
+- [Original assertions and import positive control](../fixtures/host/data-layer-port/rr-no-api-root-imports-native-direct-contracts.json.gz).
+- [API cases, reporter cases, and example positive control](../fixtures/host/data-layer-port/rr-no-api-root-imports-native-supplemental-contracts.json.gz).
+- [Initial execution failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-execution-red.json.gz).
+- [Decoded-line failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-constant-lines-red.json.gz).
+- [Nested-constant order failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-constant-order-red.json.gz).
+- [Native occurrence regression and planner repair](../fixtures/host/data-layer-port/rr-regex-occurrence-native-tdd.json.gz).

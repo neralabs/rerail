@@ -606,6 +606,198 @@
           "path": "missing.py"
         }
       }
+    },
+    {
+      "id": "dict-field-order",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = {\n \"from api import KEY1\":\n \"from api import VALUE1\",\n \"from api import KEY2\":\n \"from api import VALUE2\",\n}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "call-field-order",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "f(\n k=\"from api import KEYWORD\",\n *[\"from api import STAR\"],\n z=\"from api import LAST\",\n)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "function-field-order",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "@deco(\"from api import DECORATOR\")\ndef f(x: \"from api import ANNOTATION\" = \"from api import DEFAULT\") -> \"from api import RETURN\":\n    \"from api import BODY\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "format-spec-inner",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"{('from api import INNER'):from api import SPEC}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "format-spec-multiline",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"{(\n 'from api import INNER'\n):from api import SPEC}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "concat-formatted",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "# from api import\nx = (\"from api import FIRST\" f\"{('from api import INNER')}\\nfrom api import LAST\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "nested-two-lines",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"\"\"from api import FIRST{(\n'from api import INNER'\n)}\nfrom api import LAST\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "debug-label",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"{('from api import INNER')=}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "empty-formatted",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"{value}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "crlf-source",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"\"\"from api import FIRST\r\nfrom api import LAST\"\"\"\r\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "duplicate-same-line",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"from api import FIRST\\nimport api\"; y = \"from api import FIRST\\nimport api\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
+    },
+    {
+      "id": "unicode-names",
+      "check": "no_api_root_imports",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import ﬁ as whatever, Ｘ\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l1000_example/a.py"
+        }
+      }
     }
   ]
 }

@@ -7975,3 +7975,25 @@ One reader and one locality profiling test remain ignored. Broad syntax-checker,
 The final unit and CLI builds took 121 and 62 seconds. Compile time is separate from execution.
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
 Evidence is in rr-final-shape-guest-typing-merge.json.gz. No repository cold run or Linear issue was added.
+
+## 2026-11-07: the 65th draft and batched regex occurrences
+
+The API-root-import port passes all four original tests, with four native calls and four complete API comparisons.
+No original case is skipped or host-only. The supplemental corpus passes 50 API cases and 49 reporter cases.
+Those corpora contain 35 and 34 positive cases, respectively. Import and example positive controls both reject disabled detection.
+Earlier executions exposed a gate without a document anchor, consumed-newline locations, and nested constant order.
+The repaired order query uses only matched literals and their AST descendants.
+
+The shared symbol regex producer now returns occurrence IDs and Unicode scalar offsets in one demand batch.
+It preserves repeated equal captures. Coalescing and namespaces now update native input references and retain their dependencies.
+The actual missing-context failure is retained. Rejected round-trip fixture attempts are explicitly identified as failures.
+All 49 focused reader tests and nine simplifier tests pass; one reader test remains ignored.
+The checkpoint is b95deaf706d7c991e8294074c06139bd2036b270, with Final rerail shape through 34bfb0945.
+The final unit and CLI builds took 45.15 and 38.17 seconds. These are compile times.
+
+All 65 draft policies pass the reader. All 43 tooling tests and four format tests pass.
+The new generated-file registration failure was repaired. Structure retains the same three pre-existing directory-size findings.
+Regex occurrence producers remain cross-file operators. Repository-scale CPU and RSS are not certified by these focused tests.
+The inventory is 65 drafts and 35 absent translations. Full migration acceptance remains false.
+Evidence is in rr-no-api-root-imports-native-direct-contracts.json.gz, rr-no-api-root-imports-native-supplemental-contracts.json.gz, and rr-regex-occurrence-native-tdd.json.gz.
+No repository cold run or Linear issue was added.
