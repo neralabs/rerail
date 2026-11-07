@@ -1,0 +1,24 @@
+.policy "typescript-eslint-prefer-namespace-keyword" revision 5
+.description "Use the namespace keyword instead of module to declare custom TypeScript namespaces; module is reserved for external module declarations."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   ts_namespace, estree_at
+
+// typescript-eslint's prefer-namespace-keyword: `module A {}` declares a namespace; write `namespace A {}`, and keep
+// `module` for modules named by a string. The fix replaces the keyword.
+//   module A {}   declare module A.B {}            → reported (the second at `declare`)
+//   namespace A {}   declare module "x" {}   declare global {}      fine
+// No options.
+.violation prefer_namespace_keyword(at: node) code "@typescript-eslint/prefer-namespace-keyword" "Use 'namespace' instead of 'module' to declare custom TypeScript modules."
+    suppress eslint "@typescript-eslint/prefer-namespace-keyword"
+    suppress oxlint "prefer-namespace-keyword"
+    suppress biome "lint/suspicious/useNamespaceKeyword"
+    fix safe to_namespace "Use 'namespace'"
+prefer_namespace_keyword(at) :- module_keyword(m, _), estree_at(m, at).
+to_namespace(at) :- module_keyword(m, t), estree_at(m, at) => replace(t, `namespace`).
+
+.decl module_keyword(m: node, t: span)  // t is the `module` keyword of namespace m
+module_keyword(m, t) :- ts_namespace(m), kind(m, "module"), first_token(m, t), text(t, "module").

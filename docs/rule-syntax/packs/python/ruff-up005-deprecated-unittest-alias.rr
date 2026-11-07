@@ -1,0 +1,30 @@
+.policy "ruff-up005-deprecated-unittest-alias" revision 2
+.description "Use the current unittest assertion methods instead of their deprecated aliases; the aliases were removed in Python 3.12."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP005 (pyupgrade): a call of a deprecated unittest alias on `self`, such as `self.assertEquals(…)`.
+// The aliases were deprecated in Python 3.2 and removed in 3.12. Ruff matches the spelling only: the receiver
+// is the name `self`, whatever class it is in. The finding is at `self.alias`.
+//   self.assertEquals(1, 2)       ← UP005: use assertEqual
+//   self.assertEqual(1, 2)        not reported
+#include "python/ast.rr"
+//   attr_of(e, o, a), unparen(e, m)
+
+.violation UP005(at: node, alias: symbol, target: symbol) code "UP005"
+    "Replace `self.{alias}` with `self.{target}`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `{alias}`."
+    suppress ruff "UP005"
+    fix safe rename "Use `self.{target}`"
+UP005(f, a, t) :- kind(c, "call"), field(c, "function", g), unparen(g, f), attr_of(f, o, a), unparen(o, s),
+    kind(s, "identifier"), text(s, "self"), alias(a, t).
+rename(f, _, t) :- field(f, "attribute", n) => replace(n, `$t`).
+
+.decl alias(old: symbol, new: symbol)  // Ruff's table, as unittest documents it
+alias("assertAlmostEquals", "assertAlmostEqual"). alias("assertEquals", "assertEqual").
+alias("assertNotAlmostEquals", "assertNotAlmostEqual"). alias("assertNotEquals", "assertNotEqual").
+alias("assertNotRegexpMatches", "assertNotRegex"). alias("assertRaisesRegexp", "assertRaisesRegex").
+alias("assertRegexpMatches", "assertRegex"). alias("assert_", "assertTrue"). alias("failIf", "assertFalse").
+alias("failIfAlmostEqual", "assertNotAlmostEqual"). alias("failIfEqual", "assertNotEqual").
+alias("failUnless", "assertTrue"). alias("failUnlessAlmostEqual", "assertAlmostEqual").
+alias("failUnlessEqual", "assertEqual"). alias("failUnlessRaises", "assertRaises").

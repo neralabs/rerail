@@ -1,0 +1,20 @@
+.policy "ruff-b034-re-sub-positional-args" revision 2
+.description "Pass count, maxsplit and flags as keyword arguments to re.sub(), re.subn() and re.split(); their positional order is easy to get wrong."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B034 (flake8-bugbear): `re.sub`, `re.subn` or `re.split` with count, maxsplit or flags passed
+// positionally. `re.sub(p, r, s, re.I)` passes re.I as the count. More than three positional arguments to
+// sub/subn, or more than two to split, is reported; the callee is resolved through imports.
+//   re.sub("a", "b", "aaa", re.IGNORECASE)     ← B034
+//   from re import sub; sub("a", "b", "aaa", 5) ← B034
+//   re.split(" ", "a a", maxsplit=2)           not reported
+#include "python/bugbear.rr"
+
+.violation B034(at: node, q: symbol, p: symbol) code "B034"
+    "`{q}` should pass `{p}` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions"
+    suppress ruff "B034"
+B034(c, q, p) :- bb_sym_call(c, q), b034_max(q, p, m), call_nargs(c, k), k > m.
+.decl b034_max(q: symbol, p: symbol, m: number)  // the function, its count parameter, positionals allowed
+b034_max("re.sub", "count", 3). b034_max("re.subn", "count", 3). b034_max("re.split", "maxsplit", 2).

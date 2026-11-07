@@ -1,0 +1,18 @@
+.policy "phpcs-generic-php-lower-case-constant" revision 2
+.description "Write true, false and null in lowercase in PHP, including their fully qualified forms."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+// PHP_CodeSniffer's Generic.PHP.LowerCaseConstant (code Found): the constants true, false and null as values, in
+// any case but lowercase. Type declarations are left alone (UpperCaseConstant's twin rule reads those):
+//   $a === TRUE;   $x = $f ? FALSE : true;   function f($p = Null) {}   $a = \falSe;     reported
+//   function f(int|FALSE $p): string|NULL {}   const TRUE = 1;   $o->NULL;   class True {}   not reported
+// tree-sitter-php reads the value forms as `boolean` and `null` nodes; `\FALSE` is a qualified name. A type is a
+// named_type or primitive_type, and the other names are `name` nodes, so none of them is a candidate.
+.violation lower_case_constant(at: node) code "Generic.PHP.LowerCaseConstant" "TRUE, FALSE and NULL must be lowercase"
+    suppress phpcs "Generic.PHP.LowerCaseConstant.Found"
+lower_case_constant(n) :- (kind(n, "boolean") ; kind(n, "null")), glob("*[A-Z]*", n).
+lower_case_constant(n) :- kind(n, "qualified_name"), text(n, t), match("\\\\(?<w>[A-Za-z]+)", t), glob("*[A-Z]*", w),
+    (@lower(w) = "true" ; @lower(w) = "false" ; @lower(w) = "null").

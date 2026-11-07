@@ -1,0 +1,20 @@
+.policy "ruff-n818-error-suffix-on-exception-name" revision 2
+.description "Name custom exception classes with an Error suffix, as PEP 8 recommends, unless the exception does not signal an error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N818 (pep8-naming): a class whose name does not end in `Error` though one of its bases is spelled
+// `Exception` or `…Error`. Ruff reads the bases as written: a bare name only, not resolved, not `mod.Error`.
+//   class C(Exception): ...          ← N818
+//   class D(BaseException): ...      not reported: the base is neither
+#include "python/naming.rr"
+
+.violation N818(at: node, x: symbol) code "N818"
+    "Rename the exception class `{x}` to end in `Error`, e.g. `{x}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."
+    suppress ruff "N818"
+N818(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), !suffix("Error", x),
+    error_base(c), !naming_ignored(x).
+.decl error_base(c: node)  // a positional base that is the name `Exception` or `…Error`
+error_base(c) :- field(c, "superclasses", al), child(al, b, _), kind(b, "identifier"), text(b, t),
+    (t = "Exception" ; suffix("Error", t)).

@@ -1,0 +1,19 @@
+.policy "eslint-no-proto" revision 5
+.description "Avoid the deprecated __proto__ property; use Object.getPrototypeOf() and Object.setPrototypeOf() instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   static_prop, dotted_member, id_value
+
+// ESLint's no-proto: a member access whose static name is __proto__, read or written.
+//   var a = obj.__proto__;   obj["__proto__"] = b;   obj[`__proto__`]    → reported
+//   obj[__proto__]   obj["__" + "proto__"]                               fine: no static name
+//   ({ __proto__: b })                                                    fine: an object literal's prototype
+// No options.
+.violation no_proto(at: node) code "no-proto" "Replace __proto__ with Object.getPrototypeOf() or Object.setPrototypeOf()."
+    suppress eslint "no-proto"
+    suppress oxlint "no-proto"
+    suppress biome "lint/suspicious/noProto"
+no_proto(n) :- static_prop(n, _, "__proto__").
+no_proto(n) :- dotted_member(n, _, p), id_value(p, "__proto__").  // escapes decoded: o.\u005f_proto__

@@ -1,0 +1,22 @@
+.policy "tlint-space-after-blade-directives" revision 2
+.description "Put a space between Blade control directives (@if, @elseif, @unless, @for, @foreach, @forelse, @while) and their opening parenthesis."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_directive(d, x)   d is directive @x
+
+// tlint's SpaceAfterBladeDirectives: a control directive written with no space before its parenthesis.
+//   @if($a)   @elseif($b)   @foreach($xs as $x)   @while($n)      reported, at the directive
+//   @if ($a)   @foreach ($xs as $x)   @endif   @@if($a)           not reported
+// The control directives are @if, @elseif, @unless, @for, @foreach, @forelse and @while; one followed by a tab
+// or a space is fine, anything else right after the name is reported, as the policy's `($|[^ \t\w])` says: `(`,
+// or nothing (`@if` whose arguments Blade cannot see, on the next line). Directives inside an attribute value
+// count too: <div class="@if($a) on @endif">.
+.violation space_after(at: node) code "SpaceAfterBladeDirectives"
+    "Put a space between blade control structure names and the opening paren: `@if(` -> `@if (`"
+space_after(d) :- blade_directive(d, x), control(x), text(d, t), !match("@[A-Za-z]+[ \\t][\\s\\S]*", t).
+.decl control(x: symbol)
+control("if"). control("elseif"). control("unless"). control("for"). control("foreach"). control("forelse").
+control("while").

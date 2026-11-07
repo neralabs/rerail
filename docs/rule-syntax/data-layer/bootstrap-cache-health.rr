@@ -1,0 +1,53 @@
+.policy "data-layer:bootstrap-cache-health" revision 1
+.description "Conformance tests that bootstrap schemas inside a test or fixture, or pass a per-test manifest key."
+.language python
+.mode block
+.scope dirs "conform"
+.scope tests true
+.on syntax_error report BCH000 at line 1
+// Python linter: scripts/lint_bootstrap_cache_health.py. Cold bootstraps inside conform tests defeat the warm
+// schema cache; static schemas belong in module-level TEST_BOOTSTRAP_TABLES / TEST_BOOTSTRAP_VERSIONING_DOMAINS.
+//   BCH001  a bootstrap_test_*_for_tests helper is called (`helper(…)` or `x.helper(…)`) in a test or fixture
+//   BCH002  any call of such a helper passes manifest_key=, wherever it is
+//   BCH003  a bare `create_table(…)` / `create_tables(…)` in a test or fixture
+//   BCH000  the file does not parse
+// "In a test or fixture": the innermost enclosing def (lambdas and classes are transparent) is named test_*, or
+// carries a decorator whose dotted name ends with pytest.fixture or is fixture (`@pytest.fixture(scope=…)` too).
+// `# bootstrap-cache-health: allow` on the call's line or the line before silences every code there. The linter
+// reads raw line text, so the marker counts inside a string literal too; so does this rule.
+// The linter's in-script allowlist is empty, and its signature locks it so; there is nothing to read.
+// Names are matched by spelling, as the linter does: nothing is resolved.
+
+#include "python/ast.rr"
+#include "python/calls.rr"
+#include "data-layer/boot-python.rr"     // callee_name
+
+// helper(x): the linter's BOOTSTRAP_HELPERS, the twelve bootstrap_test_<what>_for_tests[_async] helpers.
+.decl bch_helper(x: symbol)
+bch_helper(x) :- callee_name(_, x),
+    glob("bootstrap_test_{schema,tables,logged_tables,queues,table_triggers,versioning_domain}_for_tests{,_async}", x).
+
+// bch_call(c, x): call c of callee x, the Name's id or the Attribute's attr, on a line without the allow marker.
+.decl bch_call(c: node, x: symbol)
+bch_call(c, x) :- callee_name(c, x), line(c, l), docof(c, d), !bch_allowed(d, l).
+.decl bch_allowed(d: number, l: number)  // line l, or the line after l, carries the marker
+bch_allowed(d, l) :- src_line(d, l, sp), contains("bootstrap-cache-health: allow", sp).
+bch_allowed(d, l + 1) :- src_line(d, l, sp), contains("bootstrap-cache-health: allow", sp).
+
+// bch_in_test(c): c's innermost def is a test or a fixture.
+.decl bch_in_test(c: node)
+bch_in_test(c) :- def_frame(c, f), def_name(f, n), prefix("test_", n).
+bch_in_test(c) :- def_frame(c, f), decorator(f, e), bch_deco_name(e, s), (suffix("pytest.fixture", s) ; s = "fixture").
+// bch_deco_name(e, s): the dotted name of a decorator, through a call: `@pytest.fixture(scope="module")` gives
+// pytest.fixture.
+.decl bch_deco_name(e: node, s: symbol)
+bch_deco_name(e, s) :- decorator(_, e), dotted_expr(e, s).
+bch_deco_name(e, s) :- decorator(_, e), kind(e, "call"), field(e, "function", f), dotted_expr(f, s).
+
+.violation BCH001(at: node, x: symbol) "{x}() inside a test/fixture can create repeated cold bootstraps; prefer module-level TEST_BOOTSTRAP_TABLES"
+BCH001(c, x) :- bch_call(c, x), bch_helper(x), bch_in_test(c).
+.violation BCH002(at: node, x: symbol) "{x}() uses an explicit manifest_key; per-test manifest keys commonly cause BOOT-WARM-CACHE-MISS"
+BCH002(c, x) :- bch_call(c, x), bch_helper(x), call_arg(c, _, "manifest_key", _).
+.violation BCH003(at: node, x: symbol) "{x}() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+BCH003(c, x) :- bch_call(c, x), (x = "create_table" ; x = "create_tables"), field(c, "function", f),
+    kind(f, "identifier"), bch_in_test(c).

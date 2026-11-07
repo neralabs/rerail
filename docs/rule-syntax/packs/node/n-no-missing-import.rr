@@ -1,0 +1,20 @@
+.policy "n-no-missing-import" revision 2
+.description "Import only modules that exist: each import source must resolve, as Node.js resolves it, to an installed package or a file in the repository."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-missing-import: every import, export … from and import() of a module that is not a Node
+// built-in must resolve, as Node resolves it, to a file:
+//   import x from "./util.js"        reported when the file does not exist
+//   import { a } from "nope"         reported when node_modules has no nope
+//   import fs from "node:fs"         not: a built-in
+// Options: allowModules (packages never reported), ignoreTypeImport (skip `import type`; `export type … from`
+// is still checked, as in the plugin). Resolution is node-resolve.rr's proposed native input.
+
+#include "tsx/node-resolve.rr"   // node_target, builtin_spec, spec_failed, spec_allowed, spec_type_skipped
+
+.violation missing_import(at: node) code "n/no-missing-import"
+    "This module cannot be resolved: no installed package or file in the repository provides it."
+    suppress eslint "n/no-missing-import"
+missing_import(n) :- node_target(n, x, st), st != "require", !builtin_spec(x), spec_failed(n), !spec_allowed(x),
+    !spec_type_skipped(n).

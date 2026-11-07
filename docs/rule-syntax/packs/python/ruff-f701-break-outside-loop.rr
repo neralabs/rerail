@@ -1,0 +1,17 @@
+.policy "ruff-f701-break-outside-loop" revision 2
+.description "Keep break inside a for or while loop body; outside one (including a loop's else block) it is a Python syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F701 (pyflakes): `break` with no enclosing loop body in its own def, class or module. CPython rejects the
+// file. A loop's `else` clause is not inside the loop, and a def or class in between hides an outer loop.
+//   for x in xs: pass
+//   else: break              ← F701
+//   while c: break           not reported
+#include "python/pyflakes.rr"
+//   outside_loop(s)  break/continue s has no loop body around it in its def, class or module
+
+.violation F701(at: node) code "F701" "`break` outside loop"
+    suppress ruff "F701"
+F701(s) :- kind(s, "break_statement"), outside_loop(s).

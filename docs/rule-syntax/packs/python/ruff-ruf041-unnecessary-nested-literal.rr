@@ -1,0 +1,18 @@
+.policy "ruff-ruf041-unnecessary-nested-literal" revision 1
+.description "Flatten a Literal that wraps another Literal into a single Literal; the nesting adds nothing but noise."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF041: a `Literal[…]` (typing or typing_extensions) with a `Literal[…]` among its arguments.
+// Reported once, at the outermost Literal.
+//   Literal[1, Literal[2, 3]]          ← RUF041  `Literal[1, 2, 3]`
+//   Literal[1, Alias]                  not reported: an alias is fine
+#include "python/typing.rr"
+
+.violation RUF041(at: node) code "RUF041"
+    "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."
+    suppress ruff "RUF041"
+RUF041(l) :- typing_subscript(l, "Literal"), tsub(l, _, _, a), typing_subscript(a, "Literal"), !inner_literal(l).
+.decl inner_literal(l: node)
+inner_literal(l) :- typing_subscript(p, "Literal"), tsub(p, _, _, l), typing_subscript(l, "Literal").

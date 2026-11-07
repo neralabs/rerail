@@ -1,0 +1,125 @@
+.policy "data-layer:lazy-sql-surface" revision 1
+.description "Eager SQL and ServerPlan surface names in lazy-only internals."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+// Python linter: scripts/lint_lazy_sql_surface.py. The plugin reports every finding as LSS-001; the direct calls
+// (scan_source, scan_file) return the message alone, and the recorded events key on it. So the message is the code
+// here (`code {c}`), one per pattern:
+//   connection grammar lazy terminal call: X     `….X()` for X one of the four _grammar_*_lazy methods
+//   SyncSqlConnection defines forbidden grammar terminal: X    `def X` whose innermost class is SyncSqlConnection
+//   ServerPlan execute() outside execution boundary    `<…plan>.execute()` / execute_async(), outside the allowed
+//       files and outside any `with explicit_execution_authority…`
+//   step compile() reads ctx.A     `ctx.A` in a function named compile, A one of four context attributes
+//   untyped LazyResult[T]          `LazyResult[T]` with T a bad type, in the typed-result directories
+// A file is read only if its text contains one of the linter's source triggers (the fact engine's gate): a file
+// whose only finding is `x._grammar_row_lazy()` gives none, since "_grammar_row_lazy" holds no trigger.
+//
+// How to read this file
+//   1. The tables: the linter's name sets, allowed files and path prefixes.
+//   2. lss_term / lss_solo: the linter's _call_chain, by its last name and by "is exactly the one name x".
+//   3. One rule per pattern, all into LSS.
+
+#include "python/names.rr"
+#include "python/ast.rr"      // def_frame, unparen
+
+// Source triggers (LAZY_SQL_SURFACE_EXTRACTOR.source_triggers): substrings of the file's text.
+.decl lss_trigger(v: symbol)
+lss_trigger("LazyResult"). lss_trigger("SyncSqlConnection"). lss_trigger("compile"). lss_trigger("execute").
+lss_trigger("execute_async"). lss_trigger("explicit_execution_authority"). lss_trigger("grammar_lazy").
+lss_trigger("legacy_async"). lss_trigger("legacy_sync").
+.decl lss_doc(d: number)
+lss_doc(d) :- source(d, sp), text(sp, s), lss_trigger(t), contains(t, s).
+// FORBIDDEN_CONNECTION_GRAMMAR_LAZY_METHODS and FORBIDDEN_COMPILE_CONTEXT_ATTRS.
+.decl grammar_lazy(v: symbol)
+grammar_lazy("_grammar_effect_lazy"). grammar_lazy("_grammar_row_lazy"). grammar_lazy("_grammar_rows_lazy").
+grammar_lazy("_grammar_value_lazy").
+.decl ctx_attr(v: symbol)
+ctx_attr("branch_id"). ctx_attr("materialized_pipeline"). ctx_attr("txn"). ctx_attr("sql_connection").
+// ALLOWED_PLAN_EXECUTE_FILES: the execution boundary's own files (paths from the repository root).
+.decl plan_exec_file(p: symbol)
+plan_exec_file("impl/common/l2070_server_plan/base_server_plan.py").
+plan_exec_file("impl/common/l2070_server_plan/plan_helpers.py").
+plan_exec_file("impl/common/l5150_fts_polyfill/searcher/sql_helpers.py").
+plan_exec_file("impl/common/l5200_sql_query/_read_ops.py").
+plan_exec_file("impl/common/l5200_sql_query/_write_ops.py").
+plan_exec_file("impl/doltdb/query.py"). plan_exec_file("l7000_versioned_schema/versioned_connection.py").
+plan_exec_file("l7800_versioned_merge/merge.py"). plan_exec_file("l9750_graphql/executor.py").
+plan_exec_file("l9900_auto_api/sparql_router.py"). plan_exec_file("l2050_transaction/single_intent_execution.py").
+plan_exec_file("l2050_transaction/legacy_wrappers.py"). plan_exec_file("l2070_batching/plan_flush_operation.py").
+// TYPED_LAZY_RESULT_REL_PREFIXES: where LazyResult[…] must name a real row type.
+.decl typed_prefix(p: symbol)
+typed_prefix("impl/common/l2070_server_plan/"). typed_prefix("impl/common/l2200_sql_dialect/").
+typed_prefix("impl/sqlite/"). typed_prefix("impl/postgres/"). typed_prefix("impl/mariadb/").
+typed_prefix("impl/doltdb/"). typed_prefix("l7000_versioned_schema/"). typed_prefix("l7200_versioned_transactions/").
+typed_prefix("l7800_versioned_merge/"). typed_prefix("l9750_graphql/"). typed_prefix("l9900_auto_api/").
+
+// lss_term(e, x): the last name of e's call chain (_call_chain(e)[-1]): an identifier, an attribute's name, or,
+// through a call, its function's. `factory().operation_plan` gives "operation_plan"; `xs[0]` has none.
+.decl lss_term(e: node, x: symbol)
+lss_term(e, x) :- kind(e, "identifier"), text(e, x).
+lss_term(e, x) :- kind(e, "attribute"), field(e, "attribute", a), text(a, x).
+lss_term(e, x) :- kind(e, "call"), field(e, "function", f), lss_term(f, x).
+lss_term(e, x) :- kind(e, "parenthesized_expression"), unparen(e, m), lss_term(m, x).
+// lss_solo(e, x): e's chain is exactly (x,): the name x, called any number of times, or `….x` on something with
+// no chain. `explicit_execution_authority()` and the bare name qualify; `module.explicit_execution_authority()`
+// does not.
+.decl lss_solo(e: node, x: symbol)
+lss_solo(e, x) :- kind(e, "identifier"), text(e, x).
+lss_solo(e, x) :- kind(e, "attribute"), field(e, "object", o), !lss_term(o, _), field(e, "attribute", a), text(a, x).
+lss_solo(e, x) :- kind(e, "call"), field(e, "function", f), lss_solo(f, x).
+lss_solo(e, x) :- kind(e, "parenthesized_expression"), unparen(e, m), lss_solo(m, x).
+// authority(w): a `with` (or `async with`) one of whose items is explicit_execution_authority. Every node below
+// it is exempt, its own items and nested defs included: the linter counts open blocks, not frames.
+.decl authority(w: node)
+authority(w) :- kind(w, "with_statement"), child(w, cl, _), kind(cl, "with_clause"), child(cl, it, _),
+    field(it, "value", v), (lss_solo(v, "explicit_execution_authority") ;
+    kind(v, "as_pattern"), child(v, e, 0), lss_solo(e, "explicit_execution_authority")).
+.decl authorised(c: node)
+authorised(c) :- kind(c, "call"), within(c, w), authority(w).
+
+.violation LSS(at: node, c: symbol) code {c} "{c}"
+
+LSS(c, cat("connection grammar lazy terminal call: ", x)) :- lss_doc(d), docof(c, d), kind(c, "call"),
+    field(c, "function", f), kind(f, "attribute"), field(f, "attribute", a), text(a, x), grammar_lazy(x).
+
+// The innermost class around the def, however many functions lie between (the linter's class stack).
+LSS(f, cat("SyncSqlConnection defines forbidden grammar terminal: ", x)) :- lss_doc(d), docof(f, d),
+    kind(f, "function_definition"), def_name(f, x), grammar_lazy(x),
+    nearest(f, k, "class_definition"), def_name(k, "SyncSqlConnection").
+
+// The receiver's last name, lowercased and stripped of underscores, is plan, plan_executor or ends in plan.
+LSS(c, cat("ServerPlan ", x, "() outside execution boundary")) :- lss_doc(d), docof(c, d), kind(c, "call"),
+    field(c, "function", f), field(f, "attribute", a), text(a, x), (x = "execute" ; x = "execute_async"),
+    field(f, "object", o), lss_term(o, t), match("(?i)_*(.*plan|plan_executor)_*", t),
+    doc(d, path, _), !plan_exec_file(path), !authorised(c).
+
+// The innermost def is named compile; a nested def or a lambda's own def frame decides. Decorators and defaults
+// belong to the def (def_frame).
+LSS(n, cat("step compile() reads ctx.", x)) :- lss_doc(d), docof(n, d), kind(n, "attribute"),
+    field(n, "object", o), kind(o, "identifier"), text(o, "ctx"), field(n, "attribute", a), text(a, x),
+    ctx_attr(x), def_frame(n, f), def_name(f, "compile").
+
+// The slice must print (ast.unparse) as one of the bad types; lss_bad recognises them by shape, so spacing and
+// parentheses do not matter, and a string "object" or a tuple slice is not one.
+LSS(s, cat("untyped LazyResult[", r, "]")) :- lss_doc(d), docof(s, d), doc(d, path, _), typed_prefix(p),
+    prefix(p, path), lss_sub(s, h, x), kind(h, "identifier"), text(h, "LazyResult"), lss_bad(x, r).
+// lss_sub(s, h, a): s is `h[a]` with one argument. In expressions it is a subscript; in annotations tree-sitter
+// parses it as a generic_type, with each argument in a `type` wrapper.
+.decl lss_sub(s: node, h: node, a: node)
+lss_sub(s, h, a) :- kind(s, "subscript"), field(s, "value", h), count : { field(s, "subscript", _) } = 1,
+    field(s, "subscript", a0), lss_strip(a0, a).
+lss_sub(s, h, a) :- kind(s, "generic_type"), child(s, h, 0), child(s, tp, 1), kind(tp, "type_parameter"),
+    count : { child(tp, _, _) } = 1, child(tp, a0, 0), lss_strip(a0, a).
+// lss_strip(e, m): e without its parentheses and `type` wrappers.
+.decl lss_strip(e: node, m: node)
+lss_strip(e, m) :- unparen(e, m), !kind(m, "type").
+lss_strip(e, m) :- unparen(e, t), kind(t, "type"), child(t, x, 0), lss_strip(x, m).
+.decl lss_bad(e: node, r: symbol)
+lss_bad(e, "None") :- kind(e, "none").
+lss_bad(e, x) :- kind(e, "identifier"), text(e, x), (x = "object" ; x = "DatabaseRow").
+lss_bad(e, "DatabaseRow | None") :- kind(e, "binary_operator"), op(e, "|"), field(e, "left", l0), lss_strip(l0, l),
+    lss_bad(l, "DatabaseRow"), field(e, "right", r0), lss_strip(r0, r), lss_bad(r, "None").
+lss_bad(e, "list[DatabaseRow]") :- lss_sub(e, h, x), kind(h, "identifier"), text(h, "list"),
+    lss_bad(x, "DatabaseRow").

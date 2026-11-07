@@ -1,0 +1,17 @@
+.policy "ruff-sim210-if-expr-with-true-false" revision 2
+.description "Use bool() on the condition instead of a conditional expression that yields True when it holds and False otherwise."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM210 (flake8-simplify): `True if c else False`, the literals as written. Ruff's fix is unsafe
+// (`bool(c)`, or `c` itself when it is a comparison, which may not return a bool); none here.
+//   y = True if x else False       ← SIM210: y = bool(x)
+//   y = True if x else None        not reported
+#include "python/ruff.rr"
+//   unparen(e, m)
+
+.violation SIM210(at: node) code "SIM210" "Use `bool(...)` instead of `True if ... else False`"
+    suppress ruff "SIM210"
+SIM210(e) :- kind(e, "conditional_expression"), child(e, b, 0), unparen(b, t), kind(t, "true"), child(e, o, 2),
+    unparen(o, f), kind(f, "false").

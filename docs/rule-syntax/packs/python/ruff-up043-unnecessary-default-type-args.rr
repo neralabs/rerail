@@ -1,0 +1,26 @@
+.policy "ruff-up043-unnecessary-default-type-args" revision 2
+.description "Omit the trailing None type arguments from Generator and AsyncGenerator annotations; they are the defaults since Python 3.13."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP043 (pyupgrade): trailing `None` arguments of Generator and AsyncGenerator (from typing,
+// typing_extensions or collections.abc). PEP 696 gave their send and return types the default None in
+// Python 3.13, so `Generator[int, None, None]` is `Generator[int]`. Reported from a 3.13 target, and in stubs
+// at any target (`from __future__ import annotations` is not enough: type checkers read the arguments).
+//   def f() -> Generator[int, None, None]: ...     ← UP043 at the subscript (3.13+)
+//   def f() -> Generator[int, int, None]: ...      ← UP043: the return type can go
+//   def f() -> Generator[int, None, int]: ...      not reported: the last argument is not None
+//   async def f() -> AsyncGenerator[int, None]: ...← UP043
+#include "python/upgrade-typing.rr"
+//   sub_of(s, q), type_arg(s, i, a), up_type_nargs(s, k)   (python/upgrade-typing); targets(m), stub_file(d)
+
+.violation UP043(at: node) code "UP043"
+    "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults from Python 3.13 on."
+    suppress ruff "UP043"
+UP043(s) :- sub_of(s, q), split_dot(q, m, x), generator_module(m), arity(x, k), up_type_nargs(s, k), k > 1,
+    type_arg(s, k - 1, a), kind(a, "none"), (targets(13) ; docof(s, d), stub_file(d)).
+.decl arity(x: symbol, k: number)  // the most arguments; all but the first default to None
+arity("Generator", 2). arity("Generator", 3). arity("AsyncGenerator", 2).
+.decl generator_module(m: symbol)
+generator_module("typing"). generator_module("typing_extensions"). generator_module("collections.abc").

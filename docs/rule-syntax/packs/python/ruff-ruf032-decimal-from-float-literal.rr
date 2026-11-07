@@ -1,0 +1,22 @@
+.policy "ruff-ruf032-decimal-from-float-literal" revision 2
+.description "Pass Decimal a string instead of a float literal; a float is already rounded, so the decimal value is not the one written."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF032: `decimal.Decimal(1.1)`, a float literal (signed with `+` and `-` any number of times), which is
+// rounded to binary before Decimal sees it: Decimal(0.1) is 0.1000000000000000055511151231257827….
+//   Decimal(10.0)         ← RUF032  `Decimal("10.0")`
+//   Decimal(-+4.0)        ← RUF032
+//   Decimal("10.0")       not reported
+//   Decimal(~4.0)         not reported: not a signed literal
+#include "python/ruff.rr"
+
+.violation RUF032(at: node) code "RUF032"
+    "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
+    suppress ruff "RUF032"
+RUF032(a) :- call_q(c, "decimal.Decimal"), ruff_arg(c, 0, a), signed_float(a).
+.decl signed_float(e: node)
+signed_float(e) :- unparen(e, m), kind(m, "float"), text(m, t), !match("[\\s\\S]*[jJ]", t).
+signed_float(e) :- unparen(e, m), kind(m, "unary_operator"), (op(m, "-") ; op(m, "+")), field(m, "argument", a),
+    signed_float(a).

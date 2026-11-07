@@ -1,0 +1,34 @@
+// lib/data-layer/pub-lines.rr: a file's lines as Python's str.splitlines() numbers them. Many data-layer scripts
+// read a file with `enumerate(text.splitlines(), start=1)` and report the line number. core's src_line splits
+// only at \n, \r\n and \r, as tokenizers do; splitlines() also splits at \v, \f, \x1c, \x1d, \x1e, \x85,
+// U+2028 and U+2029. On a file without those (nearly all), py_line is src_line.
+//
+// Interface
+//   py_line(d, n, s)     line n of document d, from 1, has text s, as splitlines() gives it
+//   py_line_sep(s)       s holds one of the extra separators (a test on a src_line's text)
+//
+// Example: "a b\nc\n" gives py_line(d, 1, "a"), py_line(d, 2, "b"), py_line(d, 3, "c").
+// One difference: a file whose last line ends in an extra separator and no \n ("a ") gets one more, empty,
+// line here; splitlines() drops it. An empty line holds no text to test.
+
+// The separators splitlines() adds to src_line's, as a regex class.
+// pyl_extra(d, l, k): physical line l holds k of them.
+.decl pyl_extra(d: number, l: number, k: number)
+pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), py_line_sep(s),
+    k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
+.decl py_line_sep(s: symbol)
+py_line_sep(s) :- src_line(_, _, sp), text(sp, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s).
+
+// pyl_rest(d, l, j, r): r is physical line l from just after its j-th extra separator to its end.
+.decl pyl_rest(d: number, l: number, j: number, r: symbol)
+pyl_rest(d, l, 0, s) :- src_line(d, l, sp), text(sp, s).
+pyl_rest(d, l, j + 1, a) :- pyl_rest(d, l, j, r), py_line_sep(r),
+    match("[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*)", r).
+
+// Line n is physical line l, shifted by every extra separator on earlier lines and by j on its own.
+.decl py_line(d: number, n: number, s: symbol)
+py_line(d, n, s) :- pyl_rest(d, l, 0, s), !py_line_sep(s), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off.
+py_line(d, n, h) :- pyl_rest(d, l, j, r), py_line_sep(r),
+    match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r),
+    off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off + j.
+py_line(d, n, r) :- pyl_rest(d, l, j, r), j > 0, !py_line_sep(r), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off + j.

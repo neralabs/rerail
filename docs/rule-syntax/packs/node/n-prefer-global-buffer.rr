@@ -1,0 +1,18 @@
+.policy "n-prefer-global-buffer" revision 5
+.description "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/buffer: use the global Buffer, not the buffer module's. Option "always" (the
+// default) reports each use of the module's Buffer; "never" reports each use of the global:
+//   const { Buffer } = require("buffer")     import { Buffer } from "node:buffer"     require("buffer").Buffer
+//   export * from "buffer"                   reported (the export re-exports Buffer)
+//   "never":  Buffer.from(x)  globalThis.Buffer                                          reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("Buffer", "buffer", "Buffer").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/buffer" "{msg}"
+    suppress eslint "n/prefer-global/buffer"
+prefer_global(n, m) :- prefer_global_use(n, m).

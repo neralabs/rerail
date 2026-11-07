@@ -1,0 +1,17 @@
+.policy "ruff-g201-logging-exc-info" revision 2
+.description "Use the exception logging method instead of error with exc_info inside exception handlers; it logs the same traceback at ERROR level."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G201 (flake8-logging-format): `error(…, exc_info=True)` (or `exc_info=sys.exc_info()`) inside an
+// exception handler. `exception(…)` logs the same traceback at the same level. Reported at the method name.
+//   except: logging.error("Hello", exc_info=True)              ← G201
+//   except: logging.error("Hello", exc_info=False)             not reported
+//   logging.error("Hello", exc_info=sys.exc_info())             not reported: no handler around it
+#include "python/logging.rr"
+
+.violation G201(at: node) code "G201"
+    "Call `exception(...)` instead and drop `exc_info`: in an except block it logs the same traceback at ERROR level. Leave it if this object is not a standard logger."
+    suppress ruff "G201"
+G201(at) :- log_call(c, "error", at, _), exc_info_set(c, _), log_in_handler(c).

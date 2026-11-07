@@ -1,0 +1,20 @@
+.policy "ruff-ann204-missing-return-type-special-method" revision 2
+.description "Annotate the return type of special dunder methods; the annotation documents what they return and lets a type checker verify it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN204 (flake8-annotations): a dunder method (`__init__`, `__str__`, …) with no return annotation.
+// A dunder decorated @classmethod or @staticmethod gets ANN206 or ANN205 instead. The implementation after an
+// @overload is not checked. Ruff's option mypy-init-return is not supported (its default, false, is what this
+// rule does).
+//   class C:
+//       def __init__(self): ...      ← ANN204
+//       def __str__(self): ...       ← ANN204
+//   def __dunder__(): ...            not reported here: not a method (ANN202)
+#include "python/annotations.rr"
+
+.violation ANN204(at: node, name: symbol) code "ANN204"
+    "Add a return type annotation to `{name}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
+    suppress ruff "ANN204"
+ANN204(nm, x) :- ann_missing_return(f, "ANN204"), field(f, "name", nm), text(nm, x).

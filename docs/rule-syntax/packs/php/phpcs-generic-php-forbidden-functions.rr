@@ -1,0 +1,19 @@
+.policy "phpcs-generic-php-forbidden-functions" revision 2
+.description "Use count() instead of its alias sizeof(), and don't call delete(); stick to the canonical PHP functions."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/names.rr"
+//   php_call_written(c, x)   c is written as x(…) or \x(…), x lowercase
+
+// PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions (code Found), with its default list: sizeof (use count) and
+// delete (use unset). It reads tokens, so a call counts as written, whatever namespace it is in:
+//   sizeof($a);   \sizeof($a);   sizeof /* c */ ($a);       reported, at the name
+//   \my\ns\sizeof($a);   $o->sizeof($a);   A::delete($f);   not reported: not the global function
+//   function delete() {}   new SizeOf();                    not reported: not a call
+.violation forbidden(at: node, x: symbol) code "Generic.PHP.ForbiddenFunctions"
+    "The use of function {x}() is forbidden: replace sizeof() with count(), or delete() with unset() or unlink(), whichever was meant."
+    suppress phpcs "Generic.PHP.ForbiddenFunctions.Found"
+forbidden(c, x) :- php_call_written(c, x), (x = "sizeof" ; x = "delete").

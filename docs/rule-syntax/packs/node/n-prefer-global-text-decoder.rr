@@ -1,0 +1,18 @@
+.policy "n-prefer-global-text-decoder" revision 6
+.description "Use the global TextDecoder instead of importing or requiring it from the util module; it is always available in Node.js."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/text-decoder: use the global TextDecoder, not the util module's TextDecoder. Option "always" (the
+// default) reports each use of the module's TextDecoder; "never" reports each use of the global:
+//   const { TextDecoder } = require("util")     import { TextDecoder } from "node:util"     require("util").TextDecoder
+//   export * from "util"                  reported (the export re-exports TextDecoder)
+//   "never":  TextDecoder  globalThis.TextDecoder                                             reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("TextDecoder", "util", "TextDecoder").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/text-decoder" "{msg}"
+    suppress eslint "n/prefer-global/text-decoder"
+prefer_global(n, m) :- prefer_global_use(n, m).

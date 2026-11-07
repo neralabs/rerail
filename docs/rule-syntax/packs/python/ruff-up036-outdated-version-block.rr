@@ -1,0 +1,65 @@
+.policy "ruff-up036-outdated-version-block" revision 2
+.description "Remove version checks on sys.version_info that are always true or false for the minimum supported Python version; keep only the branch that runs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP036 (pyupgrade): an `if` or `elif` test `sys.version_info OP v` that the minimum Python version
+// settles. The left side may also be `sys.version_info[…]` or `.major`; only that order counts, with one
+// operator. Two cases, for a 3.10 minimum:
+//   - v an int: 2 or 3 with any operator (`sys.version_info[0] == 3`, `sys.version_info < 3`).
+//   - v a tuple of ints, under <, <=, > or >=. It settles the test when it is below the minimum: a 2.x,
+//     a bare `(3,)`, or a lower minor (`(3, 9)`, `(3, 9, 5)`). At the minimum itself, `(3, 10)` or `(3, 10, 0)`,
+//     it settles only `<` (always false) and `>=` (always true): `> (3, 10)` holds on 3.10.1.
+//   A tuple with an element over 255, or an int over 255 under == or !=, is an invalid specifier instead.
+// The minimum is the `python-minor-version` option (3.N), else the target version (python/upgrade).
+//   if sys.version_info >= (3, 9): ...       ← UP036 "outdated"
+//   if sys.version_info > (3, 10): ...       not reported
+//   if sys.version_info < (3, 300): ...      ← UP036 "invalid" at `(3, 300)`
+#include "python/upgrade.rr"
+//   py_if(i, test, body), sym_at(e, q), target_minor(m), unparen(e, m)
+
+.violation UP036(at: node) code "UP036"
+    "Remove this `sys.version_info` check: for the minimum supported Python version it is always true or always false, so keep only the branch that runs and delete the other."
+    suppress ruff "UP036"
+UP036(t) :- version_test(t, _, v), kind(v, "integer"), value(v, n), (n = "2" ; n = "3").
+UP036(t) :- version_test(t, op, v), ordering(op), !invalid(v), settled(v, how), (how = "below" ;
+    how = "at", (op = "<" ; op = ">=")).
+
+.violation UP036_invalid(at: node) code "UP036"
+    "Fix this version in the `sys.version_info` comparison: no Python version component exceeds 255, so this specifier is invalid; write the version you meant."
+    suppress ruff "UP036"
+UP036_invalid(v) :- version_test(_, op, v), ordering(op), invalid(v).
+UP036_invalid(v) :- version_test(_, op, v), (op = "==" ; op = "!="), kind(v, "integer"), value(v, x),
+    match("[0-9]+", x), to_number(x) > 255.
+
+// version_test(t, op, v): the test t of an if or elif is `L op v`, L `sys.version_info`, a subscript of it or its
+// `.major`; v without parentheses.
+.decl version_test(t: node, op: symbol, v: node)
+version_test(t, op, v) :- py_if(_, t0, _), unparen(t0, t), cmp_pair(t, 0, op, l, r), !cmp_pair(t, 1, _, _, _),
+    unparen(l, l1), version_info(l1), unparen(r, v).
+.decl version_info(e: node)
+version_info(e) :- sym_at(e, "sys.version_info").
+version_info(e) :- sym_at(e, "sys.version_info.major").
+version_info(e) :- kind(e, "subscript"), field(e, "value", o), sym_at(o, "sys.version_info").
+.decl ordering(op: symbol)
+ordering("<"). ordering("<="). ordering(">"). ordering(">=").
+// part(v, i, n): element i of tuple v is the int n. int_tuple(v, k): v is a tuple of k ints and nothing else.
+.decl part(v: node, i: number, n: number)
+part(v, i, to_number(x)) :- kind(v, "tuple"), child(v, e, i), unparen(e, e1), kind(e1, "integer"), value(e1, x),
+    match("[0-9]+", x).
+.decl int_tuple(v: node, k: number)
+int_tuple(v, k) :- kind(v, "tuple"), k = count : { child(v, e, _), !kind(e, "comment") }, k = count : { part(v, _, _) },
+    k > 0.
+.decl invalid(v: node)
+invalid(v) :- int_tuple(v, _), part(v, _, n), n > 255.
+// settled(v, how): tuple v is "below" the minimum 3.m, or "at" it.
+.decl settled(v: node, how: symbol)
+settled(v, "below") :- int_tuple(v, _), part(v, 0, n), n < 3.
+settled(v, "below") :- int_tuple(v, 1), part(v, 0, 3).
+settled(v, "below") :- int_tuple(v, k), k > 1, part(v, 0, 3), part(v, 1, n), minimum(m), n < m.
+settled(v, "at") :- int_tuple(v, 2), part(v, 0, 3), part(v, 1, m), minimum(m).
+settled(v, "at") :- int_tuple(v, 3), part(v, 0, 3), part(v, 1, m), minimum(m), part(v, 2, 0).
+.decl minimum(m: number)
+minimum(to_number(m)) :- option("python-minor-version", m).
+minimum(m) :- !option("python-minor-version", _), target_minor(m).

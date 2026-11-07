@@ -1,0 +1,29 @@
+.policy "bandit-b103-set-bad-file-permissions" revision 2
+.description "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B103 (set_bad_file_permissions): a call whose name contains "chmod", with exactly two positional
+// arguments, the second an integer literal with any of the bits S_IWOTH, S_IWGRP, S_IXGRP, S_IXOTH (0o033) set.
+// Bandit rates world-write HIGH and the rest MEDIUM; the two messages follow that split.
+//   os.chmod(path, 0o777)                B103, world-writable
+//   os.chmod(path, 0o750)                B103, group-executable
+//   os.chmod(path, 0o600)                not reported
+//   os.chmod(path, mode=0o777)           not reported: Bandit reads positional arguments only
+//   os.chmod(path, stat.S_IRWXO)         not reported: a name, not an integer literal
+
+#include "python/security.rr"   // call_leaf, arg_count, pos_arg, literal
+
+.violation B103(at: node, msg: symbol) code "B103" "{msg}"
+    suppress nosec "B103"
+// Bits by arithmetic: (m / b) % 2 = 1 is "m has bit b". World-write is b = 2; the others 1, 8 and 16.
+B103(c, "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories.") :-
+    chmod_mode(c, m), (m / 2) % 2 = 1.
+B103(c, "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it.") :-
+    chmod_mode(c, m), (m / 2) % 2 = 0, (m % 2 = 1 ; (m / 8) % 2 = 1 ; (m / 16) % 2 = 1).
+// chmod_mode(c, m): c is a chmod-like call with two positional arguments, the second an integer whose low
+// bits are m's. The bits tested are below 32, and 10^5 is a multiple of 32, so the last five decimal digits
+// decide them: a mode of any size converts safely (0xFFFFFFFFFFFFFFFFFFFF is B103).
+.decl chmod_mode(c: node, m: number)
+chmod_mode(c, to_number(low)) :- call_leaf(c, x), contains("chmod", x), arg_count(c, 2), pos_arg(c, 1, a),
+    literal(a, "int", v), (strlen(v) <= 5, low = v ; strlen(v) > 5, low = @slice(v, strlen(v) - 5, strlen(v))).

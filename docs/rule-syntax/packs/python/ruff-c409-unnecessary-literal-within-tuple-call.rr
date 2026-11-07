@@ -1,0 +1,22 @@
+.policy "ruff-c409-unnecessary-literal-within-tuple-call" revision 2
+.description "Write a tuple literal instead of passing a list or tuple literal to the tuple constructor; the extra call only adds work."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C409 (flake8-comprehensions): `tuple(…)` of the builtin tuple, whose one argument is a list or
+// tuple display. Its fix is unsafe; none here.
+//   tuple([1, 2])      ← C409: (1, 2)
+//   tuple((1, 2))      ← C409: (1, 2), the call returns the same tuple
+//   tuple([x for x in y])      not reported
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), list_like(e, k)
+
+.violation C409(at: node, id: symbol, msg: symbol) code "C409" "{msg}"
+    suppress ruff "C409"
+C409(c, "list-literal-within-tuple-call",
+    "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`.") :-
+    c4_call(c, "tuple"), c4_only(c, a), list_like(a, "list").
+C409(c, "tuple-literal-within-tuple-call",
+    "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple.") :-
+    c4_call(c, "tuple"), c4_only(c, a), list_like(a, "tuple").

@@ -1,0 +1,22 @@
+.policy "tlint-spaces-around-blade-render-content" revision 3
+.description "Write single-line Blade echoes, escaped or raw, with exactly one space inside each delimiter."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_echo(e)   e is {{ … }} or {!! … !!}
+
+// tlint's SpacesAroundBladeRenderContent: a one-line echo needs exactly one space inside each delimiter.
+//   {{$a}}   {{ $a}}   {{  $a }}   {!!$html!!}             reported, at the echo
+//   {{ $a }}   {!! $html !!}                              not reported
+//   @{{ $a }}   an echo over several lines                 not reported: escaped (Vue's syntax), or multi-line
+.violation render_spaces(at: node) code "SpacesAroundBladeRenderContent"
+    "Spaces around blade rendered content: `{{1 + 1}}` -> `{{ 1 + 1 }}`"
+render_spaces(e) :- blade_echo(e), text(e, t), match("\\{\\{[^\\n]*\\}\\}|\\{!![^\\n]*!!\\}", t),
+    !match("\\{\\{ [^ \\n]([^\\n]*[^ \\n])? \\}\\}", t), !match("\\{!! [^ \\n]([^\\n]*[^ \\n])? !!\\}", t),
+    !after_at(e).
+// after_at never holds in the engine's tree: Forte reads `@{{ … }}` as an escape, never an echo (blade/syntax.rr).
+// It is kept for parity with the JSON rule, which tests the text before the echo, and costs one join.
+.decl after_at(e: node)  // the node right before e ends with `@`
+after_at(e) :- blade_echo(e), next_sibling(p, e), text(p, pt), match("[\\s\\S]*@", pt).
