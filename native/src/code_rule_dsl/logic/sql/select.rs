@@ -110,8 +110,10 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "parsed" => &["s", "grammar", "root"],
         // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
         "literal_json" => &["n", "v"],
-        // core.rr's @unparse(n) (`facts::vtab::syntax::cpython`).
-        "cpython_unparse" => &["n", "s"],
+        // core.rr's @unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
+        "cpython_unparse" | "cpython_ast_dump" => &["n", "s"],
+        "dump_sha256" => &["n", "h"],
+        "body_sha256" | "signature_sha256" => &["f", "h"],
         "intval" => &["n", "v"],
         "op_at" => &["n", "i", "s"],
         "op" => &["n", "s"],

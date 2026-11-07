@@ -8,11 +8,18 @@
 //!                                    whose class n's kind is (W's `KINDS`); no row where either raises
 //! cpython_unparse(n, s)              core.rr's @unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
 //!                                    alias) at n's span whose class n's kind is
+//! cpython_ast_dump(n, s)             core.rr's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
+//!                                    `ast` node at n's span whose class n's kind is
+//! dump_sha256(n, h)                  W's `dump_sha256`: sha256 of that dump (lowercase hex)
+//! body_sha256(f, h)                  W's `body_sha256` of def f: of `ast.dump(ast.Module(body=f.body, type_ignores=[]))`
+//! signature_sha256(f, h)             W's `signature_sha256` of def f: of `dump(args)|dump(returns) or "None"|
+//!                                    dump(ast.Tuple(elts=type_params))`
 //! ```
 //!
 //! core.rr's `syntax_error(d, l, msg)` lowers to `cpython_syntax_error` where a program does not declare a
 //! `syntax_error` of its own (`rr::lower::core`); the tape's `syntax_error(d)` (an ERROR or MISSING node) is apart.
-//! `@unparse(n)` lowers to a variable `cpython_unparse` binds (`logic::plan::corpus`'s `cpython_functors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
+//! `@unparse(n)` and `@ast_dump(n)` lower to a variable `cpython_unparse` and `cpython_ast_dump` bind
+//! (`logic::plan::corpus`'s `cpython_functors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
 //! a def, a class or an assignment that tree-sitter ends later than CPython by its start). Rows hold string indexes,
 //! as `Batch::build`'s do.
 
@@ -26,6 +33,12 @@ pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
 pub(crate) const LITERAL_JSON: &str = "literal_json";
 /// core.rr's `@unparse(n)` (`cpython::unparse`).
 pub(crate) const UNPARSE: &str = "cpython_unparse";
+/// core.rr's `@ast_dump(n)` (`cpython::dump`).
+pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
+/// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
+pub(crate) const DUMP_SHA256: &str = "dump_sha256";
+pub(crate) const BODY_SHA256: &str = "body_sha256";
+pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
 
 #[derive(Default)]
 pub(super) struct CPython {
@@ -34,16 +47,22 @@ pub(super) struct CPython {
     want: Want,
     syntax_errors: Vec<[i64; 3]>,
     literals: Vec<[i64; 2]>,
-    /// Rows of `UNPARSE`.
-    printed: [Vec<[i64; 2]>; 1],
+    /// Rows of `UNPARSE`, `AST_DUMP`, `DUMP_SHA256`, `BODY_SHA256`, `SIGNATURE_SHA256`.
+    printed: [Vec<[i64; 2]>; 5],
 }
 
 /// The printed relations, in `CPython::printed`'s order.
-const PRINTED: [&str; 1] = [UNPARSE];
+const PRINTED: [&str; 5] = [UNPARSE, AST_DUMP, DUMP_SHA256, BODY_SHA256, SIGNATURE_SHA256];
 
 impl CPython {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
-        let want = Want { unparse: reads.contains(UNPARSE) };
+        let want = Want {
+            unparse: reads.contains(UNPARSE),
+            dump: reads.contains(AST_DUMP),
+            dump_sha256: reads.contains(DUMP_SHA256),
+            body_sha256: reads.contains(BODY_SHA256),
+            signature_sha256: reads.contains(SIGNATURE_SHA256),
+        };
         Self { syntax_error: reads.contains(SYNTAX_ERROR), literal_json: reads.contains(LITERAL_JSON), want, ..Self::default() }
     }
 
@@ -106,7 +125,7 @@ impl CPython {
             }
             let Some(node) = node else { continue };
             let n = p.global(local as u32);
-            let fields = [&node.unparse];
+            let fields = [&node.unparse, &node.dump, &node.dump_sha256, &node.body_sha256, &node.signature_sha256];
             for (rows, field) in self.printed.iter_mut().zip(fields) {
                 if let Some(text) = field {
                     rows.push([n, string(text) as i64]);
@@ -128,7 +147,7 @@ impl CPython {
             self.literals.iter().for_each(|&[n, v]| r.push(&[n, atom(v)]));
             out.push((LITERAL_JSON, r));
         }
-        let wanted = [self.want.unparse];
+        let wanted = [self.want.unparse, self.want.dump, self.want.dump_sha256, self.want.body_sha256, self.want.signature_sha256];
         for ((rel, rows), wanted) in PRINTED.into_iter().zip(&self.printed).zip(wanted) {
             if wanted {
                 let mut r = super::Relation::new(columns(rel));
@@ -141,6 +160,10 @@ impl CPython {
 }
 
 /// A printed relation's columns.
-pub(crate) fn columns(_rel: &str) -> &'static [&'static str] {
-    &["n", "s"]
+pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
+    match rel {
+        UNPARSE | AST_DUMP => &["n", "s"],
+        DUMP_SHA256 => &["n", "h"],
+        _ => &["f", "h"],
+    }
 }

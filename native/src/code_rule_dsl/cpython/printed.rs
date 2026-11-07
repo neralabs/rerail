@@ -1,19 +1,25 @@
 //! W's pythonAst fields that print a node, per located node of a file's CPython tree (`ast::module`): `unparse`
-//! (`ast.unparse`, `unparse`). W's worker found a node by its span and the classes its tree-sitter kind may be
-//! (`of_kind`, its `KINDS`).
+//! (`ast.unparse`, `unparse`), `dump` (`ast.dump(node, include_attributes=False)`, `dump`), and the hashes of dumps
+//! W's worker gave: `dump_sha256`, and a def's `body_sha256` and `signature_sha256`. W's worker found a node by its
+//! span and the classes its tree-sitter kind may be (`of_kind`, its `KINDS`).
 
 use super::ast::{Node, module};
+use super::dump::Dump;
 use super::unparse::{is_expr, unparse};
 
 /// The fields wanted.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Want {
     pub(crate) unparse: bool,
+    pub(crate) dump: bool,
+    pub(crate) dump_sha256: bool,
+    pub(crate) body_sha256: bool,
+    pub(crate) signature_sha256: bool,
 }
 
 impl Want {
     fn any(self) -> bool {
-        self.unparse
+        self.unparse || self.dump || self.dump_sha256 || self.body_sha256 || self.signature_sha256
     }
 }
 
@@ -24,6 +30,10 @@ pub(crate) struct Printed {
     pub(crate) end: u32,
     pub(crate) class: &'static str,
     pub(crate) unparse: Option<String>,
+    pub(crate) dump: Option<String>,
+    pub(crate) dump_sha256: Option<String>,
+    pub(crate) body_sha256: Option<String>,
+    pub(crate) signature_sha256: Option<String>,
 }
 
 /// Each located node of `source`'s tree, in preorder (outer before inner), but an f-string's own pieces (its
@@ -34,17 +44,24 @@ pub(crate) fn printed(source: &str, want: Want) -> Vec<Printed> {
         return Vec::new();
     }
     let Some(root) = module(source) else { return Vec::new() };
+    let dump = (want.dump || want.dump_sha256 || want.body_sha256 || want.signature_sha256).then(|| Dump::of(&root));
     let mut located = Vec::new();
     walk(&root, &mut located);
     located
         .into_iter()
         .filter_map(|n| {
             let (start, end) = n.span?;
+            let def = matches!(n.class, "FunctionDef" | "AsyncFunctionDef");
+            let d = dump.as_ref();
             Some(Printed {
                 start,
                 end,
                 class: n.class,
                 unparse: if want.unparse { unparse(n) } else { None },
+                dump: if want.dump { d.and_then(|d| d.get(n)).map(str::to_owned) } else { None },
+                dump_sha256: if want.dump_sha256 { d.and_then(|d| d.sha256(n)) } else { None },
+                body_sha256: if want.body_sha256 && def { d.and_then(|d| d.body_sha256(n)) } else { None },
+                signature_sha256: if want.signature_sha256 && def { d.and_then(|d| d.signature_sha256(n)) } else { None },
             })
         })
         .collect()

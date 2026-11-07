@@ -111,6 +111,9 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl parsed(s: node, grammar: symbol, root: node)
                                                   // grammar "annotation": root is the tree of string annotation s
 .decl literal_json(n: node, v: symbol)            // W's pythonAst literal_json: json.dumps(ast.literal_eval(n))
+.decl dump_sha256(n: node, h: symbol)             // W's dump_sha256: sha256 of ast.dump(n), @sha256(@ast_dump(n))
+.decl body_sha256(f: node, h: symbol)             // W's body_sha256 of def f
+.decl signature_sha256(f: node, h: symbol)        // W's signature_sha256 of def f
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
 // built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
@@ -228,6 +231,14 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   where either raises: a name, a call, an f-string, bytes, a set, a complex number, `...`, an unhashable or
   non-scalar key, str and number keys together. A dict's later equal key keeps the first key and the later value
   (`{1: 'a', True: 'b'}` is `{"1":"b"}`).
+- `dump_sha256(n, h)`, `body_sha256(f, h)` and `signature_sha256(f, h)` (`facts::vtab::syntax::cpython`,
+  `cpython::dump`) are W's pythonAst fields of those names: the sha256 (lowercase hex of the UTF-8) of CPython
+  3.13's `ast.dump(…, include_attributes=False)` of the `ast` node at n's span that n's kind is read as (W's
+  `KINDS`, as for `literal_json`, with any node class: a `call` a Call, an `import_from_statement` an ImportFrom, a
+  `function_definition` a FunctionDef or AsyncFunctionDef, which tree-sitter may end later than CPython: the one
+  starting where it does and ending within it); of a def's `ast.Module(body=f.body, type_ignores=[])`; and of
+  `dump(f.args) + "|" + (dump(f.returns) or "None") + "|" + dump(ast.Tuple(elts=f.type_params))`. `dump_sha256(n,
+  h)` is `h = @sha256(@ast_dump(n))` without making the text.
 
 The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
 
@@ -274,8 +285,8 @@ unset(x)              x is -1, which no node, span or document is
 
 `child` has no comments, so `next_sibling` and `precedes` step over them, where W's `follows` and `precedes` see
 them (`prev_token`, `token` do). A relation nothing derives and the runner does not bind fails the run naming it;
-`str_part` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the corpus runner does not
-run, `list_len` a pattern's list variable.
+`str_part` needs CPython (core.rr's isolated `ast.parse` worker), which the corpus runner does not run, `list_len` a
+pattern's list variable.
 
 `#include "python/ast.rr"` (with names, imports and flow; `#include "python/calls.rr"` beside it) works in a file
 here: the libraries' `.output`s are theirs, not the file's, and their fixes (`=> …`) are not run. What reads
@@ -293,6 +304,7 @@ engine cannot step through runs them in SQL. Beyond Soufflé's `cat`, `strlen`, 
 @rx_replace(s: symbol, re: symbol, by: symbol): symbol           // every match of re in s replaced by by
 @nfkc(s: symbol): symbol                          // s under Unicode NFKC: CPython's identifier normalization
 @unparse(n: node): symbol                         // CPython 3.13's ast.unparse of n
+@ast_dump(n: node): symbol                        // CPython 3.13's ast.dump(n, include_attributes=False)
 @py_repr(s: symbol): symbol                       // CPython's repr of the str s
 s = join x by (k, …) sep "," : { … }              // an ordered string aggregate
 s = sum x : { … }                                 // a number aggregate
@@ -325,6 +337,9 @@ s = sum x : { … }                                 // a number aggregate
   the node has no value, and it may not be called in an aggregate's atom. `@py_repr(s)` is `repr(s)` of a str (`'`
   quotes unless s has `'` and no `"`, non-printable characters escaped as `str.isprintable` decides): W's
   `repr_unparse` is `@py_repr(@unparse(n))`.
+- `@ast_dump(n)` (`cpython::dump`) is CPython 3.13's `ast.dump(node, include_attributes=False)` of the `ast` node
+  found as for `dump_sha256` (any class, statements too): `f()` is `Call(func=Name(id='f', ctx=Load()))`. It writes
+  n's whole subtree, so a key is `dump_sha256`. It lowers as `@unparse` does, to `cpython_ast_dump(n, s)`.
 - `join x by (k, …) sep "sep" : { … }` (`by k` for one key; `by` and `sep` optional, `""` the default separator) is
   the body's distinct `(k, …, x)` rows' `x`, ordered by `k, …` then `x`, numbers by value and symbols by code point
   (as W's `ORDER BY` over text and Python's `sorted()` order them), joined by `sep`; `""` over no rows. A number `x`
