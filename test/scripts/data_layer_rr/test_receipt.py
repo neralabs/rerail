@@ -4,15 +4,26 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from enum import Enum
 
 directory = Path(__file__).resolve().parents[3] / 'scripts/dsl/data_layer_rr'
 sys.path.insert(0, str(directory))
+from dto import canonical
 spec = importlib.util.spec_from_file_location('rr_contract_receipt', directory / 'receipt.py')
 receipt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receipt)
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_enum_dto_keeps_the_class_name_member_and_value(self):
+        class Category(Enum):
+            POSITIVE = 'the source category'
+        value = canonical(Category.POSITIVE)
+        self.assertEqual('enum', value['kind'])
+        self.assertTrue(value['type'].endswith('.Category'))
+        self.assertEqual('POSITIVE', value['name'])
+        self.assertEqual('the source category', value['value'])
+
     def setUp(self):
         self.identity = 'scripts/tests/test_lint_a.py::test_positive'
         source_result = ['the complete original positive return']
