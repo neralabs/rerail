@@ -14,6 +14,7 @@ const assets = new Map([
   ['/evaluation.mjs', ['evaluation.mjs', 'text/javascript']],
   ['/rr-source.mjs', ['rr-source.mjs', 'text/javascript']],
   ['/source-browser.mjs', ['source-browser.mjs', 'text/javascript']],
+  ['/waves.mjs', ['waves.mjs', 'text/javascript']],
 ]);
 const server = createServer(async (req, res) => {
   try {

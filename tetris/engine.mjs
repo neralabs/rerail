@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomInt } from 'node:crypto';
+import { partitionWaves } from './waves.mjs';
 
 export const rules = await readFile(new URL('./game.rr', import.meta.url), 'utf8');
 export const fact = (name, row) => `${name}(${row.map(value => JSON.stringify(value)).join(', ')}).`;
@@ -45,6 +46,8 @@ export function preparePlayback(evaluation) {
     event.display_outcome = event.changes.added.length || event.changes.removed.length ? 'changed' :
       event.cache_hit ? 'cached' : event.candidates.length ? 'unchanged' : 'no_match';
   }
+  evaluation.waves = partitionWaves(evaluation.rules, evaluation.events);
+  evaluation.wave_basis = 'Dependency barriers in recorded native execution order';
   return evaluation;
 }
 

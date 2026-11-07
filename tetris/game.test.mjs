@@ -4,6 +4,7 @@ import { Engine, Game, rules, fact, diffFacts, preparePlayback } from './engine.
 import { sourceSpan } from './evaluation.mjs';
 import { sourceTokens } from './rr-source.mjs';
 import { sourceCatalog } from './sources.mjs';
+import { partitionWaves, waveAtPosition, frontierState } from './waves.mjs';
 
 const engine = new Engine();
 after(() => engine.close());
@@ -391,4 +392,53 @@ test('source catalog exposes the running game and pinned .rr engine files only',
   assert.equal((await catalog.source('game.rr')).text, rules);
   assert.match((await catalog.source('docs/rule-syntax/lib/core.rr')).text, /\.decl/);
   assert.equal(await catalog.source('../../.env'), null);
+});
+
+test('dependency waves preserve recorded order and separate dependent evaluations', () => {
+  const rules = [
+    { id: 0, head: 'a', reads: [{ relation: 'input', kind: 'positive' }] },
+    { id: 1, head: 'b', reads: [{ relation: 'a', kind: 'negative' }] },
+    { id: 2, head: 'c', reads: [{ relation: 'input', kind: 'positive' }] },
+    { id: 3, head: 'd', reads: [{ relation: 'c', kind: 'aggregate' }, { relation: 'b', kind: 'positive' }] },
+  ];
+  const events = rules.map(rule => ({ rule: rule.id, head: rule.head, changes: { added: [], removed: [] } }));
+  events[0].changes.added = [[1]];
+  events[2].changes.added = [[2]];
+  const waves = partitionWaves(rules, events);
+  assert.deepEqual(events.map(event => event.rule), [0, 1, 2, 3]);
+  assert.deepEqual(events.map(event => event.wave), [1, 2, 2, 3]);
+  assert.deepEqual(waves.map(wave => [wave.start, wave.end]), [[0, 1], [1, 3], [3, 4]]);
+  assert.deepEqual(waves[1].updated, ['c']);
+  assert.equal(waveAtPosition(waves, 0).id, 1);
+  assert.equal(waveAtPosition(waves, 2).id, 2);
+  assert.equal(waveAtPosition(waves, 3).id, 3);
+  assert.equal(waveAtPosition(waves, 4).id, 3);
+});
+
+test('frontier states distinguish initial facts, current updates, and earlier updates', () => {
+  assert.equal(frontierState(undefined, 1), 'unchanged');
+  assert.equal(frontierState(2, 2), 'current');
+  assert.equal(frontierState(1, 2), 'previous');
+  assert.deepEqual(partitionWaves([], []), []);
+  assert.equal(waveAtPosition([], 0), null);
+});
+
+test('native game waves cover every evaluation and contain no dependency on an earlier member', async () => {
+  const game = new Game(engine);
+  await game.dispatch('keypress', 'KeyR');
+  await game.setTracing(true);
+  const { trace: { evaluation } } = await game.dispatch('keypress', 'ArrowLeft');
+  assert.ok(evaluation.waves.length > 1);
+  assert.equal(evaluation.waves[0].start, 0);
+  assert.equal(evaluation.waves.at(-1).end, evaluation.events.length);
+  for (const [index, wave] of evaluation.waves.entries()) {
+    if (index) assert.equal(wave.start, evaluation.waves[index - 1].end);
+    const produced = new Set();
+    for (const event of evaluation.events.slice(wave.start, wave.end)) {
+      const rule = evaluation.rules.find(rule => rule.id === event.rule);
+      assert.equal(event.wave, wave.id);
+      assert.ok(rule.reads.every(read => !produced.has(read.relation)));
+      produced.add(event.head);
+    }
+  }
 });
