@@ -61,3 +61,11 @@ inherits = "dev"
 
 [profile.lab.package."*"]
 opt-level = 3
+
+# The browser build (native/wasm): optimised for size, built in parallel and without LTO, so an iteration takes
+# minutes rather than release's single-unit thin LTO (10 minutes for wasm32 on a loaded machine).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = false
+codegen-units = 16

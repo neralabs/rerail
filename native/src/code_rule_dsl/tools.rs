@@ -28,6 +28,13 @@ pub fn assemble(text: &str) -> Result<String, String> {
     Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
 
+/// A `.rr` file with `core.rr` and everything it includes, lowered and printed back as one program's text, which
+/// `logic` reads: a rule as written in the library (`#include "python/…"`) runs as the programs `logic` takes do.
+pub fn flatten(path: &std::path::Path) -> Result<String, String> {
+    let program = super::logic::rr::parse_file(path).map_err(|error| error.to_string())?;
+    super::logic::rr::print(&program).map_err(|error| error.to_string())
+}
+
 /// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
 /// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's

@@ -64,6 +64,9 @@ fn logic(args: &[String]) -> Result<String, String> {
             .collect();
         files.sort();
         files.iter().map(|path| read(&path.to_string_lossy())).collect::<Result<Vec<_>, _>>()?
+    } else if read(program)?.lines().any(|line| line.trim_start().starts_with("#include")) {
+        // A rule as written in the library: its includes and `core.rr` resolved, lowered to one program.
+        vec![rerail_engine::tools::flatten(Path::new(program.as_str()))?]
     } else {
         vec![read(program)?]
     };

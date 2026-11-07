@@ -23,7 +23,9 @@ It also links that libc (newer than the copy Rust bundles) and libc++.
 
 The outputs land in `out` as for a native run (`<relation>.csv`, `store.sqlite`). `exceptions` is for libc++'s
 unwinding; `unknown-imports-trap` stubs the Node addon's `napi_*` imports, which a CLI run never calls.
-`RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory.
+`RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory. A rule as written in the
+library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and name it in `RERAIL_RR_LIB`
+(`--dir docs/rule-syntax/lib::/lib --env RERAIL_RR_LIB=/lib`); `logic` flattens its includes (`tools::flatten`).
 
 ## What differs from a native build
 
