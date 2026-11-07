@@ -108,16 +108,34 @@ JSON in two tiers, on the 774 data-layer files: 771 tapes equal tree-sitter's, a
 tree-sitter. Two of those nest deeper than 13; tree-sitter finds an error in the third. None
 differ.
 
-| JSON tier 1 | one tier | two tiers | stage 1's target |
-|---|---:|---:|---:|
-| operations | 483 | 65 | |
-| state bits | 104 | 4 | 4 |
-| loop instructions | 1939 | 483 | 150 |
-| loop stack loads and stores | 164 | 6 | 0 |
+| JSON tier 1 | one tier | two tiers | one structural class | stage 1's target |
+|---|---:|---:|---:|---:|
+| byte classes | 16 | 16 | 5 | 5 |
+| operations | 483 | 65 | 41 | |
+| state bits | 104 | 4 | 4 | 4 |
+| loop instructions | 1939 | 483 | 253 | 150 |
+| loop stack loads and stores | 164 | 6 | 0 | 0 |
 
-An unterminated string is no longer a per-byte error. Its `string` node has no end, so the
-writer refuses the file, as simdjson finds it from stage 1's last carry.
+- **An unterminated string** is no longer a per-byte error. Its `string` node has no end, so
+  the writer refuses the file, as simdjson finds it from stage 1's last carry.
+- **One class for the six structural bytes**, as simdjson's `op`. A token's kind is its
+  keyword's, read from its text when it starts. So `after`, `parent`, `start '{'` and
+  `end '}'` name kinds, not rows. A token row whose keywords are `required` has kind 0: a
+  token that is no keyword sends the file to tree-sitter.
 
-The loop is still byte classes: 16 of them, at 4 compares and a movemask each (64 `cmeq`, 64
-`addp`). simdjson makes about 5. It has one class for all six structural bytes and reads each
-token's kind from its first byte in stage 2. That is the next step.
+  ```
+  token punctuation = start code & op
+  keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
+  node object start '{' end '}' nested max 13
+  ```
+- **Escapes are checked per token**, the same way: `escape_sequence`'s keywords are
+  tree-sitter-json's nine, `required`.
+- **Bytes no token holds** are in a word: `word = code & ~ws & ~op`. A comment's `/` or a
+  non-ASCII byte outside a string fails the number check, and the file goes to tree-sitter.
+  That replaces three per-byte rules and their classes.
+
+The loop's remaining excess over stage 1 is the code Cranelift makes around the program, not
+the program itself:
+- the `within` masks: about 45 instructions per block, all ones on every block but the last;
+- an address `add` per output store and per load;
+- the movemask weights, rebuilt each block.

@@ -57,6 +57,8 @@ pub struct MachineDef {
 pub enum NodeStart {
     /// A mask, or a node kind's name (its starts).
     At(Expr),
+    /// Where a token of a quoted kind starts: a kind a keyword gives (tier 2).
+    Kind(String),
     FirstToken,
 }
 
@@ -64,6 +66,8 @@ pub enum NodeStart {
 #[derive(Clone, Debug)]
 pub enum NodeEnd {
     At(Expr),
+    /// Where a token of a quoted kind ends (tier 2).
+    Kind(String),
     /// With its child that has this field.
     With(String),
     LastToken,
@@ -690,6 +694,8 @@ impl P {
                 let start = if self.is_kw("first") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
                     self.i += 2;
                     NodeStart::FirstToken
+                } else if matches!(self.peek(), Some(Tok::Str(_))) {
+                    NodeStart::Kind(self.kind()?)
                 } else {
                     NodeStart::At(self.expr()?)
                 };
@@ -700,6 +706,8 @@ impl P {
                 } else if self.is_kw("last") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
                     self.i += 2;
                     NodeEnd::LastToken
+                } else if matches!(self.peek(), Some(Tok::Str(_))) {
+                    NodeEnd::Kind(self.kind()?)
                 } else {
                     NodeEnd::At(self.expr()?)
                 };
@@ -900,6 +908,7 @@ tree json {
   check number is json_number
   supertype _value of object number
   supertype _value of string = not start of pair
+  node array start '[' end ']' nested
 }
 "#;
         let stmts = parse(src).expect("parses");
@@ -915,5 +924,6 @@ tree json {
         assert!(matches!(&body[6], Stmt::Check { kind, validator } if kind == "number" && validator == "json_number"));
         assert!(matches!(&body[7], Stmt::Fact { expr: FactWhen::Always, kinds, .. } if kinds.len() == 2));
         assert!(matches!(&body[8], Stmt::Fact { expr: FactWhen::NotStartOf(k), .. } if k == "pair"));
+        assert!(matches!(&body[9], Stmt::Node { start: NodeStart::Kind(s), end: NodeEnd::Kind(e), .. } if s == "[" && e == "]"));
     }
 }

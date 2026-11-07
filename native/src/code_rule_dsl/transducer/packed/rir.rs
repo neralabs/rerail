@@ -247,11 +247,11 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-/// Row numbers `rA rB …`, as many as follow.
-fn row_list(line: &mut Line<'_>) -> Result<Vec<u16>, String> {
+/// Kind ids `kA kB …`, as many as follow.
+fn kind_list(line: &mut Line<'_>) -> Result<Vec<u16>, String> {
     let mut out = Vec::new();
-    while line.peek_word().is_some_and(|w| w.starts_with('r') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1) {
-        out.push(line.number("r")?);
+    while line.peek_word().is_some_and(|w| w.starts_with('k') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1) {
+        out.push(line.number("k")?);
     }
     Ok(out)
 }
@@ -295,14 +295,16 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
 /// ```
 pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     use super::block::{Fact, RowEnd, RowStart};
-    let rows = |rs: &[u16]| rs.iter().map(|r| format!(" r{r}")).collect::<String>();
+    let kinds = |ks: &[u16]| ks.iter().map(|k| format!(" k{k}")).collect::<String>();
     for (r, row) in block.nodes.iter().enumerate() {
         let start = match row.start {
             RowStart::At(v) => format!("%{v}"),
+            RowStart::Kind(k) => format!("k{k}"),
             RowStart::FirstToken => "first".to_owned(),
         };
         let end = match row.end {
             RowEnd::At(v) => format!("%{v}"),
+            RowEnd::Kind(k) => format!("k{k}"),
             RowEnd::With(f) => format!("with {f}"),
             RowEnd::LastToken => "last".to_owned(),
         };
@@ -314,10 +316,10 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
             let _ = write!(more, " nested {d}");
         }
         if !row.after.is_empty() {
-            let _ = write!(more, " after{}", rows(&row.after));
+            let _ = write!(more, " after{}", kinds(&row.after));
         }
         if let Some(p) = row.parent {
-            let _ = write!(more, " parent r{p}");
+            let _ = write!(more, " parent k{p}");
         }
         if let Some((k, v)) = row.check {
             let _ = write!(more, " check {k} {}", v.name());
@@ -333,7 +335,7 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
             Fact::At(v) => format!("%{v}"),
             Fact::StartOf(r) => format!("start r{r}"),
             Fact::NotStartOf(r) => format!("not r{r}"),
-            Fact::After(rs) => format!("after{}", rows(rs)),
+            Fact::After(ks) => format!("after{}", kinds(ks)),
             Fact::Always => "always".to_owned(),
         };
         let _ = writeln!(out, "  block {at} code {} {what} {} when {when}", c.node, c.id);
@@ -817,12 +819,14 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 want(line, "start")?;
                 let start = match line.word()?.as_str() {
                     "first" => RowStart::FirstToken,
+                    v if v.starts_with('k') => RowStart::Kind(v[1..].parse().map_err(|_| format!("a bad start `{v}`"))?),
                     v => RowStart::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad start `{v}`"))?),
                 };
                 want(line, "end")?;
                 let end = match line.word()?.as_str() {
                     "last" => RowEnd::LastToken,
                     "with" => RowEnd::With(line.number("")?),
+                    v if v.starts_with('k') => RowEnd::Kind(v[1..].parse().map_err(|_| format!("a bad end `{v}`"))?),
                     v => RowEnd::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad end `{v}`"))?),
                 };
                 let mut row = block::NodeRow { kind, start, end, extra: false, leaf: false, nested: None, after: Vec::new(), parent: None, check: None };
@@ -831,8 +835,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                         "leaf" => row.leaf = true,
                         "extra" => row.extra = true,
                         "nested" => row.nested = Some(line.number("")?),
-                        "after" => row.after = row_list(line)?,
-                        "parent" => row.parent = Some(line.number("r")?),
+                        "after" => row.after = kind_list(line)?,
+                        "parent" => row.parent = Some(line.number("k")?),
                         "check" => {
                             let k = line.number("")?;
                             let name = line.word()?;
@@ -859,7 +863,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 let when = match line.word()?.as_str() {
                     "start" => Fact::StartOf(line.number("r")?),
                     "not" => Fact::NotStartOf(line.number("r")?),
-                    "after" => Fact::After(row_list(line)?),
+                    "after" => Fact::After(kind_list(line)?),
                     "always" => Fact::Always,
                     v => Fact::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad fact `{v}`"))?),
                 };

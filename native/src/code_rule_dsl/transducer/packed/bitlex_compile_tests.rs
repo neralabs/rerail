@@ -238,6 +238,18 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     let prepared = Executors::new(&p);
     let block = &p.block_programs()[0];
     let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
+    // A token row's tokens: its kind's and its keywords' kinds (the evaluator retypes them).
+    let members = |row: &str| -> Vec<String> {
+        let mut out = vec![row.to_owned()];
+        for s in &stmts {
+            if let ::bitlex::syntax::Stmt::Keywords { kind, words, .. } = s
+                && kind == row
+            {
+                out.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
+            }
+        }
+        out
+    };
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -248,7 +260,8 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let tree = out.tree.as_ref().expect("a tree section");
         let token_mask = |kind: &str, last: bool| {
             let mut w = vec![0u64; n.div_ceil(64)];
-            for t in out.tokens.iter().filter(|t| t.kind == kind) {
+            let kinds = members(kind);
+            for t in out.tokens.iter().filter(|t| kinds.contains(&t.kind)) {
                 let i = if last { t.end - 1 } else { t.start };
                 w[i / 64] |= 1 << (i % 64);
             }
@@ -318,7 +331,9 @@ fn json_msl_is_one_kernel() {
             let msl = generate_with(&native, width, strategy);
             assert_eq!(msl.matches("kernel void ").count(), 1);
             let lines = msl.lines().count();
-            assert!(lines < 12 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+            // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
+            // instruction.
+            assert!(lines < 200 + 10 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
         }
     }
 }
@@ -652,17 +667,17 @@ fn json_state_is_bits() {
 const JSON_STATE_BITS: usize = 4;
 
 /// A token without `through` is its start byte alone, so its last byte is its start: no carry
-/// finds it. JSON has seven: `{ } [ ] , :` and `"`.
+/// finds it. JSON has two: the structural bytes (one row, kinds by text) and `"`.
 #[test]
 fn one_byte_tokens_end_at_their_start() {
     let program = json_program();
     let p = &program.block_programs()[0];
     let same = p.nodes.iter().filter(|n| matches!((n.start, n.end), (block::RowStart::At(s), block::RowEnd::At(e)) if s == e)).count();
-    assert_eq!(same, 7, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
+    assert_eq!(same, 2, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
 }
 
 /// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 65;
+const JSON_OPS: usize = 49;
 const JSON_CARRIED_WORDS: usize = 4;
 
 #[test]
@@ -692,9 +707,10 @@ fn json_loop_keeps_values_in_registers() {
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
 /// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
-/// 0049) lowered them to 483 and 6; the target is stage 1's 150 and 0.
-const JSON_LOOP: usize = 483;
-const JSON_LOOP_STACK: usize = 6;
+/// 0049) lowered them to 483 and 6, and one structural class to 343 and 0; the target is
+/// stage 1's 150.
+const JSON_LOOP: usize = 343;
+const JSON_LOOP_STACK: usize = 0;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
 //

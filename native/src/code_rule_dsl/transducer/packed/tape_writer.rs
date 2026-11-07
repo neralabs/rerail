@@ -39,7 +39,7 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
         .iter()
         .map(|r| match r.start {
             RowStart::At(v) => output(v).map(Some),
-            RowStart::FirstToken => Ok(None),
+            RowStart::Kind(_) | RowStart::FirstToken => Ok(None),
         })
         .collect::<Result<_, _>>()?;
     let ends: Vec<Option<&[u64]>> = rows
@@ -60,14 +60,45 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
     for c in &program.codes {
         codes[usize::from(c.node)].push(c);
     }
+    let mut keywords: Vec<Vec<&super::block::KeywordRow>> = vec![Vec::new(); rows.len()];
+    for k in &program.keywords {
+        keywords[usize::from(k.node)].push(k);
+    }
+    // The first bit of `m` at or after byte `at`.
+    let next_bit = |m: &[u64], at: usize| -> Option<usize> {
+        let mut w = at / 64;
+        let mut bits = word(m, w) & (u64::MAX << (at % 64));
+        while bits == 0 {
+            w += 1;
+            if w >= words {
+                return None;
+            }
+            bits = word(m, w);
+        }
+        Some(w * 64 + bits.trailing_zeros() as usize)
+    };
+    // A token's kind, at its start: its keyword's, by its text to its last byte, or its row's.
+    // A row of kind 0 holds keywords only.
+    let kind_at = |r: usize, at: usize| -> Result<u16, String> {
+        if keywords[r].is_empty() {
+            return Ok(rows[r].kind);
+        }
+        let last = ends[r].and_then(|m| next_bit(m, at)).ok_or_else(|| format!("the token at byte {at} has no end"))?;
+        let text = &source[at..=last.min(len - 1)];
+        match keywords[r].iter().find(|k| k.word == text) {
+            Some(k) => Ok(k.kind),
+            None if rows[r].kind != 0 => Ok(rows[r].kind),
+            None => Err(format!("{:?} at byte {at} is no keyword of its token", String::from_utf8_lossy(text))),
+        }
+    };
 
     let mut nodes: Vec<WrittenNode> = Vec::new();
     let mut supertypes: Vec<(u32, u16)> = Vec::new();
     let mut stack: Vec<Open> = Vec::new();
     let mut depth = 0usize;
     let mut first_open = false;
-    // The previous token's row, and the byte after the last token.
-    let mut prev_leaf: Option<u16> = None;
+    // The previous token's kind, and the byte after the last token.
+    let mut prev_kind: Option<u16> = None;
     let mut leaf_end = 0usize;
     for w in 0..words {
         let mut events = 0u64;
@@ -79,9 +110,22 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
             events &= events - 1;
             let at = w * 64 + j as usize;
             let bit = 1u64 << j;
-            let starts_here = |r: usize| starts[r].is_some_and(|m| word(m, w) & bit != 0);
+            let mask_here = |r: usize| starts[r].is_some_and(|m| word(m, w) & bit != 0);
+            // The token that starts here, and its kind.
+            let mut leaf_row = None;
+            for r in (0..rows.len()).filter(|&r| rows[r].leaf && mask_here(r)) {
+                if leaf_row.is_some() {
+                    return Err(format!("two tokens start at byte {at}"));
+                }
+                leaf_row = Some(r);
+            }
+            let leaf_kind = leaf_row.map(|r| kind_at(r, at)).transpose()?;
+            let starts_here = |r: usize| match rows[r].start {
+                RowStart::Kind(k) => leaf_kind == Some(k),
+                _ => mask_here(r),
+            };
             // The first token opens the rows that start with it, before anything at its byte.
-            if !first_open && (0..rows.len()).any(|r| rows[r].leaf && starts_here(r)) {
+            if !first_open && leaf_row.is_some() {
                 first_open = true;
                 if !skipped(0, at) {
                     return Err(format!("byte {} is in no token", (0..at).find(|&i| !skipped(i, i + 1)).unwrap_or(0)));
@@ -92,24 +136,17 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
             }
             // Starts, outermost first: the rows' order is their rank.
             let mut here: Vec<u16> = Vec::new();
-            let mut leaf_here = None;
+            if leaf_row.is_some() && !skipped(leaf_end, at) {
+                return Err(format!("byte {leaf_end} is in no token"));
+            }
             for (r, row) in rows.iter().enumerate() {
                 if !starts_here(r) {
                     continue;
                 }
-                if row.leaf {
-                    if leaf_here.is_some() {
-                        return Err(format!("two tokens start at byte {at}"));
-                    }
-                    if !skipped(leaf_end, at) {
-                        return Err(format!("byte {leaf_end} is in no token"));
-                    }
-                    leaf_here = Some(r as u16);
-                }
-                if !row.after.is_empty() && !prev_leaf.is_some_and(|p| row.after.contains(&p)) {
+                if !row.after.is_empty() && !prev_kind.is_some_and(|p| row.after.contains(&p)) {
                     continue;
                 }
-                if row.parent.is_some_and(|p| stack.last().is_none_or(|o| o.row != p)) {
+                if row.parent.is_some_and(|p| stack.last().is_none_or(|o| nodes[o.ord as usize].kind != p)) {
                     continue;
                 }
                 if row.nested.is_some() {
@@ -122,31 +159,38 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
                     Fact::At(v) => output(*v).is_ok_and(|m| word(m, w) & bit != 0),
                     Fact::StartOf(s) => here.contains(s),
                     Fact::NotStartOf(s) => !here.contains(s),
-                    Fact::After(rs) => prev_leaf.is_some_and(|p| rs.contains(&p)),
+                    Fact::After(ks) => prev_kind.is_some_and(|p| ks.contains(&p)),
                     Fact::Always => true,
                 };
                 let held: Vec<&super::block::CodeRow> = codes[r].iter().filter(holds).copied().collect();
                 let field = held.iter().find(|c| c.field).map_or(0, |c| c.id);
                 let classes: Vec<u16> = held.iter().filter(|c| !c.field).map(|c| c.id).collect();
-                open(&mut nodes, &mut stack, &mut supertypes, r, row.kind, at, field, &classes);
+                let kind = if row.leaf { leaf_kind.unwrap_or(row.kind) } else { row.kind };
+                open(&mut nodes, &mut stack, &mut supertypes, r, kind, at, field, &classes);
                 here.push(r as u16);
             }
-            if leaf_here.is_some() {
-                prev_leaf = leaf_here;
+            if leaf_kind.is_some() {
+                prev_kind = leaf_kind;
             }
             // Ends: close the innermost open node while its row ends here, and each node that
             // ends with the child just closed.
-            let ends_here = |r: usize| ends[r].is_some_and(|m| word(m, w) & bit != 0);
+            // A kind's end is where a token of the kind ends: the token closed here first.
+            let ends_here = |r: usize, ended: Option<u16>| match rows[r].end {
+                RowEnd::Kind(k) => ended == Some(k),
+                _ => ends[r].is_some_and(|m| word(m, w) & bit != 0),
+            };
             let mut closed: Vec<u16> = Vec::new();
+            let mut ended: Option<u16> = None;
             while let Some(&top) = stack.last() {
                 let r = usize::from(top.row);
-                if !ends_here(r) || closed.contains(&top.row) && rows[r].nested.is_some() {
+                if !ends_here(r, ended) || closed.contains(&top.row) && rows[r].nested.is_some() {
                     break;
                 }
                 let mut node = close(&mut nodes, &mut stack, program, source, top, at, &mut depth)?;
                 closed.push(top.row);
                 if rows[r].leaf {
                     leaf_end = at + 1;
+                    ended = Some(node.kind);
                 }
                 while let Some(&parent) = stack.last() {
                     match rows[usize::from(parent.row)].end {
@@ -157,7 +201,7 @@ pub(in crate::code_rule_dsl) fn write(program: &BlockProgram, outputs: &[Vec<u64
             }
             // A nested row's end that closed nothing: a stray or misnested close.
             for (r, row) in rows.iter().enumerate() {
-                if row.nested.is_some() && ends_here(r) && !closed.contains(&(r as u16)) {
+                if row.nested.is_some() && ends_here(r, ended) && !closed.contains(&(r as u16)) {
                     return Err(format!("a close of row {r} at byte {at} matches no open node"));
                 }
             }
@@ -189,8 +233,7 @@ fn open(nodes: &mut Vec<WrittenNode>, stack: &mut Vec<Open>, supertypes: &mut Ve
     stack.push(Open { ord, row: r as u16 });
 }
 
-/// Close the innermost open node `top` at byte `at`: its end and size; a token's keyword and
-/// validator.
+/// Close the innermost open node `top` at byte `at`: its end and size; a token's validator.
 fn close(nodes: &mut [WrittenNode], stack: &mut Vec<Open>, program: &BlockProgram, source: &[u8], top: Open, at: usize, depth: &mut usize) -> Result<WrittenNode, String> {
     stack.pop();
     let row = &program.nodes[usize::from(top.row)];
@@ -204,9 +247,6 @@ fn close(nodes: &mut [WrittenNode], stack: &mut Vec<Open>, program: &BlockProgra
     node.extra = row.extra;
     if row.leaf {
         let text = &source[node.start as usize..node.end as usize];
-        if let Some(k) = program.keywords.iter().find(|k| k.node == top.row && k.word == text) {
-            node.kind = k.kind;
-        }
         if let Some((kind, v)) = row.check
             && node.kind == kind
             && !valid(v, text)

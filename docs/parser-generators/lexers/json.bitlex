@@ -30,19 +30,8 @@ class quote     = '"'
 class backslash = '\\'
 class ws        = ' ' '\t' '\n' '\r' 0x0b 0x0c
 class lf        = '\n'
-class lbrace    = '{'
-class rbrace    = '}'
-class lbracket  = '['
-class rbracket  = ']'
-class comma     = ','
-class colon     = ':'
-class slash     = '/'
-class star      = '*'
-class high      = 0x80..0xff
-# Bytes a number or a literal word may contain. Which word it is gets checked per token.
-class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
-# The letters that may follow a backslash in tree-sitter-json's escape_sequence.
-class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
+# The structural bytes: one class, as simdjson's. Which one a token is, tier 2 reads.
+class op        = '{' '}' '[' ']' ',' ':'
 
 # --- Strings: simdjson's stage 1 -----------------------------------------------------------------
 
@@ -61,35 +50,39 @@ mask content    = body & ~esc & ~esc_last
 # --- Outside strings -----------------------------------------------------------------------------
 
 mask code       = ~inside & ~closing
-mask word       = code & scalar
+# Any other byte outside a string is in a word: a number or a literal, checked per token. A byte
+# no JSON word holds (a '/', a non-ASCII byte) fails the check, and the file goes to tree-sitter.
+mask word       = code & ~ws & ~op
 
 # --- Tokens: each one's first and last byte ------------------------------------------------------
 
 token '"'             = start q
 token string_content  = start starts(content) last lasts(content)
 token escape_sequence = start esc last esc_last
-token '{'             = start code & lbrace
-token '}'             = start code & rbrace
-token '['             = start code & lbracket
-token ']'             = start code & rbracket
-token ','             = start code & comma
-token ':'             = start code & colon
-# A run of scalar bytes is one token: a number, unless its text is a keyword (tier 2).
+# tree-sitter-json's escapes: any other is an error, and the file goes to tree-sitter.
+keywords escape_sequence {
+  "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
+  "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
+  "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
+} required
+# One token per structural byte; its kind is its text (tier 2).
+token punctuation     = start code & op
+keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
+# A run of word bytes is one token: a number, unless its text is a keyword (tier 2).
 token number          = start starts(word) last lasts(word)
+keywords number { "true" -> true  "false" -> false  "null" -> null }
 
 skip code & ws
 
 # --- Errors a byte shows by itself: the file goes to tree-sitter ---------------------------------
 
 error "newline in a string"        when body & lf
-error "invalid escape"             when esc_last & ~escapable
-error "non-ASCII outside a string" when code & high
 
 # A string open at the end of the file is tier 2's: its node has no end, as simdjson's stage 1
 # finds it from the final carry, not per byte.
 
-# Valid JSON that this file does not lex goes to tree-sitter.
-escape "a comment"                 when code & (slash | star)
+# A comment (valid for tree-sitter-json, an extra) is in a word: its check fails, and the file
+# goes to tree-sitter.
 
 # --- The tree: tier 2, once per token (13-tape-on-the-gpu.md) -------------------------------------
 #
@@ -109,11 +102,10 @@ tree json {
   # '{' or a ',' inside an object. The pair ends with its value.
   node pair     start string when after ('{' | ',') and parent object end with value
   # Nesting on the writer's stack: 4 of the 28,470 data-layer files nest past 13.
-  node object   start code & lbrace   end code & rbrace   nested max 13
-  node array    start code & lbracket end code & rbracket nested max 13
+  node object   start '{'     end '}'     nested max 13
+  node array    start '['     end ']'     nested max 13
   node string   start opening         end closing
 
-  keywords number { "true" -> true  "false" -> false  "null" -> null }
   check number is json_number
 
   field key   of string = start of pair

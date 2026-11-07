@@ -280,6 +280,8 @@ impl ClassTable {
 /// writer runs once per token. Its place in `BlockProgram::nodes` is its rank.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct NodeRow {
+    /// Its grammar id. A token row's kind may be 0: each of its tokens is a keyword, which gives
+    /// its kind, and one that is not goes to tree-sitter.
     pub(super) kind: u16,
     pub(super) start: RowStart,
     pub(super) end: RowEnd,
@@ -291,26 +293,30 @@ pub(in crate::code_rule_dsl) struct NodeRow {
     /// On the writer's stack of nested nodes, at most this deep: an end closes the innermost
     /// open nested node, which must be of this row.
     pub(super) nested: Option<u8>,
-    /// A node starts only where the previous token's row is one of these (none: anywhere).
+    /// A node starts only where the previous token's kind is one of these (none: anywhere).
+    /// Kinds, not rows: a token's kind is its keyword's, known at its start.
     pub(super) after: Vec<u16>,
-    /// A node starts only where the innermost open node is of this row.
+    /// A node starts only where the innermost open node is of this kind.
     pub(super) parent: Option<u16>,
     /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
     pub(super) check: Option<(u16, Validator)>,
 }
 
-/// Where a row's nodes start: at each bit of an output, or at the first token.
+/// Where a row's nodes start: at each bit of an output, where a token of a kind starts (its
+/// kind after its keywords), or at the first token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) enum RowStart {
     At(u16),
+    Kind(u16),
     FirstToken,
 }
 
-/// Where a row's node ends: at the first bit of an output at or after its start; with its child
-/// that has field `With`'s id; or with the last token.
+/// Where a row's node ends: at the first bit of an output at or after its start; where a token
+/// of a kind ends; with its child that has field `With`'s id; or with the last token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) enum RowEnd {
     At(u16),
+    Kind(u16),
     With(u16),
     LastToken,
 }
@@ -354,7 +360,7 @@ pub(in crate::code_rule_dsl) enum Fact {
     /// A node of this row starts at the same byte; or does not.
     StartOf(u16),
     NotStartOf(u16),
-    /// The previous token's row is one of these.
+    /// The previous token's kind is one of these.
     After(Vec<u16>),
     Always,
 }
@@ -437,18 +443,19 @@ impl BlockProgram {
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         let output = |v: u16| self.outputs.contains(&v);
         let row = |r: u16| usize::from(r) < self.nodes.len();
-        let nodes = self.nodes.iter().all(|r| {
+        let keyworded = |r: usize| self.keywords.iter().any(|k| usize::from(k.node) == r);
+        let nodes = self.nodes.iter().enumerate().all(|(i, r)| {
             !matches!(r.start, RowStart::At(v) if !output(v))
                 && !matches!(r.end, RowEnd::At(v) if !output(v))
-                && r.after.iter().all(|&a| row(a) && self.nodes[usize::from(a)].leaf)
-                && r.parent.is_none_or(row)
+                // A token's start and end are masks; a kind-0 row's tokens are all keywords.
+                && (!r.leaf || matches!((r.start, r.end), (RowStart::At(_), RowEnd::At(_))))
+                && (r.kind != 0 || r.leaf && keyworded(i))
         }) && self.codes.iter().all(|c| {
             row(c.node)
                 && match &c.when {
                     Fact::At(v) => output(*v),
                     Fact::StartOf(r) | Fact::NotStartOf(r) => row(*r),
-                    Fact::After(rs) => rs.iter().all(|&a| row(a) && self.nodes[usize::from(a)].leaf),
-                    Fact::Always => true,
+                    Fact::After(_) | Fact::Always => true,
                 }
         }) && self.keywords.iter().all(|k| row(k.node) && self.nodes[usize::from(k.node)].leaf && !k.word.is_empty() && k.word.len() <= 8)
             && self.skip.is_none_or(output);

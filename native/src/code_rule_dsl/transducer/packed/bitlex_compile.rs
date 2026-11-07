@@ -132,11 +132,14 @@ struct RowSpec {
 
 enum SpecStart {
     At(usize),
+    /// Where a token of a keyword's kind starts.
+    Kind(String),
     First,
 }
 
 enum SpecEnd {
     At(usize),
+    Kind(String),
     With(String),
     Last,
 }
@@ -175,6 +178,11 @@ fn kind_rows(specs: &[RowSpec], facts: &[(bool, String, Vec<String>, TreeFact)],
         }
     }
     Ok(out)
+}
+
+/// Whether a keyword gives kind `name`.
+fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], name: &str) -> bool {
+    keywords.iter().any(|(_, words, _)| words.iter().any(|(w, alias)| alias.as_deref().map_or(w.as_slice() == name.as_bytes(), |a| a == name)))
 }
 
 /// How a token ends: through a run of a mask (a `fill`), or at the first bit of its last-byte
@@ -288,14 +296,19 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 _ => Err(format!("`start {name}`: no mask, token or node kind of that name")),
             }
         };
+        // A kind a keyword gives: its tokens start and end where the writer reads their text.
+        let keyword_kind = |name: &str| is_keyword_kind(&low.keywords, name);
         for n in &declared {
             let start = match &n.start {
                 Ok(None) => SpecStart::First,
                 Ok(Some(v)) => SpecStart::At(push(&mut vals, format!("node {} start", n.kind), *v)),
+                Err(name) if keyword_kind(name) => SpecStart::Kind(name.clone()),
                 Err(name) => SpecStart::At(push(&mut vals, format!("node {} start", n.kind), start_of(name)?)),
             };
             let end = match (&n.end, n.end_mask) {
                 (NodeEnd::At(_), Some(m)) => SpecEnd::At(push(&mut vals, format!("node {} end", n.kind), m)),
+                (NodeEnd::Kind(k), _) if keyword_kind(k) => SpecEnd::Kind(k.clone()),
+                (NodeEnd::Kind(k), _) => return Err(format!("node {}: `end '{k}'` names no keyword's kind", n.kind)),
                 (NodeEnd::With(f), _) => SpecEnd::With(f.clone()),
                 _ => SpecEnd::Last,
             };
@@ -361,26 +374,34 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
         let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
-        let leaf_rows = |kinds: &[String]| -> Result<Vec<u16>, String> {
+        let keyword_kind = |name: &str| is_keyword_kind(&low.keywords, name);
+        // `after K`: a token's kind (its keyword's, if any), by grammar id.
+        let token_kinds = |kinds: &[String]| -> Result<Vec<u16>, String> {
             kinds
                 .iter()
-                .map(|k| specs.iter().position(|r| r.leaf && r.kind == *k).map(|r| r as u16).ok_or_else(|| format!("`after {k}`: no token of that kind")))
+                .map(|k| {
+                    if specs.iter().any(|r| r.leaf && r.kind == *k) || keyword_kind(k) { id(k) } else { Err(format!("`after {k}`: no token or keyword of that kind")) }
+                })
                 .collect()
         };
         let row_of = |k: &str| specs.iter().position(|r| r.kind == k).map(|r| r as u16).ok_or_else(|| format!("no node kind `{k}`"));
+        // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
+        let required: Vec<&String> = low.keywords.iter().filter(|k| k.2).map(|k| &k.0).collect();
         for spec in &specs {
             let (after, parent) = match &spec.when {
-                Some(c) => (leaf_rows(&c.after)?, c.parent.as_deref().map(row_of).transpose()?),
+                Some(c) => (token_kinds(&c.after)?, c.parent.as_deref().map(|p| row_of(p).and_then(|_| id(p))).transpose()?),
                 None => (Vec::new(), None),
             };
             low.program.nodes.push(NodeRow {
-                kind: id(&spec.kind)?,
-                start: match spec.start {
-                    SpecStart::At(v) => RowStart::At(at[v]),
+                kind: if spec.leaf && required.contains(&&spec.kind) { 0 } else { id(&spec.kind)? },
+                start: match &spec.start {
+                    SpecStart::At(v) => RowStart::At(at[*v]),
+                    SpecStart::Kind(k) => RowStart::Kind(id(k)?),
                     SpecStart::First => RowStart::FirstToken,
                 },
                 end: match &spec.end {
                     SpecEnd::At(v) => RowEnd::At(at[*v]),
+                    SpecEnd::Kind(k) => RowEnd::Kind(id(k)?),
                     SpecEnd::With(f) => RowEnd::With(field_id(f)?),
                     SpecEnd::Last => RowEnd::LastToken,
                 },
@@ -403,15 +424,12 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 FactSpec::At(w) => Fact::At(at[w]),
                 FactSpec::StartOf(k) => Fact::StartOf(row_of(&k)?),
                 FactSpec::NotStartOf(k) => Fact::NotStartOf(row_of(&k)?),
-                FactSpec::After(ks) => Fact::After(leaf_rows(&ks)?),
+                FactSpec::After(ks) => Fact::After(token_kinds(&ks)?),
                 FactSpec::Always => Fact::Always,
             };
             low.program.codes.push(CodeRow { node: row as u16, field, id: fid, when });
         }
-        for (kind, words, required) in low.keywords.clone() {
-            if required {
-                return Err(format!("keywords {kind}: with a tree section a token that is no keyword keeps its kind; drop `required` and check it (decision 0049)"));
-            }
+        for (kind, words, _) in low.keywords.clone() {
             let node = specs.iter().position(|r| r.leaf && r.kind == kind).ok_or_else(|| format!("keywords {kind}: no token of that kind"))? as u16;
             for (word, alias) in words {
                 let name = alias.unwrap_or_else(|| String::from_utf8_lossy(&word).into_owned());
@@ -477,6 +495,7 @@ impl Lowering {
                     let start = match start {
                         NodeStart::FirstToken => Ok(None),
                         // Another node kind's starts, resolved with the rows.
+                        NodeStart::Kind(k) => Err(k.clone()),
                         NodeStart::At(Expr::Name(n)) if !self.names.contains_key(n) && !self.classes.contains_key(n) => Err(n.clone()),
                         NodeStart::At(e) => Ok(Some(self.expr(e)?)),
                     };
