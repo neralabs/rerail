@@ -1246,6 +1246,9 @@ pub(super) fn encode_tape(
             }
             Err(tape::TemplateError::Encode(error)) => Some(Err(error)),
         }
+    } else if language == GrammarDialect::Rr {
+        // A `.rr` file: the rule engine's own parser (decision 0061).
+        tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
     } else {
         #[cfg(feature = "code-rule-profile")]
         let _native_owner = profile::NativeOwner::start();

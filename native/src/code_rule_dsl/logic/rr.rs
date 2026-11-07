@@ -14,8 +14,11 @@ mod check;
 mod lower;
 mod print;
 mod syntax;
+pub(in crate::code_rule_dsl) mod tape;
 mod translate;
 
+#[cfg(test)]
+mod tape_tests;
 #[cfg(test)]
 mod tests;
 
@@ -48,6 +51,48 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     let statements = syntax::Parser::new(src)?.statements()?;
     lower::lower(statements)
+}
+
+/// A `.rr` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments as extras, and an ERROR
+/// leaf for each statement that does not parse. Never fails: a file the engine refuses to run still has a tape.
+pub(in crate::code_rule_dsl) fn tape(src: &str) -> Vec<tape::Node> {
+    let mut parser = syntax::Parser::taped(src);
+    // A taped parse reads on past an error; what it could not read is in the tree.
+    let _ = parser.statements();
+    parser.into_tape().0
+}
+
+/// The first error a `.rr` file's parse gives, as running it would report it: its line and message
+/// (`syntax_error/3`). `None` when it parses.
+pub(in crate::code_rule_dsl) fn syntax_error(src: &str) -> Option<(usize, String)> {
+    let error = match syntax::Parser::new(src).and_then(|mut parser| parser.statements()) {
+        Ok(_) => return None,
+        Err(error) => error,
+    };
+    let mut parser = syntax::Parser::taped(src);
+    let _ = parser.statements();
+    let at = parser.into_tape().1.map_or(0, |(at, _)| at);
+    let message = match error {
+        Error::Syntax(message) => message,
+        other => format!("{other:?}"),
+    };
+    Some((syntax::line_of(src, at), message))
+}
+
+/// A `.rr` string literal's value, as the rule engine reads it (`"a\nb"` is `a`, newline, `b`); `None` for text
+/// that is no whole string literal.
+pub(in crate::code_rule_dsl) fn string_value(text: &str) -> Option<String> {
+    match syntax::tokens(text).ok()?.as_slice() {
+        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// A backtick literal's body, without its fences (and, for a fence of two or more, the one space inside each).
+pub(in crate::code_rule_dsl) fn code_body(text: &str) -> &str {
+    let n = text.bytes().take_while(|&b| b == b'`').count();
+    let body = text.get(n..text.len().saturating_sub(n)).unwrap_or("");
+    if n > 1 { body.strip_prefix(' ').unwrap_or(body).strip_suffix(' ').unwrap_or(body) } else { body }
 }
 
 /// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
