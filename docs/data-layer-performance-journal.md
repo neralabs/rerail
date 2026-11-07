@@ -8040,3 +8040,31 @@ The full library inventory unit test exceeded the fixed 115-second execution lim
 The first Vitest command also discovered obsolete test copies under `.rerail`. Discovery now excludes that workspace data. The authoring contract resides in Final shape's existing data-layer gate. The two gate tests pass there. No full repository cold execution was run.
 
 Evidence: [root adoption and focused acceptance](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-adoption.json.gz) and [original assertions with positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-direct-contracts.json.gz). The inventory remains 66 drafts and 34 absent translations. Full migration acceptance remains false. Continue ports against the root engine.
+
+
+## 2026-11-07 — Error-handling parity repair on Final shape
+
+This delivery uses the root Final shape engine; the sibling remains at `879486272`. No native engine code changed.
+
+TDD commits: `2d8d15478` adds source-derived edge cases and failing replay-partition tests; `4486a5e66` implements bounded native replay; `430773944` repairs the rule and its input transport.
+
+The first corpus had 101 API cases. Its unsharded native command exceeded 115 seconds after recording two mismatches. Three bounded red partitions then completed: 99 passes and two failures. Relative roots were incorrectly suppressed, and invalid UTF-8 was swallowed.
+
+The repaired rule determines file admission and read-error exposure in Datalog. The host supplies only file status, decoded text or the actual read exception, and reconstructs the public result. Read failures obey the source's supplied-text trigger, suffix, and test-path gates. Outside-root read failures happen before the source collector's path rejection and must still propagate. No source detector executes in native acceptance.
+
+| Contract | Result |
+| --- | --- |
+| Original source suite | Five cases, seven assertion sites, five native calls and complete API returns; no excluded cases, omitted calls, or semantic fallbacks |
+| Supplemental public APIs | All 110 pass across three verified partitions: 53 finding-positive, 55 clean, two decoding errors |
+| Configured reporter | All 97 pass, including 45 positives |
+| Original positive control | Disabled detector fails the original positive assertion |
+| Selective reporter controls | Disabling either log-reraise or transaction-commit detection independently fails parity |
+| Authoring checks | 46 Python tooling tests, two gate format tests, changed-rule reader all pass |
+
+Cases exercise direct handler adjacency, comments and continuations, `except*`, nested callback ordering, same-line duplicate findings, exact Unicode function names, parenthesized calls, async and class scopes, source gates, directory boundaries, invalid syntax, and long source. Annotation strings create no spurious commit findings.
+
+The broader structure gate is not green: 15 categories fail on Final shape `879486272`, on the pre-port branch `f853b52af`, and here. Snapshot checks use the checker's existing in-memory repository interface over committed Git blobs. They record additional fixture-location findings from the required gate layout and the repaired generator registration. Both the failures and the snapshot comparisons are retained in the receipt.
+
+The relocation had also removed LFS coverage from parity archives. A gate-local `.gitattributes` restores it; 67 compressed archives use LFS, with all 65 existing payloads verified byte-for-byte against the preceding commit. The binary metric returns to its sole upstream finding, `native/src/code_rule_dsl/logic/plan/golden/facts.sql.zst`.
+
+Evidence: [original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-direct-contracts.json.gz) and [red/green supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-supplemental-contracts.json.gz). No full repository cold execution or new Linear issue was needed. Global associated contracts and persistent-workspace acceptance remain outstanding; full migration acceptance stays false. The next missing translation is `backend_type_strings`.

@@ -1,0 +1,2 @@
+# Compressed parity evidence is stored in Git LFS.
+*.json.gz filter=lfs diff=lfs merge=lfs -text

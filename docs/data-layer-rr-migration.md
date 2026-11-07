@@ -21,7 +21,7 @@ The replay harness rejects libraries loaded from another checkout, even when the
 
 Migration rules and fixtures live under `gate/data-layer/`, as Final shape defines them.
 The gate preserves all 100 historical policy contracts and the recorded-observation parity harness.
-The unfinished `error_handling` translation is preserved as a draft. It has no modern-engine acceptance claim.
+The `error_handling` translation has native direct-suite and reporter evidence. Full migration acceptance remains pending.
 
 Build the root CLI with the standard headless feature. On this machine, use:
 
@@ -700,3 +700,40 @@ All 44 Python tooling tests and both gate format tests pass.
 
 - [Root engine adoption, builds, tests, and supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-adoption.json.gz).
 - [Original API-import assertions and positive control on the root engine](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-direct-contracts.json.gz).
+
+
+## 2026-11-07 — Error-handling contracts on the root engine
+
+The native error-handling port now passes all five original cases and all seven assertion sites.
+The independent inventory identifies one detector suite. No original cases are excluded or run without native calls.
+The replay compares five complete API returns and rejects semantic fallbacks and missing calls.
+
+Supplemental coverage includes 110 API cases: 53 finding-positive cases, 55 clean cases, and two decoding-error cases.
+All 97 configured reporter cases pass, including 45 positives.
+The original positive test rejects an empty detector. Separate reporter controls reject disabled log-reraise and transaction-commit clauses.
+Ordering follows source callback traversal for the API and the source reporter's path/line/message sort for reporting.
+Duplicate commits on one line retain both findings.
+
+Source-derived tests found two defects in the draft. A relative repository root must remain valid.
+A requested file's decoding failure must propagate instead of returning an empty result.
+The host transports file status and read failures. Datalog applies the supplied-source, suffix, and test-path gates before exposing a failure.
+A file outside the repository can still raise a decoding error before collector construction.
+Clean supplied source, non-Python suffixes, and test paths suppress that read failure as the source does.
+No Rust or engine-library change was needed. All tests use the modern root CLI `38164d10366011ccfb131813f753d728f4b44e71f47fe066c3b07045ab3b4b06`.
+
+The initial 101-case native command reached the two mismatches but hit 115 seconds before final verification.
+Native fresh replay now supports bounded partitions against one complete source oracle.
+The three red partitions establish 99 passes and two failures.
+The three final partitions cover every one of the 110 cases exactly once, with no duplicates or omissions.
+All 46 tooling tests, both format tests, and the changed rule's reader check pass.
+
+The structure gate still fails 15 categories. Committed Final shape also fails those 15 categories.
+Snapshot comparisons record the differences; the gate layout remains unrecognized by several metrics.
+Moving evidence to the gate also lost its LFS coverage. A gate-local attribute now restores LFS storage for 67 compressed archives.
+All 65 existing archives retain their exact content hashes. The remaining large-binary finding is Final shape's `facts.sql.zst`.
+
+This is direct-suite and configured snapshot evidence. Persistent workspace and associated global acceptance remain outstanding.
+The manifest remains at 66 drafts and 34 absent translations; full migration acceptance is false.
+
+- [All original assertions and their positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-direct-contracts.json.gz).
+- [Red/green cases, complete supplemental reports, selective controls, and structure comparisons](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-supplemental-contracts.json.gz).
