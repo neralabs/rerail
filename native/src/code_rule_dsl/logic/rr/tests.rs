@@ -27,6 +27,31 @@ fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
     }
 }
 
+#[test]
+fn python_visit_order_follows_ast_fields_instead_of_source_offsets() {
+    let mut rows = finding_contract(r#"
+@decor()
+def f(a: ann() = default(), *v: varann(), k: kwann() = kwdefault(), **kw: kwargsann()) -> result():
+    body()
+x = {key1(): value1(), key2(): value2()}
+box(k=keyword(), *(positional(),))
+"#, r#"
+.policy "contract:python-visit-order" revision 1
+.language python
+#include "python/ast.rr"
+.violation Order(at: node, callee: symbol, ordinal: number) "{callee}"
+Order(c, name, i) :- call_name(c, name), visit_index(c, i).
+.violation Before(at: node) code "BEFORE" "body before decorator"
+Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
+"#);
+    assert_eq!(rows.iter().filter(|r| r["code"] == "BEFORE").count(), 1);
+    rows.retain(|r| r["clause"] == "Order");
+    rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
+    let names: Vec<_> = rows.iter().map(|r| r["parameters"]["callee"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ann", "varann", "kwann", "kwdefault", "kwargsann", "default", "body", "decor", "result",
+        "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
+}
+
 /// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
 /// and tags at the same line do not collapse into the old five-column finding index.
 #[test]
