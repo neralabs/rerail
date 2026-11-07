@@ -1471,7 +1471,7 @@ Bare(@place("a.py", 1), i, a, b) :- sample(s), match_all("x", s, i, a, b).
     assert_eq!(wanted(&rows, "MATCH"), [(0, 2, 4), (1, 5, 7)]);
     assert_eq!(wanted(&rows, "BARE"), [(0, 2, 3), (1, 3, 4), (2, 5, 6), (3, 6, 7)]);
     assert!(rows.iter().filter(|r| r["code"] == "MATCH").all(|r| r["parameters"]["capture"] == "xx"));
-    let printed = print(&parse(rule).unwrap()).unwrap();
+    let printed = complete_rule(rule);
     let roundtrip = lowered_findings(&printed);
     assert_eq!(wanted(&roundtrip, "MATCH"), wanted(&rows, "MATCH"));
     assert_eq!(wanted(&roundtrip, "BARE"), wanted(&rows, "BARE"));
@@ -1487,8 +1487,8 @@ sample("{sample}").
 .violation Found(at: span, ordinal: number) code "{code}" "found"
 Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 "#);
-    let a = rule("A", "xx xx", "xx");
-    let b = rule("B", "yy yy", "yy");
+    let a = complete_rule(&rule("A", "xx xx", "xx"));
+    let b = complete_rule(&rule("B", "yy yy", "yy"));
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
     assert_eq!(combined.natives.len(), 2);
     for native in combined.natives.values() {
@@ -1500,6 +1500,14 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 }
 
 /// Printed engine programs use reserved helper names; run through the internal text boundary used by run_rr.
+fn complete_rule(program: &str) -> String {
+    let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("public.rr");
+    std::fs::write(&path, program).unwrap();
+    let (program, _) = read_file(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    print(&program).unwrap()
+}
+
 fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("lowered-findings");
     std::fs::create_dir_all(&root).unwrap();
