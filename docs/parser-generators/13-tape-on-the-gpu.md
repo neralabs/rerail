@@ -5,7 +5,9 @@ section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_comp
 of `json.bitlex` (classes, masks, counts as bit-planes, frames, tokens, keywords, errors,
 escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on every
 executor. Both Metal executors run a batch of files, each under its own language's program, in
-one launch (§5.4, decision 0044).
+one launch (§5.4, decision 0044). Step 3 is built for the masks' output (decision 0046): the CPU
+writer's tapes equal tree-sitter's byte for byte on 771 of 774 data-layer JSON files, and the
+other 3 go to tree-sitter.
 
 ## Intro
 

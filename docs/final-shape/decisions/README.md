@@ -44,3 +44,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0043 | Every rule the engine runs is `.rr` (Soufflé Datalog plus `core.rr`): one reader, one printer, the converter writes `.rr`; `.rdl` stays only as T's copies until step 31 | accepted |
 | 0044 | Block programs run a batch of files in one launch: file-aligned groups, a file table, persistent workers, a function per program in one kernel (or the interpreter over a program table), one re-launch fallback | accepted |
 | 0045 | A batch's files are read in place in residency slabs: sources admitted once by hash, up to four slabs bound, a slab per file row | accepted |
+| 0046 | The CPU tape writer: starts and ends a word at a time, a stack per row and level, nodes in preorder, packed by the tape's one packer (`from_written`) | accepted |

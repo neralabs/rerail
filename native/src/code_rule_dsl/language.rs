@@ -385,6 +385,8 @@ const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
     (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
     (GrammarDialect::Html, 250),
+    // The tape a JSON block program writes, compared with tree-sitter's (`tape_writer`).
+    (GrammarDialect::Json, 251),
 ];
 
 /// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and

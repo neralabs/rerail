@@ -9,6 +9,8 @@
 #     errors. Outside strings, any byte of 0x80 or above is an error.
 #   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
 #   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
+#   - number is -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)? (grammar.js): an exponent's sign is
+#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers (rule 4 below sends them to tree-sitter).
 #   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
 #     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
 #   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
@@ -100,14 +102,14 @@ error "non-ASCII outside a string" when code & high
 
 escape "a comment"                 when code & (slash | star)
 
-# --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? as masks -----------------------------
+# --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)? as masks -------------------------------
 #
 # The pattern is a fixed sequence of parts, so it needs no automaton. A token matches it exactly
 # when no byte breaks one of the rules below. Each rule looks at most two bytes away, or asks
 # whether a '.' or an 'e' came earlier in the same token: a `fill`, whose carry is one bit.
 # About 25 mask operations per 64 bytes, the same for every block, however many numbers it holds.
 #
-#   token     -0.5e+10     01      1.e5     1e5.0
+#   token     -0.5e-10     01      1.e5     1e5.0
 #   breaks    nothing      rule 6  rule 4   rule 3
 
 mask nstart     = wstart & num
@@ -123,13 +125,13 @@ error "number: bad start"       when (nstart & ~(digit | minus)) | (nstart & min
 error "number: '.' or e twice"  when (dot & (after_dot | after_e)) | (expc & after_e)
 # 4. A '.' has a digit on each side.
 error "number: bare '.'"        when num & dot & ~(prev(digit) & next(digit))
-# 5. A sign is first ('-' only) or right after the 'e'.
-error "number: misplaced sign"  when num & sign & ~prev(expc) & ~(nstart & minus)
+# 5. A sign is '-', first or right after the 'e'.
+error "number: misplaced sign"  when num & sign & ~(minus & (prev(expc) | nstart))
 # 6. The integer part is 0, or does not start with 0.
 error "number: leading zero"    when int_first & zero & next(digit)
 # 7. An 'e' follows a digit, and is followed by a digit or by a sign and a digit.
 error "number: bare e"          when expc & num & (~prev(digit)
-                                                   | ~(next(digit) | (next(sign) & next(digit, 2))))
+                                                   | ~(next(digit) | (next(minus) & next(digit, 2))))
 # 8. The last byte is a digit.
 error "number: bad end"         when lasts(num) & ~digit
 
