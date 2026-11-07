@@ -20,8 +20,8 @@ metal-tests = []
 [dependencies]
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
-# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
-# parser is linked.
+# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
+# Ruff supplies a demanded Python grammar verdict; it does not replace the tape parser.
 # Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
 ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
@@ -57,10 +57,12 @@ regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
 rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
-rustc-hash = "=2.1.3"
+# Native Python grammar validation, pinned to the source oracle version (3.13).
 # `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
 # recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
 ruff_python_parser = "=0.0.10"
+ruff_python_ast = "=0.0.10"
+rustc-hash = "=2.1.3"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
 sha2 = "0.10"

@@ -31,6 +31,24 @@ fn run(args: &[String]) -> Result<String, String> {
             _ => Err(USAGE.into()),
         },
         Some("logic") => logic(&args[1..]),
+        Some("run-rr") if args.len() == 4 || args.len() == 5 => {
+            let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
+            serde_json::to_string(&rerail_engine::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
+        }
+        Some("check-rr") if args.len() > 1 => {
+            let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
+            let report = rerail_engine::tools::check_rr(&paths);
+            let failures = report.as_array().expect("rule reports").iter().filter(|row| row["status"] == "reader-failed").count();
+            let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+            if failures > 0 {
+                println!("{text}");
+                Err(format!("{failures} rules failed the .rr reader"))
+            } else { Ok(text) }
+        }
+        Some("convert-rr") if args.len() > 1 => {
+            let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
+            serde_json::to_string_pretty(&rerail_engine::tools::convert_rr(&paths)).map_err(|e| e.to_string())
+        }
         Some("gc") => gc(&args[1..]),
         _ => Err(USAGE.into()),
     }
@@ -63,9 +81,9 @@ fn logic(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
-        files.iter().map(|path| read(&path.to_string_lossy())).collect::<Result<Vec<_>, _>>()?
+        files.iter().map(|path| rerail_engine::tools::read_rr(path)).collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![read(program)?]
+        vec![rerail_engine::tools::read_rr(Path::new(program))?]
     };
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));

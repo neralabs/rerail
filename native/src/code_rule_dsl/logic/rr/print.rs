@@ -52,6 +52,11 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     let one = |p: &Term| -> Result<String, Error> {
         let Term::Str(p) = p else {
             let p = term(p)?;
+            // These internal functors search. Printing `rx(p, s)` would turn one into an
+            // undeclared relation; printing `match(p, s)` would instead require the whole string.
+            if op == "rx" || op == "irx" {
+                return Ok(format!("@{op}({s}, {p}) = {}", if neg { 0 } else { 1 }));
+            }
             return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
         };
         Ok(match op {

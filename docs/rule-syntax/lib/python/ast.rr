@@ -273,7 +273,7 @@ body_of(m, m) :- kind(m, "module").
 docstring(o, s) :- body_of(o, b), body_stmt(b, st, 0), doc_stmt(st, s).
 // doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt.
 .decl doc_stmt(s: node, e: node)
-doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str(e, _).
+doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str_node(e).
 // py_if(i, test, body) and py_orelse(i, o): an `ast.If`. Each `elif` is an If of its own, the orelse of the one
 // before it; o is the next elif clause, or the else clause (whose body is its "body" field).
 .decl py_if(i: node, test: node, body: node)
@@ -315,6 +315,12 @@ string_form(n, "fstr") :- fstring(n).
 string_form(n, "bytes") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
 string_form(n, "tstr") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[tT][rR]?[\"'].*", t).
 string_form(n, "str") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rRuU]*[\"'].*", t).
+// A string Constant's syntactic type does not require a scalar decoded value.
+// Python strings can contain lone surrogates, which Rust String cannot represent.
+.decl plain_str_node(e: node)
+plain_str_node(e) :- string_form(e, "str"), !fstring(e).
+plain_str_node(e) :- kind(e, "concatenated_string"),
+    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0.
 // plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
 // ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
 .decl plain_str(e: node, v: symbol)

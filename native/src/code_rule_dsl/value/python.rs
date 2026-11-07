@@ -4,6 +4,7 @@
 use crate::code_rule_dsl::language::Family;
 
 mod ops;
+pub(crate) mod words;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
 use crate::code_rule_dsl::identifier::python_identifier;
@@ -400,8 +401,8 @@ pub(super) fn decode_body(body: &str, prefix: &Prefix) -> Option<Piece> {
 }
 
 /// Python's escape sequences, as code points (bytes for a `bytes` literal). `None` for a malformed
-/// or out-of-range escape, a name `\N{...}` does not know, or a lone surrogate (which `String`
-/// cannot hold).
+/// or out-of-range escape, or an unknown Unicode name. Surrogates remain code points;
+/// scalar callers still reject them when they construct a Rust String.
 fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
     let mut out = Vec::with_capacity(body.len());
     let mut chars = body.chars().peekable();
@@ -451,8 +452,8 @@ fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
                 out.push(if bytes { code & 0xff } else { code });
             }
             'x' => out.push(hex(&mut chars, 2)?),
-            'u' if !bytes => out.push(scalar(hex(&mut chars, 4)?)?),
-            'U' if !bytes => out.push(scalar(hex(&mut chars, 8)?)?),
+            'u' if !bytes => out.push(codepoint(hex(&mut chars, 4)?)?),
+            'U' if !bytes => out.push(codepoint(hex(&mut chars, 8)?)?),
             // `\N{name}`: a character by its Unicode name or alias.
             'N' if !bytes => {
                 if chars.next()? != '{' {
@@ -477,9 +478,9 @@ fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// A code point a Rust `char` can hold: not a surrogate, at most U+10FFFF.
-fn scalar(code: u32) -> Option<u32> {
-    char::from_u32(code).map(u32::from)
+/// A Python str code point, including lone surrogates.
+fn codepoint(code: u32) -> Option<u32> {
+    (code <= 0x10ffff).then_some(code)
 }
 
 /// `+x`, `-x`, `~x`.

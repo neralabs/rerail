@@ -3159,6 +3159,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "ruff_python_ast",
  "ruff_python_parser",
  "rusqlite",
  "rustc-hash",

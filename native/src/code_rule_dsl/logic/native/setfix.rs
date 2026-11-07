@@ -57,6 +57,11 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// at the run's next boundary; its symbol is -1, which matches nothing.
 pub struct Interner { atoms: Arc<crate::content_store::atoms::Atoms>, buf: String, failed: Option<String> }
 impl Interner {
+    /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
+    /// so it must not hold the registered cursor's lock across SQLite execution.
+    fn for_loading(shared: &RwLock<Self>) -> Self {
+        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
+    }
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
@@ -87,6 +92,15 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None }));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
+}
+
+/// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
+pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
+    let shared = symbols(conn)?;
+    let mut cursor = Interner::for_loading(&shared);
+    let ids = texts.into_iter().map(|text| cursor.id(text)).collect();
+    cursor.check()?;
+    Ok(ids)
 }
 
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
@@ -324,7 +338,7 @@ fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(f
 
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let symbols = symbols(conn)?;
-    let mut syms = symbols.write().unwrap();
+    let mut syms = Interner::for_loading(&symbols);
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -675,7 +689,7 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
         "sql" => Body::Sql(unhex(body)?),
         "join" => {
             let symbols = Arc::clone(&comp.store.read().unwrap().syms);
-            let mut syms = symbols.write().unwrap();
+            let mut syms = Interner::for_loading(&symbols);
             let j = parse_join(conn, &unhex(body)?, &mut syms)?;
             syms.check()?;
             let mut store = comp.store.write().unwrap();

@@ -660,3 +660,33 @@ fn("function_definition").
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// A demanded symbol with many captures must not submit one SQLite statement per match.
+#[test]
+fn repeated_symbol_captures_use_bulk_sql() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+        // SAFETY: the counter outlives the callback, which is removed before it drops.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let db = Connection::open_in_memory().unwrap();
+    let source = (0..1000).map(|i| format!("k={i} ")).collect::<String>();
+    let p = parse(&format!(r#"
+.decl capture_input(s: symbol)
+capture_input({}).
+.decl captured(v: symbol)
+captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
+.output captured
+"#, serde_json::to_string(&source).unwrap())).unwrap();
+    let count = AtomicUsize::new(0);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::from_ref(&count).cast_mut().cast()); }
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let result = run(&p, &db, inputs, None);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
+    let result = result.unwrap();
+    assert_eq!(result.outputs["captured"].len(), 1000);
+    assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
+}
