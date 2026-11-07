@@ -456,3 +456,33 @@ fn within_holds_exactly_the_contained_pairs() {
         }
     }
 }
+
+/// A lookup by kind (or tape node) where the document is bound too stays in that document: over 128 copies of a
+/// file, `node WHERE d = ? AND kind = ?` reads one copy's calls, not every copy's (rechecked against `d`).
+#[test]
+fn lookups_with_a_bound_document_read_that_document_only() {
+    let store = ContentStore::open(&temp("doc-lookups")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    let source = "f(1)\ng(2)\nh(f(3))\n";
+    let docs: Vec<Document> = (1..=128).map(|k| document(k, &format!("m{k}.py"), "python", source)).collect();
+    for (name, source) in sources(&store, docs).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    let node = modules.get("node").unwrap();
+    let before = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 7 AND kind = {call}")), 4);
+    let read = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before;
+    assert_eq!(read, 4, "one document's calls, not 128 documents'");
+    // The same answer with the document only rechecked.
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE +d = 7 AND kind = {call}")), 4);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 999 AND kind = {call}")), 0);
+    let core = modules.get("core_node").unwrap();
+    let t: i64 = count("SELECT t FROM core_node WHERE d = 3 LIMIT 1 OFFSET 2");
+    let before = core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM core_node WHERE d = 3 AND t = {t}")), 1);
+    assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
+}
