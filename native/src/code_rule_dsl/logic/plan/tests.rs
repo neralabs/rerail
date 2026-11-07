@@ -423,7 +423,10 @@ fn product_programs_derive_t_outputs() {
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
-        let p = prune(parse(&src).unwrap());
+        let mut p = prune(parse(&src).unwrap());
+        // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
+        // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
+        p.rules.retain(|r| !r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "stage" && !a.neg)));
         let options = Options::default();
         let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
         // `found`'s demand is the magic-set relation, not a hand-written one.
