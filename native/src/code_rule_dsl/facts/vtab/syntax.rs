@@ -73,11 +73,7 @@ impl Projection {
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>) -> Self {
-        static CORE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-        let core = CORE.get_or_init(|| {
-            let path = crate::code_rule_dsl::logic::rr::library().join("core.rr");
-            std::fs::read_to_string(path).ok().and_then(|src| crate::code_rule_dsl::logic::rr::parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
-        });
+        let core = crate::code_rule_dsl::logic::rr::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
         Projection { shape, reads: Some(reads) }
     }
@@ -1076,6 +1072,7 @@ pub(crate) fn with_nearest(
     use crate::code_rule_dsl::typing::file_local;
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let (batch, relations, (strings, symbols)) = Batch::build(store, documents, projection)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.

@@ -242,6 +242,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
     let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    let core = crate::code_rule_dsl::logic::rr::core_names();
     for (i, text) in programs.iter().enumerate() {
         let mut prog = parse(text)?;
         // Kind sets by their kinds: this program's name for each, and the shared one.
@@ -258,7 +259,8 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             .keys()
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
-            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()))
+            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047).
+            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -295,7 +297,12 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
         for (rel, rows) in prog.facts {
             all.facts.insert(rename(&rel), rows);
         }
-        all.rules.extend(prog.rules);
+        // A rule `core.rr` gives (its head is the engine's) is taken once.
+        for rule in prog.rules {
+            if !(core.contains(&rule.head.rel) && all.rules.contains(&rule)) {
+                all.rules.push(rule);
+            }
+        }
         for list in [(&mut all.inputs, prog.inputs), (&mut all.outputs, prog.outputs), (&mut all.demand, prog.demand)] {
             for rel in list.1 {
                 let rel = rename(&rel);
@@ -837,6 +844,7 @@ pub(crate) fn run_with_options(
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
                     let measured = syntax::statistics(source.as_ref());
+                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (source.len() * source.columns().len()) as u64);
                     measured_once.insert(rel.clone(), (source.estimated_len(), measured.clone()));
                     measured
                 }

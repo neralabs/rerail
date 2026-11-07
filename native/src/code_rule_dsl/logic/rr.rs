@@ -28,6 +28,14 @@ pub(in crate::code_rule_dsl) use syntax::quote;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) use translate::translate;
 
+/// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
+pub(in crate::code_rule_dsl) fn core_names() -> &'static std::collections::BTreeSet<String> {
+    static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+    CORE.get_or_init(|| {
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
+    })
+}
+
 /// The library `#include` reads from.
 pub(in crate::code_rule_dsl) fn library() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib")
