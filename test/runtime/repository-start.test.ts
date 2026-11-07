@@ -17,6 +17,7 @@ import {
   loadRulePacks,
 } from "../../src/engine/index.js";
 import {
+  DAEMON_KEEPS_RUNNING,
   isRerailStarted,
   readOnlyStartState,
   sessionNoteRules,
@@ -419,36 +420,51 @@ describe("repository start state", () => {
       return io.lines.join("\n");
     };
     const HEAD = "○ Rerail is stopped in acme-web. No rules run here, and nothing is logged.";
+    const DAEMON = `  ${DAEMON_KEEPS_RUNNING}`;
     try {
       store.openSession(session);
       expect(stopped({ session })).toBe([
-        HEAD, "  Start it again with /rerail-start.", "",
+        HEAD, "  Start it again with /rerail-start.", DAEMON, "",
         "  To turn off only one rule instead, say “turn that rule off”.",
       ].join("\n"));
 
       store.recordSteer(session, "r1", ["ts:no-any"]);
       store.recordSteer(session, "r2", ["ts:no-any"]);
       expect(stopped({ session })).toBe([
-        HEAD, "  Start it again with /rerail-start.", "",
+        HEAD, "  Start it again with /rerail-start.", DAEMON, "",
         "  Rerail steered this session on one rule, ts:no-any.",
         "  To turn off only that rule, say “turn that rule off”.",
       ].join("\n"));
 
       store.recordSteer(session, "r3", ["acme:no-print", "ts:no-any", "ts:no-unused"]);
       expect(stopped({ session })).toBe([
-        HEAD, "  Start it again with /rerail-start.", "",
+        HEAD, "  Start it again with /rerail-start.", DAEMON, "",
         "  Rerail steered this session on ts:no-any, acme:no-print and ts:no-unused.",
         "  To turn off only one rule instead, say “turn that rule off”.",
       ].join("\n"));
 
       // The same id under another coding agent is not this session; Codex names its own commands with `$`.
       expect(stopped({ session: { host: "codex", sessionId: "s1" } })).toBe([
-        HEAD, "  Start it again with $rerail-start.", "",
+        HEAD, "  Start it again with $rerail-start.", DAEMON, "",
         "  To turn off only one rule instead, say “turn that rule off”.",
       ].join("\n"));
     } finally {
       store.close();
     }
+  });
+
+  it("says the daemon keeps running for other checkouts and names rerail daemon stop, at a terminal and to a coding agent", async () => {
+    const root = await temporary("rerail-stop-daemon-");
+    const checkout = gitRepository(join(root, "acme-web"));
+    const databasePath = join(root, "rerail.sqlite");
+    await startRerail(checkout, recorder(), answered(databasePath, "pick-myself"));
+    for (const lane of ["terminal", "agent"] as const) {
+      const io = recorder(lane);
+      stopRerail(checkout, io, { databasePath });
+      expect(io.lines.join("\n")).toContain("rerail daemon stop");
+    }
+    // Stopping a checkout changes only its start state; the daemon is the person's to stop.
+    expect(workspaceStartState(checkout, databasePath)).toBe("stopped");
   });
 
   it("reads a database whose creator has not committed its schema yet as stopped, without failing", async () => {

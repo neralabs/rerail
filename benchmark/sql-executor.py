@@ -47,6 +47,16 @@ def cases(corpus):
             ],
             "queries": ["SELECT count(*),sum(c0),sum(c1) FROM reach"],
         }))
+    for n in [100, 1000]:
+        files = [{"path": f"m{i}.py", "language": "python", "source": f"def f{i}():\n    x{i} = 1\n    return x{i}\n"} for i in range(n)]
+        initial = {"files": files}
+        edited = {"files": [{**files[0], "source": files[0]["source"] + "extra = 2\n"}, *files[1:]]}
+        result.append((f"update-native-{n}", {
+            "snapshot": initial,
+            "program": ".decl name(n:node,s:symbol)\n.input name\n.decl named(n:node,s:symbol)\nnamed(n,s) :- name(n,s).\n.decl total(k:number)\ntotal(k) :- k = count : {name(_,_)}.\n.output named,total\n",
+            "snapshots": [edited, initial, edited, initial],
+            "queries": ["SELECT * FROM total", "SELECT count(*) FROM named"],
+        }))
     for n in [10000, 100000]:
         result.append((f"update-reducers-{n}", {
             "relations":[relation("event",["id","g","v"],[[i,1,i%31] for i in range(n)]),relation("owner",["g"],[[i] for i in range(n)])],
@@ -197,6 +207,16 @@ def validate(name, request, result):
     queries = result["result"]["queries"]
     assert all(not q["truncated"] for q in queries), "truncated result"
     rows = [q["rows"] for q in queries]
+    if name.startswith("update-native-"):
+        n = int(name.split("-")[-1])
+        assert rows == [[[n*3]], [[n*3]]], rows
+        updates = result["result"]["updates"]
+        assert len(updates) == 4, updates
+        for update in updates:
+            assert update["rebuilt_files"] == 1, update
+            assert update["changed_files"] == ["m0.py"], update
+            assert not update["programs"][0]["refreshed_strata"], update
+        return "passed"
     if name.startswith("update-reducers-"):
         n=int(name.split("-")[-1]);total=[n-1,sum(i%31 for i in range(n)),0,30]
         assert rows==[[total],[[1,*total]],[[n-1,n*(n-1)//2-1]]],rows

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { createServer, request as httpRequest } from "node:http";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
+  type DaemonState,
   ingestEngineEvent,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
@@ -48,11 +49,20 @@ describe("daemon bind host", () => {
   });
 });
 
+/** The capability every test daemon requires; the helpers below send it unless a test names another. */
+const ACCESS = "test-access-capability";
+const ACCESS_HEADER = "x-rerail-access";
+
 describe("Rerail daemon", () => {
   let root: string;
   const daemons: RerailDaemon[] = [];
 
-  async function start(overrides: Partial<RerailDaemonOptions> = {}): Promise<RerailDaemon> {
+  /** `fetch` against a test daemon carries its capability, as every Rerail client and a browser holding the cookie does. */
+  const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+    globalThis.fetch(input, { ...init, headers: { [ACCESS_HEADER]: ACCESS, ...init.headers } });
+
+  /** A daemon requiring `ACCESS`, unless `minted`: then it records or mints its own, as a real start does. */
+  async function start(overrides: Partial<RerailDaemonOptions> = {}, minted = false): Promise<RerailDaemon> {
     process.env.RERAIL_HOME = join(root, "home");
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
@@ -60,6 +70,7 @@ describe("Rerail daemon", () => {
       workspaceRoot: root,
       port: 0,
       nativeHealth: healthyNative,
+      ...(minted ? {} : { accessToken: ACCESS }),
       ...overrides,
     });
     daemons.push(daemon);
@@ -98,6 +109,7 @@ describe("Rerail daemon", () => {
       method,
       setHost: false,
       headers: {
+        [ACCESS_HEADER]: ACCESS,
         ...(body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) }),
         ...headers,
       },
@@ -107,7 +119,7 @@ describe("Rerail daemon", () => {
       incoming.on("end", () => {
         const text = Buffer.concat(chunks).toString();
         const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
-        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        resolve({ status: incoming.statusCode!, body: json && text !== "" ? JSON.parse(text) : text });
       });
       incoming.on("error", reject);
     });
@@ -403,7 +415,7 @@ describe("Rerail daemon", () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const daemon = await start();
-    await ingestEngineEvent(daemon.kernelSocketPath, {
+    await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: ACCESS }, {
       kind: "session-start", eventId: "start-controls",
       session: { host: "claude-code", sessionId: "audit-session", cwd: root },
     });
@@ -696,6 +708,7 @@ describe("Rerail daemon", () => {
         databasePath: join(root, "rerail.sqlite"),
         workspaceRoot: root,
         nativeHealth: healthyNative,
+        accessToken: ACCESS,
       });
       daemons.push(daemon);
       expect(daemon.port).not.toBe(DEFAULT_DAEMON_PORT);
@@ -731,6 +744,55 @@ describe("Rerail daemon", () => {
   });
 
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
+
+  it("comes back on the port it last listened on, and moves only when another process holds it", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile };
+    const probe = createServer();
+    await new Promise<void>((resolveListening) => probe.listen(0, "127.0.0.1", () => resolveListening()));
+    const { port } = probe.address() as { port: number };
+    await new Promise<void>((resolveClosed) => probe.close(() => resolveClosed()));
+
+    // An explicit port is remembered, and a later start without one comes back on it, so dashboard links still work.
+    const first = await RerailDaemon.start({ ...options, port });
+    daemons.push(first);
+    await first.close();
+    const second = await RerailDaemon.start(options);
+    daemons.push(second);
+    expect(second.port).toBe(port);
+    await second.close();
+
+    const blocker = createServer();
+    await new Promise<void>((resolveListening) => blocker.listen(port, "127.0.0.1", () => resolveListening()));
+    try {
+      const third = await RerailDaemon.start(options);
+      daemons.push(third);
+      expect(third.port).not.toBe(port);
+      expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: third.port });
+    } finally {
+      await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
+    }
+  });
+
+  // A port below 1024 is refused (EACCES) to an unprivileged process on most systems, as a port Windows reserved is.
+  it("moves on from a remembered port it is refused", async (context) => {
+    const probe = createServer();
+    const { promise: probed, resolve: refused } = Promise.withResolvers<boolean>();
+    probe.once("error", (error: NodeJS.ErrnoException) => refused(error.code === "EACCES"));
+    probe.listen(1, "127.0.0.1", () => probe.close(() => refused(false)));
+    if (!(await probed)) context.skip();
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    await writeFile(portFile, `${JSON.stringify({ port: 1 })}\n`);
+    const daemon = await RerailDaemon.start({ version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile });
+    daemons.push(daemon);
+    expect(daemon.port).not.toBe(1);
+  });
+
+  // Review of #49 (N1): a resource that fails to close does not keep the next one open.
   it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const databasePath = join(root, "rerail.sqlite");
@@ -744,6 +806,52 @@ describe("Rerail daemon", () => {
     // Review of #49 (N5): the failed close is on record.
     expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
     stderr.mockRestore();
+  });
+
+  describe.runIf(process.platform !== "win32")("engine socket directory another user took first", () => {
+    const originalTmpdir = process.env.TMPDIR;
+
+    /** A short root (a socket path must fit 104 bytes on macOS) whose temp directory already holds `rerail-<uid>`, open to all. */
+    async function squattedTemp(): Promise<string> {
+      root = await realpath(await mkdtemp("/tmp/rerail-daemon-"));
+      process.env.TMPDIR = join(root, "tmp");
+      const squatted = join(root, "tmp", `rerail-${process.getuid!()}`);
+      await mkdir(squatted, { recursive: true });
+      await chmod(squatted, 0o777);
+      return squatted;
+    }
+
+    afterEach(() => {
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
+    });
+
+    it("listens in a run folder beside its database, which its state file names for hooks", async () => {
+      const squatted = await squattedTemp();
+      const stateFile = join(root, "daemon.json");
+      startTestRepository(root, join(root, "rerail.sqlite"));
+      await start({ stateFile });
+      // Test boundary: the state file a hook reads, parsed and asserted right after.
+      const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+      expect(dirname(state.kernelSocketPath)).toBe(join(root, "run"));
+      expect((await lstat(state.kernelSocketPath)).isSocket()).toBe(true);
+      expect(await readdir(squatted)).toEqual([]);
+      await ingestEngineEvent({ socketPath: state.kernelSocketPath, accessToken: state.accessToken! }, {
+        kind: "session-start", eventId: "start-fallback",
+        session: { host: "claude-code", sessionId: "fallback-session", cwd: root },
+      });
+      const response = await fetch(new URL("/api/sessions", state.url));
+      expect(await response.json()).toMatchObject({ sessions: [{ sessionId: "fallback-session" }] });
+    });
+
+    it("refuses to start when the run folder is refused too, naming each directory and what to do", async () => {
+      const squatted = await squattedTemp();
+      await mkdir(join(root, "run"), { mode: 0o700 });
+      await chmod(join(root, "run"), 0o755);
+      const started = start();
+      await expect(started).rejects.toThrow(`${squatted}: it has mode 777, not 700. Remove ${squatted}`);
+      await expect(started).rejects.toThrow(`${join(root, "run")}: it has mode 755, not 700. Remove ${join(root, "run")}`);
+    });
   });
 
   it("publishes every operation in the OpenAPI document", async () => {
@@ -769,11 +877,83 @@ describe("Rerail daemon", () => {
     expect(response.headers.get("Allow")).toBe("POST");
   });
 
+  /**
+   * A POST to `path` with a `bytes`-byte body: declared in `Content-Length` and never sent, or sent chunked in pieces
+   * with no declared length. Resolves with the answer, which a limit gives before the body is read.
+   */
+  function sizedPost(daemon: RerailDaemon, path: string, bytes: number, sent: "declared" | "chunked"): Promise<{ status: number; body: unknown }> {
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: unknown }>();
+    let answered = false;
+    const outgoing = httpRequest(new URL(path, daemon.url), {
+      method: "POST",
+      headers: {
+        [ACCESS_HEADER]: ACCESS,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(sent === "declared" ? { "content-length": bytes } : {}),
+      },
+    }, (incoming) => {
+      answered = true;
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => {
+        const text = Buffer.concat(chunks).toString();
+        const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
+        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        outgoing.destroy();
+      });
+      incoming.on("error", reject);
+    });
+    // Writing a body the daemon stopped reading may fail once it has answered; the answer is what is asserted.
+    outgoing.on("error", (error) => {
+      if (!answered) reject(error);
+    });
+    if (sent === "declared") {
+      outgoing.flushHeaders();
+    } else {
+      const piece = Buffer.alloc(1024 * 1024, " ");
+      for (let left = bytes; left > 0; left -= piece.length) outgoing.write(left >= piece.length ? piece : piece.subarray(0, left));
+      outgoing.end();
+    }
+    return promise;
+  }
+
+  it("answers 413 to a body past each route's limit before the route reads it", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const daemon = await start();
+    const apiLimit = 4 * 1024 * 1024;
+    const tooLarge = { status: 413, body: { error: "request-too-large", message: expect.any(String) } };
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "declared")).toEqual(tooLarge);
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "chunked")).toEqual(tooLarge);
+    expect((await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit, "chunked")).status).not.toBe(413);
+    expect(await sizedPost(daemon, "/mcp", apiLimit + 1, "declared")).toEqual(tooLarge);
+    // The native bridge would refuse this request for its missing bearer token (403) had it read it.
+    expect(await sizedPost(daemon, "/native/session", 256 * 1024 * 1024 + 1, "declared")).toEqual(tooLarge);
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  it("answers an internal error without its text, which the daemon log keeps", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const detail = "cannot read /Users/someone/private/rules.sqlite";
+    const daemon = await start({ codingAgents: async () => { throw new Error(detail); } });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const { status, body } = await getJson<{ error: string; message: string }>(daemon, "/api/coding-agents");
+      expect(status).toBe(500);
+      expect(body.error).toBe("internal");
+      expect(JSON.stringify(body)).not.toContain("/Users/someone");
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining(detail));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("exposes the same operations as MCP tools over Streamable HTTP", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     const client = new Client({ name: "rerail-test", version: "0.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL("/mcp", daemon.url)) as Parameters<Client["connect"]>[0]);
+    const transport = new StreamableHTTPClientTransport(new URL("/mcp", daemon.url), { requestInit: { headers: { [ACCESS_HEADER]: ACCESS } } });
+    await client.connect(transport as Parameters<Client["connect"]>[0]);
     try {
       const tools = await client.listTools();
       expect(tools.tools.map(tool => tool.name).sort()).toEqual(operations.map(operation => operation.id).sort());
@@ -874,17 +1054,19 @@ describe("Rerail daemon", () => {
     const daemon = await start();
     const remove = (headers: Record<string, string>) => rawRequest(daemon, "/api/presentation-preferences?repository=&host=", { method: "DELETE", headers });
     const bound = `127.0.0.1:${daemon.port}`;
+    // `port: 0` can bind any ephemeral port, 35831 included: the mapped port must differ from the bound one.
+    const mapped = daemon.port === 35831 ? 35832 : 35831;
 
     expect(await remove({ origin: `http://${bound}`, host: bound })).toEqual({ status: 200, body: { removed: 0 } });
 
     // Reached through a container port mapping, the browser addresses a port the daemon never bound.
-    for (const host of ["localhost:35831", "127.0.0.1:35831", "[::1]:35831"]) {
+    for (const host of [`localhost:${mapped}`, `127.0.0.1:${mapped}`, `[::1]:${mapped}`]) {
       expect(await remove({ origin: `http://${host}`, host })).toEqual({ status: 200, body: { removed: 0 } });
     }
 
     const forbidden = { status: 403, body: { error: "api-origin-forbidden" } };
     expect(await remove({ origin: "https://evil.example", host: bound })).toEqual(forbidden);
-    expect(await remove({ origin: "http://localhost:35831", host: bound })).toEqual(forbidden);
+    expect(await remove({ origin: `http://localhost:${mapped}`, host: bound })).toEqual(forbidden);
   });
 
   it("answers 421 before any route when Host is not a name the daemon is known by", async () => {
@@ -938,5 +1120,70 @@ describe("Rerail daemon", () => {
     expect(probed.status).toBe(200);
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "0.0.0.0:4737" } })).toMatchObject({ status: 200 });
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "evil.example" } })).toEqual({ status: 421, body: { error: "host-not-allowed" } });
+  });
+
+  it("requires its access capability on every request but the page's own files, on loopback too", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const uiRoot = join(root, "ui");
+    await mkdir(join(uiRoot, "css"), { recursive: true });
+    await writeFile(join(uiRoot, "index.html"), "<title>Rerail</title>");
+    await writeFile(join(uiRoot, "app.js"), "export {};");
+    await writeFile(join(uiRoot, "css", "a.css"), "a{}");
+    const daemon = await start({ uiRoot });
+    const host = "127.0.0.1";
+    const refused = { status: 401, body: { error: "access-required", message: expect.stringContaining("x-rerail-access") } };
+    const without = { host, [ACCESS_HEADER]: "" };
+
+    // Every operation the API document lists, and every route beside it: `Host: 127.0.0.1`, a matching `Origin`, a
+    // capability one character longer or shorter, or one in a cookie or the query, are not the capability.
+    const document = await (await fetch(new URL("/openapi.json", daemon.url))).json() as { paths: Record<string, Record<string, unknown>> };
+    const routes = Object.entries(document.paths).flatMap(([path, methods]) =>
+      Object.keys(methods).map(method => [path.replaceAll(/\{[^}]+\}/gu, "x"), method.toUpperCase()] as const));
+    expect(routes.length).toBeGreaterThan(30);
+    for (const [path, method] of [...routes, ["/healthz", "GET"], ["/healthz", "HEAD"], ["/openapi.json", "GET"], ["/mcp", "POST"], ["/native/session", "POST"], ["/sessions/abc", "GET"]] as const) {
+      const body = method === "GET" || method === "HEAD" ? {} : { body: "{}" };
+      const answer = (headers: Record<string, string>) => rawRequest(daemon, path, { method, headers, ...body });
+      const expected = method === "HEAD" ? { status: 401, body: "" } : refused;
+      expect(await answer({ ...without, origin: `http://${host}` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: `${ACCESS}x` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: ACCESS.slice(0, -1) }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ ...without, cookie: `rerail-access=${ACCESS}` }), `${method} ${path}`).toEqual(expected);
+    }
+    expect(await rawRequest(daemon, `/api/sessions?rerail-access=${ACCESS}`, { headers: without })).toEqual(refused);
+    expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
+    // The capability guards the native bridge too, on top of that bridge's own bearer token.
+    expect((await rawRequest(daemon, "/native/session", { method: "POST", headers: { host }, body: "{}" })).body).toEqual({ error: "native-authorization-invalid" });
+
+    // The page's own files load without it: they are the package's, and the page then sends the capability it keeps.
+    // The address that opened it may carry the capability, so nothing it loads names that address.
+    for (const path of ["/", `/?rerail-access=${ACCESS}`, "/index.html", "/app.js", "/css/a.css"]) {
+      const page = await globalThis.fetch(new URL(path, daemon.url));
+      expect(page.status, path).toBe(200);
+      expect(page.headers.get("referrer-policy"), path).toBe("no-referrer");
+    }
+    expect((await globalThis.fetch(new URL("/app.js", daemon.url), { method: "HEAD" })).status).toBe(200);
+    // Only those: no file under `/api/`, and no other method, is one of them.
+    expect((await rawRequest(daemon, "/api/x.js", { headers: without })).status).toBe(401);
+    expect((await rawRequest(daemon, "/app.js", { method: "POST", headers: without, body: "{}" })).status).toBe(401);
+  }, 30_000);
+
+  it("keeps a loopback daemon's capability in its home across restarts, and mints one per start off loopback", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    await mkdir(join(root, "home"), { recursive: true });
+    const accessTokenFile = join(root, "home", "access-token");
+    const first = await start({ accessTokenFile }, true);
+    const token = first.state().accessToken!;
+    expect(token).toMatch(/^[\w-]{43}$/u);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
+    if (process.platform !== "win32") expect((await stat(accessTokenFile)).mode & 0o777).toBe(0o600);
+    await first.close();
+    const second = await start({ accessTokenFile }, true);
+    expect(second.state().accessToken).toBe(token);
+    expect((await rawRequest(second, "/healthz", { headers: { host: "127.0.0.1", [ACCESS_HEADER]: token } })).status).toBe(200);
+    await second.close();
+    // Reachable from other machines, the capability is per launch and the kept one is left alone.
+    const remote = await start({ accessTokenFile, host: "0.0.0.0" }, true);
+    expect(remote.state().accessToken).not.toBe(token);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
   });
 });

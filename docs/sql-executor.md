@@ -97,6 +97,7 @@ const result = JSON.parse(session.query(
 | Method | Behavior |
 |---|---|
 | `bindSnapshot(snapshotJson)` | Replaces inputs with core fact virtual tables over a repository snapshot. |
+| `applySnapshot(snapshotJson, maxWaves?)` | Rebuilds changed files and maintains retained SQL results atomically. |
 | `bindStored(scope, paths?)` | Binds current core documents from the content store without reading source files. |
 | `bindRelation(relationJson)` | Adds or replaces facts with integer values or string symbols. Duplicate rows collapse. |
 | `lower(program, dialect)` | Returns the setup SQL and wave program without executing its rules. |
@@ -119,7 +120,7 @@ The `.output` directive selects the derived relations to compute. Their intermed
 Output names must not overlap persistent SQL objects or bound inputs.
 A later run can atomically replace session-owned outputs. It invalidates their dependent programs.
 Rebinding an input invalidates programs that read it and their dependents. Independent outputs remain available.
-Replacing a snapshot clears all generated results.
+Calling `bindSnapshot` clears all generated results. `applySnapshot` maintains them from native fact deltas.
 Rebinding a relation preserves its column names and arity.
 
 A failed run rolls back its SQL writes. It does not publish partial derived results.
@@ -262,6 +263,35 @@ These relations read native columns through virtual tables. Core input relations
 Retained rule maintenance can materialize positive contexts from these columns.
 Incomplete parses fail the binding instead of supplying partial facts.
 
+After `bindSnapshot`, use `applySnapshot` to retain SQL results across source edits:
+
+```js
+const report = JSON.parse(session.applySnapshot(JSON.stringify({
+  files: [
+    { path: "a.py", language: "python", source: "def renamed():\n    return 43\n" },
+  ],
+})));
+```
+
+This is a complete replacement snapshot. An omitted file is removed. An unchanged file reuses its native fact sources.
+Only changed files rebuild their core facts. The scheduler receives tuple deltas for families that retained programs read.
+Other families are rebound without enumerating their rows. SQL queries also see the new facts.
+The snapshot includes native `within` and `span_within` tables; their rows are produced on lookup.
+AST matching remains native.
+
+The response includes `changed_files`, `rebuilt_files`, journaled fact counts, and the usual per-program maintenance reports.
+Native fact counts cover families read by retained programs; other families are rebound without tuple journals.
+Generated tables and their indexes survive successful edits. Independent `bindRelation` inputs also survive.
+A parse error or SQL failure preserves the old bindings, document membership, and results. Content-cache entries and interned atoms may remain.
+`applySnapshot` requires an initial `bindSnapshot`; `bindStored` does not establish editable snapshot membership.
+A native snapshot family cannot be overwritten with `bindRelation`.
+
+Snapshot JSON parsing and native fact preparation run outside SQL instruction limits.
+The current adapter enumerates document metadata and shared literal-type facts when it composes a snapshot.
+A lookup without document constraints can probe several document shards.
+A retained program that reads containment may enumerate the changed file's containment pairs to produce its journal.
+These costs need separate host-work limits if callers require an end-to-end execution budget.
+
 Symbols are integer atoms. `sym_text(atom)` reads their text, and `sym_atom(text)` interns text.
 The connection also registers native lattice and text functions, including Unicode `lower`, `sha256`, and `rr_join`.
 Kind and field atoms have separate domains. The rule planner lowers their string constants using the selected dialect.
@@ -308,6 +338,11 @@ The aggregate and merge must implement the same associative, commutative, idempo
 The widening function must terminate ascending chains. Registration checks function presence, arity, and deterministic flags.
 The caller supplies the algebraic contract. The executor does not prove it.
 Unknown custom lattices fail explicitly, and registering new lattice operations clears previous results.
+
+Deletion reads old native inputs through temporary indexed overlays over current facts and actual deletions.
+The overlays preserve lazy native lookups and are removed after each stratum, including on failure.
+For an old SQL result, the executor emits separate current/deleted query branches that retain the table's indexes.
+Many changed SQL atoms in one rule can produce many branches; this case still needs a compact indexed representation.
 
 Mixed derived joins leave their ordering to SQLite. Single-delta joins keep the delta anchor and native input probes.
 Base-only joins retain the planner's source estimates. Checked rule equality constraints request reusable indexes.

@@ -106,6 +106,7 @@ function prepareWriter(database: RerailDatabase, path: string): void {
   refuseWhileRestoring(database.$client, path);
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql`PRAGMA secure_delete = ON`);
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
@@ -453,4 +454,12 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
     }
     return { sessions, openSessions };
   }, { behavior: "immediate" });
+}
+
+export function eraseFreedPages(database: RerailDatabase): boolean {
+  const client = database.$client;
+  client.pragma("wal_checkpoint(TRUNCATE)");
+  client.exec("VACUUM");
+  const [result] = client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+  return result !== undefined && result.busy === 0;
 }

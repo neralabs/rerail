@@ -5,8 +5,10 @@ import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
+import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
   blindFilePaths,
+  type AuditFailure,
   type AuditRecorder,
   type AuditInput,
   type AuditRecord,
@@ -30,6 +32,32 @@ import {
   sessionsOfRepository,
   type AuditRow,
 } from "../storage/schema.js";
+
+/**
+ * Violations as the database keeps them: each one's message, captured variables and fix text scrubbed of secrets
+ * (`scrubSecrets`). What identifies a violation across audits (`violationKeySql`: clause, path, span, code) is kept
+ * as it is, so history counts it as before. Steers render the live violations, never these.
+ */
+export function storedViolations(violations: readonly CodeRuleViolation[]): CodeRuleViolation[] {
+  return violations.map(violation => {
+    const message = scrubSecrets(violation.message);
+    const variables = scrubValue(violation.variables);
+    const fixText = violation.fix === undefined ? undefined : scrubSecrets(violation.fix.text);
+    if (message === violation.message && variables === violation.variables && fixText === violation.fix?.text) return violation;
+    return {
+      ...violation, message, variables,
+      ...(violation.fix === undefined || fixText === undefined ? {} : { fix: { ...violation.fix, text: fixText } }),
+    };
+  });
+}
+
+/** Failures as the database keeps them: each message scrubbed of secrets (`scrubSecrets`). */
+export function storedFailures(failures: readonly AuditFailure[]): AuditFailure[] {
+  return failures.map(failure => {
+    const message = scrubSecrets(failure.message);
+    return message === failure.message ? failure : { ...failure, message };
+  });
+}
 
 /**
  * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build
@@ -627,8 +655,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
       .run(
         auditId,
         pageIndex,
-        JSON.stringify(result.violations ?? []),
-        JSON.stringify(result.failures ?? []),
+        JSON.stringify(storedViolations(result.violations ?? [])),
+        JSON.stringify(storedFailures(result.failures ?? [])),
         auditId,
       );
   }
@@ -653,8 +681,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
       const running = this.#database
         .update(audits)
         .set({
-          ...(result.violations === undefined ? {} : { violations: result.violations }),
-          ...(result.failures === undefined ? {} : { failures: result.failures }),
+          ...(result.violations === undefined ? {} : { violations: storedViolations(result.violations) }),
+          ...(result.failures === undefined ? {} : { failures: storedFailures(result.failures) }),
         })
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
         .run().changes > 0;
@@ -670,8 +698,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
         .update(audits)
         .set({
           status: result.status,
-          violations: result.violations ?? [],
-          failures: result.failures ?? [],
+          violations: storedViolations(result.violations ?? []),
+          failures: storedFailures(result.failures ?? []),
           finishedAt: Date.now(),
         })
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
