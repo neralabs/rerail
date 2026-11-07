@@ -767,7 +767,34 @@ impl Source for Viewed {
         Some(if lo > hi { Vec::new() } else { self.batch.between(self.view, lo, hi) })
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.lookup_docs(column, values, None)
+    }
+    fn doc_column(&self) -> Option<usize> {
+        matches!(self.view, View::Node | View::Core).then_some(0)
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        matches!((self.view, column), (View::Node, 2) | (View::Core, 1))
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        if !self.kept_to_doc(column) {
+            return None;
+        }
+        // A document not in the batch has no rows.
+        Some(match self.batch.doc(doc) {
+            Some(doc) => self.lookup_docs(column, values, Some(doc))?,
+            None => Vec::new(),
+        })
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.value_at(row, column)
+    }
+}
+impl Viewed {
+    /// The rows whose `column` is one of `values`, in document `only` (by index) where the column spans the
+    /// documents (a kind, a tape node), else in every document.
+    fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
         let b = &*self.batch;
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc);
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
@@ -784,7 +811,7 @@ impl Source for Viewed {
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = usize::try_from(v) else { continue };
-                for (doc, p) in b.docs.iter().enumerate() {
+                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
                     if let Some(&local) = p.local.get(t).filter(|&&local| local != NONE) {
                         rows.push(b.nodes[doc] + local as usize);
                     }
@@ -795,7 +822,7 @@ impl Source for Viewed {
                 };
                 let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
                 let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
+                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
                     for &kind in &atoms {
                         rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
                     }
@@ -806,7 +833,7 @@ impl Source for Viewed {
         }
         Some(rows)
     }
-    fn value(&self, row: usize, column: usize) -> i64 {
+    fn value_at(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         if let View::Loc(place) = self.view {
             let local = i as u32;
