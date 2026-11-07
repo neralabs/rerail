@@ -8068,3 +8068,16 @@ The broader structure gate is not green: 15 categories fail on Final shape `8794
 The relocation had also removed LFS coverage from parity archives. A gate-local `.gitattributes` restores it; 67 compressed archives use LFS, with all 65 existing payloads verified byte-for-byte against the preceding commit. The binary metric returns to its sole upstream finding, `native/src/code_rule_dsl/logic/plan/golden/facts.sql.zst`.
 
 Evidence: [original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-direct-contracts.json.gz) and [red/green supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-supplemental-contracts.json.gz). No full repository cold execution or new Linear issue was needed. Global associated contracts and persistent-workspace acceptance remain outstanding; full migration acceptance stays false. The next missing translation is `backend_type_strings`.
+
+
+### Next translation: backend type strings — survey and regex prototype
+
+All 148 original tests pass in a fresh offline recording at the source pin. It captures 62 complete API returns. The other 88 cases have no outer `check_file` recording; they still require their native helper, configuration, CLI, or passive DTO contracts. They are not excluded from the migration. No native rule port is claimed yet.
+
+A direct native regex prototype proves a false negative: Python `\bbackend` matches after a combining mark, while Rust's Unicode word class includes that mark. The converse also matters: Python treats other-number characters such as superscript two as word characters. A lookbehind spelling of Python's exact word class is refused by the current occurrence producer, consistent with Final shape's deliberate regex restriction.
+
+An alternative uses existing Datalog functors. Normalize Python-word/Rust-nonword characters to a non-ASCII word marker, and Rust-word/Python-nonword characters to a nonword, nonspace marker. Both substitutions preserve Unicode scalar length. The eight source patterns use ASCII literals, word/space classes, and a `[^)]` class; both markers preserve those predicates. Explicit Python whitespace ranges retain its `\s` behavior. Native occurrence positions then slice the original line for messages and columns. This avoids consuming boundary delimiters or filtering already-greedy matches.
+
+The prototype compares all eight source patterns over ten adversarial strings. Every occurrence, ordinal, character start/end, and original matched text agrees with the source. It includes combining marks, superscript digits, join controls, adjacent matches, and nested membership text. This is a focused representation proof, not completed rule acceptance. No engine change or new Linear issue was needed.
+
+[Source recording and regex prototype](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-restart-survey.json.gz). Next: write the full rule and native API/helper adapters, then execute all 148 original cases and fresh positive/negative contracts. The migration inventory remains 66 drafts and 34 absent translations.
