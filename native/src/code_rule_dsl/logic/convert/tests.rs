@@ -549,7 +549,50 @@ fn measure_all(corpus: &Path, rules: &str) {
     } else {
         rules.split(',').map(str::to_owned).collect()
     };
-    let texts: Vec<String> = ids.iter().map(|id| std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()).collect();
+    // A check's hand-written rule (`docs/rule-syntax/data-layer`), where it lowers, replaces its converted one, as in
+    // the replay (`RERAIL_MEASURE_HAND=off`: the converted rules only).
+    // `RERAIL_MEASURE_HAND=only`: the hand-written rules alone, including the checks the pack has no rule for; `skip`: the
+    // converted rules of the other checks. A run binds one shape of base relations (`core.rr`'s, or T's), so the two
+    // sets are two runs.
+    let mode = std::env::var("RERAIL_MEASURE_HAND").unwrap_or_default();
+    let hand = mode != "off";
+    let texts: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            let written = id.strip_prefix("data-layer-").filter(|_| hand).and_then(|c| hand_written(&c.replace('-', "_")));
+            if written.is_some() {
+                println!("HAND {id}");
+            }
+            match (mode.as_str(), written) {
+                ("only", w) => w,
+                ("skip", Some(_)) => None,
+                (_, Some(w)) => Some(w),
+                _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()),
+            }
+        })
+        .flatten()
+        .collect();
+    let mut texts = texts;
+    // The hand-written rules of checks the pack has no rule for.
+    if hand && mode != "skip" && rules == "*" {
+        let dir = crate::code_rule_dsl::logic::rr::library().join("../data-layer");
+        let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        }).filter(|c| !ids.contains(&format!("data-layer-{c}"))).collect();
+        extra.sort();
+        for c in extra {
+            // A rule reading a repository input the engine does not make yet (`input_error`, O80) cannot run.
+            match hand_written(&c.replace('-', "_")) {
+                Some(t) if t.contains("input_error") => println!("HAND {c} (no converted rule): skipped, reads input_error (O80)"),
+                Some(t) => {
+                    println!("HAND {c} (no converted rule)");
+                    texts.push(t);
+                }
+                None => {}
+            }
+        }
+    }
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
@@ -560,7 +603,7 @@ fn measure_all(corpus: &Path, rules: &str) {
     let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     println!(
         "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
-        ids.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+        programs.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
     );
     for (name, user, sys, rss, statements) in &r.phases {
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);

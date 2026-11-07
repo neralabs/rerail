@@ -19,8 +19,13 @@
 //! - **Decisions.** The run's choices and optimizations: the file-local split, chunks, text tests and their matchers,
 //!   nearest-ancestor sets and where they solve, inputs read in place.
 //!
+//! - **Roofline.** `work(unit, n)` charges n units of one kind of work to the open span; SQL statements charge their
+//!   VM steps and native joins the rows into their steps on their own. The report sets each span's work against the
+//!   best time this machine gives a unit (measured as it is written, `roofline`): roof time, excess, and a join's
+//!   amplification, and lists the CPU no counter explains.
+//!
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
-//! steps by work, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
+//! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -28,6 +33,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
+
+mod roofline;
+pub(in crate::code_rule_dsl) use roofline::Unit;
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
@@ -93,6 +101,8 @@ struct State {
     plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
     devices: BTreeMap<(String, String), DeviceTotal>,
+    /// Work charged by (span path, unit) (`work`).
+    work: BTreeMap<(String, Unit), u64>,
 }
 
 struct Stratum {
@@ -230,6 +240,15 @@ pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, s
     t.autoindex += autoindex;
 }
 
+/// Charges `n` units of `unit` work to the current span (the roofline). Off, it costs one load.
+pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
+    if !on() || n == 0 {
+        return;
+    }
+    let path = current();
+    *STATE.lock().unwrap().work.entry((path, unit)).or_default() += n;
+}
+
 /// Adds a native plan's rows in and out per step to the current span.
 pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)]) {
     let path = current();
@@ -330,6 +349,9 @@ pub(in crate::code_rule_dsl) fn planned(
 ) {
     if !on() {
         return;
+    }
+    if planning > 0.0 {
+        work(Unit::Candidate, plan.candidates);
     }
     let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
     let mut state = STATE.lock().unwrap();
@@ -567,6 +589,26 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     for ((p, plan), steps) in native.iter().take(30) {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
         let _ = writeln!(r, "{:>12}  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
+    }
+
+    // The roofline: SQL's VM steps and the native joins' rows are charged here, the rest by `work`. A native
+    // component's step counts are read after its run, so its rows go to the run's span (`…/engine run (joins)`).
+    {
+        let own: BTreeMap<String, f64> = state.spans.iter().map(|(p, t)| (p.clone(), t.own)).collect();
+        let mut charged = state.work.clone();
+        for ((p, _), s) in &sql {
+            *charged.entry((p.clone(), Unit::VmStep)).or_default() += s.vm;
+        }
+        let mut joins: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for ((p, _), steps) in &native {
+            let run = format!("{p}/engine run (joins)");
+            let at = if own.contains_key(&run) { run } else { p.clone() };
+            *charged.entry((at.clone(), Unit::JoinRow)).or_default() += work(steps);
+            let j = joins.entry(at).or_default();
+            j.0 += work(steps);
+            j.1 += steps.last().map_or(0, |s| s.1);
+        }
+        roofline::report(&mut r, &own, &charged, &joins);
     }
 
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");

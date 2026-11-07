@@ -69,7 +69,9 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
         return Ok(Built::Unparsed);
     };
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    from_tape(&doc, lines).map(Built::Facts)
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok(Built::Facts(facts))
 }
 
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
@@ -116,7 +118,9 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
     let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
     drop(restore);
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    from_tape(&doc, lines).map(Built::Facts)
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok(Built::Facts(facts))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {

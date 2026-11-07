@@ -175,6 +175,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     }
     let _ = binding;
     let _span = profile::span(|| "nearest on the CPU".into());
+    profile::work(profile::Unit::Cell, (trees.parent.len() * sets.len()) as u64);
     if trees.parent.iter().enumerate().all(|(v, &p)| p == NONE || (p as usize) < v) {
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on the CPU, one pass in preorder"));
         return Ok((0..sets.len())
