@@ -215,6 +215,6 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(join.body.len(), 5, "{join:?}");
     assert_eq!(join.head.args.len(), 2);
     // Its rows are attributable to their file: the node column is a location.
-    let (_, locations) = split_located(&prog);
+    let (_, locations, _) = split_located(&prog);
     assert_eq!(locations[&made[0]], [0], "{locations:?}");
 }

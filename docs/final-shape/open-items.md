@@ -1195,6 +1195,21 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
 - **Also:** each round reruns the whole cross-file part. The digest cutoff should be per document
   (rerun only the dependents of documents whose interface rows changed), as `typing::rounds` does.
 - **Test:** `own_ingestion_derives_what_t_facts_do` prints both and asserts them.
+- **A false negative on the runtime oracle (2026-11-06).** `typing::oracle_tests` scores calls.rr against
+  `fixtures/python/calls`. `pkg.exported_helper(2)` in `main.py` reaches `pkg/util.py`'s `helper` through
+  `pkg/__init__.py`'s `from .util import helper as exported_helper`: three files. At k = 2 the rounds stop
+  unconverged (488 → 576 → 595 hop rows) and the call gets **no edge**, where CPython ran `helper`. That is not
+  unknown, so a rule reads it as "calls nothing". With k = 6 the rounds converge after round 4 (596 rows) and
+  the call agrees (84 agree, 9 depart, as the spike scored).
+  - **Why the program cannot mark it itself.** Its opens are three-valued through negation. For example,
+    `vopen(c) :- callee(c, e), !pv(e, _, _), …` and `attr_open(c, a) :- …, !found(c, a, _)` read the absence of
+    a hop relation's row as "no value". Under a bounded round, that absence is not final.
+
+- **Narrowed (2026-11-06, decision 0047).** k is 4. A program that declares `unconverged(0)` gets a pending
+  round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
+  is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
+  - pending marking for the other programs (`calls_rust.rr`, workload);
+  - the per-document cutoff, since each round still reruns the whole cross-file part.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
@@ -1466,3 +1481,72 @@ tokens have no field.
 **Closed by 0047:** both. The planner names a column by `input_columns` only for an input
 (`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
 read `kind` and `docof` as inputs. The nine tests run again.
+
+**Also (Typing-support, 2026-11-06), by renaming.** `plan::private_derived_inputs` runs where a program
+enters the planner (`plan::run`, `plan::lower::lower`). A relation the program derives under a base relation's
+name, and does not read as an input, is planned as `<rel>_rr_derived`, whose columns are positional like any
+derived table's. The suffix sorts where the name did, so components and plans keep T's order, and the reported
+plans and components give the name back (`public_names`). An output under such a name is refused. Eight of the
+nine tests run again. The ninth (`t_programs_with_the_transducers_nearest_derive_t_outputs`) now gets past O81
+and stops at O82.
+
+## O82. Metal runs abort in a debug test build
+
+Two tests that dispatch to the device abort the test process inside `metal-0.33.0` (`lib.rs:82`): Rust's
+debug-build check of `slice::from_raw_parts`' precondition (pointer aligned and non-null) fails, and it is a
+non-unwinding panic. They are `logic::plan::tests::t_programs_with_the_transducers_nearest_derive_t_outputs`,
+ignored with this item, and `typing::file_local::tests::the_device_finds_the_cpus_nearest`. Because the panic
+cannot unwind, it ends every test that shares the process, so a filtered run over `typing::` must skip the
+device tests. It was not checked whether this predates O81's change; nothing in that change touches device
+buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
+zero-length contents pointer), and both tests pass in a debug build.
+
+## O83. `calls.rr` against Jedi over a real corpus
+
+Decision 0047's condition for moving `calls:` is the runtime oracle, which `calls.rr` meets. A Jedi comparison over
+a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check beside it, not a gate.
+`calls::python_tests::benchmark_python_calls_corpus` scores only the native resolver. The spike scored `calls.rdl`
+(99.18% of 33,309 calls, t9 §7.4), but its scorer was not copied.
+
+**Closure:** a Jedi 0.19.2 recording over django (`fixtures/python/calls/generate_corpus.py`), a scorer of
+`calls.rr` over the same files through `corpus::run`, and the run recorded in t20.
+
+**Closed 2026-11-06:** run, and recorded in t20. 99.2% of 20,364 calls both decide agree; 142 differ, mostly
+through decorators. Making the 7,286 calls the program leaves open, which Jedi decides, is the accuracy work
+left.
+
+## O84. The type relations' first draft: what they leave out
+
+`calls.rr`'s type relations (decision 0047, point 3; t20) answer at the positions whose value the program models
+(`vpos`), from its points-to values. Left out, each giving `type_open`, never a wrong class:
+- **Positions:** any expression no rule of the program reads the value of (an operand, a subscript, a
+  comprehension's element).
+- **Declared types:** parameter, return and variable annotations are unread. A parameter's type is open.
+- **Values:** functions, bound methods and `super()` objects get no class. A class with a metaclass the workspace
+  defines gets none either.
+- **Generics:** names only, no arguments: `list`, not `list[int]`. Terms are interned per node by the corpus
+  runner (`x.node_type`) as unions of names.
+- **Exceptions and other builtin hierarchies:** only `bool <: int` and `<: object`.
+- **Possible:** past what is listed, `possible_open`.
+
+**Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and
+generic arguments carried as terms.
+
+## O85. Cross-file costs `calls.rr` works around
+
+Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program now avoids
+each of them by how its rules are written; another program would meet them again.
+- **One column per lookup.** The input and `__prev` sources look up rows by one equality column. A join on two
+  columns (`look(n, x, s)` by scope and name, `found__prev` by class and attribute) walks every row for the first
+  and filters on the second.
+- **A recursive relation priced by its seeds.** The set fixpoint prices the full relation (`sfx_f_<rel>`) at its
+  seed rules' rows, so a plan may scan it before a selective atom binds it. This happened in the call rule's
+  `pv(r, …)` before `retval(f, r)`.
+- **A kind test in a recursive step.** `kind(n, "assignment")` with `n` bound, in a probe of the cross-file part,
+  cost one walk of every node of that kind per delta row (about 18k VM steps). `pass(n, c)`, made per file,
+  avoids it. The cause in the plan is not confirmed.
+- **Every round reruns the whole cross-file part.** Strata the hop relations do not read (the type relations,
+  the outputs) could run once, after the last round. They are about a fifth of the cross-file CPU on 172 files.
+
+**Closure:** each cost fixed in the engine and measured on the same slices with the program's rules written
+plainly.

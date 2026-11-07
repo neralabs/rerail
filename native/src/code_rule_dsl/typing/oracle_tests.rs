@@ -1,0 +1,584 @@
+//! The typing programs scored against the call oracles the native resolvers are held to (t20 step 0): what the
+//! program answers at each call CPython ran, against what it ran. These tests replace the spike's scorers
+//! (`score_calls.py`), which were not copied: parity with the spike's outputs (`logic::plan::tests`) says the
+//! port derives what the spike derived, not that it is right.
+
+use crate::code_rule_dsl::logic::plan::corpus;
+use crate::code_rule_dsl::typing::file_local::Binding;
+use serde_json::Value as Json;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+/// A program's answer at a call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Answer {
+    /// `call_open`: the call may reach something no static name denotes.
+    Unknown,
+    /// `call_target` rows: the definitions named, as (file, line of the definition).
+    Reaches(BTreeSet<(String, u64)>),
+}
+
+/// How an answer departs from what CPython ran at a call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Departure {
+    /// Unknown, where CPython ran workspace functions or none.
+    Unknown,
+    /// No edge, where CPython ran a workspace function.
+    NoEdge,
+    /// Some of what ran, and nothing else.
+    Fewer,
+    /// A definition that did not run there: a wrong answer.
+    Wrong,
+}
+
+/// Sorted relative paths and sources of the `.py` files under `root`.
+fn python_files(root: &Path) -> BTreeMap<String, String> {
+    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else if path.extension().is_some_and(|e| e == "py") {
+                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// 1-based line of a byte offset.
+fn line(source: &str, offset: usize) -> u64 {
+    source.as_bytes()[..offset].iter().filter(|b| **b == b'\n').count() as u64 + 1
+}
+
+/// The spans the scorer reads, added to the program as one more output: each answered call's and each named
+/// definition's `(start, end)` bytes. A definition's line is its `def`'s, decorated or not, as the oracle records it.
+const SPANS: &str = "
+.decl rr_score_at(n: node, s: number, e: number)
+rr_score_at(n, s, e) :- call_target(n, _), node(_, n, _, s, e).
+rr_score_at(n, s, e) :- call_open(n), node(_, n, _, s, e).
+rr_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
+.output rr_score_at
+";
+
+/// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
+fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) -> BTreeMap<(String, usize, usize), Answer> {
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score");
+    let src = format!("{program}\n{SPANS}");
+    let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    println!("cross-file rounds {:?}", report.rounds);
+    assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at: BTreeMap<String, (usize, usize)> = rows("rr_score_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
+    let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
+    let key = |node: &str| {
+        let (s, e) = at[node];
+        (file(node), s, e)
+    };
+    let mut answers = BTreeMap::new();
+    for r in rows("call_open") {
+        answers.insert(key(&r[0]), Answer::Unknown);
+    }
+    for r in rows("call_target") {
+        let (f, (s, _)) = (file(&r[1]), at[&r[1]]);
+        let def = (f.clone(), line(&sources[&f], s));
+        match answers.entry(key(&r[0])).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
+            Answer::Reaches(defs) => {
+                defs.insert(def);
+            }
+            // Open and named both: the names are a lower bound, the call is still unknown.
+            Answer::Unknown => {}
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    answers
+}
+
+/// Each call CPython ran where the program answers otherwise: `file:line `text``, with how.
+pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>, Vec<String>) {
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
+    let project = oracle.join("project");
+    let sources = python_files(&project);
+    let answers = answers(program, &project, &sources);
+    let (mut agree, mut departures, mut ran_spans) = (0, BTreeMap::new(), BTreeSet::new());
+    for (file, calls) in expected["runtime"].as_object().unwrap() {
+        for call in calls.as_array().unwrap() {
+            let (start, end) = (call["start"].as_u64().unwrap() as usize, call["end"].as_u64().unwrap() as usize);
+            ran_spans.insert((file.clone(), start, end));
+            let at = format!("{file}:{} `{}`", call["line"], &sources[file][start..end]);
+            let callees = call["callees"].as_array().unwrap();
+            let ran: BTreeSet<(String, u64)> =
+                callees.iter().filter(|c| c[0] == "def").map(|c| (c[1].as_str().unwrap().to_owned(), c[2].as_u64().unwrap())).collect();
+            // A lambda is no definition a program can name.
+            let lambda = callees.iter().any(|c| c[0] == "lambda");
+            let departure = match answers.get(&(file.clone(), start, end)) {
+                Some(Answer::Reaches(named)) if *named == ran && !lambda => None,
+                None if ran.is_empty() && !lambda => None,
+                Some(Answer::Unknown) => Some(Departure::Unknown),
+                None => Some(Departure::NoEdge),
+                Some(Answer::Reaches(named)) if named.is_subset(&ran) => Some(Departure::Fewer),
+                Some(Answer::Reaches(named)) => {
+                    if std::env::var_os("RERAIL_SCORE_DETAIL").is_some() {
+                        println!("  wrong at {at}: named {named:?}, ran {ran:?}");
+                    }
+                    Some(Departure::Wrong)
+                }
+            };
+            match departure {
+                None => agree += 1,
+                Some(d) => {
+                    departures.insert(at, d);
+                }
+            }
+        }
+    }
+    // A definition named at a call CPython never ran is unchecked by the trace, so it is reported: the oracle's
+    // main runs every call the workspace names a function for.
+    let never_ran = answers
+        .iter()
+        .filter(|(k, a)| matches!(a, Answer::Reaches(d) if !d.is_empty()) && !ran_spans.contains(*k))
+        .map(|((f, s, _), _)| format!("{f}:{}: named, never run", line(&sources[f], *s)))
+        .collect();
+    (agree, departures, never_ran)
+}
+
+fn program(name: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
+}
+
+/// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
+/// wrong, as the spike scored). The native resolver departs at 17 calls on the same oracle; the program resolves `super()`, a local
+/// holding an instance, a call's result and an instance's `__call__`, which the native resolver leaves unknown.
+const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
+    ("pkg/aliases.py:21 `defined_later()`", Departure::Unknown, "a name a star import binds (`from .util import *`)"),
+    ("pkg/decorators.py:12 `func(*args, **kwargs)`", Departure::Unknown, "a called parameter"),
+    ("pkg/decorators.py:35 `cached(1)`", Departure::Unknown, "`functools.lru_cache`'s wrapper"),
+    ("pkg/dynamic.py:18 `HANDLERS[name]()`", Departure::Unknown, "a subscript of a container"),
+    ("pkg/dynamic.py:22 `callback()`", Departure::Unknown, "a called parameter"),
+    ("pkg/dynamic.py:26 `getattr(util, name)(1)`", Departure::Unknown, "`getattr`'s result"),
+    ("pkg/dynamic.py:31 `(lambda: first())()`", Departure::Unknown, "a lambda"),
+    ("pkg/dynamic.py:31 `square(3)`", Departure::Unknown, "a lambda bound to a name"),
+    ("pkg/dynamic.py:35 `functools.partial(util.helper, 1)()`", Departure::Unknown, "`functools.partial`"),
+];
+
+/// `calls.rr` against the CPython runtime oracle (`fixtures/python/calls`): no wrong answer, nothing named that
+/// never ran, and the departures as recorded. The native resolver's test
+/// (`calls::python_tests::python_calls_agree_with_the_runtime`) holds the same oracle to its own list.
+#[test]
+fn python_calls_program_agrees_with_the_runtime() {
+    let (agree, departures, never_ran) = score_python(&program("calls"));
+    println!("calls.rr: {agree} agree, {} depart", departures.len());
+    assert!(never_ran.is_empty(), "{never_ran:#?}");
+    let listed: BTreeMap<String, Departure> = PYTHON_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
+    assert_eq!(departures, listed, "calls where calls.rr answers otherwise than CPython ran");
+    assert!(agree >= 84, "{agree} agree");
+}
+
+/// O41 (decision 0047): rounds cut before the fixpoint make a call unknown, never no edge. At k = 1 (and the
+/// pending round) the package re-export in `main.py`, three files deep, is not reached: it is unknown. No call is
+/// no edge or wrong where CPython ran a workspace function, and the fixpoint's departures stay.
+#[test]
+fn python_calls_program_cut_short_is_unknown_not_no_edge() {
+    let (agree, departures, never_ran) = crate::code_rule_dsl::typing::cross_rounds::with_k(1, || score_python(&program("calls")));
+    println!("calls.rr at k = 1: {agree} agree, {} depart", departures.len());
+    for (at, d) in &departures {
+        println!("  {d:?}\t{at}");
+    }
+    assert!(never_ran.is_empty(), "{never_ran:#?}");
+    assert!(!departures.values().any(|d| matches!(d, Departure::NoEdge | Departure::Wrong)), "{departures:#?}");
+    assert_eq!(departures.get("main.py:10 `pkg.exported_helper(2)`"), Some(&Departure::Unknown));
+    for (at, d, _) in PYTHON_DEPARTURES {
+        assert_eq!(departures.get(*at), Some(d), "{at}");
+    }
+}
+
+/// 1-based line and code-point column of a byte offset, as rust-analyzer's recording writes them.
+fn line_column(source: &str, offset: usize) -> (u64, u64) {
+    let start = source[..offset].rfind('\n').map_or(0, |i| i + 1);
+    (line(source, offset), source[start..offset].chars().count() as u64 + 1)
+}
+
+/// The positions the Rust scorer reads: each answered call's callee name (the last segment of its path, or the
+/// method's field) and each named definition's name, as `(node, start byte)`.
+const RUST_SPANS: &str = "
+.decl rr_score_callee(c: node, x: node)
+rr_score_callee(c, x) :- field(c, \"function\", x), kind(x, \"identifier\").
+rr_score_callee(c, x) :- field(c, \"function\", p), kind(p, \"scoped_identifier\"), field(p, \"name\", x).
+rr_score_callee(c, x) :- field(c, \"function\", p), kind(p, \"field_expression\"), field(p, \"field\", x).
+rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", x), kind(x, \"identifier\").
+rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", p), kind(p, \"scoped_identifier\"), field(p, \"name\", x).
+rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", p), kind(p, \"field_expression\"), field(p, \"field\", x).
+.decl rr_score_pos(n: node, s: number)
+rr_score_pos(c, s) :- call_target(c, _), rr_score_callee(c, x), node(_, x, _, s, _).
+rr_score_pos(c, s) :- call_open(c), rr_score_callee(c, x), node(_, x, _, s, _).
+rr_score_pos(f, s) :- call_target(_, f), field(f, \"name\", x), node(_, x, _, s, _).
+rr_score_pos(f, s) :- call_target(_, f), !rr_score_named(f), node(_, f, _, s, _).
+.decl rr_score_named(f: node)
+rr_score_named(f) :- call_target(_, f), field(f, \"name\", _).
+.output rr_score_pos
+";
+
+/// `calls_rust.rr` against rust-analyzer's resolution of the fixture crate (`fixtures/rust/calls`): each recorded
+/// function or method call (macro bodies left out), as `(agree, departures)`. A call into another crate
+/// agrees when the program names nothing there; one rust-analyzer resolves in the crate agrees when the program
+/// names exactly that definition.
+pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) {
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("rust/calls");
+    let recording: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("calls.expected.json")).unwrap()).unwrap();
+    let root = oracle.join("crate");
+    let sources: BTreeMap<String, String> = recording["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p.as_str().unwrap().to_owned(), std::fs::read_to_string(root.join(p.as_str().unwrap())).unwrap()))
+        .collect();
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score-rust");
+    corpus::run(&format!("{program}\n{RUST_SPANS}"), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at = |node: &str, pos: &BTreeMap<String, usize>| -> (String, u64, u64) {
+        let file = node.rsplit_once(':').unwrap().0.to_owned();
+        let (l, c) = line_column(&sources[&file], pos[node]);
+        (file, l, c)
+    };
+    let pos: BTreeMap<String, usize> = rows("rr_score_pos").into_iter().map(|r| (r[0].clone(), r[1].parse().unwrap())).collect();
+    let mut answers: BTreeMap<(String, u64, u64), Answer> = BTreeMap::new();
+    for r in rows("call_open") {
+        answers.insert(at(&r[0], &pos), Answer::Unknown);
+    }
+    for r in rows("call_target") {
+        let (f, l, _) = at(&r[1], &pos);
+        if let Answer::Reaches(defs) = answers.entry(at(&r[0], &pos)).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
+            defs.insert((f, l));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    let (mut agree, mut departures) = (0, BTreeMap::new());
+    for call in recording["calls"].as_array().unwrap() {
+        if call["kind"].as_str().unwrap().starts_with("m:") {
+            continue;
+        }
+        let key = (call["path"].as_str().unwrap().to_owned(), call["line"].as_u64().unwrap(), call["column"].as_u64().unwrap());
+        let target = &call["target"];
+        let ran: BTreeSet<(String, u64)> =
+            target["path"].as_str().map(|p| (p.to_owned(), target["line"].as_u64().unwrap())).into_iter().collect();
+        let describe = format!("{}:{}:{} `{}`", key.0, key.1, key.2, call["text"].as_str().unwrap());
+        let departure = match answers.get(&key) {
+            Some(Answer::Reaches(named)) if *named == ran => None,
+            None if ran.is_empty() => None,
+            Some(Answer::Unknown) => Some(Departure::Unknown),
+            None => Some(Departure::NoEdge),
+            Some(Answer::Reaches(named)) if named.is_subset(&ran) => Some(Departure::Fewer),
+            Some(Answer::Reaches(named)) => {
+                if std::env::var_os("RERAIL_SCORE_DETAIL").is_some() {
+                    println!("  wrong at {describe}: named {named:?}, recorded {ran:?}");
+                }
+                Some(Departure::Wrong)
+            }
+        };
+        match departure {
+            None => agree += 1,
+            Some(d) => {
+                departures.insert(describe, d);
+            }
+        }
+    }
+    (agree, departures)
+}
+
+/// Where `calls_rust.rr` answers otherwise than rust-analyzer recorded, and why (2026-11-06: 37 agree, these 7
+/// depart, as in the spike). `Wrong` here is not wrong: rust-analyzer's definition of a call through a local
+/// function pointer is the local; the program follows the local to the function it holds, which is what runs.
+const RUST_DEPARTURES: &[(&str, Departure, &str)] = &[
+    ("src/lib.rs:45:7 `f`", Departure::Unknown, "a trait method on a generic receiver (`x: T`, `T: Trait`)"),
+    ("src/lib.rs:46:7 `defaulted`", Departure::Unknown, "a trait's default method on a generic receiver"),
+    ("src/lib.rs:47:19 `f`", Departure::Unknown, "`<T as Trait>::f`"),
+    ("src/lib.rs:48:12 `f`", Departure::Unknown, "`Trait::f(&x)`"),
+    ("src/lib.rs:50:5 `p`", Departure::Wrong, "through `let p: fn() = helper`: the program names `helper`, rust-analyzer the local"),
+    ("src/lib.rs:54:19 `map`", Departure::Unknown, "an iterator adapter on a call's result (`iter()`): no expression type"),
+    ("src/lib.rs:54:31 `count`", Departure::Unknown, "an iterator adapter's result"),
+];
+
+/// `calls_rust.rr` against rust-analyzer: the departures as recorded.
+#[test]
+fn rust_calls_program_agrees_with_rust_analyzer() {
+    let (agree, departures) = score_rust(&program("calls_rust"));
+    println!("calls_rust.rr: {agree} agree, {} depart", departures.len());
+    let listed: BTreeMap<String, Departure> = RUST_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
+    assert_eq!(departures, listed, "calls where calls_rust.rr answers otherwise than rust-analyzer recorded");
+    assert!(agree >= 37, "{agree} agree");
+}
+
+/// How the type relations answer at a receiver CPython ran a method call on (`receiver` in the oracle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum TypeAnswer {
+    /// `type_of` names exactly the classes the receiver was.
+    Exact,
+    /// `type_open`: the receiver may be of a class not listed.
+    Unknown,
+    /// Closed, and every class it was is listed, with more besides.
+    Wider,
+    /// A class it was is not listed while closed, a class proven is not in a class's MRO, or a class in an MRO
+    /// is not possible: a wrong answer.
+    Wrong,
+}
+
+/// The spans the types scorer reads: each typed or open node's.
+const TYPE_SPANS: &str = "
+.decl rr_type_at(n: node, s: number, e: number)
+rr_type_at(n, s, e) :- type_of(n, _), node(_, n, _, s, e).
+rr_type_at(n, s, e) :- type_open(n), node(_, n, _, s, e).
+.output rr_type_at
+";
+
+/// What the type relations say at a node: listed classes, open, proven classes, possible classes, possible open.
+#[derive(Debug, Default)]
+struct Typed {
+    of: BTreeSet<String>,
+    open: bool,
+    proven: BTreeSet<String>,
+    possible: BTreeSet<String>,
+    possible_open: bool,
+}
+
+/// `program`'s type relations at each receiver the CPython oracle records, keyed `file:line `text``.
+pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> {
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
+    let project = oracle.join("project");
+    let sources = python_files(&project);
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score-types");
+    corpus::run(&format!("{program}\n{TYPE_SPANS}"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at: BTreeMap<String, (String, usize, usize)> = rows("rr_type_at")
+        .into_iter()
+        .map(|r| (r[0].clone(), (r[0].rsplit_once(':').unwrap().0.to_owned(), r[1].parse().unwrap(), r[2].parse().unwrap())))
+        .collect();
+    let mut typed: BTreeMap<(String, usize, usize), Typed> = BTreeMap::new();
+    for r in rows("type_of") {
+        typed.entry(at[&r[0]].clone()).or_default().of.insert(r[1].clone());
+    }
+    for r in rows("type_open") {
+        typed.entry(at[&r[0]].clone()).or_default().open = true;
+    }
+    for r in rows("proven_type") {
+        typed.entry(at[&r[0]].clone()).or_default().proven.insert(r[1].clone());
+    }
+    for r in rows("possible_type") {
+        typed.entry(at[&r[0]].clone()).or_default().possible.insert(r[1].clone());
+    }
+    for r in rows("possible_open") {
+        typed.entry(at[&r[0]].clone()).or_default().possible_open = true;
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    let detail = std::env::var_os("RERAIL_SCORE_DETAIL").is_some();
+    let mut answers = BTreeMap::new();
+    for (file, calls) in expected["runtime"].as_object().unwrap() {
+        for call in calls.as_array().unwrap() {
+            let Some(receiver) = call.get("receiver") else { continue };
+            let (start, end) = (receiver["start"].as_u64().unwrap() as usize, receiver["end"].as_u64().unwrap() as usize);
+            let at = format!("{file}:{} `{}`", call["line"], &sources[file][start..end]);
+            let classes: Vec<(String, BTreeSet<String>)> = receiver["classes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| (c[0].as_str().unwrap().to_owned(), c[1].as_array().unwrap().iter().map(|m| m.as_str().unwrap().to_owned()).collect()))
+                .collect();
+            let ran: BTreeSet<String> = classes.iter().map(|(c, _)| c.clone()).collect();
+            let none = Typed::default();
+            let t = typed.get(&(file.clone(), start, end)).unwrap_or(&none);
+            let mut wrong = Vec::new();
+            if !t.open && !ran.is_subset(&t.of) {
+                wrong.push(format!("closed {:?}, ran {ran:?}", t.of));
+            }
+            for (c, mro) in &classes {
+                wrong.extend(t.proven.iter().filter(|u| !mro.contains(*u)).map(|u| format!("proven {u}, ran {c}")));
+                if !t.possible_open {
+                    wrong.extend(mro.iter().filter(|u| !t.possible.contains(*u)).map(|u| format!("{u} not possible, ran {c}")));
+                }
+            }
+            let answer = if !wrong.is_empty() {
+                if detail {
+                    println!("  wrong at {at}: {wrong:?}");
+                }
+                TypeAnswer::Wrong
+            } else if t.open {
+                TypeAnswer::Unknown
+            } else if t.of == ran {
+                TypeAnswer::Exact
+            } else {
+                TypeAnswer::Wider
+            };
+            answers.insert(at, answer);
+        }
+    }
+    answers
+}
+
+/// `calls.rr`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
+/// and the receivers not exact as listed.
+const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
+
+#[test]
+fn python_type_relations_agree_with_the_runtime() {
+    let answers = score_python_types(&program("calls"));
+    let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
+    println!("calls.rr types: {exact} exact of {} receivers", answers.len());
+    for (at, a) in &answers {
+        println!("  {a:?}\t{at}");
+    }
+    let departures: BTreeMap<String, TypeAnswer> = answers.into_iter().filter(|(_, a)| *a != TypeAnswer::Exact).collect();
+    let listed: BTreeMap<String, TypeAnswer> = PYTHON_TYPE_DEPARTURES.iter().map(|(at, a, _)| ((*at).to_owned(), *a)).collect();
+    assert!(!departures.values().any(|a| *a == TypeAnswer::Wrong), "{departures:#?}");
+    assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
+}
+
+/// A rule reads the Python program's answers through `lib/python/calls.rr` (decision 0047, point 2): the engine runs
+/// `typing/programs/calls.rr` for it (`corpus::bridge`), and the rule's call edges and proven types, joined back to its
+/// own nodes on `core.rr`'s facts, are exactly the program's on T's.
+#[test]
+fn rules_read_the_python_program_through_lib_calls() {
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let keyed = "
+.decl edge(cp: symbol, cs: number, fp: symbol, fs: number)
+edge(cp, cs, fp, fs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _), node(g, f, _, fs, _), doc(g, fp, _).
+.decl proven(np: symbol, ns: number, ne: number, t: symbol)
+proven(np, ns, ne, t) :- proven_type(n, t), node(d, n, _, ns, ne), doc(d, np, _).
+.decl unknown(cp: symbol, cs: number)
+unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
+.output edge, proven, unknown
+";
+    let rows = |out: &Path, rel: &str| -> BTreeSet<String> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect()
+    };
+    let direct = crate::code_rule_dsl::prefilter::tests::temp().with_extension("direct");
+    corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rule");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    let rule = rule_dir.join("rule.rr");
+    std::fs::write(&rule, format!("#include \"python/calls.rr\"\n{keyed}")).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let through = rule_dir.join("out");
+    let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"], "the program ran once");
+    for rel in ["edge", "proven", "unknown"] {
+        let (a, b) = (rows(&direct, rel), rows(&through, rel));
+        println!("{rel}: {} rows", a.len());
+        assert!(!a.is_empty(), "{rel}: the program gives no rows");
+        assert_eq!(a, b, "{rel}: the rule's rows are the program's");
+    }
+    let _ = std::fs::remove_dir_all(&direct);
+    let _ = std::fs::remove_dir_all(&rule_dir);
+}
+
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`.
+const JEDI_SPANS: &str = "
+.decl rr_jedi_cls(c: node, k: node)
+rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
+.decl rr_jedi_at(n: node, s: number, e: number)
+rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
+rr_jedi_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
+rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
+.output rr_jedi_cls, rr_jedi_at
+";
+
+/// `calls.rr` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
+/// `fixtures/python/calls/generate_corpus.py`; O83). The program runs over `RERAIL_PYTHON_CALLS_ROOT`, a directory
+/// whose tree holds the corpus's paths as the recording names them (`django/...`). Where both decide, the program
+/// agrees when Jedi's definition is among those it names, its class among the classes a class call makes, or, for
+/// an external target, it names no workspace definition.
+#[test]
+#[ignore = "Jedi call targets over a Python corpus (minutes)"]
+fn benchmark_python_calls_program_corpus() {
+    let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
+    let report = corpus::run(&format!("{}\n{JEDI_SPANS}", program("calls")), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at: BTreeMap<String, (usize, usize)> = rows("rr_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
+    let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
+    let mut sources: BTreeMap<String, String> = BTreeMap::new();
+    let mut line_of = |f: &str, s: usize| -> u64 {
+        let src = sources.entry(f.to_owned()).or_insert_with(|| std::fs::read_to_string(root.join(f)).unwrap_or_default());
+        line(src, s.min(src.len()))
+    };
+    let key = |n: &str| (file(n), at[n].0, at[n].1);
+    let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
+    let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
+    for r in rows("call_target") {
+        let (f, s) = (file(&r[1]), at[&r[1]].0);
+        named.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+    }
+    let mut classes: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
+    for r in rows("rr_jedi_cls") {
+        let (f, s) = (file(&r[1]), at[&r[1]].0);
+        classes.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for corpus in recording["corpora"].as_array().unwrap() {
+        for (path, records) in corpus["records"].as_object().unwrap() {
+            for record in records.as_array().unwrap() {
+                let k = (path.clone(), record[0].as_u64().unwrap() as usize, record[1].as_u64().unwrap() as usize);
+                let targets = record[3].as_array().unwrap();
+                *tally.entry("calls").or_default() += 1;
+                let decided: Vec<&Json> = targets.iter().filter(|t| t[0] != "other").collect();
+                if decided.is_empty() {
+                    *tally.entry("jedi undecided").or_default() += 1;
+                    continue;
+                }
+                if open.contains(&k) {
+                    *tally.entry("program unknown, jedi decided").or_default() += 1;
+                    continue;
+                }
+                *tally.entry("both decided").or_default() += 1;
+                let defs = named.get(&k).cloned().unwrap_or_default();
+                let cls = classes.get(&k).cloned().unwrap_or_default();
+                let at_of = |t: &Json| (t[1].as_str().unwrap().to_owned(), t[2].as_u64().unwrap());
+                let ok = decided.iter().any(|t| match t[0].as_str().unwrap() {
+                    "def" => defs.contains(&at_of(t)),
+                    "class" => cls.contains(&at_of(t)),
+                    _ => defs.is_empty() && cls.is_empty(),
+                });
+                let what = if ok {
+                    "agree"
+                } else if defs.is_empty() && cls.is_empty() {
+                    "program no edge, jedi a definition"
+                } else if decided.iter().all(|t| t[0] == "external") {
+                    "program a definition, jedi external"
+                } else {
+                    "program another definition"
+                };
+                *tally.entry(what).or_default() += 1;
+                if what != "agree" {
+                    let list = examples.entry(what).or_default();
+                    if list.len() < 12 {
+                        list.push(format!("{path}:{} jedi {decided:?} program {defs:?} classes {cls:?}", record[2]));
+                    }
+                }
+            }
+        }
+    }
+    for (what, n) in &tally {
+        println!("{n:>8}  {what}");
+    }
+    for (what, list) in &examples {
+        println!("{what}:");
+        for e in list {
+            println!("    {e}");
+        }
+    }
+}

@@ -25,6 +25,7 @@ use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 mod memo;
+mod bridge;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -167,6 +168,8 @@ pub(crate) struct Report {
     pub(crate) typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
     pub(crate) text: (usize, usize, f64),
+    /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
+    pub(crate) typing_runs: bridge::Runs,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -424,9 +427,14 @@ pub(crate) fn run_with_options(
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
+    let mut prog = combine(programs, "")?;
+    // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
+    let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
+    if !bridged.is_empty() {
+        prog = combine(programs, &bridged)?;
+    }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
-    let mut prog = combine(programs, "")?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
@@ -437,7 +445,7 @@ pub(crate) fn run_with_options(
         }
         None => {
             let (python, rs) = corpus_files(root)?;
-            let rust = rs.len() > python.len();
+            let rust = typing.rust.unwrap_or(rs.len() > python.len());
             let files = if rust { rs } else { python };
             // A document's key is a function of its path (decision 0050), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
@@ -1033,9 +1041,9 @@ pub(crate) fn run_with_options(
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
-        let bounded = cross_rounds::bound(&cross.program)?;
+        let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         let got = if bounded.hops.is_empty() {
-            rounds = cross_rounds::Rounds { run: 1, converged: true, rows: vec![] };
+            rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
         } else {
             let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?;
@@ -1124,12 +1132,12 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs })
 }
 
 
 /// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
-/// `<rel>__prev`, a table in `x` that holds the previous round's rows (none in round 0). Each round's rows of the
+/// `<rel>__prev`, the previous round's rows held in memory (none in round 0). Each round's rows of the
 /// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
 /// round's outcome is the part's.
 /// A relation's rows after a run: held by the engine (`kept`), or in its table.
@@ -1144,18 +1152,11 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
-    for rel in hops {
-        let cols: Vec<String> = (0..types(rel).len()).map(|i| format!("c{i}")).collect();
-        db.execute_batch(&format!(
-            "DROP TABLE IF EXISTS x.{rel}{p}; CREATE TABLE x.{rel}{p}({}, PRIMARY KEY ({})) WITHOUT ROWID",
-            cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "),
-            cols.join(", "),
-            p = cross_rounds::PREV
-        ))?;
-    }
+    // The previous round's rows of each hop relation (none before round 1), bound as `<rel>__prev` from memory.
+    let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
     // Round 0's previous rows: none, measured as such.
     let mut prev_totals = Totals::default();
     for rel in hops {
@@ -1165,12 +1166,16 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
     }
     let mut last = None;
     let k = cross_rounds::k();
-    for r in 0..=k {
+    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
+    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
+    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    for r in 0..=k + 1 {
         let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
-        for rel in hops {
-            let prev = format!("{rel}{}", cross_rounds::PREV);
-            let source = component::table_source(db, "x", &prev).ok_or_else(|| Error::Plan(format!("x.{prev} is not a table of integers")))?;
-            modules.bind(db, &prev, source)?;
+        for (rel, rows) in &prev_rows {
+            let width = types(rel).len();
+            let columns = (0..width).map(|i| format!("c{i}")).collect();
+            let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+            modules.bind(db, &format!("{rel}{}", cross_rounds::PREV), component::columns_source(columns, values))?;
         }
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
@@ -1195,22 +1200,20 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
         let digest = cross_rounds::digest(&rows);
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
-        if last == Some(digest) || r == k {
+        if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
+            report.pending = r == k + 1 && !report.converged;
             return Ok(got);
         }
-        last = Some(digest);
-        db.execute_batch("BEGIN")?;
-        for (rel, rows) in &rows {
-            let prev = format!("{rel}{}", cross_rounds::PREV);
-            db.execute(&format!("DELETE FROM x.{prev}"), [])?;
-            let width = types(rel).len();
-            let mut ins = db.prepare(&format!("INSERT OR IGNORE INTO x.{prev} VALUES ({})", vec!["?"; width].join(", ")))?;
-            for row in rows {
-                ins.execute(rusqlite::params_from_iter(row.iter()))?;
-            }
+        if r == k {
+            round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
-        db.execute_batch("COMMIT")?;
+        last = Some(digest);
+        for (rel, mut rows) in rows {
+            rows.sort_unstable();
+            rows.dedup();
+            prev_rows.insert(rel, rows);
+        }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
     }
     unreachable!("round K returns")

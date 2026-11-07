@@ -299,6 +299,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
+#[ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)"]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -399,6 +400,12 @@ fn t_programs_run_natively_over_atoms_like_t() {
 #[test]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
+    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // string is str. No T output reads it.
+    Connection::open(&facts).unwrap().execute_batch(
+        "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
+         INSERT INTO stat_col VALUES ('strprefix', 'n', 0, 0, 0, 0), ('strprefix', 's', 0, 0, 0, 0)",
+    ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
@@ -411,11 +418,15 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        for (rel, rows) in &got.outputs {
+        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
-                failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
+                let got: BTreeSet<&str> = rows.iter().map(String::as_str).collect();
+                let want: BTreeSet<&str> = expected.iter().copied().collect();
+                let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).take(3).collect(), got.difference(&want).take(3).collect());
+                failures.push(format!("{name} {rel}: {} rows, expected {}; missing {missing:?}, extra {extra:?}", rows.len(), expected.len()));
             }
         }
     }
@@ -455,12 +466,13 @@ fn own_ingestion_derives_what_t_facts_do() {
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
-        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 2). On this corpus workload's
-        // reach the fixpoint (round 2's digest is round 1's); calls' need a third crossing (8 of 5,112 hop rows,
-        // O41), so they stop unconverged after round 2. Both runs below are bounded alike.
+        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 4 since decision 0047). On this
+        // corpus both reach the fixpoint: workload's after round 1 (round 2's digest is round 1's), calls' after round
+        // 2 (hop rows 5,367 → 5,427 → 5,435 → 5,435; round 2 is the third crossing k = 2 cut, O41). Both runs below are
+        // bounded alike.
         println!("{name}: cross-file rounds {:?}", report.rounds);
-        assert_eq!(report.rounds.run, cross_rounds::K + 1, "{name}: {:?}", report.rounds);
-        assert_eq!(report.rounds.converged, name == "workload", "{name}: {:?}", report.rounds);
+        assert_eq!(report.rounds.run, if name == "workload" { 3 } else { 4 }, "{name}: {:?}", report.rounds);
+        assert!(report.rounds.converged && !report.rounds.pending, "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();

@@ -19,7 +19,7 @@ reach(c, y) :- reach(c, x), reach(x, y).
 #[test]
 fn hops_read_the_previous_round_across_documents() {
     let prog = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
-    let b = bound(&prog).unwrap();
+    let b = bound(&prog, &BTreeMap::new()).unwrap();
     assert_eq!(b.hops, BTreeSet::from(["found".to_owned(), "reach".to_owned()]));
     let rules: Vec<String> = b.program.rules.iter().map(ToString::to_string).collect();
     assert!(rules.contains(&"found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found($b, $a, $x), @doc($b) = @doc($c)".to_owned()), "{rules:#?}");
@@ -31,6 +31,30 @@ fn hops_read_the_previous_round_across_documents() {
     assert_eq!(b.program.decls["found__prev"], prog.decls["found"]);
     assert!(b.unbounded.is_empty());
     front::strata(&b.program).unwrap();
+}
+
+/// A recursive atom whose node a same-document atom joins to the head's is not a hop: `look` (file-local) puts `$s` in
+/// `$n`'s document, so only the rule within the document is kept. `base` crosses files and still splits.
+#[test]
+fn same_document_joins_are_not_hops() {
+    let prog = crate::code_rule_dsl::logic::rr::parse(
+        r#"
+.decl look(n: node, s: node)
+.decl base(c: node, b: node)
+.input look, base
+.decl pv(n: node, v: node)
+pv(n, n) :- base(n, _).
+pv(n, v) :- look(n, s), pv(s, v).
+pv(n, v) :- base(n, b), pv(b, v).
+.output pv
+"#,
+    )
+    .unwrap();
+    let b = bound(&prog, &BTreeMap::from([("look".to_owned(), vec![0, 1])])).unwrap();
+    let rules: Vec<String> = b.program.rules.iter().map(ToString::to_string).collect();
+    assert!(rules.contains(&"pv($n, $v) :- look($n, $s), pv($s, $v)".to_owned()), "{rules:#?}");
+    assert!(rules.contains(&"pv($n, $v) :- base($n, $b), pv__prev($b, $v), @doc($b) != @doc($n)".to_owned()), "{rules:#?}");
+    assert_eq!(b.program.rules.len(), 1 + 1 + 2);
 }
 
 #[test]

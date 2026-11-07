@@ -216,6 +216,16 @@ const DEPARTURES: &[(&str, Departure, &str)] = &[
         "a call of a call's result: CPython calls the partial object, which calls `util.helper`",
     ),
     (
+        "pkg/hierarchy.py:7 `super().__call__(*args)`",
+        Departure::Unknown,
+        "a method of `super()` (in a metaclass: `type.__call__`)",
+    ),
+    (
+        "pkg/hierarchy.py:17 `super().__new__(cls)`",
+        Departure::Unknown,
+        "a method of `super()` (`object.__new__`)",
+    ),
+    (
         "pkg/models.py:27 `super().__init__(value)`",
         Departure::Unknown,
         "a method of `super()`",
@@ -249,6 +259,36 @@ const DEPARTURES: &[(&str, Departure, &str)] = &[
         "pkg/nested.py:9 `closure(1)`",
         Departure::Unknown,
         "a closure another function returned",
+    ),
+    (
+        "pkg/typed.py:26 `text.upper()`",
+        Departure::Unknown,
+        "a method of a local holding a builtin's call (`str(12)`)",
+    ),
+    (
+        "pkg/typed.py:35 `child.describe()`",
+        Departure::Unknown,
+        "a method of a local holding an instance",
+    ),
+    (
+        "pkg/typed.py:39 `shape.area()`",
+        Departure::Unknown,
+        "a method of a local holding a call's result",
+    ),
+    (
+        "pkg/typed.py:40 `Shape().scaled()`",
+        Departure::Unknown,
+        "a method of a class call's result",
+    ),
+    (
+        "pkg/typed.py:40 `Shape().scaled().area()`",
+        Departure::Unknown,
+        "a method of a method call's result",
+    ),
+    (
+        "pkg/typed.py:43 `base.describe()`",
+        Departure::Unknown,
+        "a method of a local holding a conditional's instances",
     ),
 ];
 

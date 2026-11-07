@@ -23,18 +23,46 @@
 //! derived: the result is the fixpoint's under-approximation by at most `K` file crossings per chain, and the run
 //! reports it unconverged (`Rounds::converged`), the state 03 §13 keeps apart from ⊤.
 //!
+//! A recursive atom whose node is joined to the head's through same-document atoms (`look($n, $x, $s)`, a file-local
+//! relation, ties `$s` to `$n`) is not a hop: the two nodes are of one document, so the across rule would be empty.
+//!
 //! A recursive atom whose node cannot be tied to the head (no node column on either side) is left as it is and
 //! named in `Bounded::unbounded`: within a round it is a fixpoint, as before.
 
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The number of rounds after round 0 (I11, adopted: k = 2).
-pub(crate) const K: usize = 2;
+/// The number of rounds after round 0 (I11 adopted k = 2; 4 since 2026-11-06, decision 0047: the CPython runtime
+/// oracle's package re-export needs a third file crossing, and its rounds converge after round 4).
+pub(crate) const K: usize = 4;
 
-/// The rounds bound: `K`, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how many rounds a corpus needs).
+/// A program's flag for the pending round (O41, decision 0047): a program that declares the fact `unconverged(0)`
+/// gets one more round after round `K` when the rounds have not converged, with `unconverged(1)` added. Its rules
+/// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
+pub(crate) const UNCONVERGED: &str = "unconverged";
+
+/// The rounds bound: `K`, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how many rounds a corpus needs), or a test's
+/// `with_k` on this thread.
 pub(crate) fn k() -> usize {
+    #[cfg(test)]
+    if let Some(k) = TEST_K.with(std::cell::Cell::get) {
+        return k;
+    }
     std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(K)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_K: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with the rounds bound `k` on this thread (tests: the environment variable would reach every test).
+#[cfg(test)]
+pub(crate) fn with_k<T>(k: usize, f: impl FnOnce() -> T) -> T {
+    TEST_K.with(|c| c.set(Some(k)));
+    let out = f();
+    TEST_K.with(|c| c.set(None));
+    out
 }
 
 /// The suffix of a hop relation's previous-round input.
@@ -65,8 +93,37 @@ fn doc(v: &str) -> Term {
     Term::Call("doc".to_owned(), vec![Term::Var(v.to_owned())])
 }
 
-/// The cross-file part `prog` with its hops reading the previous round.
-pub(crate) fn bound(prog: &Program) -> Result<Bounded, front::Error> {
+/// The variables of `body` that its positive atoms of `same_doc` relations join to `v` through their same-document
+/// columns (`file_local::Programs::same_doc`): all of `v`'s document.
+fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<usize>>, v: &str) -> BTreeSet<String> {
+    let groups: Vec<BTreeSet<&str>> = body
+        .iter()
+        .filter_map(|l| match l {
+            Literal::Atom(a) if !a.neg => Some(a),
+            _ => None,
+        })
+        .filter_map(|a| {
+            let cols = same_doc.get(&a.rel)?;
+            Some(cols.iter().filter_map(|&c| if let Some(Term::Var(x)) = a.args.get(c) { Some(x.as_str()) } else { None }).collect())
+        })
+        .collect();
+    let mut reached: BTreeSet<&str> = BTreeSet::from([v]);
+    loop {
+        let before = reached.len();
+        for g in &groups {
+            if !g.is_disjoint(&reached) {
+                reached.extend(g);
+            }
+        }
+        if reached.len() == before {
+            return reached.into_iter().map(str::to_owned).collect();
+        }
+    }
+}
+
+/// The cross-file part `prog` with its hops reading the previous round. `same_doc` holds the same-document columns of
+/// the relations `prog` reads that cross no file (`file_local::Programs::same_doc`).
+pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Bounded, front::Error> {
     let (sccs, _) = front::strata(prog)?;
     let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.as_str(), i))).collect();
     let mut out = prog.clone();
@@ -80,11 +137,12 @@ pub(crate) fn bound(prog: &Program) -> Result<Bounded, front::Error> {
         let recursive: Vec<usize> =
             rule.body.iter().enumerate().filter(|(_, l)| l.atom().is_some_and(|a| comp.get(a.rel.as_str()) == Some(&hc))).map(|(i, _)| i).collect();
         let head_node = first_node_var(prog, &rule.head);
+        let local_to_head = head_node.as_deref().map(|h| same_document(&rule.body, same_doc, h)).unwrap_or_default();
         let mut found = Vec::new();
         for &i in &recursive {
             let a = rule.body[i].atom().expect("recursive literals are atoms");
             match (&head_node, first_node_var(prog, a)) {
-                (Some(h), Some(v)) if *h == v => {}
+                (Some(h), Some(v)) if *h == v || local_to_head.contains(&v) => {}
                 (Some(h), Some(v)) if matches!(rule.body[i], Literal::Atom(_)) => found.push((i, h.clone(), v)),
                 _ => {
                     unbounded.insert(rule.head.rel.clone());
@@ -146,6 +204,8 @@ pub(crate) struct Rounds {
     pub(crate) converged: bool,
     /// Each round's hop rows, summed over the hop relations.
     pub(crate) rows: Vec<usize>,
+    /// The rounds did not converge, and the pending round ran (`UNCONVERGED`).
+    pub(crate) pending: bool,
 }
 
 #[cfg(test)]
