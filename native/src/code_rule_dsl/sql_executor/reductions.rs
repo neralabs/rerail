@@ -6,6 +6,7 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
+mod join_tree;
 mod lattice;
 mod maintain;
 mod plan;
@@ -54,12 +55,17 @@ fn owned(
     objects: &mut Vec<(String, bool)>,
     name: &str,
     definition: &str,
+    storage: Option<&versions::Store>,
 ) -> Result<()> {
-    db.execute_batch(&format!(
-        "CREATE TEMP TABLE {}({definition}) WITHOUT ROWID",
-        quote(name)
-    ))
-    .map_err(error)?;
+    if let Some(storage) = storage {
+        storage.create(db, name, versions::Schema::generated(definition)?)?;
+    } else {
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE {}({definition}) WITHOUT ROWID",
+            quote(name)
+        ))
+        .map_err(error)?;
+    }
     objects.push((name.into(), true));
     Ok(())
 }
@@ -79,8 +85,6 @@ fn execute(db: &rusqlite::Connection, sql: &str) -> Result<usize> {
     db.execute(sql, []).map_err(error)
 }
 fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -> Result<String> {
-    let name = format!("__rr_update_{}", w.sequence);
-    w.sequence += 1;
     let mut definition = schema(width);
     if !extra.is_empty() {
         definition += &format!(",{extra}");
@@ -88,13 +92,7 @@ fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -
     if let Some(keys) = keys {
         definition += &format!(",PRIMARY KEY({})", names("", keys));
     }
-    w.db.execute_batch(&format!(
-        "CREATE TEMP TABLE {name}({definition}){}",
-        if keys.is_some() { " WITHOUT ROWID" } else { "" }
-    ))
-    .map_err(error)?;
-    w.scratch.push(name.clone());
-    Ok(name)
+    w.allocate(definition, keys.is_some())
 }
 
 /// Bootstrap once against the old facts, before any source in the atomic batch changes.
@@ -102,9 +100,10 @@ pub(super) fn prepare(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     potential: &mut BTreeSet<String>,
+    storage: Option<&versions::Store>,
 ) -> Result<Vec<String>> {
     if run.reductions.is_none() {
-        run.reductions = Some(planned(w.db, run)?);
+        run.reductions = Some(planned(w.db, run, storage.is_some())?);
     }
     loop {
         let before = potential.len();
@@ -125,7 +124,7 @@ pub(super) fn prepare(
     let mut initialized = Vec::new();
     for state in run.reductions.as_mut().unwrap().values_mut() {
         if !state.ready && potential.contains(&state.output) {
-            state.initialize(w.db, &mut run.objects)?;
+            state.initialize(w.db, &mut run.objects, storage)?;
             state.ready = true;
             initialized.push(state.output.clone());
         }
@@ -135,6 +134,7 @@ pub(super) fn prepare(
 fn planned(
     db: &rusqlite::Connection,
     run: &session::Execution,
+    native: bool,
 ) -> Result<BTreeMap<String, Retained>> {
     let e = Arc::clone(&run.emitted);
     let mut positions = BTreeMap::<String, u32>::new();
@@ -159,6 +159,18 @@ fn planned(
                         .lattice_operations
                         .get(output)
                         .map(|o| o.aggregate.clone()),
+                    tree: e
+                        .program
+                        .lattice_operations
+                        .get(output)
+                        .filter(|o| !matches!(o.aggregate.as_str(), "min" | "max"))
+                        .map(|o| join_tree::JoinTree {
+                            nodes: format!("__sql_state_{output}_join_nodes"),
+                            roots: format!("__sql_state_{output}_join_roots"),
+                            merge: o.merge.clone(),
+                            keys: *keys,
+                            top: *top,
+                        }),
                 });
         let Some(stratum) = positions.get(output) else {
             continue;
@@ -189,7 +201,7 @@ fn planned(
                 eligible = false;
                 break;
             }
-            match plan::rule(db, output, id, q)? {
+            match plan::rule(db, output, id, q, native)? {
                 Some(rule) => {
                     nonmonotone |= !rule.reducers.is_empty();
                     rules.push(rule);
@@ -216,11 +228,22 @@ fn planned(
     Ok(retained)
 }
 
+/// Rebuild checked descriptors after a copy-on-write fork. The support rows are already shared.
+pub(super) fn fork_plan(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<()> {
+    let mut states = planned(db, run, true)?;
+    for state in states.values_mut() {
+        state.ready = true;
+    }
+    run.reductions = Some(states);
+    Ok(())
+}
+
 impl Retained {
     fn initialize(
         &self,
         db: &rusqlite::Connection,
         objects: &mut Vec<(String, bool)>,
+        storage: Option<&versions::Store>,
     ) -> Result<()> {
         owned(
             db,
@@ -231,10 +254,11 @@ impl Retained {
                 schema(self.width),
                 names("", self.width)
             ),
+            storage,
         )?;
         for rule in &self.rules {
             for reducer in &rule.reducers {
-                reducer.initialize(db, objects)?;
+                reducer.initialize(db, objects, storage)?;
             }
             owned(
                 db,
@@ -245,6 +269,7 @@ impl Retained {
                     schema(rule.width),
                     names("", rule.width)
                 ),
+                storage,
             )?;
             execute(
                 db,
@@ -267,6 +292,7 @@ impl Retained {
                     schema(rule.width),
                     names("", rule.width)
                 ),
+                storage,
             )?;
             execute(
                 db,
@@ -280,12 +306,14 @@ impl Retained {
                 .map(|i| format!("h{i}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            db.execute_batch(&format!(
-                "CREATE INDEX {} ON {}({heads})",
-                quote(&format!("{}_heads", rule.contributions)),
-                quote(&rule.contributions)
-            ))
-            .map_err(error)?;
+            if storage.is_none() {
+                db.execute_batch(&format!(
+                    "CREATE INDEX {} ON {}({heads})",
+                    quote(&format!("{}_heads", rule.contributions)),
+                    quote(&rule.contributions)
+                ))
+                .map_err(error)?;
+            }
             for atom in &rule.atoms {
                 rule.index(
                     db,
@@ -293,17 +321,37 @@ impl Retained {
                 )?;
             }
             for reducer in &rule.reducers {
-                reducer.index_context(db, rule)?;
+                reducer.index_context(db, rule, storage)?;
+                if let Some(table) = reducer.dependency_object() {
+                    objects.push((table, true));
+                }
             }
-            execute(
-                db,
-                &format!(
-                    "INSERT INTO {} SELECT {heads},count(*) FROM {} GROUP BY {heads} ON CONFLICT({}) DO UPDATE SET n=n+excluded.n",
-                    self.heads,
-                    rule.contributions,
-                    names("", self.width)
-                ),
-            )?;
+            if storage.is_some() {
+                let hjoin = (0..self.width)
+                    .map(|i| format!("h.c{i}=d.h{i}"))
+                    .collect::<Vec<_>>()
+                    .join(" AND ");
+                execute(
+                    db,
+                    &format!(
+                        "INSERT OR REPLACE INTO {} SELECT {heads},count(*)+coalesce((SELECT h.n FROM {} h WHERE {hjoin}),0) FROM {} d GROUP BY {heads}",
+                        self.heads, self.heads, rule.contributions
+                    ),
+                )?;
+            } else {
+                execute(
+                    db,
+                    &format!(
+                        "INSERT INTO {} SELECT {heads},count(*) FROM {} GROUP BY {heads} ON CONFLICT({}) DO UPDATE SET n=n+excluded.n",
+                        self.heads,
+                        rule.contributions,
+                        names("", self.width)
+                    ),
+                )?;
+            }
+        }
+        if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
+            tree.initialize(db, &self.heads, objects, storage)?;
         }
         Ok(())
     }

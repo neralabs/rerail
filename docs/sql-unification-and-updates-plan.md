@@ -430,3 +430,183 @@ The 234-test parallel suite took 188.81 seconds before the routing-estimate corr
 The final 235-test run, including the simultaneous lattice replacement regression, took 27.45 seconds.
 Host load affects this timing. The probe counts, scan bounds, VM budgets, and output comparisons provide the repeatable checks.
 The headless library and engine binary pass `cargo check --locked --lib --features headless --bin rerail-engine`.
+
+## Active completion goal: remaining execution work
+
+The scope includes all five remaining items. Completion requires evidence for each item.
+
+| Item | Implementation direction | Completion evidence |
+| --- | --- | --- |
+| First-edit preparation | Prepare mutable inputs, materialized projections, and retained support during binding or initial execution. | First edits over large inputs need no migration or support initialization and pass a bounded work budget. |
+| Recursive lattices and aggregates | Maintain affected dependency regions, invalidate cyclic support, and rederive from surviving external support. | Cyclic insertion and deletion sequences match fresh execution without a whole-stratum refresh. |
+| Remaining rule shapes | Retain ordered string reductions, dependent aggregate keys, and walk blocks with subqueries or negation. | Each shape has repeated-edit, empty-input, rollback, and fresh-execution comparisons without refresh fallback. |
+| Registered lattice joins | Retain a balanced reduction tree over candidate support and combine summaries with the registered merge. | A sparse edit at a large key processes a logarithmic number of summaries, including retractions from top. |
+| Temporary-table overhead | Reuse typed scratch tables and indexes across operations. | Repeated edits create no scratch schema objects, leave no scratch rows, and preserve pool consistency after rollback and reset. |
+
+The previous implementation commit is verified progress. The five completion requirements remain active until their implementation and checks pass.
+
+### Preparation, reusable scratch state, and registered joins
+
+The first edit previously paid three deferred costs: constructing mutable input indexes, migrating projection views, and initializing support.
+Bindings now construct mutable indexed sources. Initial execution materializes projections and initializes retained reducers and walks inside its savepoint.
+First-edit reports contain no migrations or support initializations. The initial run reports these costs under `preparation`.
+This changes when preparation occurs; it does not make the initial support joins free.
+
+Eager preparation exposed a planner regression in the original CPython `type_of` workload.
+The new projection tables lacked statistics. One support join consumed 136,715,295 SQL instructions and exhausted the 200-million-instruction run budget.
+Analyzing the materialized projection tables before initializing support fixes the plan. The original budget remains unchanged.
+
+Scratch tables previously caused repeated schema changes, index creation, and cleanup.
+A connection-local pool now reuses schemas by exact column definitions and primary-key layout.
+Successful operations empty their scratch rows. Pool metadata commits with the same savepoint as facts and results.
+Failure preserves the previous pool; reset drops it. Capacity follows the largest operation so far and remains allocated until reset.
+
+Registered joins previously refolded every candidate at a changed key.
+Each key now has a persistent SQL AVL tree over distinct supported candidate values.
+Nodes cache subtree joins. Insertions and deletions update search paths and rotations, using the registered merge function.
+Duplicate witnesses change counts without changing the tree. Removing the last top candidate restores the remaining summary.
+The existing lattice laws and agreement between aggregate and merge remain required.
+
+Verified SQL regression counters at this stage:
+
+| Case | Retained size | SQL instructions | Data scan steps |
+| --- | ---: | ---: | ---: |
+| First actual edit, projection and reducers | 100,000 input rows | 2,380 | 5 |
+| Fourteen changed SQL inputs, sparse deletion | 20,000 rows per input | 7,313 | 0 |
+| Computed aggregate key, sparse deletion | 100,000 contexts | 947 | 5 |
+| Min/max/flat extrema deletion | 100,000 candidates at one key | 2,610 | 21 |
+| Registered join, distinct candidate deletion | 100,000 candidates at one key | 2,262 | 0 |
+| Registered join, remove top and insert another value | 100,000 candidates at one key | 2,990 | 7 |
+
+The registered join tests require fewer than 300 merge calls per edit; the tested value changes use 26–65 calls.
+Cached SQLite statement counters are reset before profiling, so the measurements exclude work from earlier preparation.
+Scratch tests check unchanged schema versions, zero new tables after warmup, empty cached tables, rollback, retry, and reset.
+
+### Strings, dependent correlations, and walks
+
+String aggregates now retain physical input tuples and support counts, preserving original text conversion and ordering.
+An update refolds only touched groups through the existing `rr_join` function.
+This avoids the stratum fallback. Rebuilding a large output string still reads and sorts that group's supported tuples.
+
+Aggregate-dependent correlations previously failed the eligibility check because an outer key contained a scalar subquery.
+Reducer planning now collects nested scalar sites in dependency order.
+Separate tables index each context's evaluated dependent key. Updates probe old keys, mark dirty contexts, and replace their dependency rows.
+This handles changes to the earlier aggregate, the later aggregate's input, and both in one batch.
+The 20,000-context test stays under 30,000 SQL instructions and reconsiders fewer than ten contexts per sparse edit.
+
+Walk CTEs previously formed one maintenance stratum, which prevented their seed and output blocks from using retained reducers.
+The compiler now lifts those blocks into separate dependency components and rewrites correlated fields inside subqueries.
+The recursive traversal remains positive; supported aggregates and negation run in its seed or output components.
+Validity columns preserve nullable threaded values without introducing SQL NULLs into retained integer fact sets.
+
+Validation passes 243 combined tests, with four ignored tests and the separate syntax census excluded.
+The filters cover SQL execution, rule syntax, corpus scheduling, and the content store.
+The headless library and engine binary also pass the compiler check.
+The string-group edit over 20,000 groups uses 1,541 SQL instructions and five data scan steps.
+Walk comparisons cover negative guards, empty min results, null-to-value transitions, source edits, failure after partial maintenance, and retry.
+Registered-join tests include 240 deterministic edits with composite keys, AVL balance checks, full-reduction comparisons, and removal of every node.
+
+Items 1, 4, and 5 have implementation and regression evidence. Item 3 covers the supported scalar forms described above.
+Arbitrary subqueries remain outside retained reducer eligibility. Item 2 remains active and prevents completion of the full goal.
+
+### Remaining work: recursive lattices and aggregates
+
+This requirement is still unfinished. Components without a proven independent partition still refresh an affected stratum.
+Retaining only final support counts is insufficient: a cycle can preserve itself after external support disappears.
+Widening and aggregate evaluation also depend on fixed-point progress, so an ordinary count-based work queue needs more state.
+
+The implementation must retain causal iteration or dependency information, invalidate affected recursive support, and rederive from surviving support.
+It must preserve the current cold SQL kernel's results and widening behavior.
+Iteration-indexed incrementalization is described in the primary [DBSP paper](https://www.vldb.org/pvldb/vol16/p1601-budiu.pdf).
+That is a design reference, not a claim that the current engine implements its algorithm.
+
+Required checks include cyclic shortest paths, mutually recursive lattices, accepted recursive aggregates, alternate support, retraction from top,
+simultaneous input changes, empty components, budget rollback, and retries. Compare every update with a fresh execution.
+Large disconnected regions must show bounded sparse-edit work. A whole-stratum recomputation must remain visible as a fallback until it is removed.
+
+### Recursive partition maintenance and aggregate scheduling
+
+Recursive components can now use an invariant key proven from their checked query trees.
+For each rule, every recursive input must share the head's partition, including inputs read inside scalar queries.
+Equality proofs use each subquery's own scope and its ancestors. Sibling subqueries do not supply assumptions to each other.
+The partition column can differ between relations. The engine prepares required indexes during the initial run.
+
+An edit finds affected partitions through positive witnesses in old and new inputs, including aggregate and negation read sites.
+Old SQL inputs temporarily restore their exact membership. Native overlays conservatively include current and deleted rows.
+The engine removes only selected partitions, clears their widening counters, and rederives them from bottom.
+The cold kernel keeps its step order, dependencies, and semi-naive delta variants.
+Closed partitions cannot supply support to each other, so this removes unsupported cycles and preserves cold widening behavior.
+Output differences compare only the old and new rows of affected partitions.
+
+The first sparse test exceeded its 50,000-instruction budget because SQLite reordered a join and scanned unrelated rows.
+Partition constraints now reach equivalent outer fields explicitly. Cross joins keep the small partition table first.
+The revised test uses 1,347–3,352 instructions per edit across 20,000 independent groups and 100,000 weighted edges.
+Its triggers reject any deletion or insertion outside the selected group.
+The budget remains 50,000 instructions; it was not raised.
+
+The work also exposed a compiler scheduling error in mutually recursive aggregate components.
+The emitter removed all own-component reads from full rule steps, assuming delta variants would wake them.
+Aggregates have no positive delta atom, so a count rule could stop after its initial evaluation.
+Full aggregate queries now depend on their recursive inputs and run again when those inputs change.
+A regression builds five item values through repeated recursive counts and requires the resulting max lattice to reach five.
+
+Constant fact steps now retain immutable private tables with checked select queries.
+Maintenance replays their known initial statements once to capture their rows; it does not parse SQL text.
+Constant facts can therefore share retained support with aggregate and lattice rules.
+Nonrecursive lattice outputs can also lift walk blocks with supported aggregates and negation.
+
+Tests cover unsupported cyclic support, alternate paths, empty partitions, simultaneous native and upstream SQL changes,
+rollback during old-input restoration, wave-limit failure, retry, nonleading partition columns, widening, and retraction from top.
+Another test changes a global recursive count and checks results across partition keys, where the invariant proof must not apply.
+The targeted SQL and compiler suite passes 88 tests.
+The final combined run passes 257 tests, with four ignored tests and the separate syntax census excluded.
+It includes SQL execution, compiler emission, front-end checks, rule syntax, corpus scheduling, and the content store.
+The headless library and engine binary pass the compiler check.
+
+This is progress toward item 2. It does not remove the fallback for unpartitioned recursive dependencies or recursive walks that cannot be lifted.
+The next extension must retain causal dependencies or iteration state for those components. Renaming a stratum refresh does not satisfy this requirement.
+
+### Versioned storage for iteration state
+
+General recursive maintenance remains unfinished. The next algorithm needs retained state for each iteration, including reducer support.
+Copying SQL tables or initializing support for every new iteration would scan accumulated state again.
+The engine now has an internal storage backend that shares immutable index roots between operator versions.
+SQL still evaluates rules and applies their deltas through writable temporary virtual tables.
+The public session continues to use its existing tables. This backend is not yet connected to recursive scheduling.
+
+Each relation has persistent indexes for complete rows, primary keys, row IDs, and individual columns.
+Writes copy affected search paths. Active cursors pin their version before reading.
+Canonical tree hashes identify unchanged subtrees, including versions built in different insertion orders.
+A sparse comparison over 20,000 rows visits 94 tree nodes, including split traversal and emitted rows.
+Ordered primary-key probes read minima and maxima lazily. Two probes over one 20,000-row group read fewer than 20 columns.
+SQLite still checks additional filters before applying `LIMIT`.
+
+Retained count, sum, min, and max operators can use this backend, including materialized computed correlation keys.
+Forking an operator shares its result and support indexes. It rebuilds checked descriptors without initializing support again.
+A 2,000-context regression applies insertions and retractions to independent forks and compares results with fresh SQL aggregates.
+Each edit reconsiders fewer than three contexts. Saved support versions remain unchanged.
+Scratch scopes reuse temporary tables between sequential operator updates while preserving the caller's input deltas.
+
+Two integration failures had specific causes:
+
+| Failure | Root cause | Fix |
+| --- | --- | --- |
+| Volatile state triggered the content store's durable-write guard. | Writable eponymous tables belonged to `main`. | Create writable virtual tables in `temp`. |
+| `INSERT OR IGNORE` failed on duplicate keys. | The pinned rusqlite configuration helper omitted the required constraint-support flag. | Call `sqlite3_vtab_config` with the explicit flag and reject constraints before mutation. |
+
+The constraint protocol follows [SQLite's virtual-table configuration API](https://www.sqlite.org/c3ref/c_vtab_constraint_support.html).
+Native state uses an explicit Rust transaction guard to restore previous roots and remove tables created by a failed batch.
+Ordinary SQL rollback alone does not restore this backend. Session transaction integration is still required.
+
+The combined suite passes 268 tests, with four ignored tests and the separate syntax census excluded.
+It covers SQL execution, compiler emission, front-end checks, rule syntax, corpus scheduling, virtual-table bindings, and the content store.
+The headless library and engine binary pass the compiler check.
+These checks validate the storage and operator foundation; they do not validate an iteration-indexed recursive executor.
+
+Next, retain iteration inputs, operator caches, published relations, frontiers, and widening counters.
+Update each frame from input differences. Fork the preceding cache when execution needs another iteration.
+Preserve the cold scheduler's gates and widening order, then publish only actual final differences.
+Integrate native rollback and cleanup before enabling this path in sessions.
+Compare cyclic and mutually recursive programs against fresh execution after every edit, including failures and retries.
+Measure native index work as well as SQL instructions: SQL counters exclude native hashing, allocation, and index traversal.
+Until that integration passes, unpartitioned recursive lattices and aggregates retain their visible stratum-refresh fallback.

@@ -1,5 +1,129 @@
 use super::*;
 
+#[test]
+fn string_group_edits_skip_unrelated_groups() {
+    let (_d, mut e) = executor();
+    bind(
+        &mut e,
+        "event",
+        &["g", "k", "v"],
+        json!((0..20000).map(|g| vec![g, 0, g]).collect::<Vec<_>>()),
+    );
+    bind(
+        &mut e,
+        "owner",
+        &["g"],
+        json!((0..20000).map(|g| vec![g]).collect::<Vec<_>>()),
+    );
+    let p = ".decl event(g:number,k:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl joined(g:number,s:symbol)\njoined(g,s) :- owner(g), s = join v by k sep \"|\" : {event(g,k,v)}.\n.output joined\n";
+    e.run(p.into(), "python".into(), None).unwrap();
+    e.set_limits(json!({"max_steps":30000}).to_string())
+        .unwrap();
+    let (result, work) = super::scaling::profile(&mut e, |e| {
+        e.apply_changes(
+            json!([{"name":"event","insert":[[17,1,30]]}]).to_string(),
+            None,
+        )
+    });
+    let report: Value =
+        serde_json::from_str(&result.unwrap_or_else(|err| panic!("{err}: {work:?}"))).unwrap();
+    assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
+    assert_eq!(report["programs"][0]["context_rows"], 1);
+    assert!(work.data_scans.get() < 100, "{work:?}");
+    eprintln!("string group: {work:?}");
+    e.set_limits("{}".into()).unwrap();
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c1) FROM joined WHERE c0=17"),
+        json!([["17|30"]])
+    );
+}
+
+#[test]
+fn dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts() {
+    let (_d, mut e) = executor();
+    let p = ".decl event(g:number,v:number)\n.decl bucket(k:number,v:number)\n.decl owner(g:number)\n.input event,bucket,owner\n.decl result(g:number,n:number,s:number,m:number)\nresult(g,n,s,m) :- owner(g), n = max v : {event(g,v)}, s = sum v : {bucket(n,v)}, m = count : {bucket(s,_)}.\n.output result\n";
+    bind(
+        &mut e,
+        "event",
+        &["g", "v"],
+        json!((0..20000).map(|g| vec![g, g]).collect::<Vec<_>>()),
+    );
+    bind(
+        &mut e,
+        "owner",
+        &["g"],
+        json!((0..20000).map(|g| vec![g]).collect::<Vec<_>>()),
+    );
+    bind(
+        &mut e,
+        "bucket",
+        &["k", "v"],
+        json!((0..20000).map(|g| vec![g, g]).collect::<Vec<_>>()),
+    );
+    e.run(p.into(), "python".into(), None).unwrap();
+    for patch in [
+        json!([{"name":"event","delete":[[1,1]],"insert":[[1,21000]]}]),
+        json!([{"name":"bucket","insert":[[21000,22000]]}]),
+        json!([{"name":"bucket","insert":[[22000,1]]}]),
+        json!([{"name":"bucket","delete":[[1,1]],"insert":[[1,4]]}]),
+        json!([{"name":"event","delete":[[1,21000]],"insert":[[1,1]]},{"name":"bucket","delete":[[1,4]],"insert":[[1,3]]}]),
+        json!([{"name":"owner","delete":[[1]]}]),
+        json!([{"name":"owner","insert":[[1]]},{"name":"event","delete":[[1,1]]}]),
+    ] {
+        e.set_limits(json!({"max_steps":30000}).to_string())
+            .unwrap();
+        let (result, work) =
+            super::scaling::profile(&mut e, |e| e.apply_changes(patch.to_string(), None));
+        let report: Value =
+            serde_json::from_str(&result.unwrap_or_else(|err| panic!("{err}: {work:?}"))).unwrap();
+        assert_eq!(
+            report["programs"][0]["refreshed_strata"],
+            json!([]),
+            "{report}"
+        );
+        assert!(work.data_scans.get() < 100, "{work:?}");
+        assert!(
+            report["programs"][0]["context_rows"].as_u64().unwrap() < 10,
+            "{report}"
+        );
+        e.set_limits("{}".into()).unwrap();
+        compare(
+            &e,
+            p,
+            &[
+                ("event", &["g", "v"]),
+                ("bucket", &["k", "v"]),
+                ("owner", &["g"]),
+            ],
+            &["result"],
+        );
+    }
+    e.connection().execute_batch("CREATE TEMP TRIGGER stop_dependent BEFORE INSERT ON result BEGIN SELECT RAISE(ABORT,'stop dependent'); END").unwrap();
+    let before = ordered(&e, "result");
+    let patch = json!([{"name":"event","insert":[[1,17]]}]);
+    assert!(
+        e.apply_changes(patch.to_string(), None)
+            .unwrap_err()
+            .reason
+            .contains("stop dependent")
+    );
+    assert_eq!(ordered(&e, "result"), before);
+    e.connection()
+        .execute_batch("DROP TRIGGER stop_dependent")
+        .unwrap();
+    change(&mut e, patch);
+    compare(
+        &e,
+        p,
+        &[
+            ("event", &["g", "v"]),
+            ("bucket", &["k", "v"]),
+            ("owner", &["g"]),
+        ],
+        &["result"],
+    );
+}
+
 fn change(e: &mut CodeRuleSqlExecutor, patch: Value) -> Value {
     serde_json::from_str(
         &e.apply_changes(patch.to_string(), None)
@@ -50,6 +174,67 @@ fn compare(e: &CodeRuleSqlExecutor, program: &str, inputs: &[(&str, &[&str])], o
     }
 }
 const AGG: &str = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl totals(g:number,n:number,s:number,lo:number,hi:number)\ntotals(g,n,s,lo,hi) :- owner(g), n = count : {event(_,g,_)}, s = sum v : {event(_,g,v)}, lo = min v : {event(_,g,v)}, hi = max v : {event(_,g,v)}.\n.decl global(n:number,s:number)\nglobal(n,s) :- n = count : {event(_,_,_)}, s = sum v : {event(_,_,v)}.\n.decl empty()\nempty() :- !event(_,_,_).\n.output totals,global,empty\n";
+
+#[test]
+fn ordered_string_groups_preserve_text_order_duplicates_defaults_and_rollback() {
+    let (_d, mut e) = executor();
+    let p = ".decl part(id:number,g:number,k:symbol,v:symbol)\n.decl owner(g:number)\n.input part,owner\n.decl joined(g:number,s:symbol)\njoined(g,s) :- owner(g), s = join v by (k,g) sep \"|\" : {part(_,g,k,v)}.\n.output joined\n";
+    bind(
+        &mut e,
+        "part",
+        &["id", "g", "k", "v"],
+        json!([
+            [1, 1, "2", "b"],
+            [2, 1, "10", "a"],
+            [3, 1, "2", "b"],
+            [4, 2, "x", "é"]
+        ]),
+    );
+    bind(&mut e, "owner", &["g"], json!([[1], [2], [3]]));
+    e.run(p.into(), "python".into(), None).unwrap();
+    let decoded =
+        |e: &CodeRuleSqlExecutor| all(e, "SELECT c0,sym_text(c1) FROM joined ORDER BY c0");
+    assert_eq!(decoded(&e), json!([[1, "a|b"], [2, "é"], [3, ""]]));
+    for patch in [
+        json!([{"name":"part","delete":[[1,1,"2","b"]]}]),
+        json!([{"name":"part","delete":[[3,1,"2","b"]],"insert":[[5,1,"10","c"],[6,2,"a","z"]]}]),
+        json!([{"name":"part","delete":[[2,1,"10","a"],[5,1,"10","c"],[4,2,"x","é"],[6,2,"a","z"]]}]),
+        json!([{"name":"part","insert":[[7,3,"b","new"]]},{"name":"owner","delete":[[3]]}]),
+        json!([{"name":"owner","insert":[[3]]}]),
+    ] {
+        let report = change(&mut e, patch);
+        assert_eq!(
+            report["programs"][0]["refreshed_strata"],
+            json!([]),
+            "{report}"
+        );
+        let (_d, mut fresh) = executor();
+        bind(
+            &mut fresh,
+            "part",
+            &["id", "g", "k", "v"],
+            all(&e, "SELECT id,g,sym_text(k),sym_text(v) FROM part"),
+        );
+        bind(&mut fresh, "owner", &["g"], all(&e, "SELECT * FROM owner"));
+        fresh.run(p.into(), "python".into(), None).unwrap();
+        assert_eq!(decoded(&e), decoded(&fresh));
+    }
+    let before = decoded(&e);
+    e.connection().execute_batch("CREATE TEMP TRIGGER stop_string BEFORE INSERT ON joined BEGIN SELECT RAISE(ABORT,'stop string'); END").unwrap();
+    let patch = json!([{"name":"part","insert":[[8,3,"a","first"]]}]);
+    assert!(
+        e.apply_changes(patch.to_string(), None)
+            .unwrap_err()
+            .reason
+            .contains("stop string")
+    );
+    assert_eq!(decoded(&e), before);
+    e.connection()
+        .execute_batch("DROP TRIGGER stop_string")
+        .unwrap();
+    change(&mut e, patch);
+    assert_eq!(decoded(&e), json!([[1, ""], [2, ""], [3, "first|new"]]));
+}
 
 #[test]
 fn count_sum_and_extrema_keep_multiplicities_empty_groups_and_global_defaults() {
@@ -327,7 +512,7 @@ fn deterministic_mixed_edits_match_fresh_execution_with_composite_keys_and_filte
 }
 
 #[test]
-fn dependent_aggregate_correlations_use_the_explicit_refresh_fallback() {
+fn dependent_aggregate_correlations_are_retained_without_refresh() {
     let (_d, mut e) = executor();
     bind(
         &mut e,
@@ -339,10 +524,7 @@ fn dependent_aggregate_correlations_use_the_explicit_refresh_fallback() {
     let p = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl nested(g:number,m:number)\nnested(g,m) :- owner(g), n = count : {event(_,g,_)}, m = count : {event(_,n,_)}.\n.output nested\n";
     e.run(p.into(), "python".into(), None).unwrap();
     let report = change(&mut e, json!([{"name":"event","delete":[[1,1,5]]}]));
-    assert_eq!(
-        report["programs"][0]["refreshed_strata"],
-        json!([["nested"]])
-    );
+    assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
     compare(
         &e,
         p,
@@ -394,7 +576,7 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
 }
 
 #[test]
-fn unrelated_reducers_stay_uninitialized_until_their_inputs_change() {
+fn initial_execution_prepares_reducers_and_edits_skip_unrelated_state() {
     let (_d, mut e) = executor();
     bind(&mut e, "small", &["id"], json!([[1]]));
     bind(
@@ -404,7 +586,12 @@ fn unrelated_reducers_stay_uninitialized_until_their_inputs_change() {
         json!((0..20000).map(|i| vec![i]).collect::<Vec<_>>()),
     );
     let p = ".decl small(id:number)\n.decl large(id:number)\n.input small,large\n.decl count_small(n:number)\ncount_small(n) :- n = count : {small(_)}.\n.decl count_large(n:number)\ncount_large(n) :- n = count : {large(_)}.\n.output count_small,count_large\n";
-    e.run(p.into(), "python".into(), None).unwrap();
+    let initial: Value =
+        serde_json::from_str(&e.run(p.into(), "python".into(), None).unwrap()).unwrap();
+    assert_eq!(
+        initial["preparation"]["initializations"],
+        json!(["count_large", "count_small"])
+    );
     e.set_limits(json!({"max_steps":10000}).to_string())
         .unwrap();
     let report = change(&mut e, json!([{"name":"small","insert":[[2]]}]));
@@ -412,10 +599,7 @@ fn unrelated_reducers_stay_uninitialized_until_their_inputs_change() {
         report["programs"][0]["incremental_strata"],
         json!(["count_small"])
     );
-    assert_eq!(
-        report["initializations"],
-        json!([{"program":0,"relations":["count_small"]}])
-    );
+    assert_eq!(report["initializations"], json!([]));
     assert_eq!(rows(&e, "SELECT * FROM count_large"), json!([[20000]]));
     e.set_limits("{}".into()).unwrap();
     change(&mut e, json!([{"name":"large","insert":[[20000]]}]));

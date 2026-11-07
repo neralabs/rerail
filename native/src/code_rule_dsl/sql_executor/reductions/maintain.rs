@@ -72,36 +72,7 @@ pub(super) fn apply(
         for reducer in &rule.reducers {
             if let Some((keys, touched)) = reducer.apply(w, changes)? {
                 groups += touched;
-                let positions = reducer.context_keys(rule, "c");
-                let same = if positions.is_empty() {
-                    "k.c0=1".into()
-                } else {
-                    positions
-                        .iter()
-                        .enumerate()
-                        // Computed expressions have no SQLite affinity. Removing the key
-                        // column's affinity lets SQLite use the matching expression index.
-                        .map(|(i, e)| {
-                            format!(
-                                "{}={}k.c{i}",
-                                e.render(),
-                                if matches!(e, E::Qualified { .. }) {
-                                    ""
-                                } else {
-                                    "+"
-                                }
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" AND ")
-                };
-                execute(
-                    w.db,
-                    &format!(
-                        "INSERT OR IGNORE INTO {dirty} SELECT c.* FROM {keys} k CROSS JOIN {} c WHERE {same}",
-                        rule.contexts
-                    ),
-                )?;
+                reducer.mark_contexts(w, rule, &keys, &dirty)?;
             }
         }
         contexts +=
@@ -137,6 +108,9 @@ pub(super) fn apply(
                 equal("c", "d", rule.width)
             ),
         )?;
+        for reducer in &rule.reducers {
+            reducer.refresh_dependencies(w, rule, &dirty, &active)?;
+        }
         execute(
             w.db,
             &format!(

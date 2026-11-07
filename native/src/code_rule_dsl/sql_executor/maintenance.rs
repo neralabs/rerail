@@ -10,29 +10,21 @@ pub(super) struct Delta {
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) struct Work<'a> {
-    pub db: &'a rusqlite::Connection,
-    pub scratch: Vec<String>,
-    pub sequence: usize,
-}
+pub(super) use super::scratch::Work;
 impl Work<'_> {
     pub fn table(&mut self, width: usize) -> Result<String> {
-        let name = format!("__rr_update_{}", self.sequence);
-        self.sequence += 1;
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
-        self.db
-            .execute_batch(&format!(
-                "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
-                quote(&name),
+        self.allocate(
+            format!(
+                "{},PRIMARY KEY({})",
                 cols.iter()
-                    .map(|c| format!("{c} INTEGER"))
+                    .map(|c| format!("{c} INTEGER NOT NULL"))
                     .collect::<Vec<_>>()
                     .join(","),
                 cols.join(",")
-            ))
-            .map_err(error)?;
-        self.scratch.push(name.clone());
-        Ok(name)
+            ),
+            true,
+        )
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
@@ -88,14 +80,6 @@ impl Work<'_> {
             )
             .map_err(error)? as u64;
         Ok((old, n))
-    }
-    pub fn cleanup(&self) -> Result<()> {
-        for name in self.scratch.iter().rev() {
-            self.db
-                .execute_batch(&format!("DROP TABLE IF EXISTS {}", quote(name)))
-                .map_err(error)?;
-        }
-        Ok(())
     }
 }
 
@@ -158,7 +142,7 @@ pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Res
     Ok(views.len())
 }
 
-fn barrier(q: &Query) -> bool {
+pub(super) fn barrier(q: &Query) -> bool {
     if !q.ctes.is_empty() {
         return true;
     }
@@ -169,6 +153,10 @@ fn barrier(q: &Query) -> bool {
         .iter()
         .map(|(e, _)| e)
         .chain(&q.body.predicates)
+        .chain(q.body.from.iter().flat_map(|item| match &item.join {
+            Join::On(on) => on.iter(),
+            Join::Cross => [].iter(),
+        }))
     {
         e.visit(&mut |e| {
             if matches!(e, E::Exists { .. } | E::Scalar(_)) {
@@ -350,6 +338,7 @@ pub(super) fn maintain(
     let (mut positives, mut deletions) = (0u64, 0u64);
     let mut refreshed = Vec::new();
     let mut incremental = Vec::new();
+    let mut recursive_partitions = 0u64;
     let (mut reducer_groups, mut context_rows) = (0u64, 0u64);
     let mut outputs = BTreeMap::new();
     for (_, group) in groups {
@@ -416,6 +405,36 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
+            if let Some(state) = group
+                .first()
+                .and_then(|r| {
+                    run.emitted
+                        .program
+                        .steps
+                        .iter()
+                        .filter(|s| s.output == *r)
+                        .map(|s| s.stratum)
+                        .max()
+                })
+                .and_then(|s| run.recursive.get(&s))
+            {
+                let (deltas, partitions, waves) = state.apply(w, run, changes, limit)?;
+                positives += waves;
+                recursive_partitions += partitions;
+                for (r, d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0) + d.inserted - d.deleted;
+                    run.counts.insert(r.clone(), count);
+                    if run.outputs.contains(&r) {
+                        outputs.insert(
+                            r.clone(),
+                            json!({"inserted":d.inserted,"deleted":d.deleted}),
+                        );
+                    }
+                    incremental.push(r.clone());
+                    changes.insert(r, d);
+                }
+                continue;
+            }
             let mut old = BTreeMap::new();
             for r in &group {
                 let snapshot = w.snapshot(r, arities[r])?;
@@ -729,6 +748,6 @@ pub(super) fn maintain(
         }
     }
     Ok(
-        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
+        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
     )
 }

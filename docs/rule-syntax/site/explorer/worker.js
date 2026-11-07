@@ -1,7 +1,8 @@
 // The explorer's engine, off the page's thread: loads the WASI shim and the runner, downloads and compiles the module
-// once, then runs each request on a fresh instance. Every stage is reported, so the page can show where loading is,
+// once, starts it once (the long-lived build: engine.js's `Engine`) and runs each request on it, starting another
+// only after a trap. Every stage is reported, so the page can show where loading is,
 // and a failure (a blocked import, a failed download) reaches the page instead of leaving it waiting.
-let shim = null, runner = null, module = null;
+let shim = null, runner = null, module = null, engine = null;
 
 self.postMessage({ type: "stage", stage: "worker" });
 
@@ -13,9 +14,11 @@ self.onmessage = async ({ data }) => {
       runner = await import(data.engine);
       module = await runner.loadEngine(data.wasm, data.bytes, (stage, received, total) =>
         self.postMessage({ type: "stage", stage, received, total }));
+      engine = await runner.engineFor(shim, module, null);
       self.postMessage({ type: "loaded" });
     } else if (data.type === "run") {
-      const result = await runner.explore(shim, module, data.request);
+      engine = await runner.engineFor(shim, module, engine);
+      const result = runner.explore(engine, data.request);
       self.postMessage({ type: "result", seq: data.seq, result });
     }
   } catch (error) {
