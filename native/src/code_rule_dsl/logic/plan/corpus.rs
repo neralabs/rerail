@@ -31,6 +31,7 @@ pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod inputs;
 mod world;
+mod library;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -577,6 +578,11 @@ pub(crate) fn run_with_options(
     let mut prog = combine(programs, "")?;
     drop(combining);
     world::add_facts(&mut prog, options.get("worldFacts"));
+    // The library stage (decision 0059): the loaded documents alone, the program told so if it asks.
+    let library_stage = world_round.as_deref() == Some("library");
+    if library_stage && prog.decls.contains_key(library::STAGE) {
+        prog.facts.entry(library::STAGE.to_owned()).or_default().push(vec![front::Value::Str("library".to_owned())]);
+    }
     if world_round.as_deref() == Some("discover") {
         prog.outputs = world::requests(&prog);
     }
@@ -626,8 +632,8 @@ pub(crate) fn run_with_options(
                 let rust = typing.rust.unwrap_or(rs.len() > python.len());
                 (if rust { rs } else { python }, rust)
             };
-            // Documents a rule loaded (`world`), after the corpus's own.
-            let mut files = files;
+            // Documents a rule loaded (`world`), after the corpus's own; a library stage's are only those.
+            let mut files = if library_stage { Vec::new() } else { files };
             for (path, _) in world::library_files(options) {
                 if !files.contains(&path) {
                     files.push(path);
@@ -651,6 +657,9 @@ pub(crate) fn run_with_options(
         if !facts.is_empty() {
             prog = combine(programs, &facts)?;
             world::add_facts(&mut prog, options.get("worldFacts"));
+            if library_stage && prog.decls.contains_key(library::STAGE) {
+                prog.facts.entry(library::STAGE.to_owned()).or_default().push(vec![front::Value::Str("library".to_owned())]);
+            }
             add_bridged(&mut prog);
         }
         declared = d;
@@ -710,7 +719,8 @@ pub(crate) fn run_with_options(
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
-    let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
+    // Not in a library stage: its rows are replayed for whatever a workspace's rules ask (decision 0059).
+    let (mut prog, demanded) = if library_stage { (prog, Vec::new()) } else { crate::code_rule_dsl::logic::magic::demand_negated_tests(prog) };
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
@@ -734,7 +744,29 @@ pub(crate) fn run_with_options(
     if remerged > 0 {
         crate::code_rule_dsl::logic::profile::decision("merged after the joins were pushed", || format!("{remerged} relations merged into an identical one ({reshared} classes shared across programs)"));
     }
-    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    let mut split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    // The library's rows (decision 0059): bound for the cross-file part, which then derives no row of theirs about
+    // a library node. Only under the document keys they were made with.
+    let mut library_inputs: Vec<(String, usize, Vec<i64>)> = Vec::new();
+    // The stored rows' digest: the run's manifest names them, so collection keeps them (decision 0053).
+    let mut library_digest: Option<[u8; 32]> = None;
+    if !library_stage && let Some(file) = options.get(library::OPTION).and_then(|v| v.as_str()) {
+        let bytes = std::fs::read(file).ok();
+        library_digest = bytes.as_ref().map(|b| <sha2::Sha256 as sha2::Digest>::digest(b).into());
+        let rows = bytes.and_then(|b| library::Rows::decode(&b));
+        let keys: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
+        match rows {
+            Some(rows) if rows.keys.iter().all(|(p, k)| keys.get(p.as_str()) == Some(k)) => {
+                library_inputs = library::replay(&mut split.cross, &rows, &library::open_relations(&prog));
+                let n: usize = library_inputs.iter().map(|(_, w, v)| v.len() / (*w).max(1)).sum();
+                crate::code_rule_dsl::logic::profile::decision("library rows (decision 0059)", || {
+                    format!("{} relations' rows about {} library documents replayed ({n} rows); their rules derive no row about a library node", library_inputs.len() - 1, rows.keys.len())
+                });
+            }
+            Some(_) => crate::code_rule_dsl::logic::profile::decision("library rows (decision 0059)", || "not replayed: a library document's key differs from the stage's".to_owned()),
+            None => crate::code_rule_dsl::logic::profile::decision("library rows (decision 0059)", || format!("not replayed: {file} is not a library stage's rows")),
+        }
+    }
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
@@ -1309,12 +1341,19 @@ pub(crate) fn run_with_options(
     crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || worker.join()).map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
+    // The run's sources, with the library stage's rows (decision 0059), for its manifest (decision 0053).
+    let mut run_sources = worker_cpu.2.clone();
+    if let Some(digest) = library_digest
+        && let Ok(Some(id)) = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest))
+    {
+        run_sources.push(id);
+    }
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
-    let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program, reading)? } else { drop(reading); None };
+    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, reading)? } else { drop(reading); None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -1393,11 +1432,40 @@ pub(crate) fn run_with_options(
         let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
         modules.bind(&db, rel, source)?;
     }
+    // The library's rows (decision 0059), measured as inputs.
+    let mut library_totals = Totals::default();
+    for (rel, width, values) in std::mem::take(&mut library_inputs) {
+        let types: Vec<String> = cross.program.decls[&rel].iter().map(|(_, t)| t.clone()).collect();
+        let columns = (0..width).map(|i| format!("c{i}")).collect();
+        let values = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
+        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+        library_totals.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
+        modules.bind(&db, &rel, source)?;
+    }
+    library_totals.apply(&mut cross_stats);
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
     // `returns`, held for the typing outputs (`corpus::typing`).
-    let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
+    let mut wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
+    // A library stage holds every relation its cross-file part derives, its output (decision 0059).
+    let mut library_rows = library::Rows::default();
+    if library_stage {
+        wanted.extend(cross.program.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !prog.outputs.contains(r)));
+        library_rows.keys = docs.iter().map(|(d, p)| (p.clone(), *d)).collect();
+    }
+    let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {
+        if !library_stage {
+            return Ok(());
+        }
+        let derived: BTreeSet<&str> = part.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        for rel in derived.into_iter().filter(|r| !r.ends_with(cross_rounds::PREV) && !r.ends_with(cross_rounds::DONE)) {
+            let width = part.decls[rel].len();
+            let rows = held_rows(db, got, rel, width)?;
+            library_rows.rels.insert(rel.to_owned(), (width, rows.into_iter().flatten().collect()));
+        }
+        Ok(())
+    };
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
@@ -1414,6 +1482,7 @@ pub(crate) fn run_with_options(
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
+            collect(&db, &got, &cross.program)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
@@ -1423,7 +1492,9 @@ pub(crate) fn run_with_options(
             // Held: what the rest reads, unless an output (written to its table, read from there).
             let mut held = wanted.clone();
             held.extend(cone.reads.iter().filter(|r| !outputs_of(r)).cloned());
+            let cone_rules = if library_stage { cone.cone.clone() } else { front::Program::default() };
             let got = run_rounds(&db, &modules, part(cone.cone), &bounded.hops, &held, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            collect(&db, &got, &cone_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
@@ -1451,13 +1522,17 @@ pub(crate) fn run_with_options(
             }
             crate::code_rule_dsl::logic::native::forget_inputs(&db);
             let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
-            let got = super::run_atoms_native_over(&part(rest), &db, "main", st, rest_wanted.clone(), modes)?;
+            let rest = part(rest);
+            let got = super::run_atoms_native_over(&rest, &db, "main", st, rest_wanted.clone(), modes)?;
+            collect(&db, &got, &rest.program)?;
             if rest_wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
+            let all_rules = if library_stage { bounded.program.clone() } else { front::Program::default() };
             let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            collect(&db, &got, &all_rules)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
@@ -1477,6 +1552,9 @@ pub(crate) fn run_with_options(
         }
     }
     phase("cross", statements.count());
+    if library_stage {
+        library::write(out, &library_rows)?;
+    }
     statements.enter("write");
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
@@ -1576,7 +1654,36 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
     }
     let now = thread_usage();
     let mut final_options = world.options(options, prog, "final");
-    final_options[ "worldSummary"] = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1).into();
+    let mut summary = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1);
+    // The library's cross-file rows (decision 0059): the store's, or a library stage's, recorded for the next run.
+    let loaded: Vec<String> = world::library_files(&final_options).into_iter().map(|(p, _)| p).collect();
+    let off = prog.facts.get("env").into_iter().flatten().any(|r| matches!(r.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == library::SETTING && v == "off"));
+    if !loaded.is_empty() && !off && tape_cache().map_err(|e| Error::Plan(e.to_string()))?.is_some() {
+        let key = library::key(programs, &loaded)?;
+        let dir = out.join("library");
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))?;
+        let file = dir.join(library::FILE);
+        let stored = tape_cache().map_err(|e| Error::Plan(e.to_string()))?.and_then(|store| library::lookup(&store, &key));
+        let start = thread_usage();
+        let how = match stored {
+            Some(bytes) => {
+                std::fs::write(&file, bytes).map_err(|e| Error::Plan(format!("{}: {e}", file.display())))?;
+                "read from the store"
+            }
+            None => {
+                run_with_options(programs, root, None, &dir, modes, binding, chunk_nodes, typing, &world.options(options, prog, "library"))?;
+                let bytes = std::fs::read(&file).map_err(|e| Error::Plan(format!("{}: {e}", file.display())))?;
+                if let Some(store) = tape_cache().map_err(|e| Error::Plan(e.to_string()))? {
+                    library::record(&store, &key, &bytes, &loaded)?;
+                }
+                "made by a library stage and stored"
+            }
+        };
+        let now = thread_usage();
+        summary.push_str(&format!("; the library's cross-file rows {how} ({:.2} s CPU)", now.0 - start.0 + now.1 - start.1));
+        final_options[library::OPTION] = file.to_string_lossy().into_owned().into();
+    }
+    final_options["worldSummary"] = summary.into();
     run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &final_options)
 }
 

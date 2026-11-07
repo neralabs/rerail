@@ -13,6 +13,10 @@
 // assignments, returns and a function's returned parameter.
 // A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
 .pragma "cross-rounds" "4"
+// A library stage (decision 0059) derives the library documents' rows once, for any workspace: `stage("library")` opens
+// the demand below. A workspace run still derives these about library nodes, from what it asks of them.
+.decl stage(s: symbol)
+.pragma "library-open" "need_attr iattr attr_open adeclared wantx"
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -262,6 +266,9 @@ need_attr(c, "__call__") :- callee(k, e), pv(e, "inst", c).
 .decl need_name(a: symbol)
 need_name(a) :- need_attr(_, a).
 need_name("__init__"). need_name("__call__"). need_name("__new__").
+// A library stage: every name a scope binds, and every attribute a class has.
+need_name(a) :- stage("library"), bound_in(_, a).
+need_attr(c, a) :- stage("library"), found(c, a, _).
 // Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), for the names
 // lookups read only: a stub's class binds many names no code reads.
 .decl found(c: node, a: symbol, at: node)
@@ -460,6 +467,9 @@ starmod(q, m) :- star_from(m, _), modname(m, q).
 wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
 wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
 wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).
+// A library stage: every name the source of a star binds, or star-imports itself.
+wantx(m, x) :- stage("library"), star_from(m, n), modname(m2, n), bound_in(m2, x), !rbound(m, x).
+wantx(m, x) :- stage("library"), star_from(m, n), modname(m2, n), starx(m2, x, _), !rbound(m, x).
 .decl starx(m: node, x: symbol, m2: node)
 starx(m, x, m2) :- wantx(m, x), !prefix("_", x), star_from(m, n), modname(m2, n).
 bv(m, x, k, v) :- starx(m, x, m2), bv(m2, x, k, v).

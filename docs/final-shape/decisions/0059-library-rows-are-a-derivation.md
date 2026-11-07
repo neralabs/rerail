@@ -1,0 +1,79 @@
+# 0059: A library's cross-file rows are a derivation, replayed into the workspace run
+
+Status: proposed (2026-11-07)
+
+## Intro
+
+A typing run over a workspace now loads library documents: typeshed's stubs for the standard library,
+and later the stubs and sources of installed packages (t21). On an 84-file workspace, 179 stubs are
+loaded, and most of the run is spent on them:
+
+```text
+// calls.rr at k = 1, debug build, load 60-130 (CPU s)
+                         local   cross
+workspace + its stubs     8.7    12.6
+the stubs alone           6.9    10.3     (a one-file workspace importing the same modules)
+```
+
+The local part of a stub is already made once: the per-file memo (0052) keys a document's rows by its
+content, path and plan, and a stub's path is its canonical path, the same in every workspace.
+
+The cross-file part is not. Every run derives the stubs' classes, bases, inherited attributes and
+re-exports again, and each bounded round (0035, 0047) derives them again from the start. These rows
+do not depend on the workspace: a library never imports it. They are the derivation the store's
+graph (03 §14, `content_store::derivation`) exists for, at one more granularity: one per set of
+library documents closed under their imports, not one per file (t21 §2.5).
+
+The spike's indexing work (prior-work design index §20, §4) is the same lesson at file granularity.
+Its statistics had to be per file and persisted (D S124: no statistic may need the whole corpus;
+DH L417: state held only in memory is "dishonest"). A library's rows are kept in the store with
+their statistics, not in process memory.
+
+## Decision
+
+1. **The library stage.** After the requests converge (`world::discover`), a run with loaded
+   documents first runs the program over the loaded documents alone (`world: "library"`):
+   - no workspace document, so no row about one, and no finding is written;
+   - the program's own demand is opened for the stage. A program reads `stage("library")` (engine
+     fact) to need every attribute and name a library binds, since a workspace may ask for any of
+     them. The engine's demand (0048) is not applied: a negated relation is computed for every key;
+   - its rounds run to the fixpoint, or to a bound of their own (an open question of t21 §7);
+   - the rows of every relation the cross-file part derives are the stage's output.
+
+2. **The derivation.** The output is stored as a blob, and recorded with
+   `ContentStore::record_derivations`:
+   - output name: `library-rows/<digest of the inputs>`;
+   - producer: the cross-file part as lowered (its atoms included) and the engine build;
+   - inputs: each loaded document's store path bound to its content digest, and the settings
+     (`env` facts) the program reads.
+
+   A later run with the same inputs reads the blob and skips the stage. A changed stub rebinds its
+   path, so the derivation is invalid and the stage runs again, as for any changed file.
+
+3. **Replay.** The workspace run binds each relation's library rows as an input
+   `<rel>__library` and adds `rel(...) :- rel__library(...)` to its cross-file part. Its cross-file
+   rules derive no row whose first node column lies in a library document (a guard on the head's
+   node, `@doc(n)` not a library document): those rows are the stage's, complete. Rows keyed by a
+   symbol (a qualified name) are derived as before.
+
+   A row about a library node that only the workspace's demand would make is the stage's already,
+   because the stage's demand was open.
+
+4. **What stays the same.** The local part of every document, library or workspace, is the
+   per-file memo's. The workspace's rounds and their bound are unchanged. Rows about library
+   documents are still not written as output (t21 E2).
+
+## Order of work
+
+1. The stage, its rows, and replay with the head guard, behind the setting `library.rows`
+   (`on` by default; `off` runs as before), to compare the two.
+2. `calls.rr`: `stage("library")` opens `need_attr`, `need_name` and the star names (`wantx`).
+3. Measured on the 84-file corpus: the Jedi score unchanged, and a warm run costing at most 10%
+   more than the run without typeshed (t21 step 2's goal).
+
+## Not decided here
+
+- Splitting the stage per import-closed component (a changed stub would then re-run only its own
+  component). One stage per run's loaded set first.
+- Rows in a library document that the workspace changes. None exist while a library cannot import
+  the workspace, and values do not flow from a call's arguments into a library's parameters.
