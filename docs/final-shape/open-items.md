@@ -1605,22 +1605,75 @@ generic arguments carried as terms.
 
 ## O90. Cross-file costs `calls.rr` works around
 
-Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program now avoids
-each of them by how its rules are written; another program would meet them again.
-- **One column per lookup.** The input and `__prev` sources look up rows by one equality column. A join on two
-  columns (`look(n, x, s)` by scope and name, `found__prev` by class and attribute) walks every row for the first
-  and filters on the second.
-- **A recursive relation priced by its seeds.** The set fixpoint prices the full relation (`sfx_f_<rel>`) at its
-  seed rules' rows, so a plan may scan it before a selective atom binds it. This happened in the call rule's
-  `pv(r, …)` before `retval(f, r)`.
-- **A kind test in a recursive step.** `kind(n, "assignment")` with `n` bound, in a probe of the cross-file part,
-  cost one walk of every node of that kind per delta row (about 18k VM steps). `pass(n, c)`, made per file,
-  avoids it. The cause in the plan is not confirmed.
-- **Every round reruns the whole cross-file part.** Strata the hop relations do not read (the type relations,
-  the outputs) could run once, after the last round. They are about a fifth of the cross-file CPU on 172 files.
+Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program avoids them by
+how its rules are written; another program would meet them again. Measured on django utils + db (172 files),
+debug build, load about 7.
 
-**Closure:** each cost fixed in the engine and measured on the same slices with the program's rules written
-plainly.
+1. **Hop rules fell off the native engine. Fixed** (`bcffa4c26`). `cross_rounds::bound` adds `@doc($a) = @doc($b)`
+   or `!=` to every hop rule, and `join_spec` had no native step for a call term other than `@cat`. The native set
+   engine declined the whole component ("`@doc($v) != @doc($s)` has no native step"), and its probes ran as SQL
+   through the vtabs, where costs 2 and 3 apply. A `deq`/`dne` step now compares the two nodes' documents
+   (`a >> 32`). The component is native, with composite indexes and live fanout. Cross-file CPU went from
+   25.3 to 18.1 s, SQLite statements from 6,600 to 605, and peak RSS from 418 to 350 MB, with the same outputs.
+   The earlier `cross_rounds` change (a join through same-document atoms is not a hop) removed most of these
+   tests from the start.
+2. **SQL over a vtab looks up one column, priced at one row per value. Fixed** (`f443cc6f8`, `2a69daa08`,
+   `210a2d82b`). `best_index` (`facts::vtab`) used one equality constraint, the one with the smallest
+   `estimated_matches`. The in-memory source (`setfix::Stored`: the cross part's inputs, `__prev`, `__done`)
+   answered 1 for every column, so a tie picked whichever constraint SQLite offered first. Option 4 (native `min`/`max` and
+   text functions) took SQL off `calls.rr`'s hot path. SQL stays a product surface, though: other applications
+   query rerail's relations through these vtabs, and the SQL executor (`--modes ""`) must stay usable. So the
+   index shape is fixed for both tiers:
+   - **Inputs (vtabs; immutable, so an index costs no insert).** Every usable `=` goes into one filter. `Stored`
+     answers from a lexicographic order over those columns. The order is built on first use, holds 4 bytes a row
+     and serves every later search whose columns are its prefix. Other sources probe the most selective column
+     and check the rest before SQLite sees a row. Estimates come from distinct counts (`Stored`); for several
+     columns, the default treats them as independent, bounded by the most selective. A range is taken only
+     when it beats the estimate for all the `=` together.
+   - **Derived tables (SQL executor; mutable, `WITHOUT ROWID`).** Each secondary index is a full copy of the row,
+     written on every insert. So the table's primary key serves every search on a key prefix. The other searches
+     share lexicographic orders, one order per chain of nested column sets: a minimum chain cover, as in
+     Soufflé's index selection (Subotić et al., VLDB 2018). A search either extends an order whose columns are a
+     subset of its own, or starts a new one.
+   - **Semi-naive rounds.** The new rows come from an anti-join on the key (`NOT EXISTS`, one primary-key probe per
+     candidate), not `EXCEPT`, which scanned the whole relation every round.
+
+   On slice-utils (49 files), SQL executor, debug build, with the same outputs:
+
+   | Change | Measure | Before | After |
+   |---|---|---|---|
+   | Chain-cover orders on derived tables | index statements | 99 | 28 |
+   | Composite vtab filter | VM steps | 148.5M | 50.5M |
+   | Composite vtab filter | CPU (load ~146) | 7.9 s | 5.5 s |
+   | Anti-join for new rows | VM steps | 50.5M | 43.2M |
+   | Anti-join for new rows | full-scan steps | 3.87M | 3.02M |
+   | Anti-join for new rows | CPU | 5.4 s | 5.4 s (noise) |
+
+   The worst statement before the fix was `iattr`'s probe of `field` by the constant name rather than the bound
+   child: 65M VM steps across 6 runs. With the fix it drops out of the top statements. The native engine on the same
+   slice was 1.94 s. The rest of the SQL executor's gap is the `cand` temp tables and their union steps.
+3. **A kind test in a recursive step. Gone with 1; the cause was 2.** The cost blamed on `kind(n, "assignment")`
+   came from a lookup of `field` by its constant `f`, not the bound `c`, per the plans' index numbers. It was the
+   1-per-column tie of 2. With 1 those rules run as native joins, and with 2 the SQL path probes `c`.
+4. **Probes start from seed estimates in every round. Fixed** (`a1d580128`, `a450fc0f2`; about 3%, near noise,
+   since the native engine's replans already correct the first waves). Recursive relations are priced at their seed rules'
+   estimated rows, and derived columns have no distinct counts. The probes are replanned from live fanout after
+   the first waves, which are the waves with the largest delta. Plans and statistics are not kept between rounds:
+   the native component replans in every round (`replans=6` over 6 loops). On the SQL path, the bad `pv`-before-`retval`
+   order ran in the first 2 waves of each of the 6 rounds (12 runs, 169M VM steps).
+   **Solution:** price round r's recursive relations by round r − 1's measured rows and distinct counts (the
+   `__prev` totals are already measured), and keep each probe's replanned order for the next round.
+5. **Every round reruns the whole cross-file part. Fixed** (`a450fc0f2`): `cross_rounds::cone_split`. Same 13
+   outputs; utils + template 2.67 → 2.24 s, utils + db 17.4 → 15.4 s. The gain is below the estimate, because
+   `call_target` and the relations next to it are read by hop relations and stay in the cone. `run_rounds` runs the bounded program in full each
+   round. On 172 files, the strata no hop relation reads (the type relations, `call_target`, the outputs) take
+   about 6.3 of 18.1 s over 6 rounds.
+   **Solution:** split the bounded program at the hops' upstream cone. Rounds run only the cone. After the last
+   round, the rest runs once over the cone's held relations, bound as inputs as the cross part binds the exports.
+   This saves about 5 s (29%) here.
+
+**Closure:** 1–5 done; left: `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
+plain rules on the same slices.
 
 ## O91. Bridged typing answers are recomputed every run
 

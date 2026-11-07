@@ -1102,20 +1102,67 @@ pub(crate) fn run_with_options(
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
+        let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
         // cross-file part is one fixpoint, which no chain length cuts.
         let declared = cross_rounds::declared(&prog);
-        let got = if bounded.hops.is_empty() || declared.is_none() {
-            if !bounded.hops.is_empty() {
-                crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
-                    format!("none: the program declares no `.pragma \"{}\"`, so its {} hop relations are one fixpoint", cross_rounds::PRAGMA, bounded.hops.len())
-                });
-            }
+        if !bounded.hops.is_empty() && declared.is_none() {
+            crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
+                format!("none: the program declares no `.pragma \"{}\"`, so its {} hop relations are one fixpoint", cross_rounds::PRAGMA, bounded.hops.len())
+            });
+        }
+        let k = declared.map(cross_rounds::k);
+        if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
-            super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
+            let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
+            if wanted.contains("returns") {
+                returns = held_rows(&db, &got, "returns", 2)?;
+            }
+            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+        } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops) {
+            // The rounds run the hops' cone; what reads it and no hop reads runs once, after the last round.
+            // Held: what the rest reads, unless an output (written to its table, read from there).
+            let mut held = wanted.clone();
+            held.extend(cone.reads.iter().filter(|r| !outputs_of(r)).cloned());
+            let got = run_rounds(&db, &modules, part(cone.cone), &bounded.hops, &held, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            if wanted.contains("returns") && got.kept.contains("returns") {
+                returns = held_rows(&db, &got, "returns", 2)?;
+            }
+            // The cone's final rows the rest reads, as `<rel>__done` inputs held in memory and measured.
+            let mut rest = cone.rest;
+            let mut st = cross_stats.clone();
+            let mut done = Totals::default();
+            for rel in &cone.reads {
+                let types: Vec<&str> = rest.decls[&format!("{rel}{}", cross_rounds::DONE)].iter().map(|(_, t)| t.as_str()).collect();
+                let rows = held_rows(&db, &got, rel, types.len())?;
+                let columns = (0..types.len()).map(|i| format!("c{i}")).collect();
+                let values = (0..types.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+                let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+                let name = format!("{rel}{}", cross_rounds::DONE);
+                done.add_rows(&name, source.len(), source.as_ref(), &types);
+                modules.bind(&db, &name, source)?;
+            }
+            done.apply(&mut st);
+            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+            // A pending round's marks hold for the rest as for the cone.
+            if rounds.pending && let Some(f) = rest.facts.get_mut(cross_rounds::UNCONVERGED) {
+                f.push(vec![front::Value::Int(1)]);
+            }
+            crate::code_rule_dsl::logic::native::forget_inputs(&db);
+            let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
+            let got = super::run_atoms_native_over(&part(rest), &db, "main", st, rest_wanted.clone(), modes)?;
+            if rest_wanted.contains("returns") {
+                returns = held_rows(&db, &got, "returns", 2)?;
+            }
+            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
-            let k = cross_rounds::k(declared.expect("declared"));
-            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k, &mut rounds)?;
+            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            if wanted.contains("returns") {
+                returns = held_rows(&db, &got, "returns", 2)?;
+            }
+            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+        }
+        if !bounded.hops.is_empty() && k.is_some() {
             crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
                 format!(
                     "{} hop relations ({}); {} rounds run, {}; hop rows per round {:?}",
@@ -1126,13 +1173,7 @@ pub(crate) fn run_with_options(
                     rounds.rows
                 )
             });
-            got
-        };
-        if wanted.contains("returns") {
-            returns = held_rows(&db, &got, "returns", 2)?;
         }
-        let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
-        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
     }
     phase("cross", statements.count());
     statements.enter("write");
@@ -1265,6 +1306,8 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             let t = types(rel);
             let t: Vec<&str> = t.iter().map(String::as_str).collect();
             prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), source.len(), source.as_ref(), &t);
+            // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
+            prev_totals.alias(&format!("{rel}{}", cross_rounds::PREV), rel);
             rows.insert(rel.clone(), (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
         }
         let digest = cross_rounds::digest(&rows);
@@ -1390,6 +1433,14 @@ struct Totals {
     vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
 }
 impl Totals {
+    /// `from`'s measurements also under the name `to` (the same rows, measured once).
+    fn alias(&mut self, from: &str, to: &str) {
+        if let Some(r) = self.rels.get(from).cloned() {
+            self.rels.insert(to.to_owned(), r);
+        }
+        let vals: Vec<_> = self.vals.iter().filter(|((r, _), _)| r == from).map(|((_, c), v)| ((to.to_owned(), c.clone()), v.clone())).collect();
+        self.vals.extend(vals);
+    }
     fn add(&mut self, rel: &str, rows: usize, measured: &[(String, i64, i64, i64, i64)]) {
         let entry = self.rels.entry(rel.to_owned()).or_default();
         entry.0 += rows;

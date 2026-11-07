@@ -2018,6 +2018,10 @@ struct Run<'a> {
     model: Model,
     views: HashSet<String>,
     made: HashSet<(String, Vec<usize>)>,
+    /// Each derived table's secondary indexes, as column orders (`index_for`).
+    orders: HashMap<String, Vec<Vec<usize>>>,
+    /// Derived tables with no key: views materialized as plain tables (`ensure_indexes`).
+    keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
@@ -2085,6 +2089,7 @@ impl Run<'_> {
                     ))?;
                     self.views.remove(r);
                     self.model.view_src.remove(r);
+                    self.keyless.insert(r.clone());
                 }
             }
             if let Some(a) = a
@@ -2095,13 +2100,54 @@ impl Run<'_> {
                     .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
                     .collect();
                 if !cols.is_empty() && self.made.insert((a.rel.clone(), cols.clone())) {
-                    let name = format!("{}_{}", a.rel, cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
-                    let on = cols.iter().map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                    self.db.execute(&format!("CREATE INDEX IF NOT EXISTS {name} ON {}({on})", a.rel), [])?;
+                    self.index_for(&a.rel, &cols)?;
                 }
             }
             bound.extend(s.lit.vars());
         }
+        Ok(())
+    }
+
+    /// An index serving an equality search on `cols` of derived table `rel`, with as few indexes as serve every
+    /// search: each index is one column order, and serves a search whose columns are its first ones. The table's
+    /// key (all columns in order, or a lattice's key columns; `WITHOUT ROWID`, so the table is that order) serves
+    /// its prefixes. A search containing an index's columns extends that index (rebuilt once, the old one dropped)
+    /// rather than adding one, so the indexes form chains of searches (Soufflé's index selection: a minimum chain
+    /// cover, here greedy as searches arrive). Each secondary index of a `WITHOUT ROWID` table holds the whole row,
+    /// a copy of the relation that every insert maintains: on `calls.rr` this makes 22 indexes where one per search
+    /// made 96.
+    fn index_for(&mut self, rel: &str, cols: &[usize]) -> Result<()> {
+        let want: BTreeSet<usize> = cols.iter().copied().collect();
+        let key = if self.keyless.contains(rel) {
+            0
+        } else {
+            self.prog.lattice.get(rel).map_or_else(|| self.prog.decls.get(rel).map_or(0, Vec::len), |l| l.keys)
+        };
+        if want.len() <= key && want.iter().all(|&c| c < want.len()) {
+            return Ok(());
+        }
+        let orders = self.orders.entry(rel.to_owned()).or_default();
+        let prefix = |o: &[usize]| o.len() >= want.len() && o[..want.len()].iter().copied().collect::<BTreeSet<_>>() == want;
+        if orders.iter().any(|o| prefix(o)) {
+            return Ok(());
+        }
+        let name = |i: usize| format!("{rel}__o{i}");
+        let on = |o: &[usize]| o.iter().map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+        // The longest order whose columns the search contains, extended by the search's other columns.
+        let extend = orders.iter().enumerate().filter(|(_, o)| o.iter().all(|c| want.contains(c))).max_by_key(|(_, o)| o.len()).map(|(i, _)| i);
+        let i = match extend {
+            Some(i) => {
+                let mut o = orders[i].clone();
+                o.extend(want.iter().filter(|c| !orders[i].contains(c)));
+                orders[i] = o;
+                i
+            }
+            None => {
+                orders.push(want.iter().copied().collect());
+                orders.len() - 1
+            }
+        };
+        self.db.execute_batch(&format!("DROP INDEX IF EXISTS {}; CREATE INDEX {} ON {rel}({})", name(i), name(i), on(&orders[i])))?;
         Ok(())
     }
 
@@ -2179,9 +2225,14 @@ impl Run<'_> {
             if self.prog.lattice.contains_key(rel) {
                 total += self.merge_lattice(rel, &union, true)?;
             } else {
+                // The new rows by an anti-join on the relation's key (every column), probing it once per
+                // candidate; `EXCEPT` would scan the whole relation every round. `IS` keeps EXCEPT's NULLs.
+                let k = self.prog.decls.get(rel).map_or(0, Vec::len);
+                let on: Vec<String> = (0..k).map(|i| format!("r.c{i} IS n.c{i}")).collect();
                 self.db.execute_batch(&format!(
                     "DROP TABLE IF EXISTS cand; CREATE TEMP TABLE cand AS {union};
-                     INSERT INTO new_{rel} SELECT * FROM cand EXCEPT SELECT * FROM {rel};"
+                     INSERT INTO new_{rel} SELECT DISTINCT * FROM cand n WHERE NOT EXISTS (SELECT 1 FROM {rel} r WHERE {});",
+                    if on.is_empty() { "1".to_owned() } else { on.join(" AND ") }
                 ))?;
                 total += self.count(&format!("SELECT count(*) FROM new_{rel}"))?;
                 self.db.execute(&format!("INSERT OR IGNORE INTO {rel} SELECT * FROM new_{rel}"), [])?;
@@ -2329,6 +2380,20 @@ impl LiveRel {
             .collect();
         LiveRel { n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
     }
+}
+
+/// A recursive relation's statistics measured before this run, when the caller gave them under its name
+/// (`Stats::measured`: the cross-file rounds give each hop relation's rows of the round before): its rows, and its
+/// columns' distinct counts and fanouts, which otherwise start at 1 until the first replan.
+fn prior_stats(model: &mut Model, prog: &Program, r: &str) -> Option<f64> {
+    let width = prog.decls.get(r)?.len();
+    let cols: Vec<[i64; 4]> = (0..width).map(|c| model.stats.col.get(&(r.to_owned(), sql_col(r, c))).copied()).collect::<Option<_>>()?;
+    let rows = cols.first().map_or(0, |m| m[0]);
+    for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
+        model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
+        model.stats.fan.insert((r.to_owned(), c), if n != 0 { sq as f64 / n as f64 } else { 1.0 });
+    }
+    Some((rows as f64).max(1.0))
 }
 
 fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
@@ -2679,8 +2744,36 @@ impl Run<'_> {
                     let (sc, toks) = atom(l, Some(idx), &mut slots)?;
                     lines.push(format!("{} {sc} {}", if l.neg { "neg" } else { "pos" }, toks.join(" ")));
                 }
+                Literal::Cmp { l: Term::Call(fl, xl), op, r: Term::Call(fr, xr) }
+                    if (*op == "=" || *op == "!=") && fl == "doc" && fr == "doc" && xl.len() == 1 && xr.len() == 1 =>
+                {
+                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
+                    let bound = |t: &Term| matches!(t, Term::Var(v) if slots.contains_key(v));
+                    if !bound(&xl[0]) || !bound(&xr[0]) {
+                        return None;
+                    }
+                    let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
+                    lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
+                }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
-                    if let Term::Call(f, args) = r {
+                    if let Term::Call(f, args) = r
+                        && f != "cat"
+                    {
+                        // A text function (`strings::functions`) of bound arguments, its value bound or tested.
+                        let (Some((name, kinds, _)), Term::Var(_)) = (crate::code_rule_dsl::logic::strings::functions::signature(f), l) else {
+                            return None;
+                        };
+                        let bound = |t: &Term| match t {
+                            Term::Var(v) => slots.contains_key(v),
+                            Term::Int(_) | Term::Str(_) => true,
+                            _ => false,
+                        };
+                        if *op != "=" || args.len() != kinds.len() || !args.iter().all(bound) {
+                            return None;
+                        }
+                        let toks: Vec<String> = args.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
+                        lines.push(format!("func {name} {} {}", tok(l, &mut slots)?, toks.join(" ")));
+                    } else if let Term::Call(f, args) = r {
                         if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
                             return None;
                         }
@@ -2718,6 +2811,23 @@ impl Run<'_> {
                     }
                     let (sc, toks) = atom(a, None, &mut slots)?;
                     lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                }
+                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
+                    // The aggregated variable is the atom's one free variable, in one column; the rest are bound.
+                    let col = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == o))?;
+                    let free = |t: &Term| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                    if slots.contains_key(o) || a.args.iter().enumerate().any(|(c, t)| c != col && (free(t) || matches!(t, Term::Var(v) if v == o))) {
+                        return None;
+                    }
+                    // Symbols order by text in SQL; as atoms (a corpus run) by atom on both sides, else not native.
+                    if self.model.inputs.atoms.is_none() && prog_types(prog, &a.rel).get(col).copied() == Some("sym") {
+                        return None;
+                    }
+                    let mut a = a.clone();
+                    a.args[col] = Term::Wild;
+                    let (sc, toks) = atom(&a, None, &mut slots)?;
+                    let name = if *op == AggOp::Min { "min" } else { "max" };
+                    lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
@@ -2826,7 +2936,9 @@ impl Run<'_> {
             orders.push(order);
         }
         for r in &rels {
-            self.model.stats.card.insert((*r).clone(), est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0));
+            let seeded = est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0);
+            let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
+            self.model.stats.card.insert((*r).clone(), card);
         }
         let mut probes = Vec::new();
         for r in &rules {
@@ -3114,7 +3226,8 @@ impl Run<'_> {
         }
         for r in &rels {
             let rows: f64 = seed_plans.iter().filter(|(h, _)| h.rel == **r).map(|(_, p)| p.2).sum();
-            self.model.stats.card.insert((*r).clone(), rows.max(1.0));
+            let card = prior_stats(&mut self.model, prog, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
+            self.model.stats.card.insert((*r).clone(), card);
         }
         let var_type = |v: &str, body: &[Literal]| -> Option<char> {
             body.iter().find_map(|l| match l {
@@ -3564,7 +3677,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
