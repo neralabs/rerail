@@ -6,14 +6,14 @@ from data_layer_rr_text import module,classes,character_class
 def conn_or_txn_union(source,target,header):
     original=module(source,'conn_or_txn_union');classes();q=json.dumps
     text=header('conn_or_txn_union',target)
-    text=re.sub(r'^\.scope include .*$', '.scope include "api/**/*.py", "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"',text,flags=re.M)
+    text=re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"',text,flags=re.M)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',text,flags=re.M)
-    text+='#include "python/print.rr"\n#include "data-layer/signing.rr"\n'
+    text+='.severity ConnectionUnion error\n.severity Separate error\n.severity InvalidSignature error\n#include "python/print.rr"\n#include "data-layer/signing.rr"\n'
     for relation,values in [('cut_connection',original.CONNECTION_TYPES),('cut_transaction',original.TRANSACTION_TYPES),('cut_allow',original.ALLOWLIST)]:
         text+=f'.decl {relation}(name: symbol)\n'+''.join(f'{relation}({q(v)}).\n' for v in sorted(values))
     text+=''.join(f'allow_entry("conn_or_txn_union", {q(v)}).\n' for v in sorted(original.ALLOWLIST))
     text+=f'allow_sig("conn_or_txn_union", "lint_conn_or_txn_union", {q(original._ALLOWLIST_SIGNATURE)}).\n'
-    text+='.decl cut_layer(d: number)\ncut_layer(d) :- doc(d, p, _), match('+q('(?s)l'+character_class(str.isdecimal)+r'{4}_[^/]+/.*')+', p).\n'
+    text+='.decl cut_layer(d: number)\ncut_layer(d) :- doc(d, p, _), match('+q('(?s)l'+character_class(str.isdecimal)+r'{4}_[^/\n][^/]*/.*')+', p).\n'
     return text+r'''
 .decl cut_test(d: number)
 cut_test(d) :- path_part(d, "tests").
@@ -27,7 +27,7 @@ cut_document(d) :- doc(d, _, _), file_name(d, name), suffix(".py", name), !cut_t
     !syntax_error(d, _, _), option("entryPoint", "analyze_file").
 cut_document(d) :- doc(d, p, _), file_name(d, name), suffix(".py", name), !prefix("test_", name),
     !cut_test(d), !cut_hidden(d), cut_trigger(d), !syntax_error(d, _, _), !option("entryPoint", _),
-    (prefix("api/", p) ; prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
+    (prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
 .decl cut_class_kind(kind: symbol)
 cut_class_kind("class_definition").
 .decl cut_qualified(f: node, bare: symbol, qualified: symbol)
@@ -47,10 +47,14 @@ cut_parameter(f, p, @nfkc(name), ann, rank, i) :- kind(f, "function_definition")
 cut_edge(e, c) :- kind(e, "type"), child(e, c, 0).
 cut_edge(e, c) :- kind(e, "parenthesized_expression"), child(e, c, _), !kind(c, "comment").
 cut_edge(e, c) :- kind(e, "generic_type"), child(e, c, 0).
-cut_edge(e, c) :- kind(e, "generic_type"), child(e, tp, 1), kind(tp, "type_parameter"), child(tp, c, _).
 cut_edge(e, c) :- kind(e, "subscript"), field(e, "value", c).
-cut_edge(e, c) :- kind(e, "subscript"), field(e, "subscript", c), !kind(c, "tuple").
-cut_edge(e, c) :- kind(e, "subscript"), field(e, "subscript", t), kind(t, "tuple"), child(t, c, _).
+// A parenthesized tuple slice is still a tuple in Python's AST. Strip wrappers before classifying it.
+.decl cut_slice(e: node, slice: node)
+cut_slice(e, s) :- kind(e, "generic_type"), child(e, tp, 1), kind(tp, "type_parameter"), child(tp, s, _).
+cut_slice(e, s) :- kind(e, "subscript"), field(e, "subscript", s).
+cut_slice(e, c) :- cut_slice(e, s), (kind(s, "type") ; kind(s, "parenthesized_expression")), child(s, c, _), !kind(c, "comment").
+cut_edge(e, s) :- cut_slice(e, s), !kind(s, "tuple").
+cut_edge(e, c) :- cut_slice(e, t), kind(t, "tuple"), child(t, c, _).
 cut_edge(e, c) :- kind(e, "binary_operator"), op(e, "|"), (field(e, "left", c) ; field(e, "right", c)).
 cut_edge(e, c) :- kind(e, "union_type"), child(e, c, _).
 .decl cut_annotation(e: node)

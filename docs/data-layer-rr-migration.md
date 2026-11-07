@@ -11,12 +11,15 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`31d3d15dc`. That branch includes the migration and regex fixes, the current planner,
-indexed SQL maintenance, native relation reclamation, and corpus publication leases.
+`cbf255bb1`. That branch includes the migration and regex fixes, the current planner,
+indexed SQL maintenance, native relation reclamation, corpus publication leases, and the current Python module world.
 Merge its committed engine, frontend, libraries, build files, and locks into this root.
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
+The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.
+It makes one additional native AST pass per prepared file batch when a program reads the relation.
+Repeated batch preparation can repeat that pass. Rule decisions remain in Datalog.
 Uncommitted sibling work is not part of this baseline.
 
 The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
@@ -52,7 +55,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **69 target drafts and 31 absent translations**. None has full acceptance yet.
+The current inventory contains **70 target drafts and 30 absent translations**. None has full acceptance yet.
+The 70th draft, `conn_or_txn_union`, passes all five original cases, 83 supplemental API cases, and 94 configured reporter cases.
+The supplemental corpus includes 56 positive API cases and 60 positive reporter cases.
+Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-supplemental-contracts.json.gz) retain exact values and regression controls.
 The 69th draft, `unresolved_forward_refs`, passes 116 direct original cases and its associated supplied-AST case.
 It also passes 206 supplemental contracts and 205 configured reporter cases, including 109 positive reporter cases.
 Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-native-direct-contracts.json.gz)

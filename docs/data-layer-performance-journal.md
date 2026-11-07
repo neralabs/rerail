@@ -8252,3 +8252,63 @@ and [duplicate-finding regression](../gate/data-layer/fixtures/host/data-layer-p
 The inventory is 69 drafts and 31 absent translations. Full migration acceptance remains false.
 Production integration, persistent-workspace contracts, and the remaining rules still require work.
 No Linear ticket was created. The next missing translation is `conn_or_txn_union`.
+
+
+## 2026-11-07 — Canonical annotation rows and connection/transaction unions
+
+The previous delivery made progress: it adopted Final shape and completed the focused FieldInfo contracts.
+This delivery translates `conn_or_txn_union`, the next missing rule. The inventory is now 70 drafts and 30 absent translations.
+Full migration acceptance remains false.
+
+Merge `8df8997cf` adopts committed Final shape `cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2`.
+It includes the Python module world, typeshed integration, and the latest demand-planning correction.
+Builds and tests use this repository root. The retired nested engines remain untouched.
+
+The source's messages require Python's canonical annotation text. The advertised node form of `@unparse` has no implementation;
+the existing tape-value operation returns tape text. Source text cannot preserve the annotation message contract.
+The initial regression failed with `no columns for annotation_text` on the root engine.
+Commit `237d49d2c` records the relation and its failing integration test. Commit `e6968ad82` implements the native producer and rule.
+The producer's missing planner registration produced a second integration failure, retained in the receipt.
+
+`python/print.rr` declares `annotation_text(node, text)`. The producer uses the existing native Ruff parser and emits typed rows.
+It runs one additional AST pass per prepared file batch only when the program reads that relation.
+Repeated batch preparation can repeat that pass. It does not invoke Python or make SQL scalar callbacks.
+The rule's receiver, annotation, parameter, qualification, allowlist, and reporting decisions remain Datalog predicates.
+No connection or transaction type names appear in the native printer implementation.
+
+The formatter passes 107 comparisons recorded offline from Python 3.13.18. They cover literals, Unicode printing, surrogates,
+precedence, tuples, slices, calls, lambdas, comprehensions, and f-strings. The Unicode printing table records all 712 printable ranges.
+Both artifacts have a registered deterministic generator. This capability covers annotation expressions, not arbitrary statement printing or signature hashes.
+No repository-scale performance improvement is claimed for this additional native pass.
+
+The rule preserves the source's unusual argument order: ordinary positional arguments, then positional-only arguments, then keyword-only arguments.
+It ignores variadic arguments and `self`, checks both bare and nearest-class allowlist names, and stops at the first union parameter.
+The separate-parameter diagnostic retains every eligible parameter in source order. Quoted annotations remain single names; they are not parsed as unions.
+Configured reporting verifies the original signed allowlist through the shared native signing library.
+
+The acceptance ladder caught real defects before the final receipt:
+
+- The finding name `Union` collided with a SQL keyword. Renaming the Datalog finding fixed execution.
+- `Callable[(Connection, ReadTransaction)]` was a missed positive. The rule now strips CST wrappers before classifying tuple slices.
+- Reporter findings use severity `error`, independently of the plugin's `hard-fail` enforcement. All three configured finding clauses now state it.
+- Configured discovery excludes `api/`, despite a stale discovery docstring. Native scope now follows the executable source.
+- Layer-directory matching now follows Python's Unicode decimal digits and its treatment of newlines after the underscore.
+
+Final acceptance uses frozen root CLI SHA-256 `8da9477947d9b95637d39e579c44468d5b3e61cd5075e97aad2b8ac06f7ab205`:
+
+- All five unchanged original cases pass, including both positives. Five native calls preserve all five complete API values.
+- All 83 supplemental API cases pass, including 56 positive cases and exact I/O exception observations.
+- All 94 configured reporter cases pass, including 60 positive cases and complete messages, paths, codes, order, and severities.
+- The original positive rejects a disabled detector. Two independent reporter controls reject disabled union and separate-parameter decisions.
+- Unsigned and malformed allowlist signatures match the complete source reporter failure result.
+- All 107 formatter comparisons, 60 focused engine tests, 52 migration tooling tests, and both authoring gate tests pass.
+- All 70 drafts pass the reader. The two ignored engine tests are upstream file-writing utilities; the whole-library checker was excluded.
+
+Each final corpus uses eight disjoint shards, with two workers. Every case appears exactly once in its corpus receipt.
+Final shard commands took at most 24 seconds. The native unit build took 81 seconds; the first implementation build took 119 seconds.
+No full repository or whole-batch cold run was performed. The receipt retains earlier failing runs and the exact validation script.
+
+Evidence: [direct original contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-direct-contracts.json.gz)
+and [supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-supplemental-contracts.json.gz).
+Production integration, persistent-workspace contracts, and the other ports still require work. No Linear ticket was created.
+The next missing translation is `async_patterns`.

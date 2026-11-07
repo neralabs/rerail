@@ -73,7 +73,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--destination',type=Path,required=True);p.add_argument('--reporters',type=Path,required=True);args=p.parse_args();rows=cases()
     args.destination.write_text(json.dumps(dict(format='rerail.rr-fresh-cases/v1',cases=rows),indent=2)+'\n')
     reports=[dict(id=row['id'],check=row['check'],files=[dict(f,path='impl/'+f['path']) for f in row['files']]) for row in rows if row['files'] and all('source' in f for f in row['files'])]
-    for path in ['api/input.py','conform/input.py','data_layer/input.py','_internal/input.py','l1234_types/input.py','l１２３４_types/input.py','l123_types/input.py','other/input.py','input.py','.git/input.py','impl/.venv/input.py']:
+    for path in ['api/input.py','conform/input.py','data_layer/input.py','_internal/input.py','l1234_types/input.py','l１２３４_types/input.py','l123_types/input.py','l1234_\n/input.py','l1234_a\n/input.py','other/input.py','input.py','.git/input.py','impl/.venv/input.py']:
         reports.append(dict(id='scope-'+path,check='conn_or_txn_union',files=[dict(path=path,source='def f(x:Connection|Transaction):\n    pass\n')]))
     args.reporters.write_text(json.dumps(dict(format='rerail.rr-plugin-reporter-cases/v1',cases=reports),indent=2)+'\n');print(len(rows),len(reports))
 

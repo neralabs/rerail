@@ -882,6 +882,26 @@
       ]
     },
     {
+      "id": "scope-l1234_\n/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "l1234_\n/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l1234_a\n/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "l1234_a\n/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
       "id": "scope-other/input.py",
       "check": "conn_or_txn_union",
       "files": [

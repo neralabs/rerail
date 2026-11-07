@@ -3,10 +3,13 @@
 .description "Port of nera-data-layer conn_or_txn_union at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "api/**/*.py", "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"
+.scope include "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"
 .scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_conn_or_txn_union.py
 #include "python/ast.rr"
+.severity ConnectionUnion error
+.severity Separate error
+.severity InvalidSignature error
 #include "python/print.rr"
 #include "data-layer/signing.rr"
 .decl cut_connection(name: symbol)
@@ -64,7 +67,7 @@ allow_entry("conn_or_txn_union", "process_trigger_ripple").
 allow_entry("conn_or_txn_union", "search_versioned_table_with_replay").
 allow_sig("conn_or_txn_union", "lint_conn_or_txn_union", "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==").
 .decl cut_layer(d: number)
-cut_layer(d) :- doc(d, p, _), match("(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^/]+/.*", p).
+cut_layer(d) :- doc(d, p, _), match("(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^/\\n][^/]*/.*", p).
 
 .decl cut_test(d: number)
 cut_test(d) :- path_part(d, "tests").
@@ -78,7 +81,7 @@ cut_document(d) :- doc(d, _, _), file_name(d, name), suffix(".py", name), !cut_t
     !syntax_error(d, _, _), option("entryPoint", "analyze_file").
 cut_document(d) :- doc(d, p, _), file_name(d, name), suffix(".py", name), !prefix("test_", name),
     !cut_test(d), !cut_hidden(d), cut_trigger(d), !syntax_error(d, _, _), !option("entryPoint", _),
-    (prefix("api/", p) ; prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
+    (prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
 .decl cut_class_kind(kind: symbol)
 cut_class_kind("class_definition").
 .decl cut_qualified(f: node, bare: symbol, qualified: symbol)
@@ -98,10 +101,14 @@ cut_parameter(f, p, @nfkc(name), ann, rank, i) :- kind(f, "function_definition")
 cut_edge(e, c) :- kind(e, "type"), child(e, c, 0).
 cut_edge(e, c) :- kind(e, "parenthesized_expression"), child(e, c, _), !kind(c, "comment").
 cut_edge(e, c) :- kind(e, "generic_type"), child(e, c, 0).
-cut_edge(e, c) :- kind(e, "generic_type"), child(e, tp, 1), kind(tp, "type_parameter"), child(tp, c, _).
 cut_edge(e, c) :- kind(e, "subscript"), field(e, "value", c).
-cut_edge(e, c) :- kind(e, "subscript"), field(e, "subscript", c), !kind(c, "tuple").
-cut_edge(e, c) :- kind(e, "subscript"), field(e, "subscript", t), kind(t, "tuple"), child(t, c, _).
+// A parenthesized tuple slice is still a tuple in Python's AST. Strip wrappers before classifying it.
+.decl cut_slice(e: node, slice: node)
+cut_slice(e, s) :- kind(e, "generic_type"), child(e, tp, 1), kind(tp, "type_parameter"), child(tp, s, _).
+cut_slice(e, s) :- kind(e, "subscript"), field(e, "subscript", s).
+cut_slice(e, c) :- cut_slice(e, s), (kind(s, "type") ; kind(s, "parenthesized_expression")), child(s, c, _), !kind(c, "comment").
+cut_edge(e, s) :- cut_slice(e, s), !kind(s, "tuple").
+cut_edge(e, c) :- cut_slice(e, t), kind(t, "tuple"), child(t, c, _).
 cut_edge(e, c) :- kind(e, "binary_operator"), op(e, "|"), (field(e, "left", c) ; field(e, "right", c)).
 cut_edge(e, c) :- kind(e, "union_type"), child(e, c, _).
 .decl cut_annotation(e: node)

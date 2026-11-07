@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
+    "commit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -472,7 +472,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
+      "sha256": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -531,6 +531,11 @@
           "after": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
           "reason": "Adopt committed Final shape resolutions for guest documents and typing",
           "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
+        },
+        {
+          "before": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
+          "after": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
+          "reason": "Adopt the committed Final shape library resolutions at cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -1169,6 +1174,11 @@
       "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
     },
     {
+      "destination": "docs/rule-syntax/lib/python/print.rr",
+      "sha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
+      "origin": "authored"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
       "sha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
       "origin": "authored",
@@ -1354,7 +1364,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "sha256": "a821791cace05a3d18f10e8cd5fb1456402b924568738f14da86f247005e4c6b",
+      "sha256": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242",
       "origin": "authored",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1365,11 +1375,6 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
-    },
-    {
-      "destination": "docs/rule-syntax/lib/python/print.rr",
-      "sha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
-      "origin": "authored"
     }
   ],
   "rules": [
@@ -1515,7 +1520,7 @@
       "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "ruleSha256": "a821791cace05a3d18f10e8cd5fb1456402b924568738f14da86f247005e4c6b"
+      "ruleSha256": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242"
     },
     {
       "check": "async_executor",
@@ -2320,12 +2325,17 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "7e49971d1c1fda93f9f5a17847d342d958e72ec1",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
-    "status": "Root Final shape engine with generic Boolean-context and Python AST diagnostic/order repairs",
+    "upstreamCommit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
+    "status": "Root Final shape engine with generic Boolean, Python AST, and canonical annotation text repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2333,6 +2343,16 @@
       "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
       "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
       "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
+    ],
+    "localCapabilityCommits": [
+      "e6968ad82"
+    ],
+    "localCapabilityPaths": [
+      "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+      "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+      "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+      "native/src/code_rule_dsl/logic/sql/select.rs",
+      "native/src/code_rule_dsl/logic/strings.rs"
     ]
   }
 }
