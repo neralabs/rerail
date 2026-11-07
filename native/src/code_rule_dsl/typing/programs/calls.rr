@@ -380,6 +380,22 @@ call_open(c) :- callee(c, e), pv(e, "cls", k), attr_open(k, "__init__").
 call_open(c) :- callee(c, e), pv(e, "inst", k), attr_open(k, "__call__").
 call_open(c) :- callee(c, e), pv(e, "mod", _).
 call_open(c) :- callee(c, e), pv(e, "super", _).
+// Rounds that stop before the fixpoint (O41, decision 0047) leave a cross-file row missing, and a missing row reads
+// as no edge. The pending round adds `unconverged(1)`: a call with no target is then unknown, not "calls nothing".
+// A call with targets keeps them as a lower bound.
+.decl unconverged(r: number)
+unconverged(0).
+// A callee rooted in an import of a module outside the workspace, or in a builtin, gains no workspace target from
+// more rounds, so it keeps its answer.
+call_open(c) :- unconverged(1), callee(c, e), !call_target(c, _), !extn(e), !builtin_ref(e, _).
+.decl ext_import(s: node, x: symbol)
+ext_import(s, x) :- rifrom(s, x, m, _), !isqmod(m).
+ext_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), !isqmod(q).
+.decl extq(q: symbol)
+extq(q) :- ribind(s, x, q), ext_import(s, x).
+.decl extn(n: node)
+extn(n) :- qn(n, q), extq(q).
+extn(n) :- attr_of(n, o, _), extn(o).
 .output call_target, call_open, base
 
 // ---- call chains ----------------------------------------------------------------------------------------------

@@ -602,7 +602,7 @@ pub(crate) fn run_with_options(
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program)?;
         let got = if bounded.hops.is_empty() {
-            rounds = cross_rounds::Rounds { run: 1, converged: true, rows: vec![] };
+            rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
         } else {
             run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?
@@ -683,7 +683,7 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
     for rel in hops {
@@ -704,7 +704,10 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
     }
     let mut last = None;
     let k = cross_rounds::k();
-    for r in 0..=k {
+    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
+    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
+    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    for r in 0..=k + 1 {
         for rel in hops {
             let prev = format!("{rel}{}", cross_rounds::PREV);
             let source = component::table_source(db, "x", &prev).ok_or_else(|| Error::Plan(format!("x.{prev} is not a table of integers")))?;
@@ -733,9 +736,13 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
         let digest = cross_rounds::digest(&rows);
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
-        if last == Some(digest) || r == k {
+        if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
+            report.pending = r == k + 1 && !report.converged;
             return Ok(got);
+        }
+        if r == k {
+            round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
         last = Some(digest);
         db.execute_batch("BEGIN")?;

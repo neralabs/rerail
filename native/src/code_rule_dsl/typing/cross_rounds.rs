@@ -29,12 +29,37 @@
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The number of rounds after round 0 (I11, adopted: k = 2).
-pub(crate) const K: usize = 2;
+/// The number of rounds after round 0 (I11 adopted k = 2; 4 since 2026-11-06, decision 0047: the CPython runtime
+/// oracle's package re-export needs a third file crossing, and its rounds converge after round 4).
+pub(crate) const K: usize = 4;
 
-/// The rounds bound: `K`, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how many rounds a corpus needs).
+/// A program's flag for the pending round (O41, decision 0047): a program that declares the fact `unconverged(0)`
+/// gets one more round after round `K` when the rounds have not converged, with `unconverged(1)` added. Its rules
+/// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
+pub(crate) const UNCONVERGED: &str = "unconverged";
+
+/// The rounds bound: `K`, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how many rounds a corpus needs), or a test's
+/// `with_k` on this thread.
 pub(crate) fn k() -> usize {
+    #[cfg(test)]
+    if let Some(k) = TEST_K.with(std::cell::Cell::get) {
+        return k;
+    }
     std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(K)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_K: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with the rounds bound `k` on this thread (tests: the environment variable would reach every test).
+#[cfg(test)]
+pub(crate) fn with_k<T>(k: usize, f: impl FnOnce() -> T) -> T {
+    TEST_K.with(|c| c.set(Some(k)));
+    let out = f();
+    TEST_K.with(|c| c.set(None));
+    out
 }
 
 /// The suffix of a hop relation's previous-round input.
@@ -146,6 +171,8 @@ pub(crate) struct Rounds {
     pub(crate) converged: bool,
     /// Each round's hop rows, summed over the hop relations.
     pub(crate) rows: Vec<usize>,
+    /// The rounds did not converge, and the pending round ran (`UNCONVERGED`).
+    pub(crate) pending: bool,
 }
 
 #[cfg(test)]

@@ -69,6 +69,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     let src = format!("{program}\n{SPANS}");
     let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     println!("cross-file rounds {:?}", report.rounds);
+    assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
@@ -150,16 +151,10 @@ fn program(name: &str) -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
 
-/// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 83 agree, these 10 depart, none
-/// wrong). The native resolver departs at 17 calls on the same oracle; the program resolves `super()`, a local
+/// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
+/// wrong, as the spike scored). The native resolver departs at 17 calls on the same oracle; the program resolves `super()`, a local
 /// holding an instance, a call's result and an instance's `__call__`, which the native resolver leaves unknown.
 const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
-    (
-        "main.py:10 `pkg.exported_helper(2)`",
-        Departure::NoEdge,
-        "O41: the re-export needs a third file crossing (main, pkg/__init__, pkg/util); at k = 2 the rounds stop \
-         unconverged and the missing row is no edge, not unknown. With k = 6 they converge in 5 rounds and it agrees",
-    ),
     ("pkg/aliases.py:21 `defined_later()`", Departure::Unknown, "a name a star import binds (`from .util import *`)"),
     ("pkg/decorators.py:12 `func(*args, **kwargs)`", Departure::Unknown, "a called parameter"),
     ("pkg/decorators.py:35 `cached(1)`", Departure::Unknown, "`functools.lru_cache`'s wrapper"),
@@ -181,7 +176,25 @@ fn python_calls_program_agrees_with_the_runtime() {
     assert!(never_ran.is_empty(), "{never_ran:#?}");
     let listed: BTreeMap<String, Departure> = PYTHON_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
     assert_eq!(departures, listed, "calls where calls.rr answers otherwise than CPython ran");
-    assert!(agree >= 83, "{agree} agree");
+    assert!(agree >= 84, "{agree} agree");
+}
+
+/// O41 (decision 0047): rounds cut before the fixpoint make a call unknown, never no edge. At k = 1 (and the
+/// pending round) the package re-export in `main.py`, three files deep, is not reached: it is unknown. No call is
+/// no edge or wrong where CPython ran a workspace function, and the fixpoint's departures stay.
+#[test]
+fn python_calls_program_cut_short_is_unknown_not_no_edge() {
+    let (agree, departures, never_ran) = crate::code_rule_dsl::typing::cross_rounds::with_k(1, || score_python(&program("calls")));
+    println!("calls.rr at k = 1: {agree} agree, {} depart", departures.len());
+    for (at, d) in &departures {
+        println!("  {d:?}\t{at}");
+    }
+    assert!(never_ran.is_empty(), "{never_ran:#?}");
+    assert!(!departures.values().any(|d| matches!(d, Departure::NoEdge | Departure::Wrong)), "{departures:#?}");
+    assert_eq!(departures.get("main.py:10 `pkg.exported_helper(2)`"), Some(&Departure::Unknown));
+    for (at, d, _) in PYTHON_DEPARTURES {
+        assert_eq!(departures.get(*at), Some(d), "{at}");
+    }
 }
 
 /// 1-based line and code-point column of a byte offset, as rust-analyzer's recording writes them.

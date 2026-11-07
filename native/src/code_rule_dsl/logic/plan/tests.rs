@@ -456,12 +456,13 @@ fn own_ingestion_derives_what_t_facts_do() {
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
-        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 2). On this corpus workload's
-        // reach the fixpoint (round 2's digest is round 1's); calls' need a third crossing (8 of 5,112 hop rows,
-        // O41), so they stop unconverged after round 2. Both runs below are bounded alike.
+        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 4 since decision 0047). On this
+        // corpus both reach the fixpoint: workload's after round 1 (round 2's digest is round 1's), calls' after round
+        // 2 (hop rows 5,367 → 5,427 → 5,435 → 5,435; round 2 is the third crossing k = 2 cut, O41). Both runs below are
+        // bounded alike.
         println!("{name}: cross-file rounds {:?}", report.rounds);
-        assert_eq!(report.rounds.run, cross_rounds::K + 1, "{name}: {:?}", report.rounds);
-        assert_eq!(report.rounds.converged, name == "workload", "{name}: {:?}", report.rounds);
+        assert_eq!(report.rounds.run, if name == "workload" { 3 } else { 4 }, "{name}: {:?}", report.rounds);
+        assert!(report.rounds.converged && !report.rounds.pending, "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();

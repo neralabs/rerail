@@ -1178,6 +1178,12 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
     `vopen(c) :- callee(c, e), !pv(e, _, _), …` and `attr_open(c, a) :- …, !found(c, a, _)` read the absence of
     a hop relation's row as "no value". Under a bounded round, that absence is not final.
 
+- **Narrowed (2026-11-06, decision 0047).** k is 4. A program that declares `unconverged(0)` gets a pending
+  round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
+  is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
+  - pending marking for the other programs (`calls_rust.rr`, workload);
+  - the per-document cutoff, since each round still reruns the whole cross-file part.
+
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
 Found at list step 29 (2026-11-04). The three write-new modules of Phase 10 exist with their

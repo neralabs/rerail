@@ -126,4 +126,8 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   Each departure is pinned with its reason. One Python departure is a silent no-edge caused by O41: a
   re-export three files deep, which the k = 2 rounds cut. With k = 6 the rounds converge and it agrees, so O41
   is an accuracy bug, not only a report.
+- **Decisions** (0047, the user): rounds k = 4 with a pending round; `calls:` moves to the programs after parity;
+  type relations drafted here first; Python first for receiver typing.
+- **O41 narrowed:** at k = 4 calls.rr converges on the oracle (84 agree, 9 depart, 0 wrong). Cut short, the
+  pending round makes the re-export unknown, never no edge.
 
