@@ -2,8 +2,8 @@
 
 Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator runs the tree
 section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) handles
-classes, the masks that read only earlier bytes (`fill` included, a new carried block
-operation), errors and escapes, equal to the evaluator on every executor.
+classes, masks (with `fill`, a new carried block operation, and `next` by delaying values),
+errors and escapes, equal to the evaluator on every executor.
 
 ## Intro
 

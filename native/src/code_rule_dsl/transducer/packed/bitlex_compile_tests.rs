@@ -94,9 +94,9 @@ fn classes_pack_into_shared_products() {
 /// What the compiler does not handle yet is refused by name, not guessed.
 #[test]
 fn unsupported_operations_are_refused() {
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = next(a)\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = text(\"ab\") & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"]).expect_err("refused");
-    assert!(error.contains("next"), "{error}");
+    assert!(error.contains("text"), "{error}");
 }
 
 /// Errors and escapes are the fallback output: on every input and every executor its bits equal
@@ -143,4 +143,47 @@ fn errors_and_escapes_are_the_fallback_output() {
         if falls_back { falls += 1 } else { clean += 1 }
     }
     assert!(clean > 0 && falls > 0, "{clean} clean, {falls} falling back");
+}
+
+/// Masks that read later bytes, by delays: `next`, `lasts`, the last byte, `next` of a value
+/// the zero padding passes (`eq 0x00`) and of a carried one, `next` inside `prev`, and
+/// `aligned`; JSON's number checks among them.
+const LATER: &str = r#"
+class digit     = '0'..'9'
+class sign      = '+' '-'
+class expc      = 'e' 'E'
+class nul       = 0x00
+class quote     = '"'
+class backslash = '\\'
+mask a          = next(digit)
+mask b          = next(sign) & next(digit, 2)
+mask c          = lasts(digit)
+mask last_byte  = ~next(~empty)
+mask d          = next(nul) | next(nul, 5)
+mask e          = next(toggle(quote))
+mask f          = aligned(backslash, 2)
+mask g          = aligned(digit, 4) ^ aligned(quote, 8)
+mask h          = expc & (~prev(digit) | ~(next(digit) | (next(sign) & next(digit, 2))))
+mask i          = prev(next(digit, 3), 2) & ~nul
+mask j          = fill(next(quote) & digit, ~digit)
+"#;
+
+#[test]
+fn later_masks_equal_the_evaluator_on_every_executor() {
+    let names = ["a", "b", "c", "last_byte", "d", "e", "f", "g", "h", "i", "j"];
+    let stmts = ::bitlex::syntax::parse(LATER).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &names).unwrap_or_else(|e| panic!("compiles: {e}"));
+    assert!(compiled.rows.contains("delay 5"), "the largest next is 5 bytes\n{}", compiled.rows);
+    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let mut cases = inputs();
+    cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
+    for bytes in cases {
+        let want = evaluated(&stmts, &bytes, &names);
+        for (executor, got) in executors(&p, &bytes) {
+            for (k, name) in names.iter().enumerate() {
+                assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
+            }
+        }
+    }
 }
