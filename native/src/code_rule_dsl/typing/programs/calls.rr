@@ -464,8 +464,12 @@ gbind(c, x) :- callee(c, n), attr_of(n, o, _), pv(n, "fn", f), rtvar(f, a, y), p
 ghead(x, h) :- gbind(_, x), kind(x, "subscript"), field(x, "value", h).
 ghead(x, h) :- gbind(_, x), kind(x, "generic_type"), child(x, h, 0).
 ghead(x, x) :- gbind(_, x), !kind(x, "subscript"), !kind(x, "generic_type").
-pv(c, "inst", s) :- gbind(c, x), ghead(x, h), pv(h, "cls", k), sub(k, s).
-pv(c, "gen", x) :- gbind(c, x), ghead(x, h), x != h, pv(h, "cls", k), cparam(k, _, _).
+// The bound class first, joined with its subclasses last (as `cret`): a new subclass row then reaches only the calls
+// bound to its base, not every class's value.
+.decl gcls(c: node, x: node, k: node)
+gcls(c, x, k) :- gbind(c, x), ghead(x, h), pv(h, "cls", k).
+pv(c, "inst", s) :- gcls(c, _, k), sub(k, s).
+pv(c, "gen", x) :- gcls(c, x, k), ghead(x, h), x != h, cparam(k, _, _).
 // A function's own type variable, from the argument its parameter is given (a method's arguments follow `self`).
 pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method(f, _), rpvar(f, i, _), posarg(c, i, a), pv(a, k, v).
 pv(c, k, v) :- callee(c, e), attr_of(e, _, _), pv(e, "fn", f), method(f, _), rpvar(f, i, _), pred(i, j), posarg(c, j, a), pv(a, k, v).

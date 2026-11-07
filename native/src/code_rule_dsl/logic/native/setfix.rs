@@ -279,8 +279,10 @@ struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, p
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
 enum Body { Sql(String), Join(JoinRule) }
 /// `whole`: a join probe's plan for the wave whose delta is its whole relation (the relation was empty before it), in
-/// any literal order, reading that relation in full.
-struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule> }
+/// any literal order, reading that relation in full. `wkey`: its spec, the same for each probe of one rule: in a wave
+/// the store does not change, so a whole plan run once derives what each of its rule's probes would (it is not run
+/// again).
+struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<String> }
 
 pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
@@ -374,8 +376,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 rel.stored = rel.n;
                 rels.push(rel);
             }
-            "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None }),
-            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
+            "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None, wkey: None }),
+            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None, wkey: None }),
             "nowrite" => write = false,
             "gate" => {
                 let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
@@ -385,7 +387,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "join" => {
                 let (head, delta) = (num(toks[1])?, num(toks[2])?);
                 let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
-                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole });
+                let wkey = toks.get(4).map(|w| w.to_string());
+                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole, wkey });
             }
             "rule" => {
                 let (head, src) = (num(toks[1])?, num(toks[2])?);
@@ -508,12 +511,20 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             }
         }
         // Join probes, natively; seed joins in the first wave only.
+        let mut wholes_run: Vec<&str> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
             if p.delta == SEED { if seeded { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
-            let j = match &p.whole { Some(w) if p.delta != SEED && store.rels[p.delta].lo == 0 => w, _ => j };
+            let j = match (&p.whole, &p.wkey) {
+                (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
+                    if wholes_run.contains(&k.as_str()) { skips += 1; continue; }
+                    wholes_run.push(k);
+                    w
+                }
+                _ => j,
+            };
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
@@ -715,6 +726,20 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
+        }
+        // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics.
+        "whole" => {
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = Interner::for_loading(&symbols);
+            let j = parse_join(conn, &unhex(body)?, &mut syms)?;
+            syms.check()?;
+            let mut store = comp.store.write().unwrap();
+            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
+            drop(store);
+            let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
+            p.whole = Some(j);
+            p.wkey = Some(body.to_owned());
+            return Ok(());
         }
         other => return Err(err(format!("unknown probe kind {other}"))),
     };
