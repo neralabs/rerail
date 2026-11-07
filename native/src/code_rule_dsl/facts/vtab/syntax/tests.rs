@@ -501,3 +501,20 @@ fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     shaped(&store, vec![doc.clone()], &ast).unwrap();
     assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
 }
+
+/// Literal values and positions are one demanded producer; a names-only rule must not build either table.
+#[test]
+fn unread_python_literal_columns_are_not_materialized() {
+    let store = ContentStore::open(&temp("literal-demand")).unwrap();
+    let doc = document(0, "a.py", "python", "x = 'plain'\ny = f'left{x}right'\n");
+    let names = Projection { reads: Some(["name".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &names).unwrap();
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+    let literals = Projection { reads: Some(["str_part".into(), "str_part_start".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc], &literals).unwrap();
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 3, "{rel}");
+    }
+}

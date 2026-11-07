@@ -52,6 +52,17 @@ Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
         "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
 }
 
+#[test]
+fn decoded_constant_positions_are_public_typed_rows() {
+    let mut rows = finding_contract("x = f\"\"\"json\n{a}\njson\"\"\"\n", r#"
+.language python
+.violation Piece(at: span, ordinal: number, column: number) "{ordinal}:{column}"
+Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, _).
+"#);
+    rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
+    assert_eq!(rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["column"].as_i64().unwrap())).collect::<Vec<_>>(), [(1, 8), (2, 3)]);
+}
+
 /// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
 #[test]
 fn native_python_syntax_verdict_keeps_raw_source_available() {

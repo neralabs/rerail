@@ -338,13 +338,12 @@
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
-// @tree_digest(n): a hash of n's subtree (kinds, fields, token text; no positions), as Python's ast.dump compares.
+// @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
 .functor tree_digest(n: node): symbol
-// There is no @ast_dump: a repository that stores hashes of ast.dump text (cached_pure_lazy_allowlist) is
-// re-signed once with @tree_digest, which compares the same way without reproducing CPython's text.
+// Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
+// A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
-// message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
-// parts of trees with relations.
+// message previews such as "{@unparse(call)}". Keys and signatures must use their specified canonical format.
 .functor unparse(n: node): symbol
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
@@ -397,9 +396,12 @@
 // at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
 // literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
+// Exact start of each Constant: physical line from 1, UTF-8 byte column from 0.
+// Keep `at` above for owner traversal; it is not the fragment's exact coordinate.
+.decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_start
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

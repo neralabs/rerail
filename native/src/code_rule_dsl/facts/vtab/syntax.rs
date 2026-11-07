@@ -44,6 +44,7 @@ pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
 mod python_order;
 mod python_syntax;
+mod python_parts;
 use core_rr::Family;
 
 /// Which projection of the tree a batch serves.
@@ -580,7 +581,7 @@ impl Batch {
                     _ => {}
                 }
                 if core {
-                    c.node(&p, dialect, local as u32, &mut string, wants_text);
+                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"));
                 }
             }
             if core {

@@ -426,7 +426,7 @@ pub(super) fn js_number(t: &str) -> Option<String> {
 
 /// Decoded parts and their source byte offsets, relative to the part's literal token.
 pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
-    str_parts(parts).into_iter().map(|(value, node, spec)| (value, node, spec, 0)).collect()
+    super::python_parts::with_offsets(parts)
 }
 
 /// `str_part(lit, i, v, at, spec)`: the str constants CPython builds from Python literal `lit` (a `string`, or a
@@ -434,140 +434,7 @@ pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(Strin
 /// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
 /// t-strings give none. Returns (v, at, spec) per piece, in order.
 pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
-    let mut pieces: Vec<(String, N, u8)> = Vec::new();
-    let mut cur: Option<(String, N)> = None;
-    let mut any_f = false;
-    for &(sid, t) in parts {
-        let pre: String = t.chars().take_while(char::is_ascii_alphabetic).collect::<String>().to_lowercase();
-        if pre.contains('b') || pre.contains('t') {
-            return Vec::new();
-        }
-        let rest = &t[pre.len()..];
-        let Some(q) = ["\"\"\"", "'''", "\"", "'"].into_iter().find(|q| rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q)) else {
-            return Vec::new();
-        };
-        let body = &rest[q.len()..rest.len() - q.len()];
-        let raw = pre.contains('r');
-        let dec = |x: &str| if raw { x.to_owned() } else { py_unescape(x) };
-        let push = |cur: &mut Option<(String, N)>, v: &str| match cur {
-            Some((s, _)) => s.push_str(v),
-            None => *cur = Some((v.to_owned(), sid)),
-        };
-        if !pre.contains('f') {
-            push(&mut cur, &dec(body));
-            continue;
-        }
-        any_f = true;
-        let b: Vec<char> = body.chars().collect();
-        let mut i = 0;
-        let mut run = String::new();
-        while i < b.len() {
-            let c = b[i];
-            if c == '\\' && !raw && i + 1 < b.len() {
-                // An escape, kept whole for `py_unescape`: `\N{…}` holds braces that are not a field.
-                let mut j = i + 2;
-                if b[i + 1] == 'N' && b.get(i + 2) == Some(&'{') {
-                    while j < b.len() && b[j - 1] != '}' {
-                        j += 1;
-                    }
-                }
-                run.extend(&b[i..j.min(b.len())]);
-                i = j;
-            } else if (c == '{' || c == '}') && b.get(i + 1) == Some(&c) {
-                run.push_str(if c == '{' { "{{" } else { "}}" });
-                i += 2;
-            } else if c == '{' {
-                let lit = dec(&run).replace("{{", "{").replace("}}", "}");
-                run.clear();
-                // The field: an expression up to a depth-0 `!`, `:` or `}`.
-                let mut j = i + 1;
-                let mut depth = 0i32;
-                let mut quote: Option<char> = None;
-                while j < b.len() {
-                    let d = b[j];
-                    if let Some(qc) = quote {
-                        if d == qc {
-                            quote = None;
-                        }
-                    } else if d == '\'' || d == '"' {
-                        quote = Some(d);
-                    } else if "([{".contains(d) {
-                        depth += 1;
-                    } else if ")]}".contains(d) {
-                        if depth == 0 {
-                            break;
-                        }
-                        depth -= 1;
-                    } else if depth == 0 && (d == ':' || d == '!' && b.get(j + 1) != Some(&'=')) {
-                        break;
-                    }
-                    j += 1;
-                }
-                let expr: String = b[i + 1..j.min(b.len())].iter().collect();
-                let te = expr.trim_end();
-                // `f"{x=}"`: the expression's text is part of the constant.
-                let debug = te.ends_with('=') && !["==", "!=", "<=", ">="].iter().any(|o| te.ends_with(o));
-                let mut text = lit;
-                if debug {
-                    text.push_str(&expr);
-                }
-                if !text.is_empty() {
-                    push(&mut cur, &text);
-                }
-                if let Some((v, at)) = cur.take()
-                    && !v.is_empty()
-                {
-                    pieces.push((v, at, 0));
-                }
-                // A conversion, then a format spec up to the field's closing brace.
-                if j < b.len() && b[j] == '!' {
-                    while j < b.len() && b[j] != ':' && b[j] != '}' {
-                        j += 1;
-                    }
-                }
-                if j < b.len() && b[j] == ':' {
-                    j += 1;
-                    let mut spec = String::new();
-                    let mut depth = 0i32;
-                    while j < b.len() {
-                        let d = b[j];
-                        if d == '{' {
-                            if depth == 0 && !spec.is_empty() {
-                                pieces.push((dec(&spec), sid, 1));
-                                spec.clear();
-                            }
-                            depth += 1;
-                        } else if d == '}' {
-                            if depth == 0 {
-                                break;
-                            }
-                            depth -= 1;
-                        } else if depth == 0 {
-                            spec.push(d);
-                        }
-                        j += 1;
-                    }
-                    if !spec.is_empty() {
-                        pieces.push((dec(&spec), sid, 1));
-                    }
-                }
-                i = j + 1;
-            } else {
-                run.push(c);
-                i += 1;
-            }
-        }
-        if !run.is_empty() {
-            let lit = dec(&run).replace("{{", "{").replace("}}", "}");
-            push(&mut cur, &lit);
-        }
-    }
-    if let Some((v, at)) = cur.take()
-        && (!any_f || !v.is_empty())
-    {
-        pieces.push((v, at, 0));
-    }
-    pieces
+    super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -608,6 +475,7 @@ pub(super) struct CoreRows {
     lf_line: Vec<[i64; 3]>,
     line_count: Vec<[i64; 2]>,
     str_part: Vec<[i64; 5]>,
+    str_part_start: Vec<[i64; 4]>,
     first_token: Vec<[i64; 2]>,
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
@@ -617,7 +485,7 @@ pub(super) struct CoreRows {
 
 impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool) {
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool) {
         let f = &*p.facts;
         let id = p.core[local as usize];
         let n = p.global(local);
@@ -685,6 +553,7 @@ impl CoreRows {
                 self.value_type.insert([v, string(ty) as i64]);
             }
             if dialect.family == Family::Python
+                && (wants_parts || wants_part_starts)
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 let parts: Vec<(i64, &str)> = if kind == "string" {
@@ -692,8 +561,15 @@ impl CoreRows {
                 } else {
                     p.children(local).filter(|&c| dialect.name(f, p.core[c as usize]) == "string").map(|c| (p.global(c), f.text(p.core[c as usize]))).collect()
                 };
-                for (i, (v, at, spec)) in str_parts(&parts).into_iter().enumerate() {
-                    self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
+                for (i, (v, at, spec, offset)) in str_parts_with_offsets(&parts).into_iter().enumerate() {
+                    if wants_parts {
+                        self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
+                    }
+                    if wants_part_starts {
+                        let absolute = f.start[p.core[at as u32 as usize] as usize] + offset as u32;
+                        let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
+                        self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
+                    }
                 }
             }
         }
@@ -853,6 +729,7 @@ impl CoreRows {
             ("lf_line", make(&["d", "l", "t"], &self.lf_line, [false, false, true], atom)),
             ("line_count", pair(&["d", "k"], &self.line_count)),
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
+            ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
             ("first_token", pair(&["n", "t"], &self.first_token)),
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
