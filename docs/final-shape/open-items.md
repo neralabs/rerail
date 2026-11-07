@@ -1514,24 +1514,44 @@ debug build, load about 7.
    25.3 to 18.1 s, SQLite statements from 6,600 to 605, and peak RSS from 418 to 350 MB, with the same outputs.
    The earlier `cross_rounds` change (a join through same-document atoms is not a hop) removed most of these
    tests from the start.
-2. **SQL over a vtab looks up one column, priced at one row per value. Open.** `best_index`
-   (`facts::vtab::p_table`, `residency::…::table`) uses one equality constraint, the one with the smallest
-   `estimated_matches`. The in-memory source (`setfix::Stored`: `node`, the exports, `__prev`) answers 1 for every
-   column, so a tie picks the constraint. A join on two columns (`look` by scope and name, `fv__prev` by class and
-   attribute) walks every row of the first and filters on the second. Pricing by distinct counts alone is not
-   the fix. Measured on `alook × fv__prev`: choosing the more selective single column went from 22.4M to 33.0M VM
-   steps, because neither column is selective and the pair is.
-   **Solution:** `best_index` takes every usable equality on the source, and `filter` probes a composite sorted
-   index on those columns, built lazily like `Stored::index` and keyed by the column set. `estimated_matches`
-   comes from distinct counts (runs of the sorted index). This matters where SQL still runs: strata the native
-   engine declines (`@pkg_up`), and `INSERT … SELECT` strata.
-   **Since 1:** in `calls.rr`'s cross-file part only `type_first` (a `min` aggregate, which has no native step)
-   runs as SQL, at about 0.1 s on 172 files. Whether to build the composite lookup, or instead give `min`/`max`
-   and `@pkg_up` native steps so SQL is never on a hot path, is still to decide.
-3. **A kind test in a recursive step. Gone with 1.** `kind(n, "assignment")` with `n` bound cost about 18k VM
-   steps per delta row. That is the SQL path of 2: `kind` is a view over `node` (a `Stored` source), and
-   `best_index` took the lookup by kind. The exact constraint SQLite offered first was not traced. With 1, the
-   program from before `pass(n, c)` no longer pays it: those rules run as native joins.
+2. **SQL over a vtab looks up one column, priced at one row per value. Fixed** (`f443cc6f8`, `2a69daa08`,
+   `210a2d82b`). `best_index` (`facts::vtab`) used one equality constraint, the one with the smallest
+   `estimated_matches`. The in-memory source (`setfix::Stored`: the cross part's inputs, `__prev`, `__done`)
+   answered 1 for every column, so a tie picked whichever constraint SQLite offered first. Option 4 (native `min`/`max` and
+   text functions) took SQL off `calls.rr`'s hot path. SQL stays a product surface, though: other applications
+   query rerail's relations through these vtabs, and the SQL executor (`--modes ""`) must stay usable. So the
+   index shape is fixed for both tiers:
+   - **Inputs (vtabs; immutable, so an index costs no insert).** Every usable `=` goes into one filter. `Stored`
+     answers from a lexicographic order over those columns. The order is built on first use, holds 4 bytes a row
+     and serves every later search whose columns are its prefix. Other sources probe the most selective column
+     and check the rest before SQLite sees a row. Estimates come from distinct counts (`Stored`); for several
+     columns, the default treats them as independent, bounded by the most selective. A range is taken only
+     when it beats the estimate for all the `=` together.
+   - **Derived tables (SQL executor; mutable, `WITHOUT ROWID`).** Each secondary index is a full copy of the row,
+     written on every insert. So the table's primary key serves every search on a key prefix. The other searches
+     share lexicographic orders, one order per chain of nested column sets: a minimum chain cover, as in
+     Soufflé's index selection (Subotić et al., VLDB 2018). A search either extends an order whose columns are a
+     subset of its own, or starts a new one.
+   - **Semi-naive rounds.** The new rows come from an anti-join on the key (`NOT EXISTS`, one primary-key probe per
+     candidate), not `EXCEPT`, which scanned the whole relation every round.
+
+   On slice-utils (49 files), SQL executor, debug build, with the same outputs:
+
+   | Change | Measure | Before | After |
+   |---|---|---|---|
+   | Chain-cover orders on derived tables | index statements | 99 | 28 |
+   | Composite vtab filter | VM steps | 148.5M | 50.5M |
+   | Composite vtab filter | CPU (load ~146) | 7.9 s | 5.5 s |
+   | Anti-join for new rows | VM steps | 50.5M | 43.2M |
+   | Anti-join for new rows | full-scan steps | 3.87M | 3.02M |
+   | Anti-join for new rows | CPU | 5.4 s | 5.4 s (noise) |
+
+   The worst statement before the fix was `iattr`'s probe of `field` by the constant name rather than the bound
+   child: 65M VM steps across 6 runs. With the fix it drops out of the top statements. The native engine on the same
+   slice was 1.94 s. The rest of the SQL executor's gap is the `cand` temp tables and their union steps.
+3. **A kind test in a recursive step. Gone with 1; the cause was 2.** The cost blamed on `kind(n, "assignment")`
+   came from a lookup of `field` by its constant `f`, not the bound `c`, per the plans' index numbers. It was the
+   1-per-column tie of 2. With 1 those rules run as native joins, and with 2 the SQL path probes `c`.
 4. **Probes start from seed estimates in every round. Fixed** (`a1d580128`, `a450fc0f2`; about 3%, near noise,
    since the native engine's replans already correct the first waves). Recursive relations are priced at their seed rules'
    estimated rows, and derived columns have no distinct counts. The probes are replanned from live fanout after
@@ -1549,5 +1569,5 @@ debug build, load about 7.
    round, the rest runs once over the cone's held relations, bound as inputs as the cross part binds the exports.
    This saves about 5 s (29%) here.
 
-**Closure:** 2 decided and done, and `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
+**Closure:** 1–5 done; left: `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
 plain rules on the same slices.
