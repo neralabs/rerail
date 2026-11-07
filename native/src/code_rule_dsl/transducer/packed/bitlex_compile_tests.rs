@@ -232,7 +232,6 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
-    let mut skipped: Vec<String> = Vec::new();
     for bytes in cases {
         let n = bytes.len();
         let tables = std::collections::HashMap::new();
@@ -258,7 +257,7 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
             }
         };
         let (runs, over) = prepared.run(&bytes, true);
-        skipped.extend(over);
+        assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
             let falls = cut(got[0].clone(), n).iter().any(|&w| w != 0);
             if !out.errors.is_empty() {
@@ -278,9 +277,7 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
             compared += 1;
         }
     }
-    skipped.sort();
-    skipped.dedup();
-    eprintln!("{compared} compared, {rejected} rejected, {conservative} falling back where the evaluator does not; over the launch budget: {skipped:?}");
+    eprintln!("{compared} compared, {rejected} rejected, {conservative} falling back where the evaluator does not");
     assert!(compared > 0 && rejected > 0);
 }
 
@@ -306,9 +303,66 @@ fn json_msl_is_one_kernel() {
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
             let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void tempo_").count(), 1);
+            assert_eq!(msl.matches("kernel void ").count(), 1);
             let lines = msl.lines().count();
             assert!(lines < 12 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+        }
+    }
+}
+
+/// A batch (decision 0044): files of several languages, interleaved, each under its own program,
+/// in one launch. Every file's outputs and positions equal its program's CPU interpreter on that
+/// file alone, on the Metal interpreter and on generated MSL at every lane width. With one poll
+/// per predecessor and none after it, groups leave unfinished and the launch is repeated; the
+/// results are the same.
+#[test]
+#[cfg(target_os = "macos")]
+fn a_batch_of_files_and_programs_is_one_launch() {
+    use super::block_tests::{STAGE1, runs};
+    use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
+        let stmts = ::bitlex::syntax::parse(src).expect("parses");
+        let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
+        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
+    };
+    let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
+    let programs = [
+        compiled(JSON, &[bitlex_compile::FALLBACK], Some(&symbols)),
+        compiled(LATER, &["a", "b", "c", "last_byte", "d", "e", "f", "g", "h", "i", "j"], None),
+        compiled(FORWARD, &NAMES, None),
+        rir::assemble(STAGE1).expect("assembles"),
+        rir::assemble(chain).expect("assembles"),
+    ];
+    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
+    let natives: Vec<native_ir::BlockNative> = programs.iter().map(|p| native_ir::lower(p).expect("lowers").block_programs.remove(0)).collect();
+    let natives: Vec<&native_ir::BlockNative> = natives.iter().collect();
+    let mut bytes: Vec<Vec<u8>> = inputs().into_iter().step_by(7).collect();
+    bytes.extend(runs());
+    bytes.extend(JSON_CASES.iter().map(|c| c.to_vec()));
+    bytes.push(Vec::new());
+    let files: Vec<BatchFile<'_>> = bytes.iter().enumerate().map(|(i, b)| BatchFile { bytes: b, program: (i * 3 + i / 5) % blocks.len() }).collect();
+    let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
+    for width in LaneWidth::ALL {
+        for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
+            for spins in [64, 0] {
+                let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
+                if spins > 0 {
+                    assert_eq!(run.launches, 1, "{executor:?}, {}-byte lanes", width.bytes());
+                }
+                for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
+                    let what = format!("file {k} ({} bytes, program {}), {executor:?}, {}-byte lanes, {spins} polls", files[k].bytes.len(), files[k].program, width.bytes());
+                    assert_eq!(got.outputs, want.outputs, "{what}");
+                    assert_eq!(got.positions, want.positions, "{what}");
+                }
+            }
         }
     }
 }

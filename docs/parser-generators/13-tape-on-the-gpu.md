@@ -3,10 +3,9 @@
 Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator runs the tree
 section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) compiles all
 of `json.bitlex` (classes, masks, counts as bit-planes, frames, tokens, keywords, errors,
-escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on the
-CPU interpreter, Cranelift and generated MSL. Generated MSL is one launch now (§5.3): each
-instruction once, a look-back per carry. The Metal interpreter still takes three launches per
-carry, more than the budget for this program.
+escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on every
+executor. Both Metal executors run a batch of files, each under its own language's program, in
+one launch (§5.4, decision 0044).
 
 ## Intro
 
@@ -393,6 +392,19 @@ are separated by order instead:
 
 The JSON program needs only the forward sweep. Sweeps are built when a lexer first needs a
 backward fact: Python's.
+
+### 5.4 A batch of files in one launch
+
+Most launches parse many files, in several languages (decision 0044). One launch takes the batch
+and a group of programs, one per language:
+
+- **A group of lanes holds one file.** So it runs one program, chosen by a switch that is the same
+  in every lane. The padding to whole groups costs 0.8% to 4.1% of the bytes.
+- **A file table** gives each file its bytes, its program and where its states and outputs go.
+- **Carries stay inside a file.** A file's first group starts from the identity; its other groups
+  look back only to earlier groups of the same file.
+- **Generated MSL** has a function per program and one kernel. **The interpreter** reads each
+  program's steps from a table.
 
 ## 6. What changes where
 

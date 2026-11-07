@@ -1,38 +1,34 @@
-//! Block programs on Metal (`block`), both ways the transducer runs on the device:
+//! Block programs on Metal (`block`), both ways the transducer runs on the device, each over a
+//! batch of files in one launch (decision 0044):
 //!
-//! - **the interpreter** (`metal_block_program.metal`): the set program's shape, one dispatch
-//!   running every operation in order;
-//! - **generated MSL** from the native IR (`BlockNative`): the operations written out as one
-//!   straight-line kernel, with no loop, no switch and no branch.
+//! - **the interpreter** (`metal_block_program.metal`): one kernel for any programs, reading each
+//!   program's steps from a table;
+//! - **generated MSL** from the native IR (`BlockNative`): a function per program, the operations
+//!   written out straight-line, and one kernel that calls the file's.
 //!
-//! Each lane owns `W` consecutive source bytes and builds its own `W`-bit word of every value
-//! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once, not one bit
-//! each. A byte compare is SWAR over the lane's `uint4`s; the logic is word logic.
+//! Each lane owns `W` consecutive bytes of a file and builds its own `W`-bit word of every value
+//! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once. A group of
+//! lanes holds one file, so it runs one program. Files are read in place through a file table
+//! (`FileRow`), as zero outside them.
 //!
-//! Carried operations (`prev`, `toggle`, `after_odd_run`, `fill`) follow `06-block-parallel.md` §2 and
-//! §5: each is a round, one dispatch. A lane's summary is combined across its SIMD group (one
-//! threadgroup of 32 lanes) by SIMD-group operations, and across groups through a state per
-//! group. Masks are recomputed in every round, not stored; only the states persist.
-//!
-//! - **Generated MSL** passes states by decoupled look-back with bounded waits: a group waits a
-//!   fixed number of polls for a predecessor's state, then computes that predecessor's aggregate
-//!   from its bytes itself. The mask code stays straight-line; only the look-back loops.
-//! - **The interpreter** keeps its values in slots, so a group cannot recompute another's; it
-//!   scans the groups' aggregates in a dispatch of its own instead (`block_carry_scan`).
+//! Carried operations (`prev`, `toggle`, `after_odd_run`, `fill`) follow `06-block-parallel.md` §2
+//! and §5. A lane's carry is combined across its SIMD group by SIMD-group operations, and across a
+//! file's groups by decoupled look-back with bounded polls (`13-tape-on-the-gpu.md` §5.3). Groups
+//! take their numbers in launch order from persistent workers; a group waits only on earlier groups
+//! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
 use super::*;
-use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, BlockRun, undelay};
+use crate::code_rule_dsl::transducer::packed::block::{BlockRun, undelay};
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
-/// The extract pass's kernels (`metal_block_extract.metal`), shared likewise.
+/// The extract pass (`metal_block_extract.metal`), shared likewise.
 const EXTRACT: &str = include_str!("metal_block_extract.metal");
-const SOURCE: &str = concat!(
-    include_str!("metal_block_carry.metal"),
-    include_str!("metal_block_program.metal"),
-    include_str!("metal_block_extract.metal")
-);
+/// The interpreter's source: the shared helpers, then its kernels.
+static INTERPRETER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!("{CARRY}\n{}\n{}", batch_helpers(), include_str!("metal_block_program.metal"))
+});
 /// Lanes per threadgroup: one SIMD group.
 const GROUP: usize = 32;
 
@@ -65,27 +61,39 @@ impl LaneWidth {
     }
 }
 
+/// A file of a batch, as the kernels read it (`FileRow` in `batch_helpers`).
 #[repr(C)]
-#[derive(Clone, Copy)]
-struct BlockArgs {
-    from: u32,
-    to: u32,
-    lanes: u32,
-    pad: u32,
+#[derive(Clone, Copy, Default)]
+struct FileRow {
+    src16: u32,
+    len: u32,
+    program: u32,
+    group0: u32,
+    groups: u32,
+    out_base: u32,
+    state_base: u32,
+    halo_base: u32,
+    ext_base: u32,
+    pos_base: u32,
+    pad: [u32; 2],
 }
 
-/// A carried instruction's kind, as the carry helpers number it.
-fn kind(inst: &BlockInst) -> u32 {
-    match inst {
-        BlockInst::Toggle(_) => 0,
-        BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => 1,
-        _ => unreachable!("scanned carries only"),
-    }
+/// A program of a batch, as the interpreter reads it (`ProgramRow` in the interpreter).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProgramRow {
+    step0: u32,
+    steps: u32,
+    out0: u32,
+    outs: u32,
+    ext0: u32,
+    exts: u32,
+    pad: [u32; 2],
 }
 
 /// An instruction of the planes form as the interpreter's step: `[op, a, b, imm]`; a carried
-/// instruction's `b` is its round.
-fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
+/// instruction's `b` is its index among the program's carried instructions.
+fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
     match *inst {
         BlockInst::EqByte(byte) => [0, 0, 0, u32::from(byte)],
         BlockInst::Const(c) => [1, 0, c as u32, (c >> 32) as u32],
@@ -96,98 +104,239 @@ fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
         BlockInst::AndNot(a, b) => [6, u32::from(a), u32::from(b), 0],
         BlockInst::Plane(k) => [7, 0, 0, u32::from(k)],
         BlockInst::PlaneBefore(k) => [11, 0, 0, u32::from(k)],
-        BlockInst::Prev(a, k) => [8, u32::from(a), round, u32::from(k)],
-        BlockInst::Toggle(a) => [9, u32::from(a), round, 0],
-        BlockInst::AfterOddRun(a) => [10, u32::from(a), round, 0],
-        // Its second operand in `imm`: `b` is the round.
-        BlockInst::Fill(a, e) => [12, u32::from(a), round, u32::from(e)],
-        // The length is the dispatch's (`BlockArgs::pad`).
+        BlockInst::Prev(a, k) => [8, u32::from(a), carry, u32::from(k)],
+        BlockInst::Toggle(a) => [9, u32::from(a), carry, 0],
+        BlockInst::AfterOddRun(a) => [10, u32::from(a), carry, 0],
+        // Its second operand in `imm`: `b` is the carry's index.
+        BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within => [13, 0, 0, 0],
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
 
+/// Which Metal executor runs a batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum Executor {
+    Interpreter,
+    Generated(ClassStrategy),
+}
+
+/// A file of a batch: its bytes, and its program's index in the batch's programs.
+pub(in crate::code_rule_dsl) struct BatchFile<'a> {
+    pub(in crate::code_rule_dsl) bytes: &'a [u8],
+    pub(in crate::code_rule_dsl) program: usize,
+}
+
+/// A batch's results: each file's outputs and extract positions, the launches it took, and their
+/// GPU seconds.
+pub(in crate::code_rule_dsl) struct BatchRun {
+    pub(in crate::code_rule_dsl) files: Vec<BlockRun>,
+    pub(in crate::code_rule_dsl) launches: usize,
+    pub(in crate::code_rule_dsl) seconds: f64,
+}
+
+/// Workers of the persistent dispatch: SIMD groups that take the batch's groups in order.
+const WORKERS: usize = 256;
+
+/// Launches repeated because a look-back ran out of polls.
+pub(in crate::code_rule_dsl) static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Run `files` in one launch, each under `programs[file.program]` (decision 0044). `spins` is the
+/// polls of a predecessor after the first; 0 tests the repeated launch.
+pub(in crate::code_rule_dsl) fn run_batch(
+    programs: &[&BlockNative],
+    files: &[BatchFile<'_>],
+    width: LaneWidth,
+    executor: Executor,
+    spins: u32,
+) -> Result<BatchRun, Error> {
+    METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    let word = width.bytes() / 8;
+    let span = width.bytes() * GROUP;
+    // The form each executor runs: `class` by lookups only in generated MSL's `Lookup`.
+    let forms: Vec<BlockNative> = programs
+        .iter()
+        .map(|p| if executor == Executor::Generated(ClassStrategy::Lookup) { (*p).clone() } else { p.planes_form() })
+        .collect();
+    let carried: Vec<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
+    let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+    // The file table, and each base after the files before.
+    let (mut src16, mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base) = (0, 0, 0, 0, 0, 0, 0);
+    let mut rows = Vec::with_capacity(files.len());
+    let mut group_file: Vec<u32> = Vec::new();
+    for (i, file) in files.iter().enumerate() {
+        let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
+        let len = file.bytes.len();
+        let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
+        rows.push(FileRow {
+            src16: fit(src16)?,
+            len: fit(len)?,
+            program: fit(file.program)?,
+            group0: fit(group0)?,
+            groups: fit(groups)?,
+            out_base: fit(out_base)?,
+            state_base: fit(state_base)?,
+            halo_base: fit(halo_base)?,
+            ext_base: fit(ext_base)?,
+            pos_base: fit(pos_base)?,
+            pad: [0; 2],
+        });
+        group_file.extend(std::iter::repeat_n(fit(i)?, groups));
+        src16 += len.div_ceil(16).max(1);
+        group0 += groups;
+        out_base += n.outputs.len() * groups * GROUP;
+        state_base += carried[file.program] * groups;
+        halo_base += carried[file.program] * groups * 3;
+        ext_base += n.extracts.len() * groups;
+        pos_base += n.extracts.len() * len.max(1);
+    }
+    let total = group0;
+    // Each file at a 16-byte boundary, as a slab holds it (decision 0032).
+    let mut source = vec![0u8; src16.max(1) * 16];
+    for (row, file) in rows.iter().zip(files) {
+        let at = row.src16 as usize * 16;
+        source[at..at + file.bytes.len()].copy_from_slice(file.bytes);
+    }
+    let source = super::blocks::upload(&source)?;
+    let table = super::blocks::upload(&rows)?;
+    let group_file = super::blocks::upload(&group_file)?;
+    let out = super::blocks::zeroed::<u8>(out_base.max(1) * word)?;
+    let states = super::blocks::zeroed::<u32>(state_base.max(1))?;
+    let halos = super::blocks::zeroed::<u32>(halo_base.max(1))?;
+    let ext_states = super::blocks::zeroed::<u32>(ext_base.max(1))?;
+    let counts = super::blocks::zeroed::<u32>(ext_base.max(1))?;
+    let positions = super::blocks::zeroed::<u32>(pos_base.max(1))?;
+    let tickets = super::blocks::zeroed::<u32>(2)?;
+    let done = super::blocks::zeroed::<u32>(total)?;
+    let workers = total.min(WORKERS);
+    let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
+    let params = [fit(total)?, spins, fit(most)?, 0];
+    let mut buffers: Vec<(u64, &metal::BufferRef, u64)> = vec![
+        (0, source.buffer(), 0),
+        (1, out.buffer(), 0),
+        (2, table.buffer(), 0),
+        (3, group_file.buffer(), 0),
+        (4, states.buffer(), 0),
+        (5, halos.buffer(), 0),
+        (6, ext_states.buffer(), 0),
+        (7, positions.buffer(), 0),
+        (8, counts.buffer(), 0),
+        (9, tickets.buffer(), 0),
+        (10, done.buffer(), 0),
+    ];
+    let interpreter;
+    let pipeline = match executor {
+        Executor::Interpreter => {
+            let (mut steps, mut table, mut outs) = (Vec::new(), Vec::new(), Vec::new());
+            for n in &forms {
+                let mut carry = 0u32;
+                let step0 = fit(steps.len())?;
+                for inst in &n.insts {
+                    steps.push(encoded(inst, carry));
+                    carry += u32::from(inst.carried());
+                }
+                let out0 = fit(outs.len())?;
+                outs.extend(n.outputs.iter().map(|&v| u32::from(v)));
+                let ext0 = fit(outs.len())?;
+                for &k in &n.extracts {
+                    outs.push(fit(k)?);
+                }
+                table.push(ProgramRow {
+                    step0,
+                    steps: fit(n.insts.len())?,
+                    out0,
+                    outs: fit(n.outputs.len())?,
+                    ext0,
+                    exts: fit(n.extracts.len())?,
+                    pad: [0; 2],
+                });
+            }
+            steps.push([0; 4]);
+            outs.push(0);
+            interpreter = [
+                super::blocks::upload(&table)?,
+                super::blocks::upload(&steps)?,
+                super::blocks::upload(&outs)?,
+                // Each worker's values: a slot of 32 lane words per step (decision 0034).
+                super::blocks::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
+            ];
+            for (k, block) in interpreter.iter().enumerate() {
+                buffers.push((12 + k as u64, block.buffer(), 0));
+            }
+            pipeline_named(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?
+        }
+        Executor::Generated(_) => {
+            let refs: Vec<&BlockNative> = forms.iter().collect();
+            let source = generate_forms(&refs, width);
+            pipeline_named(&source, "tempo_batch").inspect_err(|e| eprintln!("block program: pipeline tempo_batch: {e:?}"))?
+        }
+    };
+    let pass = Pass { pipeline: &pipeline, buffers, args: vec![(11, bytes_of(&params))], groups: workers, threads: GROUP };
+    // Each launch finishes at least the first unfinished group, whose predecessors are all done.
+    let (mut seconds, mut launches) = (0.0, 0);
+    loop {
+        if launches == total {
+            return Err(Error::BackendFailure);
+        }
+        if launches > 0 {
+            REPEATED_LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: two words, written between launches, when no kernel runs.
+            unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
+        }
+        seconds += encode_passes(std::slice::from_ref(&pass))?;
+        launches += 1;
+        if tickets.read::<u32>(2)[1] == 0 {
+            break;
+        }
+    }
+    let lanes_bytes = out.read::<u8>(out_base * word);
+    let counts = counts.read::<u32>(ext_base);
+    let positions = positions.read::<u32>(pos_base);
+    let mut results = Vec::with_capacity(files.len());
+    for row in &rows {
+        let n = &forms[row.program as usize];
+        let (len, groups) = (row.len as usize, row.groups as usize);
+        let lanes = groups * GROUP;
+        let words = (len + usize::from(n.delay)).div_ceil(64);
+        let outputs = (0..n.outputs.len())
+            .map(|k| {
+                let at = (row.out_base as usize + k * lanes) * word;
+                let w: Vec<u64> = lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+                undelay(&w, n.delay, len)
+            })
+            .collect();
+        let capacity = len.max(1);
+        let positions = (0..n.extracts.len())
+            .map(|e| {
+                let at = row.ext_base as usize + e * groups;
+                let count: usize = counts[at..at + groups].iter().map(|&c| c as usize).sum();
+                let from = row.pos_base as usize + e * capacity;
+                positions[from..from + count.min(capacity)].to_vec()
+            })
+            .collect();
+        results.push(BlockRun { outputs, positions });
+    }
+    Ok(BatchRun { files: results, launches, seconds })
+}
+
 /// The interpreter: every output's words over `bytes`, as 64-bit words of the stream.
 pub(in crate::code_rule_dsl) fn interpret(
-    program: &BlockProgram,
+    program: &super::block::BlockProgram,
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<Vec<Vec<u64>>, Error> {
     interpret_extract(program, bytes, width).map(|run| run.outputs)
 }
 
-/// The interpreter with the extract pass: the outputs, then each extract's positions, counted
-/// from its slot (`block_extract_count_W`) in the same command buffer.
+/// The interpreter with the extract pass: a batch of one file.
 pub(in crate::code_rule_dsl) fn interpret_extract(
-    program: &BlockProgram,
+    program: &super::block::BlockProgram,
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<BlockRun, Error> {
-    // The interpreter runs the planes form: `class` as formulas of bit-planes, as generated MSL.
-    let native = BlockNative::lower(program).planes_form();
-    let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
-    let mut round = 0u32;
-    let steps: Vec<[u32; 4]> = native
-        .insts
-        .iter()
-        .map(|inst| {
-            let step = encoded(inst, round);
-            round += u32::from(inst.carried());
-            step
-        })
-        .collect();
-    let w = width.bytes();
-    let run = pipeline_named(SOURCE, &format!("block_program_{w}"))?;
-    let summary = pipeline_named(SOURCE, &format!("block_summary_{w}"))?;
-    let scan = pipeline_named(SOURCE, "block_carry_scan")?;
-    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let stream = Stream::new(bytes, width, steps.len(), native.delay)?;
-    let steps_buffer = MappedBuffer::from_slice(device, &steps)?;
-    let states = MappedBuffer::zeroed::<u32>(device, carried.len().max(1) * stream.groups)?;
-    let aggregates = MappedBuffer::zeroed::<u32>(device, stream.groups)?;
-    let halos = MappedBuffer::zeroed::<u64>(device, carried.len().max(1) * stream.groups)?;
-    // `pad` holds the stream's length, for `within`.
-    let args = |from: usize, to: usize| BlockArgs { from: from as u32, to: to as u32, lanes: stream.lanes as u32, pad: bytes.len() as u32 };
-    let state_bytes = (stream.groups * 4) as u64;
-    let mut passes: Vec<Pass<'_>> = Vec::new();
-    let lanes_pass = |pipeline, a: BlockArgs| Pass {
-        pipeline,
-        buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*steps_buffer.buffer, 0), (4, &*states.buffer, 0), (5, &*aggregates.buffer, 0), (6, &*halos.buffer, 0)],
-        args: vec![(2, bytes_of(&a))],
-        groups: stream.groups,
-        threads: GROUP,
-    };
-    let mut from = 0;
-    for (j, &at) in carried.iter().enumerate() {
-        if from < at {
-            passes.push(lanes_pass(&run, args(from, at)));
-        }
-        passes.push(lanes_pass(&summary, args(at, at)));
-        // A halo (`prev`) is the group before's last 64 bits, written by the summary pass: no scan.
-        if matches!(native.insts[at], BlockInst::Prev(..)) {
-            from = at;
-            continue;
-        }
-        let p = [stream.groups as u32, kind(&native.insts[at])];
-        passes.push(Pass {
-            pipeline: &scan,
-            buffers: vec![(0, &*aggregates.buffer, 0), (1, &*states.buffer, j as u64 * state_bytes)],
-            args: vec![(2, bytes_of(&p))],
-            groups: 1,
-            threads: 256,
-        });
-        from = at;
-    }
-    passes.push(lanes_pass(&run, args(from, native.insts.len())));
-    let planes: Vec<u64> = native.extracts.iter().map(|&k| (usize::from(native.outputs[k]) * stream.slot_bytes) as u64).collect();
-    let extract = Extract::new(SOURCE, &stream, width, bytes.len(), native.extracts.len())?;
-    passes.extend(extract.count_passes(&stream, &planes));
-    passes.extend(extract.scan_passes());
-    encode_passes(&passes)?;
-    let positions = extract.scatter(&stream, &planes)?;
-    let words = stream.slots(steps.len());
-    let outputs = native.outputs.iter().map(|&v| undelay(&words[usize::from(v)], native.delay, bytes.len())).collect();
-    Ok(BlockRun { outputs, positions })
+    let native = BlockNative::lower(program);
+    let mut run = run_batch(&[&native], &[BatchFile { bytes, program: 0 }], width, Executor::Interpreter, SPINS)?;
+    Ok(run.files.remove(0))
 }
 
 /// SWAR byte compare, emitted once into every generated kernel (the interpreter's `eq16`).
@@ -238,7 +387,7 @@ const TRANSPOSE8: &str = "static inline ulong transpose8(ulong x) {
 }
 ";
 
-/// The native IR as one straight-line MSL kernel, `tempo_block`, for lanes of `width`.
+/// The native IR as generated MSL for lanes of `width`, `class` by bit-planes.
 pub(in crate::code_rule_dsl) fn generate(native: &BlockNative, width: LaneWidth) -> String {
     generate_with(native, width, ClassStrategy::Planes)
 }
@@ -285,17 +434,17 @@ fn planes(width: LaneWidth) -> String {
 }
 
 /// One table's class bytes of a `uint4` by lookups: byte `j`'s `lo[b & 15] & hi[b >> 4]`.
-fn lookup_helper(t: usize, table: &super::block::ClassTable) -> String {
+fn lookup_helper(p: usize, t: usize, table: &super::block::ClassTable) -> String {
     let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
     let mut out = format!(
-        "constant uchar T{t}[32] = {{{}, {}}};\nstatic inline uint4 classes_t{t}(uint4 v) {{\n  uint4 k;\n",
+        "constant uchar T{p}_{t}[32] = {{{}, {}}};\nstatic inline uint4 classes_p{p}_t{t}(uint4 v) {{\n  uint4 k;\n",
         hex(&table.lo),
         hex(&table.hi)
     );
     for lane in ["x", "y", "z", "w"] {
         let bytes: Vec<String> = (0..4)
             .map(|j| {
-                let b = format!("uint(T{t}[(v.{lane} >> {}u) & 15u] & T{t}[16u + ((v.{lane} >> {}u) & 15u)])", 8 * j, 8 * j + 4);
+                let b = format!("uint(T{p}_{t}[(v.{lane} >> {}u) & 15u] & T{p}_{t}[16u + ((v.{lane} >> {}u) & 15u)])", 8 * j, 8 * j + 4);
                 if j == 0 { b } else { format!("({b} << {}u)", 8 * j) }
             })
             .collect();
@@ -305,95 +454,110 @@ fn lookup_helper(t: usize, table: &super::block::ClassTable) -> String {
     out
 }
 
-/// The native IR as MSL for lanes of `width`, `class` by `strategy`: one kernel, `tempo_block`,
-/// that computes each instruction once, in order, with a look-back for each carried one, and
-/// writes the outputs (`13-tape-on-the-gpu.md` §5.3).
+/// The native IR as MSL for lanes of `width`, `class` by `strategy`: a batch's kernel for one
+/// program.
 pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy) -> String {
-    generate_polling(native, width, strategy, SPINS)
+    let form = match strategy {
+        ClassStrategy::Lookup => native.clone(),
+        ClassStrategy::Planes => native.planes_form(),
+    };
+    generate_forms(&[&form], width)
 }
 
-/// `generate_with`, polling a predecessor's state once and then `spins` more times before the
-/// group gives up and is run again (`run_source`); 0 tests that path.
-pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy, spins: u32) -> String {
-    let planes_form;
-    let native = match strategy {
-        ClassStrategy::Lookup => native,
-        ClassStrategy::Planes => {
-            planes_form = native.planes_form();
-            &planes_form
-        }
-    };
+/// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
+/// per program, `program_P`, that computes each instruction once, in order, with a look-back for
+/// each carried one, and writes the file's outputs and extracts; and persistent workers that take
+/// the batch's groups in order and call their file's program (decision 0044).
+fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
+    let m = width.word();
     let mut helpers = String::new();
-    if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
+    if programs.iter().any(|n| n.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. }))) {
         helpers.push_str(NZ16);
-        for (t, table) in native.tables.iter().enumerate() {
-            helpers.push_str(&lookup_helper(t, table));
-        }
     }
-    if native.insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
+    if programs.iter().any(|n| n.insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_)))) {
         helpers.push_str(TRANSPOSE8);
     }
-    let plan = Plan::new(native);
-    let extract = if native.extracts.is_empty() { "" } else { EXTRACT };
-    let mut out = format!("{CARRY}\n{extract}\n{EQ16}\n{helpers}\n");
-    if !plan.scanned.is_empty() {
-        out.push_str(&table_helpers(1));
-        out.push_str(LOOK_BACK);
+    let mut out = format!("{CARRY}\n{}\n{EQ16}\n{helpers}\n", batch_helpers());
+    for (p, native) in programs.iter().enumerate() {
+        if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
+            for (t, table) in native.tables.iter().enumerate() {
+                out.push_str(&lookup_helper(p, t, table));
+            }
+        }
+        let plan = Plan::new(native);
+        if !plan.windowed.is_empty() {
+            out.push_str(&halo_window(p, native, &plan));
+        }
+        out.push_str(&program_function(p, native, &plan, width));
     }
-    if !plan.halos.is_empty() {
-        out.push_str(HALO_EXCHANGE);
-    }
-    if !plan.windowed.is_empty() {
-        out.push_str(&halo_window(native, &plan));
-    }
+    let cases: String = (0..programs.len())
+        .map(|p| {
+            format!(
+                "      case {p}u: ok = program_{p}(bytes, f, t - f.group0, l, p.y, out, states, halos, ext_states, positions, counts); break;\n"
+            )
+        })
+        .collect();
     out.push_str(&format!(
-        "kernel void tempo_block(\n\
-         \x20   device const uint4* bytes [[buffer(0)]],\n\
-         \x20   device {}* out [[buffer(1)]],\n\
-         \x20   constant uint& lanes [[buffer(2)]],\n\
-         \x20   device atomic_uint* states [[buffer(3)]],\n\
-         \x20   device atomic_uint* halos [[buffer(4)]],\n\
-         \x20   constant uint& len [[buffer(5)]],\n\
-         \x20   device atomic_uint* extract_states [[buffer(6)]],\n\
-         \x20   device uint* positions [[buffer(7)]],\n\
-         \x20   device atomic_uint* deferred [[buffer(8)]],\n\
-         \x20   constant uint& capacity [[buffer(9)]],\n\
-         \x20   device uint* counts [[buffer(10)]],\n\
-         \x20   device atomic_uint* tickets [[buffer(11)]],\n\
-         \x20   device uint* done [[buffer(12)]],\n\
-         \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint groups = lanes / {GROUP}u;\n\
-         \x20 // Groups take their numbers in launch order, so a group waits only on groups that\n\
-         \x20 // started before it (13-tape-on-the-gpu.md §5.3).\n\
-         \x20 uint ticket = 0u;\n\
-         \x20 if (l == 0u) ticket = atomic_fetch_add_explicit(&tickets[0], 1u, memory_order_relaxed);\n\
-         \x20 const uint g = simd_broadcast(ticket, ushort(0));\n\
-         \x20 if (g >= groups || done[g] != 0u) return;\n\
-         \x20 const uint gl = g * {GROUP}u + l;\n",
-        width.word()
+        "// Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
+         // file's program over the group. `p`: the batch's groups, the polls after the first.\n\
+         kernel void tempo_batch(\n\
+         \x20   device const uint4* bytes [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
+         \x20   device const uint* group_file [[buffer(3)]], device atomic_uint* states [[buffer(4)]],\n\
+         \x20   device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],\n\
+         \x20   device uint* positions [[buffer(7)]], device uint* counts [[buffer(8)]], device atomic_uint* tickets [[buffer(9)]],\n\
+         \x20   device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20 for (uint round = 0u; round < p.x; round++) {{\n\
+         \x20   uint ticket = 0u;\n\
+         \x20   if (l == 0u) ticket = atomic_fetch_add_explicit(&tickets[0], 1u, memory_order_relaxed);\n\
+         \x20   const uint t = simd_broadcast(ticket, ushort(0));\n\
+         \x20   if (t >= p.x) return;\n\
+         \x20   if (done[t] != 0u) continue;\n\
+         \x20   const FileRow f = files[group_file[t]];\n\
+         \x20   bool ok = false;\n\
+         \x20   // The same program in every lane: the group holds one file.\n\
+         \x20   switch (f.program) {{\n{cases}\
+         \x20     default: break;\n\
+         \x20   }}\n\
+         \x20   if (l == 0u && ok) done[t] = 1u;\n\
+         \x20   if (l == 0u && !ok) atomic_fetch_add_explicit(&tickets[1], 1u, memory_order_relaxed);\n\
+         \x20 }}\n\
+         }}\n"
     ));
-    out.push_str(&body(native, &plan, width, spins));
-    for (k, v) in native.outputs.iter().enumerate() {
-        out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
-    }
-    // The extract pass, in the common case here: each extract's positions, from the plane just
-    // written, at offsets found by look-back (`extract_write`). Its fallback is a second command
-    // buffer, not a recompute, so it polls longer than the carries do (still bounded).
-    let extract_spins = spins * EXTRACT_POLLS;
-    for (e, &k) in native.extracts.iter().enumerate() {
-        out.push_str(&format!(
-            "  extract_write(v{}, gl, g, l, len, extract_states + {e}u * groups, positions + {e}u * capacity, capacity, deferred + {e}u, counts + {e}u * groups, {extract_spins}u);\n",
-            native.outputs[k]
-        ));
-    }
-    out.push_str("  if (l == 0u) done[g] = 1u;\n}\n");
     out
 }
+
+/// The helpers both executors share: the file table's row, reading a file's bytes, and the
+/// look-backs.
+fn batch_helpers() -> String {
+    format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXTRACT}\n", table_helpers(1))
+}
+
+/// A file of a batch, and its bytes read in place: 16-byte chunks from `src16`, zero at and past
+/// its length (a neighbour's bytes never read as its own).
+const FILE_ROW: &str = "// A file of the batch (decision 0044). Lane words are indexed in the file: output k of lane gl at
+// out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
+// three words from halo_base + (j * groups + g) * 3); extract e's state and count of group g at
+// ext_base + e * groups + g, its positions from pos_base + e * max(len, 1).
+struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, pad0, pad1; };
+static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
+  const uint chunks = max((f.len + 15u) / 16u, 1u);
+  const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];
+  const int have = clamp(int(f.len) - int(c * 16u), 0, 16);
+  const uint4 keep = uint4(clamp(int4(have) - int4(0, 4, 8, 12), 0, 4));
+  const uint4 low = (uint4(1u) << ((keep * 8u) & 31u)) - 1u;
+  return v & select(low, uint4(0xffffffffu), keep == uint4(4u));
+}
+// The byte before chunk c of a file (0x00 before its first byte).
+static inline uint file_byte_before(device const uint4* bytes, FileRow f, uint c) {
+  return select(0u, load16(bytes, f, max(c, 1u) - 1u).w >> 24u, c > 0u);
+}
+";
 
 /// Polls of a predecessor's state after the first.
 const SPINS: u32 = 64;
 /// The extract look-back's polls per predecessor, as a multiple of the carries'.
 const EXTRACT_POLLS: u32 = 64;
+
 
 /// One scanned carry's look-back (`06-block-parallel.md` §5): the lanes' tables (bit `c` is the
 /// lane's carry-out for carry-in `c`) scanned in the SIMD group, the group's aggregate published,
@@ -543,13 +707,21 @@ fn table_helpers(m: usize) -> String {
     )
 }
 
-/// Every instruction of lane `gl` (group `g`, lane `l`) in order, each once. A carry's look-back
-/// or a halo that is not published yet counts the group as unfinished and leaves it.
-fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, spins: u32) -> String {
+/// Program `p` as a function over group `g` (lane `l`) of file `f`: every instruction in order,
+/// each once, then the outputs and the extracts. A look-back or a halo that is not published yet
+/// returns false: the group is unfinished.
+fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
     let m = width.word();
     let chunks = width.bytes() / 16;
     let w = width.bytes();
-    let mut out = String::new();
+    let mut out = format!(
+        "static inline bool program_{p}(device const uint4* bytes, FileRow f, uint g, uint l, uint spins, device {m}* out,\n\
+         \x20                              device atomic_uint* states, device atomic_uint* halos, device atomic_uint* ext_states,\n\
+         \x20                              device uint* positions, device uint* counts) {{\n\
+         \x20 const uint gl = g * {GROUP}u + l;\n\
+         \x20 const uint lanes = f.groups * {GROUP}u;\n\
+         \x20 const uint len = f.len;\n"
+    );
     if !plan.windowed.is_empty() {
         let mut ops: Vec<usize> = plan.windowed.iter().flat_map(|&at| operands(&native.insts[at])).collect();
         ops.sort_unstable();
@@ -558,17 +730,16 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, spins: u32) -> Stri
             out.push_str(&format!("  ulong w{a} = 0ul;\n"));
         }
         let wargs: String = ops.iter().map(|a| format!(", w{a}")).collect();
-        out.push_str(&format!("  halo_window(bytes, len, int(gl * {w}u) - 64{wargs});\n"));
+        out.push_str(&format!("  halo_window_{p}(bytes, f, int(gl * {w}u) - 64{wargs});\n"));
     }
-    let leave = "{ if (l == 0u) atomic_fetch_add_explicit(&tickets[1], 1u, memory_order_relaxed); return; }";
     let all: Vec<usize> = (0..native.insts.len()).collect();
-    out.push_str(&emit(native, width, &all, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
+    out.push_str(&emit(p, native, width, &all, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
         // A scanned carry: the lane's results for carry-ins 0 and 1, its table, the look-back.
         let scanned = |out: &mut String, j: usize, f: &str| {
             out.push_str(&format!(
                 "  uint o{at}_0 = 0u, o{at}_1 = 0u, cin{at} = 0u;\n\
                  \x20 const {m} f{at}_0 = {}, f{at}_1 = {};\n\
-                 \x20 if (!look_back(states + {j}u * groups, g, l, (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u), {spins}u, cin{at})) {leave}\n\
+                 \x20 if (!look_back(states + f.state_base + {j}u * f.groups, g, l, (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u), spins, cin{at})) return false;\n\
                  \x20 const {m} v{at} = select(f{at}_0, f{at}_1, cin{at} != 0u);\n",
                 f.replace("CIN", &format!("{m}(0)")).replace("OUT", &format!("o{at}_0")),
                 f.replace("CIN", &format!("{m}(1)")).replace("OUT", &format!("o{at}_1")),
@@ -578,13 +749,13 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, spins: u32) -> Stri
             (Placement::Windowed, BlockInst::Prev(a, k)) => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, w{a});\n")),
             (Placement::Halo(j), BlockInst::Prev(a, k)) => out.push_str(&format!(
                 "  ulong h{at} = 0ul;\n\
-                 \x20 if (!halo_exchange(halos + {j}u * groups * 3u, g, l, halo_last(v{a}), {spins}u, h{at})) {leave}\n\
+                 \x20 if (!halo_exchange(halos + f.halo_base + {j}u * f.groups * 3u, g, l, halo_last(v{a}), spins, h{at})) return false;\n\
                  \x20 const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, h{at}));\n"
             )),
             (Placement::Scanned(j), BlockInst::Toggle(a)) => out.push_str(&format!(
                 "  const uint s{at} = summary_toggle(v{a});\n\
                  \x20 uint cin{at} = 0u;\n\
-                 \x20 if (!look_back(states + {j}u * groups, g, l, s{at} | ((1u ^ s{at}) << 1u), {spins}u, cin{at})) {leave}\n\
+                 \x20 if (!look_back(states + f.state_base + {j}u * f.groups, g, l, s{at} | ((1u ^ s{at}) << 1u), spins, cin{at})) return false;\n\
                  \x20 const {m} v{at} = apply_toggle(v{a}, cin{at});\n"
             )),
             (Placement::Scanned(j), BlockInst::AfterOddRun(a)) => scanned(out, j, &format!("after_odd_run(v{a}, CIN, OUT)")),
@@ -592,6 +763,18 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, spins: u32) -> Stri
             _ => unreachable!("placement"),
         }
     }));
+    for (k, v) in native.outputs.iter().enumerate() {
+        out.push_str(&format!("  out[f.out_base + {k}u * lanes + gl] = v{v};\n"));
+    }
+    // The extract pass: each extract's positions, at offsets found by look-back
+    // (`extract_write`). It polls longer than the carries do (still bounded).
+    for (e, &k) in native.extracts.iter().enumerate() {
+        out.push_str(&format!(
+            "  if (!extract_write(v{}, gl, g, l, len, ext_states + f.ext_base + {e}u * f.groups, positions + f.pos_base + {e}u * max(len, 1u), max(len, 1u), counts + f.ext_base + {e}u * f.groups, spins * {EXTRACT_POLLS}u)) return false;\n",
+            native.outputs[k]
+        ));
+    }
+    out.push_str("  return true;\n}\n\n");
     out
 }
 
@@ -599,6 +782,7 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, spins: u32) -> Stri
 /// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
 /// `carried` writes each carried instruction's statements.
 fn emit(
+    p: usize,
     native: &BlockNative,
     width: LaneWidth,
     chosen: &[usize],
@@ -614,13 +798,13 @@ fn emit(
     let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
     if back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 c{c} = bytes[{base} + {c}u];\n"));
+            out.push_str(&format!("  const uint4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
     }
     // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
     // the word's bytes one back.
     if back {
-        out.push_str(&format!("  const uint before = byte_before(bytes, {base});\n"));
+        out.push_str(&format!("  const uint before = file_byte_before(bytes, f, {base});\n"));
     }
     let used: std::collections::BTreeSet<u16> = insts
         .iter()
@@ -631,7 +815,7 @@ fn emit(
         .collect();
     for t in used {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 k{t}_{c} = classes_t{t}(c{c});\n"));
+            out.push_str(&format!("  const uint4 k{t}_{c} = classes_p{p}_t{t}(c{c});\n"));
         }
     }
     let used_before: std::collections::BTreeSet<u16> =
@@ -644,7 +828,7 @@ fn emit(
     }
     for t in used_before {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 kb{t}_{c} = classes_t{t}(b{c});\n"));
+            out.push_str(&format!("  const uint4 kb{t}_{c} = classes_p{p}_t{t}(b{c});\n"));
         }
     }
     if insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
@@ -726,10 +910,10 @@ fn cone(native: &BlockNative, roots: &[usize]) -> Vec<usize> {
     (0..native.insts.len()).filter(|&at| keep[at]).collect()
 }
 
-/// `halo_window`: the operands of the local `prev`s over the 64 bytes from stream byte `base`
-/// (a multiple of 16; before the stream, zero), as 64-bit words. A lane calls it once, with
-/// `base` 64 bytes before its first byte: the words are those operands' halos.
-fn halo_window(native: &BlockNative, plan: &Plan) -> String {
+/// `halo_window_P`: program `p`'s operands of local `prev`s over the 64 bytes from file byte `base`
+/// (a multiple of 16; before the file, zero), as 64-bit words. A lane calls it once, with `base`
+/// 64 bytes before its first byte: the words are those operands' halos.
+fn halo_window(p: usize, native: &BlockNative, plan: &Plan) -> String {
     let operands: Vec<usize> = plan
         .windowed
         .iter()
@@ -740,11 +924,12 @@ fn halo_window(native: &BlockNative, plan: &Plan) -> String {
     wanted.dedup();
     let params: String = wanted.iter().map(|a| format!(", thread ulong& w{a}")).collect();
     let mut out = format!(
-        "// The 64 bytes from `base` (zero before the stream): the local prevs' operands.\n\
-         static inline void halo_window(device const uint4* bytes, uint len, int base{params}) {{\n\
-         \x20 const uint b = uint(max(base, 0));\n"
+        "// The 64 bytes from `base` (zero before the file): the local prevs' operands.\n\
+         static inline void halo_window_{p}(device const uint4* bytes, FileRow f, int base{params}) {{\n\
+         \x20 const uint b = uint(max(base, 0));\n\
+         \x20 const uint len = f.len;\n"
     );
-    out.push_str(&emit(native, LaneWidth::W64, &cone(native, &wanted), "b / 16u", "b", |_, _, _| unreachable!("local")));
+    out.push_str(&emit(p, native, LaneWidth::W64, &cone(native, &wanted), "b / 16u", "b", |_, _, _| unreachable!("local")));
     for a in &wanted {
         // A window that starts before the stream: its bits from the stream's start on.
         out.push_str(&format!(
@@ -772,267 +957,19 @@ pub(in crate::code_rule_dsl) fn run_generated_with(
     width: LaneWidth,
     strategy: ClassStrategy,
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
-    run_source(native, &generate_with(native, width, strategy), bytes, width).map(|(run, seconds)| (run.outputs, seconds))
+    run_generated_extract(native, bytes, width, strategy).map(|(run, seconds)| (run.outputs, seconds))
 }
 
-/// Generated MSL with the extract pass: the outputs and each extract's positions, and the GPU
-/// seconds of the mask passes with the count's scan (the scatter is a second command buffer,
-/// after the host has allocated the positions at their total).
+/// Generated MSL with the extract pass, a batch of one file: the outputs and each extract's
+/// positions, and the GPU seconds of its launches.
 pub(in crate::code_rule_dsl) fn run_generated_extract(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
     strategy: ClassStrategy,
 ) -> Result<(BlockRun, f64), Error> {
-    run_source(native, &generate_with(native, width, strategy), bytes, width)
-}
-
-/// Run generated `source` for `native`: one launch in the common case. A group whose look-back
-/// ran out of polls leaves unfinished, and the launch is repeated for those groups: each repeat
-/// finishes at least the first unfinished group, whose predecessors are all done.
-pub(in crate::code_rule_dsl) fn run_source(
-    native: &BlockNative,
-    source: &str,
-    bytes: &[u8],
-    width: LaneWidth,
-) -> Result<(BlockRun, f64), Error> {
-    // The planes form has the same plan: `class` is local in both, and carried instructions
-    // are kept in order.
-    let plan = Plan::new(native);
-    let pipeline = pipeline_named(source, "tempo_block").inspect_err(|e| eprintln!("block program: pipeline tempo_block: {e:?}"))?;
-    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let stream = Stream::new(bytes, width, native.outputs.len(), native.delay)?;
-    let states = MappedBuffer::zeroed::<u32>(device, plan.scanned.len().max(1) * stream.groups)?;
-    let halos = MappedBuffer::zeroed::<u32>(device, plan.halos.len().max(1) * stream.groups * 3)?;
-    let tickets = MappedBuffer::zeroed::<u32>(device, 2)?;
-    let done = MappedBuffer::zeroed::<u32>(device, stream.groups)?;
-    let lanes = stream.lanes as u32;
-    let len = bytes.len() as u32;
-    // `tempo_block` writes each extract's positions itself (`extract_write`), into buffers of
-    // an upper bound: a plane has at most one position per byte.
-    let extracts = native.extracts.len();
-    let capacity = bytes.len().max(1);
-    let extract = Extract::new(source, &stream, width, bytes.len(), extracts)?;
-    let extract_states = MappedBuffer::zeroed::<u32>(device, extracts.max(1) * stream.groups)?;
-    let written = MappedBuffer::zeroed::<u32>(device, extracts.max(1) * capacity)?;
-    let deferred = MappedBuffer::zeroed::<u32>(device, extracts.max(1))?;
-    let capacity_arg = capacity as u32;
-    let pass = Pass {
-        pipeline: &pipeline,
-        buffers: vec![
-            (0, &*stream.source.buffer, 0),
-            (1, &*stream.values.buffer, 0),
-            (3, &*states.buffer, 0),
-            (4, &*halos.buffer, 0),
-            (6, &*extract_states.buffer, 0),
-            (7, &*written.buffer, 0),
-            (8, &*deferred.buffer, 0),
-            (10, &*extract.counts.buffer, 0),
-            (11, &*tickets.buffer, 0),
-            (12, &*done.buffer, 0),
-        ],
-        args: vec![(2, bytes_of(&lanes)), (5, bytes_of(&len)), (9, bytes_of(&capacity_arg))],
-        groups: stream.groups,
-        threads: GROUP,
-    };
-    let read = |buffer: &MappedBuffer, at: usize| -> u32 {
-        // SAFETY: every index read is inside the buffer's allocation (sizes above).
-        unsafe { *buffer.buffer.contents().cast::<u32>().add(at) }
-    };
-    let mut seconds = 0.0;
-    let mut finished = false;
-    for launch in 0..stream.groups {
-        if launch > 0 {
-            REPEATED_LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            // SAFETY: two words, written between launches, when no kernel runs.
-            unsafe { std::ptr::write_bytes(tickets.buffer.contents().cast::<u32>(), 0, 2) };
-        }
-        seconds += encode_passes(std::slice::from_ref(&pass))?;
-        if read(&tickets, 1) == 0 {
-            finished = true;
-            break;
-        }
-    }
-    if !finished {
-        return Err(Error::BackendFailure);
-    }
-    let complete = (0..extracts).all(|e| read(&deferred, e) == 0);
-    let positions = if complete {
-        (0..extracts)
-            .map(|e| {
-                let total: usize = (0..stream.groups).map(|g| read(&extract.counts, e * stream.groups + g) as usize).sum();
-                (0..total).map(|i| read(&written, e * capacity + i)).collect()
-            })
-            .collect()
-    } else {
-        // The fallback, when a look-back ran out of polls: the scan of the counts, then the scatter.
-        EXTRACT_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        encode_passes(&extract.scan_passes())?;
-        let planes: Vec<u64> = native.extracts.iter().map(|&k| (k * stream.slot_bytes) as u64).collect();
-        extract.scatter(&stream, &planes)?
-    };
-    let words = stream.slots(native.outputs.len());
-    let outputs = words.iter().map(|w| undelay(w, native.delay, bytes.len())).collect();
-    Ok((BlockRun { outputs, positions }, seconds))
-}
-
-/// Launches of generated MSL repeated because a look-back ran out of polls.
-pub(in crate::code_rule_dsl) static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Runs of generated MSL whose extract pass needed the fallback (a second command buffer).
-pub(in crate::code_rule_dsl) static EXTRACT_FALLBACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The extract pass's buffers (`metal_block_extract.metal`): each extract's chunk counts (a
-/// chunk is a group's span), and its chunk offsets with the total after them.
-struct Extract {
-    counts: MappedBuffer,
-    offsets: MappedBuffer,
-    count: Option<metal::ComputePipelineState>,
-    scan: Option<metal::ComputePipelineState>,
-    scatter: Option<metal::ComputePipelineState>,
-    extracts: usize,
-    chunks: usize,
-    len: u32,
-}
-
-impl Extract {
-    fn new(source: &str, stream: &Stream, width: LaneWidth, len: usize, extracts: usize) -> Result<Self, Error> {
-        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let chunks = stream.groups;
-        let w = width.bytes();
-        let pipeline = |name: String| if extracts > 0 { pipeline_named(source, &name).map(Some) } else { Ok(None) };
-        Ok(Self {
-            counts: MappedBuffer::zeroed::<u32>(device, extracts.max(1) * chunks)?,
-            offsets: MappedBuffer::zeroed::<u32>(device, extracts.max(1) * (chunks + 1))?,
-            count: pipeline(format!("block_extract_count_{w}"))?,
-            scan: pipeline("block_extract_scan".into())?,
-            scatter: pipeline(format!("block_extract_scatter_{w}"))?,
-            extracts,
-            chunks,
-            len: len as u32,
-        })
-    }
-
-    fn counts_at(&self, e: usize) -> u64 {
-        (e * self.chunks * 4) as u64
-    }
-
-    fn offsets_at(&self, e: usize) -> u64 {
-        (e * (self.chunks + 1) * 4) as u64
-    }
-
-    /// The interpreter's counts: each plane (a byte offset into the values) counted per chunk.
-    fn count_passes<'a>(&'a self, stream: &'a Stream, planes: &[u64]) -> Vec<Pass<'a>> {
-        let Some(count) = &self.count else { return vec![] };
-        planes
-            .iter()
-            .enumerate()
-            .map(|(e, &plane)| Pass {
-                pipeline: count,
-                buffers: vec![(0, &*stream.values.buffer, plane), (1, &*self.counts.buffer, self.counts_at(e))],
-                args: vec![(2, bytes_of(&self.len))],
-                groups: stream.groups,
-                threads: GROUP,
-            })
-            .collect()
-    }
-
-    /// Each extract's scan of its counts: one SIMD group.
-    fn scan_passes(&self) -> Vec<Pass<'_>> {
-        let Some(scan) = &self.scan else { return vec![] };
-        let chunks = self.chunks as u32;
-        (0..self.extracts)
-            .map(|e| Pass {
-                pipeline: scan,
-                buffers: vec![(0, &*self.counts.buffer, self.counts_at(e)), (1, &*self.offsets.buffer, self.offsets_at(e))],
-                args: vec![(2, bytes_of(&chunks))],
-                groups: 1,
-                threads: GROUP,
-            })
-            .collect()
-    }
-
-    /// After the counts and scans have run: each extract's positions, in buffers allocated at
-    /// the scanned totals and written by one scatter dispatch each.
-    fn scatter(&self, stream: &Stream, planes: &[u64]) -> Result<Vec<Vec<u32>>, Error> {
-        let Some(scatter) = &self.scatter else { return Ok(vec![]) };
-        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let offsets = self.offsets.buffer.contents().cast::<u32>();
-        // SAFETY: the buffer holds `extracts * (chunks + 1)` offsets, written by the scans.
-        let totals: Vec<usize> =
-            (0..self.extracts).map(|e| unsafe { *offsets.add(e * (self.chunks + 1) + self.chunks) } as usize).collect();
-        let buffers: Vec<MappedBuffer> =
-            totals.iter().map(|&n| MappedBuffer::zeroed::<u32>(device, n.max(1))).collect::<Result<_, _>>()?;
-        let passes: Vec<Pass<'_>> = planes
-            .iter()
-            .enumerate()
-            .map(|(e, &plane)| Pass {
-                pipeline: scatter,
-                buffers: vec![
-                    (0, &*stream.values.buffer, plane),
-                    (1, &*self.offsets.buffer, self.offsets_at(e)),
-                    (3, &*buffers[e].buffer, 0),
-                ],
-                args: vec![(2, bytes_of(&self.len))],
-                groups: stream.groups,
-                threads: GROUP,
-            })
-            .collect();
-        encode_passes(&passes)?;
-        Ok(buffers
-            .iter()
-            .zip(&totals)
-            .map(|(b, &n)| {
-                // SAFETY: the buffer holds at least `n` positions, written by the scatter.
-                unsafe { std::slice::from_raw_parts(b.buffer.contents().cast::<u32>(), n) }.to_vec()
-            })
-            .collect())
-    }
-}
-
-/// The source padded to whole SIMD groups of lanes, and a buffer of `slots` slots of lane words.
-struct Stream {
-    source: MappedBuffer,
-    values: MappedBuffer,
-    lanes: usize,
-    groups: usize,
-    slot_bytes: usize,
-    words: usize,
-}
-
-impl Stream {
-    /// The stream and `delay` bytes past it (`block::BlockProgram::delay`), in groups' spans.
-    fn new(bytes: &[u8], width: LaneWidth, slots: usize, delay: u8) -> Result<Self, Error> {
-        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let span = width.bytes() * GROUP;
-        let run = bytes.len() + usize::from(delay);
-        let padded_len = run.div_ceil(span).max(1) * span;
-        let mut flat = bytes.to_vec();
-        flat.resize(padded_len, 0);
-        let lanes = padded_len / width.bytes();
-        let slot_bytes = padded_len / 8;
-        Ok(Self {
-            source: MappedBuffer::from_slice(device, &flat)?,
-            values: MappedBuffer::zeroed::<u8>(device, slots.max(1) * slot_bytes)?,
-            lanes,
-            groups: lanes / GROUP,
-            slot_bytes,
-            words: run.div_ceil(64),
-        })
-    }
-
-    /// Each slot as 64-bit words of the stream (lane words are little-endian and in lane order,
-    /// so they are the stream's words).
-    fn slots(&self, slots: usize) -> Vec<Vec<u64>> {
-        let base = self.values.buffer.contents().cast::<u8>();
-        (0..slots)
-            .map(|slot| {
-                // SAFETY: the buffer holds `slots * slot_bytes` bytes, written by the kernels.
-                let raw = unsafe { std::slice::from_raw_parts(base.add(slot * self.slot_bytes), self.slot_bytes) };
-                raw.chunks(8).take(self.words).map(|w| u64::from_le_bytes(w.try_into().unwrap())).collect()
-            })
-            .collect()
-    }
+    let mut run = run_batch(&[native], &[BatchFile { bytes, program: 0 }], width, Executor::Generated(strategy), SPINS)?;
+    Ok((run.files.remove(0), run.seconds))
 }
 
 /// One compute dispatch: buffers `(index, buffer, offset)`, small arguments by value, and the
@@ -1075,14 +1012,8 @@ fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
 fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let _scope = super::metal_backend::launch::LaunchScope::enter();
-    // One queue for every block program run: a queue per run exhausts the GPU's memory when many
-    // run at once ("Insufficient Memory").
-    static QUEUE: std::sync::OnceLock<std::sync::Mutex<metal::CommandQueue>> = std::sync::OnceLock::new();
-    let queue = QUEUE
-        .get_or_init(|| std::sync::Mutex::new(device.new_command_queue()))
-        .lock()
-        .map_err(|_| Error::BackendFailure)?
-        .clone();
+    // The one kept queue of device solves (decision 0039).
+    let queue = super::blocks::queue(device)?;
     let command = queue.new_command_buffer();
     command.set_label("Rerail block program");
     for pass in passes {

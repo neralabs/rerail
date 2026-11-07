@@ -34,7 +34,7 @@ pub(super) fn inputs() -> Vec<Vec<u8>> {
 /// Runs of backslashes, quotes and other bytes of every length to 200, over enough bytes that
 /// carries cross lanes, SIMD groups and threadgroups at every lane width (a group is 512 to 2048
 /// bytes), with a stretch of one long run.
-fn runs() -> Vec<Vec<u8>> {
+pub(super) fn runs() -> Vec<Vec<u8>> {
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move |n: u64| {
         seed ^= seed << 13;
@@ -244,17 +244,17 @@ fn check_lowering(name: &str, p: &Program) {
         let carried = native.insts.iter().any(native_ir::BlockInst::carried);
         for (strategy, msl) in metal_program_backend_generate(&native, width) {
             println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
-            // The lane code (the carry helpers and `tempo_block`) is straight-line; only the
-            // look-backs loop, over predecessor groups. `tempo_block`'s only branches are uniform
-            // across the SIMD group: the ticket, a group already done, a look-back that has to
-            // wait for another launch, and the done flag.
+            // The lane code (the carry helpers and each program's function) is straight-line;
+            // only the look-backs loop, over predecessor groups, and the workers' loop takes
+            // groups. A program's only branches leave the group unfinished when a look-back has
+            // to wait for another launch: the same in every lane.
             for (section, code) in lane_code(&msl) {
                 let code: String = code.lines().filter(|l| !CONTROL.iter().any(|c| l.trim_start().starts_with(c))).map(|l| format!("{l}\n")).collect();
                 for word in ["for (", "while", "switch", "goto", "?", "if (", "break"] {
                     assert!(!code.contains(word), "{name}: generated MSL ({strategy}), {section}, has `{word}`");
                 }
                 // SIMD-group operations only combine carries: none without a carried instruction.
-                if !carried && section == "tempo_block" {
+                if !carried && section.starts_with("program_") {
                     assert!(!code.contains("simd_"), "{name}: generated MSL ({strategy}) has a SIMD-group operation");
                 }
             }
@@ -266,21 +266,15 @@ fn check_lowering(name: &str, p: &Program) {
     }
 }
 
-/// `tempo_block`'s control lines, each uniform across the SIMD group.
-const CONTROL: [&str; 6] = [
-    "if (l == 0u) ticket = ",
-    "const uint g = simd_broadcast(ticket, ushort(0));",
-    "if (g >= groups || done[g] != 0u) return;",
-    "if (!look_back(",
-    "if (!halo_exchange(",
-    "if (l == 0u) done[g] = 1u;",
-];
+/// A program function's control lines: each leaves the group unfinished, the same in every lane.
+const CONTROL: [&str; 3] = ["if (!look_back(", "if (!halo_exchange(", "if (!extract_write("];
 
-/// The generated MSL's lane code: every function (the carry helpers, `halo_window`) and
-/// `tempo_block`. Only the look-backs, which loop over predecessor groups, are left out.
+/// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
+/// and each `program_P`). The look-backs, which loop over predecessor groups, and the workers'
+/// kernel, which loops over groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for marker in ["static inline ", "kernel void tempo_block("] {
+    for marker in ["static inline "] {
         for (at, _) in msl.match_indices(marker) {
             let code = &msl[at..];
             let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
@@ -292,7 +286,7 @@ fn lane_code(msl: &str) -> Vec<(String, String)> {
             out.push((name, code.to_owned()));
         }
     }
-    assert!(out.iter().any(|(name, _)| name == "tempo_block"), "no tempo_block");
+    assert!(out.iter().any(|(name, _)| name == "program_0"), "no program_0");
     out
 }
 
@@ -332,15 +326,27 @@ fn interpreters_have_no_byte_loops() {
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");
     }
-    // The Metal interpreter's `run`: one loop, over operations; the carry helpers it calls have
-    // none. Loops elsewhere are over groups (`block_carry_scan`).
+    // The Metal interpreter's `interpret_file`: one loop over operations, and loops over the
+    // program's outputs and extracts (sizes); a lane's chunks are a loop over `sizeof(M) / 2`.
+    // Its only branches leave the group unfinished when a look-back has to wait.
     let metal = include_str!("metal_block_program.metal");
-    let run = &metal[metal.find("static inline void run(").expect("run")..];
+    let run = &metal[metal.find("static bool interpret_file(").expect("interpret_file")..];
     let run = &run[..run.find("\n}\n").expect("its end")];
-    assert_eq!(run.matches("for (").count(), 1, "the Metal interpreter's one loop is over operations");
-    assert!(run.contains("for (uint at = p.from; at < p.to; at++)"));
-    for word in ["while", "if (", "simd_ballot"] {
+    let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
+    assert_eq!(loops.len(), 3, "{loops:?}");
+    assert!(loops[0].starts_with("for (uint at = 0u; at < pr.steps; at++)"), "{loops:?}");
+    assert!(loops[1].starts_with("for (uint k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint e = 0u; e < pr.exts; e++)"), "{loops:?}");
+    for word in ["while", "simd_ballot"] {
         assert!(!run.contains(word), "the Metal interpreter has `{word}`");
+    }
+    for line in run.lines().filter(|l| l.contains("if (")) {
+        let line = line.trim();
+        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!extract_write("].iter().any(|c| line.starts_with(c)), "the Metal interpreter branches: `{line}`");
+    }
+    for helper in ["eq_file", "plane_file"] {
+        let code = &metal[metal.find(&format!("M {helper}(")).expect("helper")..];
+        let code = &code[..code.find("\n}\n").expect("its end")];
+        assert!(code.contains("for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++)"), "{helper} loops over chunks only");
     }
     let carry = include_str!("metal_block_carry.metal");
     for word in ["for (", "while", "if (", "?"] {
@@ -801,7 +807,7 @@ fn carried_chain_equals_reference_on_every_executor() {
 #[test]
 #[cfg(target_os = "macos")]
 fn lookback_fallback_equals_reference() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
+    use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
     let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
     let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
     for (rows, halo) in [(one, false), (two, true)] {
@@ -817,9 +823,10 @@ fn lookback_fallback_equals_reference() {
             }
             for width in LaneWidth::ALL {
                 for spins in [0, 64] {
-                    let source = generate_polling(&native, width, ClassStrategy::Planes, spins);
-                    let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
-                    assert_eq!(got.outputs, want, "{} bytes, {}-byte lanes, {spins} polls", bytes.len(), width.bytes());
+                    for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
+                        let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, spins).expect("runs");
+                        assert_eq!(run.files[0].outputs, want, "{} bytes, {}-byte lanes, {spins} polls, {executor:?}", bytes.len(), width.bytes());
+                    }
                 }
             }
         }
@@ -836,7 +843,7 @@ fn generated_msl_is_one_kernel() {
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
             let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void tempo_").count(), 1, "{msl}");
+            assert_eq!(msl.matches("kernel void ").count(), 1, "{msl}");
             let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
             assert!(lines < 12 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
         }
@@ -854,7 +861,7 @@ fn carried_lower_to_straight_bit_operations() {
 // --- simdjson's stage 1 ----------------------------------------------------------------------
 
 /// Stage 1, written by hand in `rir` (`fixtures/simdjson-stage1/stage1.rir`).
-const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
+pub(super) const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
 
 /// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
 /// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
@@ -929,16 +936,17 @@ fn extract_equals_reference_on_every_executor() {
         for (name, got) in extract_executors(&p, &bytes) {
             assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
         }
-        // No polls: every group but the first defers, and the fallback (scan, then scatter)
-        // writes the positions.
+        // One poll: a group whose predecessor has not published its count leaves unfinished,
+        // and the launch is repeated.
         #[cfg(target_os = "macos")]
         {
-            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
+            use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
             let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
             for width in LaneWidth::ALL {
-                let source = generate_polling(&native, width, ClassStrategy::Planes, 0);
-                let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
-                assert_eq!(got.positions, want, "no polls, {}-byte lanes, {} bytes", width.bytes(), bytes.len());
+                for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
+                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
+                    assert_eq!(run.files[0].positions, want, "no polls, {}-byte lanes, {executor:?}, {} bytes", width.bytes(), bytes.len());
+                }
             }
         }
     }
@@ -1093,13 +1101,12 @@ fn stage1_cost_per_block() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        // The mask passes alone, and with the extract pass (in the same dispatch unless a
-        // look-back runs out of polls; the fallback's second command buffer is not timed, and
-        // its runs are counted).
+        // The mask passes alone, and with the extract pass (in the same launch unless a
+        // look-back runs out of polls; repeated launches are timed, and counted).
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::EXTRACT_FALLBACKS;
-        let before = EXTRACT_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::REPEATED_LAUNCHES;
+        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
@@ -1107,15 +1114,15 @@ fn stage1_cost_per_block() {
                         .map(|_| run_generated_with(program, &bytes, width, strategy).expect("runs").1)
                         .fold(f64::MAX, f64::min);
                     println!(
-                        "generated msl, {what}, {strategy:?}, {:2}-byte lanes: {:.3} ns per block (GPU time, all rounds, best of 5)",
+                        "generated msl, {what}, {strategy:?}, {:2}-byte lanes: {:.3} ns per block (GPU time, best of 5)",
                         width.bytes(),
                         s / blocks * 1e9
                     );
                 }
             }
         }
-        let fallbacks = EXTRACT_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed) - before;
-        println!("extract fallbacks (second command buffer): {fallbacks} of 30 runs with the extract");
+        let repeats = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before;
+        println!("repeated launches: {repeats} over 60 runs");
     }
 }
 
