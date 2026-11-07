@@ -1489,7 +1489,7 @@ device tests. It was not checked whether this predates O81's change; nothing in 
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
 
-## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then: closed (2026-11-06)
 
 Found (2026-11-06). Of the 750 `transducer::packed` tests with `--features metal-tests`, about 440 failed in
 one run. There were five causes:
@@ -1515,12 +1515,16 @@ one run. There were five causes:
 5. **A process-wide device pool.** `METAL_BUFFER_BYTES` (256 MiB) is shared by every thread, which is right
    for production, but parallel tests then fill it for each other. About 16 tests fail only in a batch
    (`BackendCapacity`, or a peak-bytes assertion). With `--test-threads=1` all of them pass.
-   **Still open.**
+   Fixed (user decision: a resource lock on memory, so that small tests still run together):
+   `metal_test_pool.rs`. In a test build each thread has its own pool ledger and peak, and the driver's
+   process-wide figure is left out, so a test sees the pool as it would alone. A weighted lock over bytes
+   bounds what all tests hold at once at 1 GiB (the RAM budget). A reservation that would pass it waits for
+   others to release, for at most 30 s, then goes ahead: the bound is on memory, never on results.
+   Production is unchanged.
 - The admission spike's oracle snapshot (`execute_roots_from` as at f5de8998d) is ignored. The interpreter
   has since gained set mode, lazy cursors and `Reach` pruning.
 - `explain` (`logic::profile::tests`): a concurrent corpus run's `profile::reset()` raced it. Profiled runs
   and the profile tests now hold `profile::one_run()`. `logic::` passed twice at load 50 or more.
 
-**Closure:** the packed suites pass in a parallel filtered run. Either the device tests that assume the
-whole pool take a test-only exclusive lock, or the device suites run with `--test-threads=1` (about 200 s
-of CPU in chunks, over the 2-minute run cap as one run).
+**Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
+executor's, and the admission spike), 104 s at load 40-73.

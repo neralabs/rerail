@@ -23,9 +23,35 @@ pub(crate) mod launch;
 // sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
 // refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
 pub(super) const METAL_BUFFER_LIMIT: usize = 256 << 20;
+#[cfg(not(test))]
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// The most `METAL_BUFFER_BYTES` has held.
+#[cfg(not(test))]
 static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+
+/// The pool's ledger: the bytes reserved now.
+#[cfg(not(test))]
+fn pool() -> &'static AtomicUsize {
+    &METAL_BUFFER_BYTES
+}
+
+/// The most the pool's ledger has held.
+#[cfg(not(test))]
+fn pool_peak() -> &'static AtomicUsize {
+    &METAL_BUFFER_PEAK
+}
+
+/// What the driver has allocated for the device, beside the pool's own reservations.
+#[cfg(not(test))]
+fn driver_bytes(device: &metal::DeviceRef) -> u64 {
+    device.current_allocated_size()
+}
+
+#[cfg(test)]
+#[path = "metal_test_pool.rs"]
+mod test_pool;
+#[cfg(test)]
+use test_pool::{driver_bytes, pool, pool_peak};
 
 /// The Metal buffer budget, in bytes.
 pub(in crate::code_rule_dsl) fn buffer_limit() -> usize {
@@ -34,17 +60,17 @@ pub(in crate::code_rule_dsl) fn buffer_limit() -> usize {
 
 /// The bytes of the Metal buffer budget not reserved now.
 pub(in crate::code_rule_dsl) fn buffer_free() -> usize {
-    METAL_BUFFER_LIMIT.saturating_sub(METAL_BUFFER_BYTES.load(Ordering::Acquire))
+    METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire))
 }
 
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub(in crate::code_rule_dsl) fn reserved_mb() -> usize {
-    METAL_BUFFER_BYTES.load(Ordering::Acquire) >> 20
+    pool().load(Ordering::Acquire) >> 20
 }
 
 /// The most bytes of Metal buffers alive at once, in MB.
 pub(in crate::code_rule_dsl) fn peak_mb() -> usize {
-    METAL_BUFFER_PEAK.load(Ordering::Acquire) >> 20
+    pool_peak().load(Ordering::Acquire) >> 20
 }
 
 /// What the Metal driver says it has allocated for the device, in MB.
@@ -57,14 +83,14 @@ static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
 pub(super) fn available_buffer_bytes(device: &Device) -> usize {
-    let reserved = METAL_BUFFER_BYTES.load(Ordering::Acquire);
-    let driver = usize::try_from(device.current_allocated_size()).unwrap_or(usize::MAX);
+    let reserved = pool().load(Ordering::Acquire);
+    let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
     METAL_BUFFER_LIMIT.saturating_sub(reserved.max(driver))
 }
 
 pub(super) fn buffer_usage() -> (usize, usize) {
     (
-        METAL_BUFFER_BYTES.load(Ordering::Acquire),
+        pool().load(Ordering::Acquire),
         METAL_PRIVATE_BYTES.load(Ordering::Acquire),
     )
 }
@@ -105,6 +131,9 @@ struct BufferReservation {
     bytes: usize,
     ledger: &'static AtomicUsize,
     private: bool,
+    /// Admitted to the tests' weighted bound (`test_pool`).
+    #[cfg(test)]
+    admitted: bool,
     #[cfg(test)]
     _observations: Vec<buffer_observation::ReservationObservation>,
 }
@@ -124,8 +153,13 @@ impl BufferReservation {
                 }
                 Error::BackendCapacity
             })?;
-        if std::ptr::eq(ledger, &METAL_BUFFER_BYTES) {
-            METAL_BUFFER_PEAK.fetch_max(previous + bytes, Ordering::AcqRel);
+        let pooled = std::ptr::eq(ledger, pool());
+        #[cfg(test)]
+        if pooled {
+            test_pool::admit(bytes);
+        }
+        if pooled {
+            pool_peak().fetch_max(previous + bytes, Ordering::AcqRel);
             if bytes >= 4 << 20 && std::env::var_os("RERAIL_BUFFERS").is_some() {
                 let trace = std::backtrace::Backtrace::force_capture().to_string();
                 let frames = trace
@@ -144,7 +178,9 @@ impl BufferReservation {
             ledger,
             private: false,
             #[cfg(test)]
-            _observations: if std::ptr::eq(ledger, &METAL_BUFFER_BYTES) {
+            admitted: pooled,
+            #[cfg(test)]
+            _observations: if pooled {
                 buffer_observation::reserve(bytes)
             } else {
                 Vec::new()
@@ -162,6 +198,10 @@ impl BufferReservation {
 impl Drop for BufferReservation {
     fn drop(&mut self) {
         self.ledger.fetch_sub(self.bytes, Ordering::AcqRel);
+        #[cfg(test)]
+        if self.admitted {
+            test_pool::release(self.bytes);
+        }
         if self.private {
             METAL_PRIVATE_BYTES.fetch_sub(self.bytes, Ordering::AcqRel);
         }
@@ -233,7 +273,7 @@ impl MappedRegion {
             .map(|value| value / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation =
-            BufferReservation::acquire(length, &METAL_BUFFER_BYTES, METAL_BUFFER_LIMIT)?;
+            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?;
         let raw = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -416,8 +456,7 @@ impl MappedBuffer {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if mapping.length as u64 > device.max_buffer_length()
-            || device
-                .current_allocated_size()
+            || driver_bytes(device)
                 .saturating_add(mapping.length as u64)
                 > METAL_BUFFER_LIMIT as u64
         {
@@ -425,7 +464,7 @@ impl MappedBuffer {
                 eprintln!(
                     "TEMPO_METAL_DRIVER_REJECT bytes={} reserved={} driver={} maximumBuffer={}",
                     mapping.length,
-                    METAL_BUFFER_BYTES.load(Ordering::Acquire),
+                    pool().load(Ordering::Acquire),
                     device.current_allocated_size(),
                     device.max_buffer_length()
                 );
@@ -469,15 +508,14 @@ impl MappedBuffer {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if length as u64 > device.max_buffer_length()
-            || device
-                .current_allocated_size()
+            || driver_bytes(device)
                 .saturating_add(length as u64)
                 > METAL_BUFFER_LIMIT as u64
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
                     "TEMPO_METAL_DRIVER_REJECT bytes={length} reserved={} driver={} maximumBuffer={} caller={}",
-                    METAL_BUFFER_BYTES.load(Ordering::Acquire),
+                    pool().load(Ordering::Acquire),
                     device.current_allocated_size(),
                     device.max_buffer_length(),
                     std::panic::Location::caller()
@@ -514,7 +552,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, &METAL_BUFFER_BYTES, METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
         );
         let target = Self::owned_allocation(
             device,
@@ -567,7 +605,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, &METAL_BUFFER_BYTES, METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
         );
         Self::owned_allocation(
             device,
@@ -597,7 +635,7 @@ impl MappedBuffer {
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(BufferReservation::acquire(
             length,
-            &METAL_BUFFER_BYTES,
+            pool(),
             METAL_BUFFER_LIMIT,
         )?);
         Self::owned_allocation(device, length, reservation, MTLResourceOptions::StorageModeShared)
@@ -620,7 +658,7 @@ impl MappedBuffer {
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(BufferReservation::acquire(
             length,
-            &METAL_BUFFER_BYTES,
+            pool(),
             METAL_BUFFER_LIMIT,
         )?);
         let buffer = Self::owned_allocation(
