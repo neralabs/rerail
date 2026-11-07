@@ -1,0 +1,242 @@
+{
+  "cases": [
+    {
+      "id": "hnsw-reporter-0",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-1",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/a.py",
+          "source": "scored_pairs_query = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-2",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/trigger.py",
+          "source": "# hnsw\nscored_pairs_query = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-3",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "l5200_vector_index/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-4",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "vector_types.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-5",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "vector_types.py/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-6",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-7",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-8",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/tests/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-9",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/test/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-10",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/conform/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-11",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/test_a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-12",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/.venv/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-13",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/venv/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-14",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/tmp/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-15",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/__pycache__/a_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-16",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/rust_bridge/generated_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-17",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/algorithm.py",
+          "source": "from impl.sqlite.connection import C\ndef render(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-18",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/algorithm.py",
+          "source": "# hnsw\nfrom impl.sqlite.connection import C\ndef render(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-19",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/a_hnsw.py",
+          "source": "x = f\"json {a} json\"\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-20",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/a_hnsw.py",
+          "source": "x = f\"\"\"json\n{a}\njson\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-21",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "impl/common/a_hnsw.py",
+          "source": "\ufeffimport json\n"
+        }
+      ]
+    },
+    {
+      "id": "hnsw-reporter-order",
+      "check": "hnsw_architecture",
+      "files": [
+        {
+          "path": "l5200_vector_index/z_hnsw.py",
+          "source": "import json\n"
+        },
+        {
+          "path": "impl/common/a_hnsw.py",
+          "source": "import json\n"
+        },
+        {
+          "path": "vector_types.py/m_hnsw.py",
+          "source": "import json\n"
+        }
+      ]
+    }
+  ]
+}

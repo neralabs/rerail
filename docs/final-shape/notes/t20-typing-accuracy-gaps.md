@@ -126,4 +126,142 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   Each departure is pinned with its reason. One Python departure is a silent no-edge caused by O41: a
   re-export three files deep, which the k = 2 rounds cut. With k = 6 the rounds converge and it agrees, so O41
   is an accuracy bug, not only a report.
+- **Decisions** (0047, the user): rounds k = 4 with a pending round; `calls:` moves to the programs after parity;
+  type relations drafted here first; Python first for receiver typing.
+- **O41 narrowed:** at k = 4 calls.rr converges on the oracle (84 agree, 9 depart, 0 wrong). Cut short, the
+  pending round makes the re-export unknown, never no edge.
+- **Python parity** (decision 0047, point 2).
+  - The runtime oracle gained the cases the native resolver models and the program did not: a metaclass
+    `__call__`, a `__new__`, a C3 diamond, and relative imports two dots up (`pkg/hierarchy.py`,
+    `pkg/sub/deep.py`).
+  - The tracer now records what CPython runs for a class call: the metaclass's `__call__`, `__new__` and
+    `__init__` where the workspace defines them, not `__init__` alone. It runs under 3.13.18, which reproduced
+    the old recording exactly.
+  - `calls.rr` now has:
+    - `__new__` and metaclass `__call__` targets;
+    - relative imports of any depth (`@pkg_up`);
+    - method resolution per receiver class. A definition on a class another candidate subclasses is dropped at
+      the call. Incomparable candidates make the call unknown, never both.
 
+  | | Agree | Depart | Wrong |
+  |---|---|---|---|
+  | `calls.rr` | 94 | 9 | 0 |
+  | native resolver | 84 | 19 | 0 |
+
+  Every departure of the program is one the native resolver also has. The program departs nowhere the native
+  resolver agrees. That is decision 0047's condition for the switch. The Jedi corpus comparison is a broader
+  accuracy check beside it, not a gate (O88).
+
+- **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
+  `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
+
+  ```text
+  type_of(n, t)        n may hold a value whose class is t ("pkg.models.Base", or a builtin's "str")
+  type_open(n)         n may also hold a value of a class not listed
+  proven_type(n, t)    isinstance(n, t) is true: every class n may hold is t or a subclass, none unlisted
+  possible_type(n, t)  isinstance(n, t) may be true: some listed class is t or a subclass of t
+  possible_open(n)     possible_type is incomplete
+  ```
+
+  A rule's `proven: t` is `proven_type(n, t)`. Its `possible: t` is `possible_type(n, t)` or `possible_open(n)`.
+  `not` is the negation of either.
+  - **New values in the program:**
+    - **Builtin values** (`pv(n, "builtin", n)`): literals, and calls of builtin classes (`str(x)`, `dict()`).
+      Their methods are no workspace definition, so `str(x).upper()` is now no edge rather than unknown.
+    - **External values** (`pv(n, "ext", n)`): external imports, builtin names, their attributes, and
+      comparisons. They mark a name that may hold something the program does not model. T's outputs on T's
+      facts are unchanged (`product_programs_derive_t_outputs`). Without this marker, `json/encoder.py`'s
+      `_iterencode` lost its unknown.
+  - **Classes:**
+    - an instance's class is the workspace class's qualified name;
+    - a class object's class is `type`, unless a metaclass, an external base or an unknown base may change it;
+    - a module's class is `module`, including an external module bound by `import`.
+  - **Declared returns** (`declared_ret`, from `rerail.types/v1` and dependency summaries) type a call of a
+    name the workspace does not define, as in `workload.rr`. The corpus runner interns `type_of` as one union
+    term per node (`x.node_type`).
+  - **Oracle:** the CPython tracer now records each method call's receiver: the span of `o` in `o.m(...)`, and
+    each class it was, with its MRO. `typing::oracle_tests::python_type_relations_agree_with_the_runtime`
+    checks three things at every receiver:
+    - a closed `type_of` lists every class CPython saw;
+    - every proven class is in each runtime class's MRO;
+    - every class in an MRO is possible.
+
+    A new fixture module (`pkg/typed.py`) adds builtin and local receivers.
+
+  | | Receivers | Exact | Wider | Unknown | Wrong |
+  |---|---|---|---|---|---|
+  | `calls.rr` types | 44 | 44 | 0 | 0 | 0 |
+
+  | Calls on the grown oracle | Agree | Depart | Wrong |
+  |---|---|---|---|
+  | `calls.rr` | 113 | 9 | 0 |
+  | native resolver | 97 | 25 | 0 |
+
+  A bytes literal is told from a str by `strprefix`, which T's shape of the syntax facts already makes.
+  The receiver fixture is small and written for this, so 44 of 44 says the relations are sound where they
+  answer, not how often they answer on a real corpus. What they leave out is O89.
+
+  **For More-ergonomic-rule-syntax (information).** The relations above, with their columns, are what
+  `core.rr` would declare for Python's `proven:`/`possible:`. They are in
+  `native/src/code_rule_dsl/typing/programs/calls.rr`, section "types". Type names are dotted qualified names
+  for workspace classes and bare names for builtins, as `declared_ret` and `workload.rr`'s `type_of` write them.
+
+- **The switch, Python** (decision 0047, point 2). One implementation of Python call resolution remains for
+  `.rr` rules: the typing program.
+  - **The bridge** (`logic::plan::corpus::bridge`). A rule reads a typing program's output by declaring an input
+    `typing_<program>__<output>`, with each node column as four: path, kind, start, end. When a rule reaching an
+    output reads one, the corpus runner first runs `typing/programs/<program>.rr` over the same root, in its own
+    bounded rounds and with the same typing inputs. The rows become the rule's facts, and `Report::typing_runs`
+    has the program's report. The rule joins spans back to its own nodes, so T's numbering and `core.rr`'s
+    need not agree.
+  - **`lib/python/calls.rr` is retired** as a resolver. It now joins the program's `call_target`,
+    `call_open` and type relations to the rule's nodes. It keeps the chain relations (`calls`, `calls_open`,
+    `reach`, `owner`) and the syntax helpers the data-layer rules use (`call`, `callee`, `call_arg`, `posarg`,
+    `awaited`). Its points-to copy is gone. No rule read it: the data-layer rules use only the syntax helpers.
+  - **Check:** `typing::oracle_tests::rules_read_the_python_program_through_lib_calls`. A rule including the
+    library, run on `core.rr`'s facts, gets exactly the program's rows on the oracle project: 93 call edges,
+    358 proven types and 9 unknown calls.
+  - **Left:** the JSON rule term `calls:` is not lowered to `.rr` by the converter (`logic::convert`
+    refuses it, for every language, as before this work), so it still reaches only the native resolvers.
+    No pack rule uses it (the Python pack exempts the capability). Lowering it onto the library's `reach` is
+    what removes the native Python resolver.
+
+- **Cost of `calls.rr` on django** (2026-11-06). The first Jedi scoring run used 1,126 s of CPU and did not
+  finish. Profiling slices of django (`RERAIL_PROFILE`, debug build, CPU = user + sys, machine load 30-97)
+  showed where the time went. Each fix below keeps every output the same, `pv`, `tv` and `vopen` included.
+
+  | Fix | Slice | Cross-file CPU before → after |
+  |---|---|---|
+  | `alook(n, c, a)`: an attribute's lookup class, joined once | utils (49 files) | 17.5 → 8.7 s |
+  | `pass(n, c)`: pass-through values made per file | utils + template (75) | 32.4 → 16.2 s |
+  | A join through same-document atoms is not a hop (`cross_rounds::bound`) | db/models (24) | 36.4 → 18.0 s |
+  | `fv(c, a, k, v)`, and proven types from one type's supertypes | db/models (24) | 18.0 → 9.3 s |
+  | `type_first` by `min`, not by pairs compared as text | utils + db (172) | 73 s, of which 25 s was this |
+  | `fret(f, k, v)` | utils + db (172) | → 40.9 s |
+  | Node types written in one transaction | utils + template (75) | write 2.7 → 0.07 s |
+  | Previous round's rows bound from memory | utils + template (75) | 5.63 → 3.86 s |
+
+  At the end: 75 files take 3.9 s, 172 files 37 s and 393 files (django without `contrib` and `conf`) 51.5 s,
+  with a peak RSS of 552 MB. Before, 172 files did not finish in 110 s.
+
+  The program-side fixes work around engine costs, which are listed in O90.
+
+- **`calls.rr` against Jedi on django** (O88; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
+  ignored). Jedi 0.19.2 `goto` recorded over django's 907 files. The run took 112 s of CPU (debug, the test with
+  its scoring) and a peak RSS of 815 MB.
+
+  | Calls | Count |
+  |---|---|
+  | All | 37,141 |
+  | Jedi undecided | 9,491 |
+  | Both decided | 20,364 |
+  | Agree | 20,205 (99.2% of both decided) |
+  | Program: another workspace definition | 142 |
+  | Program: a workspace definition, Jedi: external | 17 |
+  | Program unknown, Jedi decided | 7,286 |
+
+  The spike's `calls.rdl` scored 99.18% of 33,309 (t9 §7.4). Most of the 142 resolve through a decorator. For
+  example, `mark_safe(...)` is decorated with `keep_lazy`, and the program gives the wrapper in
+  `utils/functional.py`, where Jedi gives the decorated `def`. Most of the 17 are `super().__init__` calls, where
+  Jedi stops at `object.__init__` and the program gives a workspace base's. Neither group has been judged one by
+  one. The 7,286 unknowns are where the program says `call_open` instead of guessing.

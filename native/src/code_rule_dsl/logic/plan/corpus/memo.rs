@@ -73,9 +73,10 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
 
 /// The stored source of `text`, stored if it is not.
 pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
-    match store.source_by_hash(HashKey::sha256(text.as_bytes()))? {
+    let hash = HashKey::sha256(text.as_bytes());
+    match store.source_by_hash(hash)? {
         Some(id) => Ok(id),
-        None => store.put_source(text.as_bytes(), &[]),
+        None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
 }
 
@@ -93,6 +94,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
     let set = plan(program);
     let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
     Ok(())
 }

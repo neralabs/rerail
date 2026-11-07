@@ -69,13 +69,20 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
         return Ok(Built::Unparsed);
     };
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    from_tape(&doc, lines).map(Built::Facts)
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok(Built::Facts(facts))
 }
 
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
 /// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
 /// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
 pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+    build_cached_as(file, cache, None)
+}
+
+/// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
+pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;
@@ -86,9 +93,16 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source.as_bytes();
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
-    let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
+    let source_id = match known {
         Some(id) => id,
-        None => cache.put_source(bytes, &[]).map_err(e)?,
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+            let hash = HashKey::sha256(bytes);
+            match cache.source_by_hash(hash).map_err(e)? {
+                Some(id) => id,
+                None => cache.put_source_hashed(bytes, hash, &[]).map_err(e)?,
+            }
+        }
     };
     let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
     drop(lookup);
@@ -100,23 +114,30 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
         }
         None => {
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+            // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
             let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
                 return Ok(Built::Unparsed);
             };
             let image = image?;
             drop(parse);
             let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
-            cache.put_tape(source_id, tag, gv, fv, &image.primary.to_bytes()?).map_err(e)?;
+            let tape = image.primary.to_bytes()?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            cache.put_tape(source_id, tag, gv, fv, &tape).map_err(e)?;
             image.primary
         }
     };
     let image = FileImage { primary, derived: Vec::new() };
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
     let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
     drop(restore);
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    from_tape(&doc, lines).map(Built::Facts)
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok(Built::Facts(facts))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
@@ -271,12 +292,15 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     hash.update(f.source.as_bytes());
     hash.update((f.len() as u64).to_le_bytes());
     // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
+    let mut bytes = f.source.len() + f.flags.len() + std::mem::size_of_val(&f.field[..]);
     for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
         hash.update((column.len() as u64).to_le_bytes());
         update_le(&mut hash, column);
+        bytes += std::mem::size_of_val(&column[..]);
     }
     hash.update(&f.flags);
     update_le(&mut hash, &f.field);
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()
 }

@@ -526,7 +526,7 @@ function openDef(mod, name, push = true) {
   $("#d-title").textContent = name;
   const nat = lib.kind === "native";
   const others = (DEFINERS.get(name) || []).filter(m => m !== mod);
-  $("#d-sub").innerHTML = `<span class="pill ${nat ? "native" : "datalog"}">${nat ? "native, in the binary" : "Datalog, shipped as a library"}</span>
+  $("#d-sub").innerHTML = `<span class="pill ${nat ? "native" : "datalog"}">${nat ? "native, in the binary" : lib.kind === "program" ? "a typing program, run before the rules" : "Datalog, shipped as a library"}</span>
     <span>${esc(mod)}</span>${others.length ? `<span>also defined in ${others.map(o => `<a href="#" data-alt="${o}">${o}</a>`).join(", ")}</span>` : ""}
     <span style="flex:1"></span><button class="btn" type="button" id="d-open">Open module</button>`;
   const srcLines = lib.src.split("\n");
@@ -585,7 +585,7 @@ function buildLib() {
   for (const [mod, lib] of Object.entries(LIBS)) {
     const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.mod = mod;
     const nrel = [...LIBDEFS[mod].values()].filter(s => s.some(x => isDecl(x))).length;
-    el.innerHTML = `<span class="id">${esc(mod)}</span><span class="meta"><span class="pill ${lib.kind}">${lib.kind === "native" ? "native" : "Datalog"}</span><span>${nrel} relations · ${lineCount(lib.src)} lines</span></span>`;
+    el.innerHTML = `<span class="id">${esc(mod)}</span><span class="meta"><span class="pill ${lib.kind === "program" ? "datalog" : lib.kind}">${lib.kind === "native" ? "native" : lib.kind === "program" ? "program" : "Datalog"}</span><span>${nrel} relations · ${lineCount(lib.src)} lines</span></span>`;
     el.addEventListener("click", () => showLib(mod));
     el.addEventListener("keydown", e => { if (e.key === "Enter") showLib(mod); });
     list.appendChild(el);

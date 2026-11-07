@@ -33,6 +33,7 @@ ast_walk(f, n) :- decorator(f, e), (n = e ; within(n, e)).
 short_name(e, x) :- kind(e, "identifier"), text(e, x).
 short_name(e, x) :- attr_of(e, _, x).
 short_name(e, x) :- kind(e, "call"), field(e, "function", g), short_name(g, x).
+short_name(e, x) :- kind(e, "parenthesized_expression"), unparen(e, m), m != e, short_name(m, x).  // `(a.foo)`
 
 // walk_name(r, x): `_names(r)`. In `f(a.b, k=c)` the names are f, a, b and c, not k: a keyword's name, a def's
 // name, a parameter and an imported name are not ast.Name nodes.

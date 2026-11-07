@@ -1,0 +1,283 @@
+{
+  "scope": "Changed logical-line vocabulary kernel only; no repository-wide comparison; one sample per build; other assertion processes were active, so wall time is descriptive only",
+  "lines": 2000,
+  "sourceSha256": "908cf21e056e06af995f7dbd7342ecb9c46e1e17b4a270e1d7fcb2a4eb043fc1",
+  "ruleSha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172",
+  "runs": [
+    {
+      "label": "before",
+      "engineSha256": "c2a0b80aaf8b0c63f746e130480cc2a49f58ddefa2b0aaf529288614306dbf52",
+      "wallSeconds": 1.6052956249914132,
+      "diagnostics": [
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1001,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1501,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 501,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        }
+      ],
+      "files": 1,
+      "nodes": 10033,
+      "phases": [
+        {
+          "peakRssMB": 84.328448,
+          "phase": "stats",
+          "submittedStatements": 46,
+          "systemCpuSeconds": 0.016366999999999993,
+          "userCpuSeconds": 0.21272000000000002
+        },
+        {
+          "peakRssMB": 94.715904,
+          "phase": "parse (worker)",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.001529,
+          "userCpuSeconds": 0.021215
+        },
+        {
+          "peakRssMB": 94.715904,
+          "phase": "batch (worker)",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.00019700000000000013,
+          "userCpuSeconds": 0.011094
+        },
+        {
+          "peakRssMB": 45.907968,
+          "phase": "wait",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.00024300000000000016,
+          "userCpuSeconds": 0.00013900000000000023
+        },
+        {
+          "peakRssMB": 72.17152,
+          "phase": "local",
+          "submittedStatements": 31,
+          "systemCpuSeconds": 0.012361000000000004,
+          "userCpuSeconds": 0.7907869999999999
+        },
+        {
+          "peakRssMB": 94.683136,
+          "phase": "cross",
+          "submittedStatements": 150,
+          "systemCpuSeconds": 0.0029670000000000044,
+          "userCpuSeconds": 0.337788
+        },
+        {
+          "peakRssMB": 94.715904,
+          "phase": "write",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.0007360000000000005,
+          "userCpuSeconds": 4.300000000001525e-05
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rr",
+          "sha256": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c"
+        },
+        {
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rr",
+          "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
+        }
+      ],
+      "externalTimeReport": "real 1.51\nuser 1.45\nsys 0.04\n            94879744  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6422  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                 121  voluntary context switches\n                1168  involuntary context switches\n         25015580673  instructions retired\n          5278795345  cycles elapsed\n            61080128  peak memory footprint\n"
+    },
+    {
+      "label": "after",
+      "engineSha256": "93383c986bf6b4f9c777772c3a04898c3683ed257d0dd1aae82f48732d91f833",
+      "wallSeconds": 1.1332369170268066,
+      "diagnostics": [
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1001,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 1501,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        },
+        {
+          "at": 0,
+          "clause": "Inspection0",
+          "code": "NSI001",
+          "line": 501,
+          "message": "inspect.getsource() is forbidden in tests",
+          "parameters": {
+            "label": "inspect.getsource()",
+            "ordinal": 0,
+            "snippet": "text = inspect.getsource(value)"
+          },
+          "path": "tests/bench.py",
+          "policy": "data-layer-no-source-inspection",
+          "tag": null
+        }
+      ],
+      "files": 1,
+      "nodes": 10033,
+      "phases": [
+        {
+          "peakRssMB": 96.141312,
+          "phase": "stats",
+          "submittedStatements": 46,
+          "systemCpuSeconds": 0.010366999999999998,
+          "userCpuSeconds": 0.17133299999999993
+        },
+        {
+          "peakRssMB": 104.136704,
+          "phase": "parse (worker)",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.0007840000000000001,
+          "userCpuSeconds": 0.015832
+        },
+        {
+          "peakRssMB": 104.136704,
+          "phase": "batch (worker)",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.000414,
+          "userCpuSeconds": 0.009023
+        },
+        {
+          "peakRssMB": 60.53888,
+          "phase": "wait",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.0002660000000000006,
+          "userCpuSeconds": 0.00019399999999999973
+        },
+        {
+          "peakRssMB": 84.770816,
+          "phase": "local",
+          "submittedStatements": 31,
+          "systemCpuSeconds": 0.011806,
+          "userCpuSeconds": 0.681605
+        },
+        {
+          "peakRssMB": 104.136704,
+          "phase": "cross",
+          "submittedStatements": 147,
+          "systemCpuSeconds": 0.0008390000000000029,
+          "userCpuSeconds": 0.021321000000000034
+        },
+        {
+          "peakRssMB": 104.136704,
+          "phase": "write",
+          "submittedStatements": 0,
+          "systemCpuSeconds": 0.0007369999999999981,
+          "userCpuSeconds": 4.599999999999049e-05
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rr",
+          "sha256": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c"
+        },
+        {
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rr",
+          "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
+        }
+      ],
+      "externalTimeReport": "real 1.04\nuser 0.95\nsys 0.04\n           104251392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7154  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                 133  voluntary context switches\n                 645  involuntary context switches\n         17102271000  instructions retired\n          4058410746  cycles elapsed\n            70288008  peak memory footprint\n"
+    }
+  ],
+  "inputFiles": [
+    {
+      "path": "tests/bench.py",
+      "source": "text = inspect.getsource(value)\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\ntext = inspect.getsource(value)\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\ntext = inspect.getsource(value)\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\ntext = inspect.getsource(value)\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\nvalue_0 = 1\nvalue_1 = 1\nvalue_2 = 1\nvalue_3 = 1\nvalue_4 = 1\nvalue_5 = 1\nvalue_6 = 1\nvalue_7 = 1\nvalue_8 = 1\nvalue_9 = 1\nvalue_10 = 1\nvalue_11 = 1\nvalue_12 = 1\nvalue_13 = 1\nvalue_14 = 1\nvalue_15 = 1\nvalue_16 = 1\nvalue_17 = 1\nvalue_18 = 1\nvalue_19 = 1\nvalue_20 = 1\nvalue_21 = 1\nvalue_22 = 1\nvalue_23 = 1\nvalue_24 = 1\nvalue_25 = 1\nvalue_26 = 1\nvalue_27 = 1\nvalue_28 = 1\nvalue_29 = 1\nvalue_30 = 1\nvalue_31 = 1\nvalue_32 = 1\nvalue_33 = 1\nvalue_34 = 1\nvalue_35 = 1\nvalue_36 = 1\nvalue_37 = 1\nvalue_38 = 1\nvalue_39 = 1\n"
+    }
+  ],
+  "options": {
+    "inputFiles": [
+      "tests/bench.py"
+    ],
+    "entryPoint": "find_violations"
+  },
+  "reproduction": "Write inputFiles below to a fresh corpus and options to JSON. Run each frozen engine with /usr/bin/time -lp engine run-rr packs/data-layer/candidates/rr/no-source-inspection.rr corpus output options.json. Use a separate empty RERAIL_TAPE_CACHE for each build."
+}

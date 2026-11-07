@@ -276,6 +276,31 @@
 //    raises" is a chain over the branches (python/flow's always_raises). Use ordered by only when which write
 //    counts depends on the recursion.
 
+// ---- lattices and demand (Soufflé's, as the engine reads them) --------------------------------------------------
+// A relation's last column may be a lattice value: `.decl cv(n: node, v: flat<>)` keeps one value per key, the
+// join of every value derived for it (flat<>: one value, or top when two differ; min<> and max<> keep the least
+// or greatest). `.lattice L<base> { Lub -> @f }` names a lattice by its join functor (shortlex_min<> keeps the
+// shortest, then least, symbol). `widen k` after a lattice .decl sends a value to top once it has changed k
+// times, which a lattice of unbounded height needs; `top` in a term is the lattice's top. Typing's constant
+// values and qualified names are lattice columns.
+// `.pragma "magic-transform" "a, b"` computes a and b only for the arguments rules ask about ("*": every
+// relation that can be); no other .pragma is read.
+// Aggregates are Soufflé's count, min, max and sum, over a variable or a term (`sum strlen(v) : { … }`);
+// Soufflé's substr, to_float, `%`, min/2 and max/2 are built in. `<` on symbols compares their UTF-8 bytes.
+// Names starting `rr_` belong to the engine; no rule may declare one, nor redeclare a name this file declares.
+
+// ---- typing programs ----------------------------------------------------------------------------------------------
+// Call targets and types are computed by typing programs: .rr programs the engine runs over the repository before
+// the rules, file by file and then in bounded cross-file rounds (typing/programs/ beside this site). A rule reads
+// a program's output `o` by declaring `typing_<program>__<o>`, with each node column written as four columns
+// (path, kind, start byte, end byte); declaring it is what makes the engine run the program. The libraries do
+// the join back to nodes, so rules read typed relations: python/calls (call_target, call_open) and python/types
+// (type_of, type_open, proven_type, possible_type, possible_open). Answers are three-valued: a missing row with
+// the open relation set means unknown, not false. A round cut short before the fixpoint marks every call it left
+// without a target open, so an unfinished answer is never read as "calls nothing".
+// Calls of names the workspace does not define are typed from declared returns: `rerail.types/v1` stub files and
+// dependency summaries.
+
 // ---- value functions and captures --------------------------------------------------------------------------------
 // Soufflé built-ins used here: cat(a, b) concatenation, strlen(s), to_number(s), to_string(n), contains(a, b),
 // and match(re, s).
@@ -439,6 +464,18 @@
 // (data-layer/FINDINGS-LAYER.md, section 2). The format and the CI steps: data-layer/RUN-FACTS.md.
 .decl input_error(path: symbol, kind: symbol, detail: symbol)  // missing, unreadable, malformed, signature, stale, failed
 .input input_error
+
+// ---- embedded languages (proposed) ------------------------------------------------------------------------------
+// Code inside code (SQL in a Python string, a template's expressions, a string annotation) is to be a guest
+// document: parsed with its own grammar, with its own nodes, and declared by libraries rather than built in.
+//   guest(g, host, at, grammar)   document g is the text at `at` of document host, parsed as grammar
+//   doc_role(d, r)                "primary" (a file), "program" or "fragment" (a guest)
+//   host_node(n, h)               h is the innermost host node spanning guest node n
+//   root(d, n)                    the root of document d; for a fragment, the expression inside its wrapper
+//   embed(at, grammar, role)      a library rule that declares a guest (embeds of embeds up to depth 4)
+// parsed(s, g, root) becomes a view over guest and root, and `.scope embedded false` keeps a policy to primary
+// documents. A tape may also become a value: `@parse(grammar, text)` and, for fixes, `@splice` and `@unparse`.
+// None of this is built yet.
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
 // Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`

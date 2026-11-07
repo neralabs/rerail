@@ -1,6 +1,6 @@
 """Writes python.expected.json: for the Python workspace in project/, what each call ran.
 
-`runtime`: CPython 3.13.14 running project/main.py with every call of the workspace's code traced
+`runtime`: CPython 3.13.18 running project/main.py with every call of the workspace's code traced
 (trace.py, through sys.monitoring): per file, each call expression's byte range and line, and the
 definitions (file, `def` line) it dispatched to, or a lambda, a class without a workspace
 `__init__`, or a callable outside the workspace. main.py runs every call site of the workspace.
@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-PYTHON = "3.13.14"
+PYTHON = "3.13.18"
 HERE = pathlib.Path(__file__).parent
 
 

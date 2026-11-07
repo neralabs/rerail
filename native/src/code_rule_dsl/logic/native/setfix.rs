@@ -196,6 +196,7 @@ impl Rel {
     fn add_multi(&mut self, cols: &[usize]) {
         if self.idx.iter().any(|ix| ix.cols == cols) { return; }
         let mut ix = Index { cols: cols.to_vec(), table: HashTable::new(), next: Vec::with_capacity(self.n) };
+        charge(Unit::IndexEntry, self.n as u64);
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
@@ -299,6 +300,8 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     }
 }
 
+use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
+
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
     let mut st = conn.prepare(&format!("SELECT {} FROM {table}", cols.join(", ")))?;
@@ -309,6 +312,10 @@ fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) 
         for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms)?); }
         out.push(row);
     }
+    drop(rows);
+    // The roofline's work: the statement's VM steps, and each row entered in a component relation or edge map.
+    charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
+    charge(Unit::IndexEntry, out.len() as u64);
     Ok(out)
 }
 
@@ -1057,6 +1064,7 @@ impl InRel {
                 // hash table of every row.
                 Csr { lead, ..empty(!sorted, sorted) }
             } else {
+                charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
@@ -1146,8 +1154,17 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
         None
     } else {
         let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(eqs[0]);
-        let cands: Vec<usize> = src.lookup(c, &[v]).unwrap_or_else(|| (0..src.len()).collect());
-        Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+        // The roofline's work: each candidate's filter values read.
+        match src.lookup(c, &[v]) {
+            Some(cands) => {
+                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
+                Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+            }
+            None => {
+                charge(Unit::Value, (src.len() * eqs.len()) as u64);
+                Some(src.filter_eq(&eqs))
+            }
+        }
     };
     Some(View { src, cols, ids, eqs })
 }
@@ -1156,13 +1173,48 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
 /// reads are loaded by one statement the first time any input of the run needs them (a table scan, `NOT INDEXED`,
 /// so every column is in the table's row order), and every filtered or projected input over it is then a view
 /// (`View`). A column's index is built on its first lookup. A table holding a non-integer value is not one.
-struct Stored { columns: Vec<String>, n: std::sync::OnceLock<usize>, values: Vec<std::sync::OnceLock<Vec<i64>>>, index: Vec<std::sync::OnceLock<Vec<u32>>> }
+struct Stored {
+    columns: Vec<String>,
+    n: std::sync::OnceLock<usize>,
+    values: Vec<std::sync::OnceLock<Vec<i64>>>,
+    index: Vec<std::sync::OnceLock<Vec<u32>>>,
+    /// Each column's count of distinct values, from its index (for SQL's estimates).
+    distinct: Vec<std::sync::OnceLock<usize>>,
+    /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
+    /// the table never changes, so an order costs no insert). One serves every search whose columns are its prefix.
+    orders: Mutex<Vec<(Vec<usize>, Arc<Vec<u32>>)>>,
+}
 impl Stored {
+    fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
+        let k = columns.len();
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default() }
+    }
+    fn distinct(&self, c: usize) -> usize {
+        *self.distinct[c].get_or_init(|| {
+            let (ids, col) = (self.index(c), self.col(c));
+            1 + ids.windows(2).filter(|w| col[w[0] as usize] != col[w[1] as usize]).count()
+        })
+    }
+    /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
+    fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
+        let mut orders = self.orders.lock().unwrap();
+        let fits = |o: &[usize]| o.len() >= cols.len() && { let mut p = o[..cols.len()].to_vec(); p.sort_unstable(); p == cols };
+        if let Some((o, ids)) = orders.iter().find(|(o, _)| fits(o)) { return (o.clone(), Arc::clone(ids)); }
+        let mut by = cols.to_vec();
+        by.sort_by_key(|&c| std::cmp::Reverse(self.distinct(c)));
+        let cols_v: Vec<&[i64]> = by.iter().map(|&c| self.col(c)).collect();
+        let mut ids: Vec<u32> = (0..self.n.get().copied().unwrap_or(0) as u32).collect();
+        ids.sort_by(|&a, &b| cols_v.iter().map(|v| v[a as usize].cmp(&v[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        let ids = Arc::new(ids);
+        orders.push((by.clone(), Arc::clone(&ids)));
+        (by, ids)
+    }
     fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
         self.index[c].get_or_init(|| {
             let col = self.col(c);
+            charge(Unit::IndexEntry, col.len() as u64);
             let mut ids: Vec<u32> = (0..col.len() as u32).collect();
             ids.sort_by_key(|&r| col[r as usize]);
             ids
@@ -1188,6 +1240,8 @@ impl Stored {
                     match r.get_ref(i)? { ValueRef::Integer(x) => v.push(x), _ => return Ok(None) }
                 }
             }
+            drop(q);
+            charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
             Ok(Some(values))
         };
         let Ok(Some(values)) = read() else { return false };
@@ -1201,7 +1255,22 @@ impl Stored {
 impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
     fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
-    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
+    fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        let one = self.len().div_ceil(self.distinct(c).max(1));
+        if batch { one * 8 } else { one }
+    }
+    fn composite(&self) -> bool { true }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
+        let (on, order) = self.order(&cols);
+        let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
+        let cmp = |r: u32| by.iter().map(|&(v, x)| v[r as usize].cmp(&x)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal);
+        let lo = order.partition_point(|&r| cmp(r).is_lt());
+        let hi = order.partition_point(|&r| cmp(r).is_le());
+        let mut out: Vec<usize> = order[lo..hi.max(lo)].iter().map(|&r| r as usize).collect();
+        out.sort_unstable();
+        Some(out)
+    }
     /// For SQL over its vtab and a view's constant filters (`lookup`); a join probes the sorted index in place
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
@@ -1218,8 +1287,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let k = columns.len();
-    let t = Stored { columns, n: std::sync::OnceLock::new(), values: values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() };
+    let t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
     let _ = t.n.set(n);
     Arc::new(t)
 }
@@ -1242,7 +1310,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
             // The columns' names, from the statement (prepared, not run).
             let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
             let k = columns.len();
-            let t = Arc::new(Stored { columns, n: std::sync::OnceLock::new(), values: (0..k).map(|_| std::sync::OnceLock::new()).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() });
+            let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
             t
         }
@@ -1268,8 +1336,16 @@ enum Step {
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     Count { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, out: usize, bind: bool },
+    /// `out = min col : { atom }` (`max` when `max`): the least (greatest) value of column `col` over the atom's
+    /// matching rows; no rows, no binding.
+    Extreme { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: usize, out: usize, bind: bool, max: bool },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
+    /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
+    /// interned; no value (NULL), no binding.
+    Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
+    /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
+    Doc { a: Key, b: Key, eq: bool },
 }
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
@@ -1290,16 +1366,17 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         let toks: Vec<&str> = line.split_whitespace().collect();
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
         match toks[0] {
-            "pos" | "neg" | "count" => {
-                let (neg, count) = (toks[0] == "neg", toks[0] == "count");
-                let atoks = if count { &toks[2..toks.len() - 1] } else { &toks[2..] };
+            "pos" | "neg" | "count" | "min" | "max" => {
+                let (neg, count, extreme) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "min" | "max"));
+                // `min <src> <atom tokens> <column> <out>`: the aggregated column's token is `_`.
+                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else { &toks[2..] };
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
                 for (col, t) in atoks.iter().enumerate() {
                     match tok(t, syms)? {
                         None => {}
                         Some(k) if is_bound(&bound, k) => keys.push((col, k)),
                         Some(Key::Slot(s)) => {
-                            if neg || count { return Err(err(format!("unbound v{s} in a negated or counted atom"))); }
+                            if neg || count || extreme { return Err(err(format!("unbound v{s} in a negated or aggregated atom"))); }
                             match binds.iter().find(|&&(_, b)| b == s) { Some(&(c0, _)) => tests.push((col, c0)), None => binds.push((col, s)) }
                         }
                         Some(Key::Const(_)) => unreachable!(),
@@ -1329,7 +1406,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                     t => return Err(err(format!("bad source {t}"))),
                 };
-                if count {
+                if extreme {
+                    let col = num(toks[toks.len() - 2])?;
+                    let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
+                    let bind = !is_bound(&bound, Key::Slot(o));
+                    grow(&mut bound, o); bound[o] = true;
+                    steps.push(Step::Extreme { src, keys, tests, col, out: o, bind, max: toks[0] == "max" });
+                } else if count {
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad count")) };
                     let bind = !is_bound(&bound, Key::Slot(o));
                     grow(&mut bound, o); bound[o] = true;
@@ -1359,6 +1442,21 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
                 steps.push(Step::Lt { a, b, or_eq: toks[0] == "le" });
+            }
+            "func" => {
+                // `func <name> <out> <args…>`
+                let Some((name, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(toks[1]) else { return Err(err(format!("no function {}", toks[1]))) };
+                let args: Vec<Key> = toks[3..].iter().map(|t| tok(t, syms)).collect::<Result<Option<Vec<_>>>>()?.ok_or_else(|| err("a function of `_`"))?;
+                if args.len() != kinds.len() || args.iter().any(|&a| !is_bound(&bound, a)) { return Err(err(format!("{name} of unbound or missing arguments"))); }
+                let Some(Key::Slot(o)) = tok(toks[2], syms)? else { return Err(err("a function's value into a constant")) };
+                let bind = !is_bound(&bound, Key::Slot(o));
+                grow(&mut bound, o); bound[o] = true;
+                steps.push(Step::Func { name, kinds, args, out: o, bind });
+            }
+            "deq" | "dne" => {
+                let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
+                if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("a document comparison of an unbound slot")); }
+                steps.push(Step::Doc { a, b, eq: toks[0] == "deq" });
             }
             "eq" | "ne" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
@@ -1479,6 +1577,23 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 if *bind { slots[*out] = n } else if slots[*out] != n { return }
                 go(cx, i + 1, slots);
             }
+            Step::Extreme { src, keys, tests, col, out, bind, max } => {
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let mut best: Option<i64> = None;
+                cands.any(|id| {
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+                        let v = row.at(*col);
+                        best = Some(best.map_or(v, |b| if *max { b.max(v) } else { b.min(v) }));
+                    }
+                    false
+                });
+                let Some(v) = best else { return };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
             Step::Lt { a, b, or_eq } => {
                 let (x, y) = (val(slots, *a), val(slots, *b));
                 if x < y || (*or_eq && x == y) { go(cx, i + 1, slots) }
@@ -1505,6 +1620,26 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
+            Step::Func { name, kinds, args, out, bind } => {
+                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
+                let value = {
+                    let mut text = Vec::new();
+                    let mut numbers = Vec::new();
+                    for (k, a) in kinds.iter().zip(args) {
+                        match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                    }
+                    let text: Vec<&str> = text.iter().map(String::as_str).collect();
+                    eval(name, &text, &numbers)
+                };
+                let v = match value {
+                    rusqlite::types::Value::Integer(n) => n,
+                    rusqlite::types::Value::Text(s) => cx.syms.id(&s),
+                    _ => return,
+                };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
+            Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }

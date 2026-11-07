@@ -6,11 +6,11 @@ Five checks, written by hand from the Python linters at `2b1504adc`.
 |---|---|---|---|---|
 | hnsw_architecture | 263 | 132 | 60 / 61 | lowers |
 | generated_index_sources | 275 | 90 | 24 / 24 (a) | lowers |
-| conditional_architecture | 426 (+750 facts module) | 301 | 82 / 82 (a, b), or 42 / 82 counting dropped findings | lowers |
+| conditional_architecture | 426 (+750 facts module) | 305 | 57 / 82 with `--codeless CONDA-005`; the 25 misses are findings the plugin drops (b) | lowers |
 | embedding_vector_orchestration | 596 | 129 | 70 / 70 (a) | lowers |
-| matching_architecture | 1,268 | 446 | 286 / 286 (a); the 287th event was not run (c) | lowers |
+| matching_architecture | 1,268 | 476 | 286 / 286 (a); the 287th event was not run (c) | lowers |
 
-There is also one library: `lib/data-layer/match-frames.rr` (41 lines). conditional_architecture and
+There is also one library: `lib/data-layer/match-frames.rr` (52 lines). conditional_architecture and
 matching_architecture use it.
 
 (a) The stock `rrlab dl` stops with an error on these four checks, before it runs any rule. Their batch-10 records
@@ -25,10 +25,9 @@ message holds one of three markers, and reports them as CONDA-005:
 - callback fields, state writes, backend controls, child compiles and lowering levels are computed;
 - they are never reported, so the rule does not write them (group-7.md says the same).
 
-The wrapper maps a message with a marker to CONDA-005, and any other message to `CONDA-005-dropped`. Scored on the
-reported codes only (`DROP=1`), every event is exact. Counting the dropped findings, 40 events miss. Each of those
-misses is a finding that the linter computes but does not report, so it comes only from emulating the entry
-function: a harness limit.
+`rrlab dl conditional_architecture --codeless CONDA-005` reads every such finding as CONDA-005. 57 of 82 events
+are exact. The 25 misses each lack a CONDA-005 that the facts module computes and the plugin drops (for example
+`test_shared_state_and_provenance[…]`), so they come only from emulating the entry function: a harness limit.
 
 (c) The event `test_current_matching_architecture_is_clean_tdd_red` holds the real repository: 2,871 files and no
 findings. rrlab writes tape relations out as fact files, 3.5 GB for this event. Souffle had used 3.7 GB of RAM after
@@ -50,12 +49,18 @@ limit. `SKIP_BIG=1` in the wrapper leaves it out.
     follows that call, which is the only one recorded. The plugin path, which applies the gate, is noted in the
     rule's header.
 - **matching_architecture's gate and the entry functions.** The rule follows `lint`, the CLI, which is the check
-  CI runs. `lint` scans a file only when it is a matching path, holds one of the seven markers, or is in a layer and
-  defines `match(`; it scans application roots whole.
-  - `scan_sources` scans every file it is given.
-  - The only files where the two differ are top-level `applications/…` files. Under `lint` such a file can only
-    come from an application root, which is scanned whole. So the rule scans application files without the gate,
-    and that makes the two agree on every recorded event.
+  CI runs. `lint` reads only its production roots (the `.scope include` list) and the application roots; it scans
+  a production file only when it is a matching path, holds one of the seven markers, or is in a layer and defines
+  `match(`; it scans application roots whole.
+  - The rule's `.scope` holds the roots; `ma_doc` applies the gate to every file except the application files the
+    caller names (`applicationPaths`, or a file under `applicationRoots`) and top-level `applications/`,
+    `application/`, `app/` files. No `lint` root holds the latter, so under `lint` they come only from an
+    application root; the direct `scan_sources` and `_scan_tree` events give such files without markers and expect
+    MA001. An `applications/` part elsewhere (say `impl/common/applications/x.py`) makes a file an application
+    file, but it still has to pass the gate.
+  - `data_layer_testing/matching_operator.py` is in the scope only for MA034, which reads its text; it is never
+    scanned.
+  - `scan_sources` scans every file it is given. The rule still gates files that are not named application paths.
   - MA033 and MA034 are `lint`'s own checks. `scan_sources` events are not compared on them.
 - **matching_architecture `--application-root`.** COVERAGE.md lists this as a gap. Here it is
   `.scope dirs option("applicationRoots")`, plus `ma_app` for the files under those roots. The recording passes
@@ -85,12 +90,24 @@ limit. `SKIP_BIG=1` in the wrapper leaves it out.
   In `class A: def m(): ... def m(): ...`, a call in the first `m` still counts for `ca_belongs`. The script would
   have replaced that method's entry. No event has that case.
 
+## Review fixes (counterexamples in `dl/review-c/`)
+
+- matching MA011: the forwarded position counts only positional parameters (`def run(txn, /, spec)` gives 1).
+- matching scan: `ma_owned` is gone; `.scope` holds the roots, and only named application files skip the gate.
+- matching MA004: a `try … except*` has no handlers (tree-sitter marks its clauses with a `*` token).
+- matching MA018: decorators come after the body, the return annotation last, as ast's fields are ordered. A
+  `.get` inside a nested def's decorators is still ordered by tree-sitter's preorder.
+- matching MA032: `d["working_memory_bytes", payload_bytes]` counts as a tuple.
+- conditional: the scope is the five fixed files; owners are typed (class or function) and carry the facts
+  module's messages; CONDA-003 looks through parentheses.
+
 ## Library and core changes
 
 None needed. The new vocabulary is in `lib/data-layer/match-frames.rr`:
 - `mf_class(n, k)`: the innermost class around n, through defs, as the scripts' class stack has it;
 - `mf_def(n, f)`: the innermost def around n, through classes, decorators included;
-- `mf_walk(n, o)`: n is in `ast.walk(o)`, decorators included.
+- `mf_walk(n, o)`: n is in `ast.walk(o)`, decorators included;
+- `mf_fn(c, x)` and `mf_call_name(c, x)`: the scripts' `_call_name` (a bare callee, or an attribute's last name).
 
 python/ast's `def_frame` covers defs only, and `nearest(…, "class_definition")` treats decorators as outside the
 class or def they decorate. The checks in other groups whose scripts keep `_class_stack` / `_function_stack` may
