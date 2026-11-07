@@ -741,6 +741,26 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
+    // `deco(cls: type[T]) -> type[T]` gives back the class it decorates, whatever its body returns (an unknown
+    // `wrap(cls)`): A stays A, so B's base is known and `b.m()` targets A.m. Only `wrap(cls)` is unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("classdec");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import TypeVar\nT = TypeVar(\"T\")\ndef deco(cls: type[T]) -> type[T]:\n    return wrap(cls)\n@deco\nclass A:\n    def m(self) -> int: ...\nclass B(A): ...\ndef f(b: B) -> None:\n    b.m()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 1, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 1, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

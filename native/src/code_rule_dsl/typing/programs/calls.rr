@@ -589,6 +589,15 @@ ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"),
     text(e2, v), tvar(g, v).
 ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
     text(e2, v), docof(g, d), mtvar(d, v).
+// A class decorator's form, `(cls: type[T]) -> type[T]`.
+ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), typeof_var(e, v), rann(g, r), ann(r, e2), typeof_var(e2, v), tvar(g, v).
+ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), typeof_var(e, v), rann(g, r), ann(r, e2), typeof_var(e2, v), docof(g, d), mtvar(d, v).
+// typeof_var(e, v): e is `type[v]` (or `Type[v]`), v a name.
+.decl typeof_var(e: node, v: symbol)
+typeof_var(e, v) :- kind(e, "generic_type"), child(e, h, 0), text(h, n), type_form(n), aarg(e, a), kind(a, "identifier"), text(a, v).
+typeof_var(e, v) :- kind(e, "subscript"), field(e, "value", h), text(h, n), type_form(n), aarg(e, a), kind(a, "identifier"), text(a, v).
+.decl type_form(n: symbol)
+type_form("type"). type_form("Type").
 
 // ---- values ---------------------------------------------------------------------------------------------------
 .decl attr_of(n: node, o: node, a: symbol)
