@@ -334,6 +334,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
                 }
             }
         }
+        all.nullary.extend(prog.nullary.iter().map(|rel|rename(rel)));
         for (rel, cols) in prog.decls {
             all.decls.entry(rename(&rel)).or_insert(cols);
         }
@@ -1339,7 +1340,7 @@ pub(crate) fn run_with_options(
         decoded.sort();
         decoded.dedup();
         let mut text = decoded.join("\n");
-        if !text.is_empty() {
+        if !decoded.is_empty() {
             text.push('\n');
         }
         std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;

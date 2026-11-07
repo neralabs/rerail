@@ -34,7 +34,7 @@ impl Database {
         *self.storage.borrow_mut() = Storage::default();
         self.flush_prepared_statement_cache();
     }
-    pub(super) fn ensure_idle(&self) -> rusqlite::Result<()> {
+    pub(in crate::code_rule_dsl) fn ensure_idle(&self) -> rusqlite::Result<()> {
         // SAFETY: this connection and its statements belong to the current worker.
         // SQLite retains the statement list until statements are finalized here.
         unsafe {

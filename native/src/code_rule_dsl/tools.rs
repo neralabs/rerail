@@ -38,15 +38,24 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
         program: Option<String>,
         dialect: Option<String>,
         max_waves: Option<u32>,
+        limits: Option<serde_json::Value>,
+        #[serde(default)]
+        indexes: Vec<Index>,
         #[serde(default)]
         queries: Vec<Query>,
+        #[serde(default)]
+        changes: Vec<Vec<serde_json::Value>>,
     }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Index { relation: String, columns: Vec<u32> }
     let request: Request = serde_json::from_str(request).map_err(|e| e.to_string())?;
     if request.snapshot.is_some() && request.stored.is_some() {
         return Err("a SQL request selects either stored documents or a snapshot".into());
     }
     let mut session = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).map_err(|e| e.to_string())?;
     let result = (|| -> napi::Result<serde_json::Value> {
+        if let Some(limits) = request.limits {session.set_limits(limits.to_string())?;}
         if let Some(snapshot) = request.snapshot {
             session.bind_snapshot(snapshot.to_string())?;
         }
@@ -57,12 +66,16 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
             session.bind_relation(relation.to_string())?;
         }
         let execution = request.program.map(|p| session.run(p, request.dialect.unwrap_or_else(|| "python".into()), request.max_waves)).transpose()?;
+        for index in request.indexes {session.create_index(index.relation,index.columns)?;}
+        let updates = request.changes.into_iter().map(|batch| {
+            session.apply_changes(serde_json::Value::Array(batch).to_string(),request.max_waves).and_then(|s|serde_json::from_str::<serde_json::Value>(&s).map_err(|e|napi::Error::from_reason(e.to_string())))
+        }).collect::<napi::Result<Vec<_>>>()?;
         let queries = request.queries.into_iter().map(|query| {
             let result = session.query(query.sql, Some(serde_json::to_string(&query.parameters).map_err(|e| napi::Error::from_reason(e.to_string()))?), query.max_rows)?;
             serde_json::from_str::<serde_json::Value>(&result).map_err(|e| napi::Error::from_reason(e.to_string()))
         }).collect::<napi::Result<Vec<_>>>()?;
         let execution = execution.map(|s| serde_json::from_str::<serde_json::Value>(&s)).transpose().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(serde_json::json!({"execution": execution, "queries": queries}))
+        Ok(serde_json::json!({"execution": execution, "updates":updates, "queries": queries}))
     })().map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result).map(|s| s + "\n").map_err(|e| e.to_string())
 }

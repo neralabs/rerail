@@ -143,6 +143,21 @@ fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Re
 
 /// The program's `.rr` text.
 pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
+    // Keep the public schema when printing frontend unit columns back to rule source.
+    let mut logical;
+    let prog = if prog.nullary.is_empty() { prog } else {
+        logical=prog.clone();
+        for name in &prog.nullary {
+            if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
+            for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
+        }
+        let decode=|a:&mut Atom|{if prog.nullary.contains(&a.rel){a.args.clear();}};
+        for rule in &mut logical.rules {
+            decode(&mut rule.head);
+            for lit in &mut rule.body{if let Literal::Atom(a)|Literal::Agg{atom:a,..}=lit{decode(a);}}
+        }
+        logical.nullary.clear();&logical
+    };
     let mut out = String::new();
     let kindsets: BTreeSet<&String> = prog.kindsets.keys().collect();
     for p in &prog.policies {

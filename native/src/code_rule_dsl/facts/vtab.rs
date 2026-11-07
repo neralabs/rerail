@@ -37,7 +37,9 @@ fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
 }
 
-/// An immutable relation of integer columns, read row by row.
+/// A relation of integer columns, stable while SQL cursors read it.
+/// A mutable owner must close every reader before changing rows, then refresh its binding
+/// and planner estimates. Most producers expose immutable snapshots.
 pub(crate) trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;

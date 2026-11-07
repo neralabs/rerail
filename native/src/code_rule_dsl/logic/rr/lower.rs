@@ -216,6 +216,7 @@ fn lower_boolean_relations(prog: &mut Program) {
     if names.is_empty() {
         return;
     }
+    prog.nullary.extend(names.iter().cloned());
     for name in &names {
         prog.decls.get_mut(name).unwrap().push(("rr_unit".to_owned(), "int".to_owned()));
         if let Some(rows) = prog.facts.get_mut(name) {

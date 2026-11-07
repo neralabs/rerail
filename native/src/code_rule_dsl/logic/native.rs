@@ -129,7 +129,7 @@ pub(in crate::code_rule_dsl) fn declare(name: &str, lattice: Arc<dyn Lattice>) {
     lattices.push((name.to_owned(), lattice));
 }
 
-fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
     LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
 }
