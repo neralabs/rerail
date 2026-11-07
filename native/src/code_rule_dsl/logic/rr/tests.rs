@@ -667,3 +667,35 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
     assert_eq!(read("given"), "38\n46\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Source scanners use str.splitlines(), while AST positions use physical lines.
+/// Keep both contracts, including long lines, empty lines and CRLF as one separator.
+#[test]
+fn python_split_lines_are_lossless_and_document_local() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("splitlines");
+    std::fs::create_dir_all(&dir).unwrap();
+    let long = "x".repeat(400);
+    let src = format!("{long}\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine\r\nten\releven\n");
+    std::fs::write(dir.join("a.py"), src).unwrap();
+    std::fs::write(dir.join("b.py"), "short").unwrap();
+    std::fs::write(dir.join("empty.py"), "").unwrap();
+    let program = r#"
+.decl split_line(d: number, l: number, t: symbol)
+.decl doc(d: number, p: symbol, m: symbol)
+.input split_line, doc
+.decl seen(p: symbol, l: number, t: symbol)
+seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
+.output seen
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let actual = std::fs::read_to_string(out.join("seen.csv")).unwrap();
+    let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
+    let mut expected: Vec<String> = lines.iter().enumerate().map(|(i, t)| format!("a.py\t{}\t{t}", i + 1)).collect();
+    expected.push("b.py\t1\tshort".to_owned());
+    let mut rows: Vec<&str> = actual.lines().collect();
+    rows.sort();
+    expected.sort();
+    assert_eq!(rows, expected);
+    let _ = std::fs::remove_dir_all(&dir);
+}
