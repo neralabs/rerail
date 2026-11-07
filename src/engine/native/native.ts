@@ -291,6 +291,8 @@ export interface NativeCodeRuleSqlExecutor {
   bindSnapshot(snapshotJson: string): void;
   /** Retain SQL results across source edits; unchanged files reuse native fact shards. */
   applySnapshot(snapshotJson: string, maxWaves?: number | null): string;
+  /** Atomic {upsert: snapshot files, delete: paths}; leaves unmentioned files and metadata in place. */
+  applyFileChanges(changesJson: string, maxWaves?: number | null): string;
   bindStored(scope: string, paths?: string[] | null): void;
   bindRelation(relationJson: string): void;
   /** Drop generated outputs while keeping fact bindings and registered extensions. */

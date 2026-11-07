@@ -1628,6 +1628,34 @@ fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
     rows
 }
 
+
+#[test]
+fn printed_guest_demand_rules_are_not_generated_again() {
+    for source in [r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl parsed(s: node, grammar: symbol, r: node)
+.input parsed
+.decl result(r: node)
+result(r) :- context(n, _), parsed(n, "annotation", r).
+.output result
+"#,r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl result(t: symbol)
+result(t) :- context(n, x), t = @parse("sql", x).
+.output result
+"#] {
+        let original = parse(source).unwrap();
+        assert!(original.rules.iter().any(|r|r.head.rel.starts_with("rr_")));
+        let mut current = original.clone();
+        for _ in 0..3 {
+            current = parse(&print(&current).unwrap()).unwrap();
+            assert!(difference(&original,&current).is_none(), "{:?}",difference(&original,&current));
+        }
+    }
+}
+
 /// A value document is its askers' files' (O96): two files asking for one text share a value, and each keeps its
 /// rows in the memo. A second run over the same files reads every file from the memo and gives the first run's rows.
 #[test]

@@ -449,14 +449,17 @@ impl Drop for HeldPlan<'_> {
     }
 }
 
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], reading: Option<crate::content_store::CollectionLease>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let fresh = store
         .record_corpus_run(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), now)
         .map_err(|e| Error::Plan(e.to_string()))?;
-    if !fresh || std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
+    // The manifest now protects the sources. Release before collection, including warm runs
+    // that must resume a pass deferred by another active reader.
+    drop(reading);
+    if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") || (!fresh && !store.corpus_collection_due().map_err(|e| Error::Plan(e.to_string()))?) {
         return Ok(None);
     }
     let mut policy = crate::content_store::CorpusPolicy::default();
@@ -677,6 +680,8 @@ pub(crate) fn run_with_options(
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
     let tapes = if cfg!(feature = "tape-cache") { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
+    // Hold before any source/stat lookup, through parsing, memo publication and the run manifest.
+    let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose().map_err(|e| Error::Plan(e.to_string()))?;
     let own_store;
     let store: &ContentStore = match &tapes {
         Some(cache) if t.is_none() => {
@@ -1273,7 +1278,7 @@ pub(crate) fn run_with_options(
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             for (d, path, source_id, _) in &chunk_docs {
                 let (Some(id), Some(entry)) = (source_id, entries.get(d)) else { continue };
-                memo::remember(store, *id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(e.to_string()))?;
+                memo::remember(store, *id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(format!("{path}: memo publication for source {id:?}: {e}")))?;
             }
         } else if memoised {
             memo_unattributed += 1;
@@ -1292,12 +1297,12 @@ pub(crate) fn run_with_options(
     crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || worker.join()).map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
-    // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
-    let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program)? } else { None };
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
     }
+    // Publish all source references before releasing the lease and starting collection (decision 0053).
+    let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program, reading)? } else { drop(reading); None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -2120,6 +2125,28 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "tape-cache")]
+    #[test]
+    fn a_warm_run_resumes_deferred_collection() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("rerail-warm-collection-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&path).unwrap();
+        let source = store.put_source(b"rooted", &[]).unwrap();
+        let orphan_hash = crate::content_store::HashKey::sha256(b"unrooted");
+        store.put_source(b"unrooted", &[]).unwrap();
+        store.collect(100, 100).unwrap();
+        let root = path.with_extension("root");
+        let program = [7; 32];
+        // Simulate another active run deferring the first run's background collection.
+        let reader = store.hold_collection().unwrap();
+        super::record_run(&store, &root, &[source], &program, None).unwrap().unwrap().join().unwrap().1.unwrap();
+        assert!(store.corpus_collection_due().unwrap());
+        // Same files and plan: the manifest is unchanged, but pending collection must still run.
+        super::record_run(&store, &root, &[source], &program, Some(reader)).unwrap().unwrap().join().unwrap().1.unwrap();
+        assert!(!store.corpus_collection_due().unwrap());
+        assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
+    }
+
     #[test]
     fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
         assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");

@@ -214,13 +214,61 @@ fn insert_query(db: &rusqlite::Connection, table: &str, q: &Query) -> Result<usi
     .map_err(error)
 }
 fn anchor(q: &mut Query, at: usize) {
-    let delta = q.body.from.remove(at);
-    q.body.from.insert(0, delta);
+    let mut delta = q.body.from.remove(at);
+    if let Join::On(conditions) = std::mem::replace(&mut delta.join, Join::Cross) {
+        q.body.predicates.extend(conditions);
+    }
     for item in &mut q.body.from {
         if let Join::On(conditions) = std::mem::replace(&mut item.join, Join::Cross) {
             q.body.predicates.extend(conditions);
         }
     }
+    // A changed document can bind a native node before it binds a retained walk. Keep the
+    // small delta outermost, then prefer joins connected to aliases already bound. Keeping
+    // the original tail order can scan every walk row before testing the document.
+    let mut bound = BTreeSet::from([delta.alias.clone()]);
+    let mut ordered = vec![delta];
+    while !q.body.from.is_empty() {
+        let score = |alias: &str| {
+            q.body
+                .predicates
+                .iter()
+                .filter(|e| {
+                    let E::Binary {
+                        operator: B::Equal,
+                        left,
+                        right,
+                    } = e
+                    else {
+                        return false;
+                    };
+                    let mut aliases = BTreeSet::new();
+                    for expr in [left, right] {
+                        expr.visit(&mut |e| {
+                            if let E::Qualified { alias, .. } = e {
+                                aliases.insert(alias.clone());
+                            }
+                        });
+                    }
+                    aliases.contains(alias)
+                        && aliases.iter().any(|a| bound.contains(a))
+                        && aliases.iter().all(|a| a == alias || bound.contains(a))
+                })
+                .count()
+        };
+        let at = q
+            .body
+            .from
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, f)| (score(&f.alias), std::cmp::Reverse(*i)))
+            .unwrap()
+            .0;
+        let next = q.body.from.remove(at);
+        bound.insert(next.alias.clone());
+        ordered.push(next);
+    }
+    q.body.from = ordered;
 }
 fn targeted(mut q: Query, table: &str) -> Query {
     let alias = "rr_update_target";
@@ -405,8 +453,9 @@ pub(super) fn maintain(
             }
             continue;
         }
-        // Current native inputs plus deleted rows retain their native lookup paths. SQL results
-        // use separate query variants, so SQLite never materializes an old-input UNION view.
+        // Native inputs keep their indexed overlays. SQL results temporarily restore their
+        // old membership inside the batch savepoint, using only row deltas and existing indexes.
+        // This costs only the deletion set, without distributing joins over 2^N alternatives.
         let mut overlays = overlay::Overlays::new(w.db);
         let mut old_inputs = BTreeMap::new();
         let mut sql_deleted = BTreeMap::new();
@@ -431,6 +480,34 @@ pub(super) fn maintain(
                     }
                 }
             }
+        }
+        for (r, (minus, width)) in &sql_deleted {
+            // A lattice key can have different old and new values. Remove insertions first
+            // so the old value fits its unique key. Never materialize the complete relation.
+            if changes[r].inserted > 0 {
+                let cols = (0..*width)
+                    .map(|i| format!("c{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                w.db.execute(
+                    &format!(
+                        "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                        quote(r),
+                        quote(&changes[r].plus)
+                    ),
+                    [],
+                )
+                .map_err(error)?;
+            }
+            w.db.execute(
+                &format!(
+                    "INSERT OR IGNORE INTO {} SELECT * FROM {}",
+                    quote(r),
+                    quote(minus)
+                ),
+                [],
+            )
+            .map_err(error)?;
         }
         let mut over = BTreeMap::new();
         let mut front = BTreeMap::new();
@@ -479,29 +556,8 @@ pub(super) fn maintain(
                             .map_err(error)?
                             .column_count();
                     variant.body.from[i].relation = source(delta, width);
-                    // Distribute old SQL-table reads over current/deleted alternatives. The
-                    // delta anchor stays first, and every branch uses the original table indexes.
-                    let mut variants = vec![variant];
-                    for (j, rel) in atoms(q) {
-                        if j == i {
-                            continue;
-                        }
-                        if let Some((table, width)) = sql_deleted.get(&rel) {
-                            let deleted = variants
-                                .iter()
-                                .map(|v| {
-                                    let mut v = v.clone();
-                                    v.body.from[j].relation = source(table, *width);
-                                    v
-                                })
-                                .collect::<Vec<_>>();
-                            variants.extend(deleted);
-                        }
-                    }
-                    for mut variant in variants {
-                        anchor(&mut variant, i);
-                        w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
-                    }
+                    anchor(&mut variant, i);
+                    w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
                 }
             }
             for r in &group {
@@ -521,6 +577,34 @@ pub(super) fn maintain(
                 break;
             }
             deletions += 1;
+        }
+        // Restore current membership before rederivation or downstream work. Any error above
+        // rolls back the whole savepoint, including temporarily removed insertions.
+        for (r, (minus, width)) in &sql_deleted {
+            let cols = (0..*width)
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            w.db.execute(
+                &format!(
+                    "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                    quote(r),
+                    quote(minus)
+                ),
+                [],
+            )
+            .map_err(error)?;
+            if changes[r].inserted > 0 {
+                w.db.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO {} SELECT * FROM {}",
+                        quote(r),
+                        quote(&changes[r].plus)
+                    ),
+                    [],
+                )
+                .map_err(error)?;
+            }
         }
         drop(overlays);
         let mut removed = BTreeMap::new();

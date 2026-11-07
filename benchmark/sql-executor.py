@@ -47,7 +47,7 @@ def cases(corpus):
             ],
             "queries": ["SELECT count(*),sum(c0),sum(c1) FROM reach"],
         }))
-    for n in [100, 1000]:
+    for n in [100, 1000, 10000]:
         files = [{"path": f"m{i}.py", "language": "python", "source": f"def f{i}():\n    x{i} = 1\n    return x{i}\n"} for i in range(n)]
         initial = {"files": files}
         edited = {"files": [{**files[0], "source": files[0]["source"] + "extra = 2\n"}, *files[1:]]}
@@ -56,6 +56,10 @@ def cases(corpus):
             "program": ".decl name(n:node,s:symbol)\n.input name\n.decl named(n:node,s:symbol)\nnamed(n,s) :- name(n,s).\n.decl total(k:number)\ntotal(k) :- k = count : {name(_,_)}.\n.output named,total\n",
             "snapshots": [edited, initial, edited, initial],
             "queries": ["SELECT * FROM total", "SELECT count(*) FROM named"],
+        }))
+        result.append((f"update-native-files-{n}", {
+            **result[-1][1], "snapshots": [],
+            "file_changes": [{"upsert": [edited["files"][0]]}, {"upsert": [files[0]]}, {"upsert": [edited["files"][0]]}, {"upsert": [files[0]]}],
         }))
     for n in [10000, 100000]:
         result.append((f"update-reducers-{n}", {
@@ -216,6 +220,9 @@ def validate(name, request, result):
             assert update["rebuilt_files"] == 1, update
             assert update["changed_files"] == ["m0.py"], update
             assert not update["programs"][0]["refreshed_strata"], update
+            if name.startswith("update-native-files-"):
+                assert update["examined_files"] == 1, update
+                assert update["metadata_nodes"] < 2000, update
         return "passed"
     if name.startswith("update-reducers-"):
         n=int(name.split("-")[-1]);total=[n-1,sum(i%31 for i in range(n)),0,30]
