@@ -1,0 +1,2419 @@
+{
+  "format": "rerail.rr-recorded-detector-parity/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "scope": "Recorded detector DTO parity only; excludes helper, host, configured, mutation and persistent-workspace acceptance",
+  "rules": [
+    {
+      "check": "generated_index_sources",
+      "status": "recorded-detector-parity",
+      "ruleSha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+      "engineSha256": "37499a4464f3abcc987d107a7c760ae525f8a459680b1a954b58edb6118a2829",
+      "corpusSha256": "f143ce0c5f6b596444c8763d12943f9b9c4dc7e075fcc32be9778376c5b02e9d",
+      "observations": 24,
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "2887260c7eb2fd90f813a9a89867efa69d517e20c6f7195f541307f85f2e4311"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1"
+        }
+      ],
+      "positives": 13,
+      "results": [
+        {
+          "index": 0,
+          "test": "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 1,
+          "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 2,
+          "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:1: _generated_index must require a source: IndexSource parameter",
+            "generic_sparse.py:2: _generated_index must forward source=source into Index(...)"
+          ],
+          "actual": [
+            "generic_sparse.py:1: _generated_index must require a source: IndexSource parameter",
+            "generic_sparse.py:2: _generated_index must forward source=source into Index(...)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 3,
+          "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
+          ],
+          "actual": [
+            "generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 4,
+          "test": "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 5,
+          "test": "::test_generated_index_forms[def _generated_index(*, source: IndexSource):\\n    return Index(source=source)\\n]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 6,
+          "test": "::test_generated_index_forms[def _generated_index(*, source: \"IndexSource\"):\\n    return Index(source=source)\\n]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:1: _generated_index source parameter must be annotated as IndexSource"
+          ],
+          "actual": [
+            "generic_sparse.py:1: _generated_index source parameter must be annotated as IndexSource"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 7,
+          "test": "::test_generated_index_forms[async def _generated_index(*, source):\\n    return Index(source=source)\\n]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 8,
+          "test": "::test_generated_index_forms[from l1000_schema.schema_def import Index as Idx\\nIdx()\\n]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 9,
+          "test": "::test_generated_index_forms[import l1000_schema.schema_def as sd\\nsd.Index()\\n]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 10,
+          "test": "::test_generated_index_forms[def outer():\\n    def _generated_index(*, source: IndexSource):\\n        return Index(source=source)\\n]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 11,
+          "test": "::test_generated_check_source_reads_the_file",
+          "entry": "check_source",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:1: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:1: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 12,
+          "test": "::test_complete_shape_result[shift-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 13,
+          "test": "::test_complete_shape_result[shift-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 14,
+          "test": "::test_complete_shape_result[normalized-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 15,
+          "test": "::test_complete_shape_result[normalized-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 16,
+          "test": "::test_complete_shape_result[parentheses-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 17,
+          "test": "::test_complete_shape_result[parentheses-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 18,
+          "test": "::test_complete_shape_result[control-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 19,
+          "test": "::test_complete_shape_result[control-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 20,
+          "test": "::test_complete_shape_result[duplicate-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 21,
+          "test": "::test_complete_shape_result[duplicate-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 22,
+          "test": "::test_complete_shape_result[shadow-generated_index_sources-clean]",
+          "entry": "check_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 23,
+          "test": "::test_complete_shape_result[shadow-generated_index_sources-positive]",
+          "entry": "check_file",
+          "positive": true,
+          "expected": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "actual": [
+            "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+          ],
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "check": "hnsw_architecture",
+      "status": "recorded-detector-parity",
+      "ruleSha256": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
+      "engineSha256": "37499a4464f3abcc987d107a7c760ae525f8a459680b1a954b58edb6118a2829",
+      "corpusSha256": "f143ce0c5f6b596444c8763d12943f9b9c4dc7e075fcc32be9778376c5b02e9d",
+      "observations": 61,
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
+          "sha256": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100"
+        }
+      ],
+      "positives": 52,
+      "results": [
+        {
+          "index": 0,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[from grammar import SqlJsonIndexSet as mutate\\nmutate(state, key, value)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 1,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[from grammar import SqlJsonBuild\\nSqlJsonBuild(name, args)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 2,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[import json as codec\\ncodec.dumps(state)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 3,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[import grammar as g\\ng.SqlJsonArrayElements(state)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 4,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[SqlFuncCall(SqlFunctionName('jsonb_set'), args)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 5,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[SqlFragment.static('SELECT JSON_EXTRACT(state, path)')\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 6,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[SqlCast(value, SqlCastTargetType(base_type='JSONB'))\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 7,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_rejects_json_manipulation[from grammar.tree.json_member import membership\\nmembership(state, key)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 8,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_accepts_relational_state",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 9,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_json_rejection_does_not_depend_on_module_contents",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/operation.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/operation.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 10,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_architecture_linter_rejects_deleted_algorithms",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 11,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_architecture_linter_rejects_epoch_recovery",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "epoch_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlHnswEpochRecoveryStep"
+            }
+          ],
+          "actual": [
+            {
+              "path": "epoch_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlHnswEpochRecoveryStep"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 12,
+          "test": "scripts/tests/test_lint_hnsw_architecture.py::test_hnsw_algorithm_rejects_backend_imports_and_custom_render",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 13,
+          "test": "::test_hnsw_text_and_parser_forms[\"json route_partition\"\\njsonb_set(state)\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 14,
+          "test": "::test_hnsw_text_and_parser_forms[def f():\\n    \"json\"\\n    return \"json\"\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 15,
+          "test": "::test_hnsw_text_and_parser_forms[class A:\\n    \"JSONB\"\\n    pass\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 16,
+          "test": "::test_hnsw_text_and_parser_forms[from grammar import SqlJsonBuild as build\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 17,
+          "test": "::test_hnsw_text_and_parser_forms[json = (\\n]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 18,
+          "test": "::test_hnsw_forbidden_artifact_is_reported_before_parsing",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 19,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 3,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 7,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 3,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 7,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 20,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 4,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 4,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 21,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 5,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 5,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 22,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 5,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 5,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 23,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 24,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 25,
+          "test": "::test_complete_shape_result[shift-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 26,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 27,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 28,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 29,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 30,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 31,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 32,
+          "test": "::test_complete_shape_result[normalized-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 33,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 34,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 35,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 36,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 37,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 38,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 39,
+          "test": "::test_complete_shape_result[parentheses-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 40,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 3,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 7,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 3,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 7,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 41,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 42,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 43,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 44,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 45,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 46,
+          "test": "::test_complete_shape_result[control-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 47,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 4,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 9,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 4,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 9,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 48,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 3,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 49,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 50,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 2,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 4,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 51,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 52,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 53,
+          "test": "::test_complete_shape_result[duplicate-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 54,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW001]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            }
+          ],
+          "actual": [
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 1,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 5,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 6,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+            },
+            {
+              "path": "forbidden_hnsw.py",
+              "line": 8,
+              "code": "HNSW001",
+              "message": "forbidden pseudo-HNSW definition: SqlTableHnswScopedRebuild"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 55,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW002]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW002",
+              "message": "forbidden pseudo-HNSW state: route_partition"
+            },
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 2,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 56,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW003]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 6,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 6,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 57,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW004]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 6,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "actual": [
+            {
+              "path": "algorithm.py",
+              "line": 1,
+              "code": "HNSW003",
+              "message": "algorithm imports backend implementation: impl.sqlite.connection"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 3,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            },
+            {
+              "path": "algorithm.py",
+              "line": 6,
+              "code": "HNSW004",
+              "message": "algorithm defines a custom render method"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 58,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW006]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "actual": [
+            {
+              "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+              "line": 1,
+              "code": "HNSW006",
+              "message": "forbidden HNSW module exists"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 59,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-HNSW007]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": true,
+          "expected": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "actual": [
+            {
+              "path": "sql_table_hnsw/state.py",
+              "line": 1,
+              "code": "HNSW007",
+              "message": "HNSW must use indexed SQL rows, not JSON operations"
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 60,
+          "test": "::test_complete_shape_result[shadow-hnsw_architecture-clean]",
+          "entry": "find_hnsw_architecture_findings",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "check": "removed_compat_surfaces",
+      "status": "recorded-detector-parity",
+      "ruleSha256": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120",
+      "engineSha256": "37499a4464f3abcc987d107a7c760ae525f8a459680b1a954b58edb6118a2829",
+      "corpusSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8",
+      "observations": 4,
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
+          "sha256": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120"
+        }
+      ],
+      "positives": 3,
+      "results": [
+        {
+          "index": 0,
+          "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_compatibility_surface_is_rejected",
+          "entry": "scan_file",
+          "positive": true,
+          "expected": [
+            {
+              "path": "removed_surface.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface '_coalesce_branch_tip_materialization_alias' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "actual": [
+            {
+              "path": "removed_surface.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface '_coalesce_branch_tip_materialization_alias' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 1,
+          "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_runtime_surface_is_rejected",
+          "entry": "scan_file",
+          "positive": true,
+          "expected": [
+            {
+              "path": "removed_timer_surface.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'ApplyClaimedTimersConfig' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "actual": [
+            {
+              "path": "removed_timer_surface.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'ApplyClaimedTimersConfig' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 2,
+          "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_claim_and_scheduler_tick_surfaces_are_rejected",
+          "entry": "scan_file",
+          "positive": true,
+          "expected": [
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'TimerClaim' must not be reintroduced",
+              "severity": null
+            },
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 3,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'SchedulerTick' must not be reintroduced",
+              "severity": null
+            },
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 5,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'dispatch_due_jobs' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "actual": [
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 1,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'TimerClaim' must not be reintroduced",
+              "severity": null
+            },
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 3,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'SchedulerTick' must not be reintroduced",
+              "severity": null
+            },
+            {
+              "path": "removed_timer_scheduler_surfaces.py",
+              "line": 5,
+              "column": null,
+              "code": "RCS001",
+              "message": "removed compatibility surface 'dispatch_due_jobs' must not be reintroduced",
+              "severity": null
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 3,
+          "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_unrelated_symbols_are_accepted",
+          "entry": "scan_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "status": "recorded-detector-parity",
+      "ruleSha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514",
+      "engineSha256": "37499a4464f3abcc987d107a7c760ae525f8a459680b1a954b58edb6118a2829",
+      "corpusSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8",
+      "observations": 3,
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
+          "sha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514"
+        }
+      ],
+      "positives": 1,
+      "results": [
+        {
+          "index": 0,
+          "test": "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases",
+          "entry": "scan_file",
+          "positive": true,
+          "expected": [
+            {
+              "path": "versioned_transaction.py",
+              "line": 3,
+              "column": null,
+              "code": "VLL001",
+              "message": "BackendVersionedWriteTransaction.commit_branch shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering.",
+              "severity": null
+            }
+          ],
+          "actual": [
+            {
+              "path": "versioned_transaction.py",
+              "line": 3,
+              "column": null,
+              "code": "VLL001",
+              "message": "BackendVersionedWriteTransaction.commit_branch shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering.",
+              "severity": null
+            }
+          ],
+          "status": "passed"
+        },
+        {
+          "index": 1,
+          "test": "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases",
+          "entry": "scan_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        },
+        {
+          "index": 2,
+          "test": "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases",
+          "entry": "scan_file",
+          "positive": false,
+          "expected": [],
+          "actual": [],
+          "status": "passed"
+        }
+      ]
+    }
+  ],
+  "historical": true,
+  "supersededReason": "Initial frozen-build detector evidence; current engine and libraries require fresh reports. Never full migration acceptance."
+}

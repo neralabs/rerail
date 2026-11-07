@@ -91,11 +91,7 @@ impl Projection {
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>) -> Self {
-        static CORE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-        let core = CORE.get_or_init(|| {
-            let path = crate::code_rule_dsl::logic::rr::library().join("core.rr");
-            std::fs::read_to_string(path).ok().and_then(|src| crate::code_rule_dsl::logic::rr::parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
-        });
+        let core = crate::code_rule_dsl::logic::rr::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
         let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
@@ -823,6 +819,7 @@ impl Batch {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
         drop(intern);
         let atom = |i: i64| i64::from(atoms[i as usize]);
@@ -1040,7 +1037,7 @@ impl Source for Viewed {
         })
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.value_at(row, column)
+        self.row_value(row, column)
     }
 }
 impl Viewed {
@@ -1087,8 +1084,29 @@ impl Viewed {
         }
         Some(rows)
     }
-    fn value_at(&self, row: usize, column: usize) -> i64 {
+    fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
+        self.value_at(p, i, column)
+    }
+    /// Document by document, with no search for each row's document.
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        let offsets = self.batch.offsets(self.view);
+        let mut out = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            for i in 0..offsets[doc + 1] - base {
+                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+                    out.push((base + i) as u32);
+                }
+            }
+        }
+        out
+    }
+}
+
+impl Viewed {
+    /// Column `column` of row `i` of document `p` in this view.
+    fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
         if let View::Loc(place) = self.view {
             let local = i as u32;
             if column == 0 {
@@ -1271,21 +1289,6 @@ impl Source for PyFamily {
 }
 
 impl Batch {
-    /// The batch's trees for the file-local FIX: per node row, its parent's row (or `file_local::NONE`)
-    /// and its kind atom, as `node.kind` reads it.
-    fn trees(&self) -> (Vec<u32>, Vec<i64>) {
-        let n = *self.nodes.last().unwrap_or(&0);
-        let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        for (doc, p) in self.docs.iter().enumerate() {
-            for local in 0..p.len() as usize {
-                let up = p.parent[local];
-                parent.push(if up == NONE { crate::code_rule_dsl::typing::file_local::NONE } else { (self.nodes[doc] + up as usize) as u32 });
-                let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
-                kind.push(i64::from(kind_atom(p.tag, self.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16))));
-            }
-        }
-        (parent, kind)
-    }
     /// The node id of row `row` of the node view.
     fn id(&self, row: usize) -> i64 {
         let (p, local) = self.locate(View::Node, row);
@@ -1293,70 +1296,11 @@ impl Batch {
     }
 }
 
-/// `nearest_<set>(n, a)`: `a` is `n`'s nearest strict ancestor of a kind in the set, a row per node that has
-/// one, by `n` and by `a`; or `inside_<set>(n, a)`, a row per such ancestor (decision 0036). Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
-/// of the batch (`u32`), ids made on read.
-struct Nearest {
-    batch: Arc<Batch>,
-    /// Per row, its node and its ancestor (node rows), ascending by node.
-    node: Vec<u32>,
-    ancestor: Vec<u32>,
-    /// The rows ascending by ancestor, made on the first lookup by ancestor: a program that only climbs (`n` bound,
-    /// as T's do) never sorts them.
-    by_ancestor: std::sync::OnceLock<Vec<u32>>,
-}
-
-impl Nearest {
-    /// The node row of id `v`.
-    fn row_of(&self, v: i64) -> Option<u32> {
-        let (doc, local) = self.batch.node(v)?;
-        Some((self.batch.nodes[doc] + local as usize) as u32)
-    }
-}
-
-impl Source for Nearest {
-    fn columns(&self) -> Vec<String> {
-        vec!["n".to_owned(), "a".to_owned()]
-    }
-    fn len(&self) -> usize {
-        self.node.len()
-    }
-    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let per = if column == 0 { 2 } else { 16 };
-        if batch { per * 8 } else { per }
-    }
-    fn indexed(&self, column: usize) -> bool {
-        column < 2
-    }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let mut out = Vec::new();
-        for &v in values {
-            let Some(at) = self.row_of(v) else { continue };
-            if column == 0 {
-                // One row per node for `nearest_<set>`, a run of them for `inside_<set>`.
-                let start = self.node.partition_point(|&r| r < at);
-                out.extend((start..self.node.len()).take_while(|&r| self.node[r] == at));
-            } else {
-                let by_ancestor = self.by_ancestor.get_or_init(|| {
-                    let mut rows: Vec<u32> = (0..self.node.len() as u32).collect();
-                    rows.sort_unstable_by_key(|&r| (self.ancestor[r as usize], self.node[r as usize]));
-                    rows
-                });
-                let start = by_ancestor.partition_point(|&r| self.ancestor[r as usize] < at);
-                out.extend(by_ancestor[start..].iter().take_while(|&&r| self.ancestor[r as usize] == at).map(|&r| r as usize));
-            }
-        }
-        Some(out)
-    }
-    fn value(&self, row: usize, column: usize) -> i64 {
-        self.batch.id(if column == 0 { self.node[row] } else { self.ancestor[row] } as usize)
-    }
-}
-
-/// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms),
-/// made by the transducer's file-local FIX bound as `binding`: `rr_nearest_<set>(n, a)`, the nearest ancestor in the
-/// set, `rr_inside_<set>(n, a)`, every one (decision 0036), or `rr_has_<set>(n, a)`, n in the set and a each of its
-/// strict ancestors.
+/// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms):
+/// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
+/// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
+/// (`within::Axis`); `binding` (the transducer's file-local FIX, `typing::file_local::nearest`) no longer makes them
+/// for the whole batch first (O87).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -1365,13 +1309,14 @@ pub(crate) fn with_nearest(
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    use crate::code_rule_dsl::typing::file_local;
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let (batch, relations, (strings, symbols)) = Batch::build(store, documents, projection)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
     for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
         let mut r = Relation::new(&["s"]);
         rows.into_iter().for_each(|s| r.push(&[s]));
@@ -1381,46 +1326,20 @@ pub(crate) fn with_nearest(
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().map(|(name, source)| (name.to_owned(), source)));
     drop(viewing);
+    // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
+    // no join binds, cost nothing. Their statistics come from the tree.
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
-    let (parent, kind) = batch.trees();
     use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
-    // `rr_has_<set>` needs no nearest ancestors: it is read off the parents.
-    let kinds: Vec<Vec<i64>> = sets.iter().filter(|(name, _)| !name.starts_with(DESCENDANTS)).map(|(_, kinds)| kinds.clone()).collect();
-    let mut found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?.into_iter();
+    let _ = binding;
     for (name, members) in sets {
-        let (mut node, mut ancestor) = (Vec::new(), Vec::new());
-        if name.starts_with(DESCENDANTS) {
-            // `rr_has_<set>` (`core.rr`'s `has`): every node of a kind in the set, with each of its strict ancestors.
-            let members: std::collections::HashSet<i64> = members.iter().copied().collect();
-            for (row, k) in kind.iter().enumerate() {
-                if !members.contains(k) {
-                    continue;
-                }
-                let mut a = parent[row];
-                while a != file_local::NONE {
-                    node.push(row as u32);
-                    ancestor.push(a);
-                    a = parent[a as usize];
-                }
-            }
-            out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
-            continue;
-        }
-        let ancestors = found.next().expect("one nearest ancestor list per set");
-        // `rr_inside_<set>` (decision 0036): every ancestor in the set, the chain of nearest ones.
-        let all = name.starts_with(AXIS);
-        for (row, &first) in ancestors.iter().enumerate() {
-            let mut a = first;
-            while a != file_local::NONE {
-                node.push(row as u32);
-                ancestor.push(a);
-                if !all {
-                    break;
-                }
-                a = ancestors[a as usize];
-            }
-        }
-        out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
+        let axis = if name.starts_with(DESCENDANTS) {
+            within::Axis::Has
+        } else if name.starts_with(AXIS) {
+            within::Axis::Inside
+        } else {
+            within::Axis::Nearest
+        };
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
     }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
     out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));

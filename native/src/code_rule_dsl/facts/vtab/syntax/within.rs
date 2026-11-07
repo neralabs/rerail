@@ -13,6 +13,10 @@
 //! - **The nodes it holds** (`outer` bound): its subtree, its ancestors with the same span, and the
 //!   document's nodes of zero width inside its span.
 //!
+//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
+//!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
+//!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
+//!
 //! Rows are made per node a join looks up (nothing for a node never bound), kept for the batch, and
 //! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
 //! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
@@ -31,6 +35,19 @@ pub(super) enum Mode {
     Tree,
     /// Span inside span, equal spans included.
     Span,
+    /// Strictly below an ancestor of a kind in a set (`Within::axis`).
+    Axis(Axis),
+}
+
+/// A kind-set axis: which ancestors of `n` are its rows' `a`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Axis {
+    /// The nearest one in the set.
+    Nearest,
+    /// Every one in the set.
+    Inside,
+    /// Every one, where `n` is in the set.
+    Has,
 }
 
 /// Rows live in chunks of doubling size: chunk `k` holds `BASE << k` rows.
@@ -50,9 +67,20 @@ pub(super) struct Within {
     all: OnceLock<usize>,
     /// Per document, its nodes of zero width (locals).
     zero: OnceLock<Vec<Vec<u32>>>,
-    /// Rows (the sum of depth + 1), the sum of squared containers and of squared subtree sizes.
-    shape: OnceLock<(i64, i64, i64, i64)>,
+    /// The rows' count and per column its distinct values and the sum of its postings' squares, from the tree.
+    shape: OnceLock<Shape>,
     len: AtomicUsize,
+    /// An axis's set: per dialect tag, whether each kind code is in it.
+    members: FxHashMap<u8, Box<[bool]>>,
+}
+
+/// Statistics from the tree (`Within::shape`): rows, and per column (`n`, `a`) distinct values and the sum of
+/// squared postings.
+#[derive(Clone, Copy)]
+struct Shape {
+    rows: i64,
+    ndv: [i64; 2],
+    sq: [i64; 2],
 }
 
 fn slot(row: usize) -> (usize, usize) {
@@ -72,7 +100,33 @@ impl Within {
             zero: OnceLock::new(),
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
+            members: FxHashMap::default(),
         }
+    }
+
+    /// The axis `axis` over the set of kind atoms `kinds`. Nothing is made until a join reads it.
+    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64]) -> Self {
+        use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
+        let kinds: rustc_hash::FxHashSet<i64> = kinds.iter().copied().collect();
+        let members = batch
+            .dialects
+            .iter()
+            .map(|(&tag, d)| {
+                let table = (0..KIND_STRIDE as usize)
+                    .map(|code| kinds.contains(&i64::from(kind_atom(tag, d.canonical.get(code).copied().unwrap_or(code as u16)))))
+                    .collect();
+                (tag, table)
+            })
+            .collect();
+        Within { members, ..Within::new(batch, Mode::Axis(axis)) }
+    }
+
+    /// Whether node `local` of document `doc` is of a kind in the axis's set.
+    fn member(&self, doc: usize, local: u32) -> bool {
+        use crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let p = &self.batch.docs[doc];
+        let code = (p.facts.kind[p.core[local as usize] as usize] % KIND_STRIDE) as usize;
+        self.members.get(&p.tag).is_some_and(|t| t[code])
     }
 
     /// The document and local node of node row `row`.
@@ -101,6 +155,23 @@ impl Within {
     /// The nodes (locals) that hold `local`.
     fn containers(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if let Mode::Axis(axis) = self.mode {
+            let mut out = Vec::new();
+            if axis == Axis::Has && !self.member(doc, local) {
+                return out;
+            }
+            let mut up = p.parent[local as usize];
+            while up != NONE {
+                if axis == Axis::Has || self.member(doc, up) {
+                    out.push(up);
+                    if axis == Axis::Nearest {
+                        break;
+                    }
+                }
+                up = p.parent[up as usize];
+            }
+            return out;
+        }
         if self.mode == Mode::Tree {
             let mut out = Vec::new();
             let mut up = p.parent[local as usize];
@@ -142,6 +213,23 @@ impl Within {
     /// The nodes (locals) that `local` holds.
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if let Mode::Axis(axis) = self.mode {
+            let end = local + p.size[local as usize];
+            return match axis {
+                _ if axis != Axis::Has && !self.member(doc, local) => Vec::new(),
+                Axis::Inside => (local + 1..=end).collect(),
+                Axis::Has => (local + 1..=end).filter(|&n| self.member(doc, n)).collect(),
+                Axis::Nearest => {
+                    // The subtree, less what lies below a nearer member: its nearest is that member or lower.
+                    let (mut out, mut n) = (Vec::new(), local + 1);
+                    while n <= end {
+                        out.push(n);
+                        n += if self.member(doc, n) { p.size[n as usize] + 1 } else { 1 };
+                    }
+                    out
+                }
+            };
+        }
         if self.mode == Mode::Tree {
             return (local + 1..=local + p.size[local as usize]).collect();
         }
@@ -194,7 +282,7 @@ impl Within {
 
     fn names(&self) -> [&'static str; 2] {
         match self.mode {
-            Mode::Tree => ["n", "a"],
+            Mode::Tree | Mode::Axis(_) => ["n", "a"],
             Mode::Span => ["inner", "outer"],
         }
     }
@@ -205,8 +293,11 @@ impl Within {
         self.chunks[side][k].get().expect("a row made")[at].load(Ordering::Relaxed)
     }
 
-    fn shape(&self) -> (i64, i64, i64, i64) {
+    fn shape(&self) -> Shape {
         *self.shape.get_or_init(|| {
+            if let Mode::Axis(axis) = self.mode {
+                return self.axis_shape(axis);
+            }
             let (mut rows, mut nodes, mut sq_inner, mut sq_outer) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
                 for l in 0..p.len() as usize {
@@ -219,8 +310,47 @@ impl Within {
                     sq_outer += s * s;
                 }
             }
-            (rows, nodes, sq_inner, sq_outer)
+            Shape { rows, ndv: [nodes, nodes], sq: [sq_inner, sq_outer] }
         })
+    }
+
+    /// An axis's statistics, from one pass over each document's nodes in preorder: its members, the nodes below
+    /// one (`covered`), the members' subtree sizes and depths. Exact rows; postings of the side that holds several
+    /// rows per value are spread evenly where the tree does not give them.
+    fn axis_shape(&self, axis: Axis) -> Shape {
+        let (mut members, mut covered, mut below, mut below_sq, mut above, mut above_sq, mut nodes) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            // The end of the outermost member's subtree the walk is in.
+            let mut until: Option<u32> = None;
+            for l in 0..p.len() {
+                nodes += 1;
+                if until.is_some_and(|u| l <= u) {
+                    covered += 1;
+                }
+                if !self.member(doc, l) {
+                    continue;
+                }
+                if !until.is_some_and(|u| l <= u) {
+                    until = Some(l + p.size[l as usize]);
+                }
+                let (s, d) = (i64::from(p.size[l as usize]), i64::from(p.depth[l as usize]));
+                members += 1;
+                below += s;
+                below_sq += s * s;
+                above += d;
+                above_sq += d * d;
+            }
+        }
+        let spread = |rows: i64, ndv: i64| rows * rows / ndv.max(1);
+        match axis {
+            // A member that is a leaf holds no row: at most one value per row.
+            Axis::Nearest => Shape { rows: covered, ndv: [covered, members.min(covered)], sq: [covered, spread(covered, members.min(covered))] },
+            Axis::Inside => Shape { rows: below, ndv: [covered, members.min(below)], sq: [spread(below, covered), below_sq] },
+            Axis::Has => {
+                let ancestors = above.min(nodes);
+                Shape { rows: above, ndv: [members, ancestors], sq: [above_sq, spread(above, ancestors)] }
+            }
+        }
     }
 }
 
@@ -238,11 +368,11 @@ impl Source for Within {
         })
     }
     fn estimated_len(&self) -> usize {
-        self.shape().0 as usize
+        self.shape().rows as usize
     }
-    fn estimated_matches(&self, _column: usize, batch: bool) -> usize {
-        let (rows, nodes, _, _) = self.shape();
-        let per = (rows / nodes.max(1)).max(1) as usize;
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        let shape = self.shape();
+        let per = (shape.rows / shape.ndv[column.min(1)].max(1)).max(1) as usize;
         if batch { per * 8 } else { per }
     }
     fn indexed(&self, column: usize) -> bool {
@@ -264,11 +394,11 @@ impl Source for Within {
         let pair = self.pair(row);
         self.batch.id(if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize })
     }
-    /// From the tree: as many rows as nodes have containers (their depth + 1); per inner node its
-    /// depth + 1, per outer node its subtree. Values never cross documents.
+    /// From the tree (`shape`): for containment, as many rows as nodes have containers (their depth + 1), per
+    /// inner node its depth + 1, per outer node its subtree. Values never cross documents.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        let (rows, nodes, sq_inner, sq_outer) = self.shape();
+        let Shape { rows, ndv, sq } = self.shape();
         let [inner, outer] = self.names();
-        Some(vec![(inner.to_owned(), rows, nodes, sq_inner, sq_inner), (outer.to_owned(), rows, nodes, sq_outer, sq_outer)])
+        Some(vec![(inner.to_owned(), rows, ndv[0], sq[0], sq[0]), (outer.to_owned(), rows, ndv[1], sq[1], sq[1])])
     }
 }

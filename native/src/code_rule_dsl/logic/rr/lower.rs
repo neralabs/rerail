@@ -161,6 +161,10 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
+                // `.pragma "cross-rounds" "k"` (decision 0056): kept as written, for the corpus runner.
+                [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
+                    l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
+                }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),

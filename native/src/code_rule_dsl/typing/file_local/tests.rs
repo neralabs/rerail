@@ -13,7 +13,7 @@ fn source_relations_keep_their_document_location() {
     ] {
         let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
         let program = parse(&text).unwrap();
-        let (_, locations) = split_located(&program);
+        let (_, locations, _) = split_located(&program);
         assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
         let mut located = program;
         locate(&mut located).unwrap();
@@ -236,7 +236,7 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(join.body.len(), 5, "{join:?}");
     assert_eq!(join.head.args.len(), 2);
     // Its rows are attributable to their file: the node column is a location.
-    let (_, locations) = split_located(&prog);
+    let (_, locations, _) = split_located(&prog);
     assert_eq!(locations[&made[0]], [0], "{locations:?}");
 }
 

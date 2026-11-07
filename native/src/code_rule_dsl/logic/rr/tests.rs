@@ -194,7 +194,8 @@ fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
     files(&rule_syntax(), "rr", &mut out);
-    out.retain(|p| !p.starts_with(rule_syntax().join("site")));
+    // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
+    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")));
     out
 }
 
@@ -449,6 +450,43 @@ agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k :
     assert_eq!(read("neg"), "-2.25\n");
     assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
     assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `min`/`max` aggregates and the text functions as native steps (O85): the corpus runner's native engine takes
+/// the rules the SQL executor ran before, with the same rows.
+#[test]
+fn native_aggregates_and_text_functions_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("native-agg");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl kv(k: number, v: number)
+kv(1, 5). kv(1, 3). kv(1, 9). kv(2, 4).
+.decl ks(k: number, s: symbol)
+ks(1, "b"). ks(1, "a"). ks(2, "c").
+.decl lo(k: number, v: number)
+lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
+.decl hi(k: number, v: number)
+hi(k, v) :- kv(k, _), v = max x : { kv(k, x) }.
+.decl one(k: number)
+one(k) :- ks(k, _), s = min t : { ks(k, t) }, ks(k, s).
+.decl q(p: symbol, k: number)
+q("a.b.c", 1). q("a.b.c", 2). q("a", 3).
+.decl up(p: symbol, k: number, u: symbol)
+up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
+.output lo, hi, one, up
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("lo"), "1\t3\n2\t4\n");
+    assert_eq!(read("hi"), "1\t9\n2\t4\n");
+    assert_eq!(read("one"), "1\n2\n");
+    assert_eq!(read("up"), "a\t3\t\na.b.c\t1\ta.b\na.b.c\t2\ta\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

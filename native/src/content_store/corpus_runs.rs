@@ -78,7 +78,88 @@ struct Manifest {
     sources: Vec<i64>,
 }
 
+/// A file's stat when its source was read: what the stat index keeps of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStat {
+    pub size: i64,
+    pub mtime_ns: i64,
+    pub inode: i64,
+}
+
+impl FileStat {
+    /// The stat of `metadata`.
+    #[cfg(unix)]
+    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
+        use std::os::unix::fs::MetadataExt as _;
+        FileStat { size: metadata.len() as i64, mtime_ns: metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec()), inode: metadata.ino() as i64 }
+    }
+}
+
+/// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin
+/// for file systems whose mtime is coarse).
+pub const RACY_NS: i64 = 2_000_000_000;
+
+/// A root's stat index as loaded: by path, the stat recorded and its source, for entries a run may trust.
+#[derive(Debug, Default)]
+pub struct StatIndex {
+    entries: HashMap<String, (FileStat, SourceId)>,
+}
+
+impl StatIndex {
+    /// The source of the file at `path` when its stat is `now` and the index holds the same: else `None`, and the file
+    /// is to be read.
+    pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
+        self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 impl ContentStore {
+    /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
+    /// still stored.
+    pub fn corpus_stats(&self, root: &str) -> StoreResult<StatIndex> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT st.path, st.size, st.mtime_ns, st.inode, st.source_id FROM corpus_stats st \
+             JOIN corpus_roots r ON r.root_id=st.root_id JOIN source_objects s ON s.source_id=st.source_id \
+             WHERE r.path=?1 AND st.mtime_ns < st.recorded_ns - ?2",
+        )?;
+        let rows = statement.query_map(params![root, RACY_NS], |r| {
+            Ok((r.get::<_, String>(0)?, FileStat { size: r.get(1)?, mtime_ns: r.get(2)?, inode: r.get(3)? }, SourceId(r.get(4)?)))
+        })?;
+        let mut entries = HashMap::new();
+        for row in rows {
+            let (path, stat, id) = row?;
+            entries.insert(path, (stat, id));
+        }
+        Ok(StatIndex { entries })
+    }
+
+    /// Records in `root`'s stat index each (path, stat, source) of `read`, the files a run read, at `now_ns`.
+    pub fn record_corpus_stats(&self, root: &str, read: &[(String, FileStat, SourceId)], now_ns: i64) -> StoreResult<()> {
+        if read.is_empty() {
+            return Ok(());
+        }
+        self.immediate_transaction(|tx| {
+            tx.execute("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
+            let root_id: i64 = tx.query_row("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
+            let mut put = tx.prepare_cached(
+                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns) VALUES (?1,?2,?3,?4,?5,?6,?7) \
+                 ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
+                 source_id=excluded.source_id, recorded_ns=excluded.recorded_ns",
+            )?;
+            for (path, stat, id) in read {
+                put.execute(params![root_id, path, stat.size, stat.mtime_ns, stat.inode, id.0, now_ns])?;
+            }
+            Ok(())
+        })
+    }
+
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
     /// memo plan `plan`, at unix second `now`. True if the manifest is new: a run matching an earlier manifest of its
     /// root only moves that one's last run.

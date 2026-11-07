@@ -19,8 +19,13 @@
 //! - **Decisions.** The run's choices and optimizations: the file-local split, chunks, text tests and their matchers,
 //!   nearest-ancestor sets and where they solve, inputs read in place.
 //!
+//! - **Roofline.** `work(unit, n)` charges n units of one kind of work to the open span; SQL statements charge their
+//!   VM steps and native joins the rows into their steps on their own. The report sets each span's work against the
+//!   best time this machine gives a unit (measured as it is written, `roofline`): roof time, excess, and a join's
+//!   amplification, and lists the CPU no counter explains.
+//!
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
-//! steps by work, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
+//! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -28,6 +33,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
+
+mod roofline;
+pub(in crate::code_rule_dsl) use roofline::Unit;
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
@@ -93,6 +101,52 @@ struct State {
     plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
     devices: BTreeMap<(String, String), DeviceTotal>,
+    /// Work charged by (span path, unit) (`work`).
+    work: BTreeMap<(String, Unit), u64>,
+    /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
+    waits: BTreeMap<(String, String, String), WaitTotal>,
+}
+
+#[derive(Default)]
+struct WaitTotal {
+    count: u64,
+    /// Wall time blocked, and the waiter's CPU meanwhile (spinning, waking).
+    wall: f64,
+    cpu: f64,
+}
+
+/// What a thread is doing, for the threads that wait on it (`wait`): one shared marker, set as it moves between
+/// phases. Cheap to set: a store of a static name.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct Activity(parking_lot::Mutex<&'static str>);
+
+impl Activity {
+    pub(in crate::code_rule_dsl) fn set(&self, doing: &'static str) {
+        *self.0.lock() = doing;
+    }
+    pub(in crate::code_rule_dsl) fn get(&self) -> &'static str {
+        *self.0.lock()
+    }
+}
+
+/// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
+/// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
+/// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
+    if !on() {
+        return blocking();
+    }
+    let at = doing.get();
+    let (wall0, cpu0) = (std::time::Instant::now(), cpu());
+    let out = blocking();
+    let (wall, spent) = (wall0.elapsed().as_secs_f64(), cpu() - cpu0);
+    let path = current();
+    let mut state = STATE.lock().unwrap();
+    let w = state.waits.entry((path, awaited.to_owned(), if at.is_empty() { "-".to_owned() } else { at.to_owned() })).or_default();
+    w.count += 1;
+    w.wall += wall;
+    w.cpu += spent;
+    out
 }
 
 struct Stratum {
@@ -228,6 +282,15 @@ pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, s
     t.scan += scan;
     t.sort += sort;
     t.autoindex += autoindex;
+}
+
+/// Charges `n` units of `unit` work to the current span (the roofline). Off, it costs one load.
+pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
+    if !on() || n == 0 {
+        return;
+    }
+    let path = current();
+    *STATE.lock().unwrap().work.entry((path, unit)).or_default() += n;
 }
 
 /// Adds a native plan's rows in and out per step to the current span.
@@ -576,6 +639,40 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     for ((p, plan), steps) in native.iter().take(30) {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
         let _ = writeln!(r, "{:>12}  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
+    }
+
+    // The roofline: SQL's VM steps and the native joins' rows are charged here, the rest by `work`. A native
+    // component's step counts are read after its run, so its rows go to the run's span (`…/engine run (joins)`).
+    {
+        let own: BTreeMap<String, f64> = state.spans.iter().map(|(p, t)| (p.clone(), t.own)).collect();
+        let mut charged = state.work.clone();
+        for ((p, _), s) in &sql {
+            *charged.entry((p.clone(), Unit::VmStep)).or_default() += s.vm;
+        }
+        let mut joins: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for ((p, _), steps) in &native {
+            let run = format!("{p}/engine run (joins)");
+            let at = if own.contains_key(&run) { run } else { p.clone() };
+            // A join's work: the rows into each step, and the rows its last step makes.
+            let made = steps.last().map_or(0, |s| s.1);
+            *charged.entry((at.clone(), Unit::JoinRow)).or_default() += work(steps) + made;
+            let j = joins.entry(at).or_default();
+            j.0 += work(steps) + made;
+            j.1 += made;
+        }
+        roofline::report(&mut r, &own, &charged, &joins);
+    }
+
+    let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
+    if state.waits.is_empty() {
+        r.push_str("(no waits)\n");
+    } else {
+        let _ = writeln!(r, "{:>9} {:>9} {:>7}  waiter: waited on (which was doing)", "wall s", "cpu s", "waits");
+        let mut waits: Vec<_> = state.waits.iter().collect();
+        waits.sort_by(|a, b| b.1.wall.total_cmp(&a.1.wall));
+        for ((path, on, doing), w) in waits {
+            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>7}  {path}: {on} ({doing})", w.wall, w.cpu, w.count);
+        }
     }
 
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");

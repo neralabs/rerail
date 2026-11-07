@@ -1204,8 +1204,12 @@ impl TapeImage {
             None,
             Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
         )?;
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, bytes.len() as u64);
         drop(parse);
         let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
+        if crate::code_rule_dsl::logic::profile::on() {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
+        }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 

@@ -26,6 +26,7 @@
 // Missing classes and symbols are reported at line 1.
 
 #include "python/ast.rr"      // ast_name, assign_target, assign_ann, unparen
+#include "data-layer/boot-python.rr" // deco_word, def_walk
 
 // ---- the summary ----------------------------------------------------------------------------------------------
 .decl glsp_scope(k: symbol)
@@ -45,6 +46,10 @@ glsp_binding(d, x, "assign", t) :- assign_target(a, t), !assign_ann(a, _), kind(
     !nearest(a, _, glsp_scope), docof(a, d).
 glsp_binding(d, x, "typealias", n) :- kind(n, "type_alias_statement"), field(n, "left", l), child(l, t, 0),
     kind(t, "identifier"), text(t, x), !nearest(n, _, glsp_scope), docof(n, d).
+// `type X[T] = …`: the tree has no node for X inside the generic_type, so X is read off its text.
+glsp_binding(d, x, "typealias", n) :- kind(n, "type_alias_statement"), field(n, "left", l), child(l, t, 0),
+    kind(t, "generic_type"), text(t, s), match("(?<x>[^\\[\\s]+)\\s*\\[(?s:.*)", s), !nearest(n, _, glsp_scope),
+    docof(n, d).
 // glsp_top(d, x, k, l): x's last top-level binding is of kind k, at line l.
 .decl glsp_top(d: number, x: symbol, k: symbol, l: number)
 glsp_top(d, x, k, l) :- glsp_binding(d, x, k, n), count : { glsp_binding(d, x, _, n2), n2 > n } = 0, line(n, l).
@@ -58,20 +63,10 @@ glsp_direct(d, cx, m, f) :- kind(f, "function_definition"), def_name(f, m), near
     glsp_binding(d, cx, "class", c).
 .decl glsp_method(d: number, cx: symbol, m: symbol, f: node)
 glsp_method(d, cx, m, f) :- glsp_direct(d, cx, m, f), count : { glsp_direct(d, cx, m, f2), f2 > f } = 0.
-// glsp_dec(f, k): def f has a decorator whose last name is k (`@k`, `@a.k`, `@k(…)`, `@(k)`).
-.decl glsp_dec(f: node, k: symbol)
-glsp_dec(f, k) :- decorator(f, e0), unparen(e0, e), glsp_dec_name(e, k).
-.decl glsp_dec_name(e: node, k: symbol)
-glsp_dec_name(e, k) :- kind(e, "call"), field(e, "function", g), glsp_last(g, k).
-glsp_dec_name(e, k) :- glsp_last(e, k).
-.decl glsp_last(e: node, k: symbol)
-glsp_last(e, k) :- kind(e, "identifier"), text(e, k).
-glsp_last(e, k) :- kind(e, "attribute"), field(e, "attribute", a), text(a, k).
 // glsp_mentions(f, x): a Name x, or an attribute `….x`, is inside method f (its decorators included).
 .decl glsp_mentions(f: node, x: symbol)
-glsp_mentions(f, x) :- glsp_method(_, _, _, f), defstmt(f, st), within(n, st), ast_name(n, x).
-glsp_mentions(f, x) :- glsp_method(_, _, _, f), defstmt(f, st), within(n, st), kind(n, "attribute"),
-    field(n, "attribute", a), text(a, x).
+glsp_mentions(f, x) :- glsp_method(_, _, _, f), def_walk(n, f), ast_name(n, x).
+glsp_mentions(f, x) :- glsp_method(_, _, _, f), def_walk(n, f), attr_of(n, _, x).
 // glsp_class_assigns(d, cx, x): `x = …` in the body of a top-level class cx, outside its defs and nested classes.
 .decl glsp_class_assigns(d: number, cx: symbol, x: symbol)
 glsp_class_assigns(d, cx, x) :- assign_target(a, t), !assign_ann(a, _), kind(t, "identifier"), text(t, x),
@@ -94,7 +89,7 @@ GLSP(@place(p, 1), "GLSP-002", "VersionedReadTransactionLazyMixin class not foun
 GLSP(@place(p, l), "GLSP-003", "graph_lazy must exist as a pure lazy graph entrypoint") :- glsp_mixin(d, l),
     !glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", _), doc(d, p, _).
 GLSP(f, "GLSP-004", "graph_lazy must be decorated with @pure_lazy") :- glsp_mixin(d, _),
-    glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", f), !glsp_dec(f, "pure_lazy").
+    glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", f), !deco_word(f, "pure_lazy").
 GLSP(f, "GLSP-003", cat("removed graph shortcut must remain absent: ", m)) :- glsp_mixin(d, _),
     glsp_method(d, "VersionedReadTransactionLazyMixin", m, f), (m = "graph_query_builder_lazy" ; m = "graph_traverse_lazy").
 
@@ -117,7 +112,7 @@ GLSP(@place(p, l), "GLSP-008", cat("SqlPlanGraphQueryBuilder terminal is missing
     glsp_class(d, "SqlPlanGraphQueryBuilder", l), glsp_terminal(m), !glsp_method(d, "SqlPlanGraphQueryBuilder", m, _),
     doc(d, p, _).
 GLSP(f, "GLSP-009", cat(m, " must be decorated with @pure_lazy")) :- glsp_file(d, "sql"), glsp_terminal(m),
-    glsp_method(d, "SqlPlanGraphQueryBuilder", m, f), !glsp_dec(f, "pure_lazy").
+    glsp_method(d, "SqlPlanGraphQueryBuilder", m, f), !deco_word(f, "pure_lazy").
 
 // ---- versioned_transactions.py --------------------------------------------------------------------------------
 .decl glsp_surface(m: symbol, k: symbol)  // the public delegate surfaces and their decorators
@@ -129,7 +124,7 @@ GLSP(@place(p, 1), "GLSP-006", "LazyVersionedReadTransaction class not found") :
 GLSP(@place(p, l), "GLSP-007", cat(m, " must exist as a public delegate surface")) :- glsp_txn(d, l), glsp_surface(m, _),
     !glsp_method(d, "LazyVersionedReadTransaction", m, _), doc(d, p, _).
 GLSP(f, "GLSP-010", cat(m, cat(" must be decorated with @", k))) :- glsp_txn(d, _), glsp_surface(m, k),
-    glsp_method(d, "LazyVersionedReadTransaction", m, f), !glsp_dec(f, k).
+    glsp_method(d, "LazyVersionedReadTransaction", m, f), !deco_word(f, k).
 GLSP(f, "GLSP-011", cat(m, " must remain a legacy delegate shell")) :- glsp_txn(d, _), glsp_surface(m, _),
     glsp_method(d, "LazyVersionedReadTransaction", m, f),
     !glsp_mentions(f, "_legacy_delegate_stub"), !glsp_mentions(f, "_txn_legacy_delegate_body"),

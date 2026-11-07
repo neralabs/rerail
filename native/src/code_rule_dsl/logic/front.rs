@@ -133,7 +133,12 @@ pub(in crate::code_rule_dsl) struct Atom {
 
 impl Atom {
     pub(in crate::code_rule_dsl) fn vars(&self) -> BTreeSet<String> {
-        self.args.iter().filter_map(|a| if let Term::Var(v) = a { Some(v.clone()) } else { None }).collect()
+        // A head's `@dot(p, s)` names p and s too.
+        let mut out = BTreeSet::new();
+        for a in &self.args {
+            a.vars(&mut out);
+        }
+        out
     }
 }
 
@@ -682,6 +687,17 @@ impl Parser<'_> {
                     let names = self.list(Self::id)?;
                     prog.demand.extend(names);
                 }
+            }
+            // `.pragma "cross-rounds" "k"`, as `.rr` writes it (decision 0056).
+            "pragma" => {
+                let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
+                    return self.fail("a pragma's two strings");
+                };
+                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
+                }
+                self.i += 2;
+                prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
             }
             "kindset" => {
                 let name = self.id()?;

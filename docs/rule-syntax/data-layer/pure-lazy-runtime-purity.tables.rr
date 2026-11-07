@@ -39,8 +39,26 @@ plp_name("RUNTIME_OWNER_PARAM_NAMES", "conn"). plp_name("RUNTIME_OWNER_PARAM_NAM
 plp_name("RUNTIME_OWNER_PARAM_NAMES", "session"). plp_name("RUNTIME_OWNER_PARAM_NAMES", "tx"). plp_name("RUNTIME_OWNER_PARAM_NAMES", "txn").
 plp_name("PLAN_HELPER_TERMINAL_NAMES", "ddl_effect_lazy"). plp_name("PLAN_HELPER_TERMINAL_NAMES", "grammar_effect_lazy"). plp_name("PLAN_HELPER_TERMINAL_NAMES", "grammar_row_lazy").
 plp_name("PLAN_HELPER_TERMINAL_NAMES", "grammar_rows_lazy"). plp_name("PLAN_HELPER_TERMINAL_NAMES", "grammar_value_lazy").
+plp_name("PURE_SOURCE_TRIGGERS", "@lazy"). plp_name("PURE_SOURCE_TRIGGERS", "__pure_lazy_surface__"). plp_name("PURE_SOURCE_TRIGGERS", "pure_lazy").
+plp_name("PURE_DECORATOR_NAMES", "pure_lazy").
+plp_name("STRICT_OWNER_VIOLATION_CODES", "PLP-001"). plp_name("STRICT_OWNER_VIOLATION_CODES", "PLP-002"). plp_name("STRICT_OWNER_VIOLATION_CODES", "PLP-003").
+plp_name("STRICT_OWNER_VIOLATION_CODES", "PLP-004"). plp_name("STRICT_OWNER_VIOLATION_CODES", "PLP-005").
+plp_name("file_triggers", "__pure_lazy_surface__"). plp_name("file_triggers", "_lazy"). plp_name("file_triggers", "pure_lazy").
+plp_name("global_state_factories", "create_embedding_ref_class"). plp_name("global_state_factories", "create_embedding_vector_class"). plp_name("global_state_factories", "register_permissions").
+plp_name("global_state_factories", "register_table").
+plp_name("lazy_wrapper_methods", "from_value"). plp_name("lazy_wrapper_methods", "of"). plp_name("lazy_wrapper_methods", "resolved").
+plp_name("lazy_wrapper_roots", "LazyResult"). plp_name("lazy_wrapper_roots", "LazySeq").
+plp_name("local_metadata_caches", "LocalMetadataCache"). plp_name("local_metadata_caches", "WeakLocalMetadataCache").
+plp_name("opaque_immutable_calls", "frozenset"). plp_name("opaque_immutable_calls", "tuple").
+plp_name("queue_methods", "queue_sequence"). plp_name("queue_methods", "queue_single").
+plp_name("receiver_names", "cls"). plp_name("receiver_names", "self").
+plp_name("regex_modules", "_re"). plp_name("regex_modules", "re").
+plp_name("type_subscripts", "Type"). plp_name("type_subscripts", "type").
 // plp_registry_access(path, global, access): TRANSPARENT_SCHEMA_CALLBACK_REGISTRY_ACCESSES.
 .decl plp_registry_access(path: symbol, g: symbol, access: symbol)
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".contains").
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".register").
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".version").
+// The signatures written in the linter, checked by lib/data-layer/signing.rr.
+allow_sig("plp", "lint_pure_lazy_runtime_purity", "ABcOeThOUBA1gKcLhVC8onMupU75NAfAZPNyLizkJ0ImSGyJlr0iZUBENcUAUL7dBUyEh1Di+XYOvLvHh7rYCQ==").
+allow_sig("plp_ceiling", "lint_pure_lazy_runtime_purity:burn_down_ceiling", "R1cZFd/dL/i+Sa5twPQ/pv52iPjS5kWv+l8+VHjdIuLTizcfXLVv4AGIsiZxqGyzMS12YhnLi3m69Y9UgTcNDg==").

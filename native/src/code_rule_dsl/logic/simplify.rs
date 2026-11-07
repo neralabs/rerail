@@ -28,9 +28,12 @@
 //!   it names bound by a positive atom of its own. A document variable is one in `node`'s or `doc`'s first column.
 //! - **Relations no output reads go.** A derived relation that no output, demanded or kept relation reads,
 //!   directly or through others, is not computed.
-//! - **Identical relations merge.** Derived relations whose rules are equal once their heads and variables are
-//!   renamed in order are one relation; readers read the first. Repeated to a fixpoint, so relations over merged
-//!   ones merge too. Outputs, inputs, lattices, relations with facts and demanded relations are kept as they are.
+//! - **Identical relations merge.** Derived relations whose rules are equal once their variables are renamed in
+//!   order and each relation is named by its class are one relation: the greatest such partition (`congruence`), so
+//!   recursive relations equal only to each other merge too. A library relation every combined program has (`p0_qn`,
+//!   `p1_qn`) is one relation in the shared namespace (`s_qn`); a program's own relations keep its namespace unless
+//!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
+//!   as they are.
 
 use super::front::{Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -56,6 +59,14 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
     /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
     pub(in crate::code_rule_dsl) within: usize,
+    /// Recursive components that climb or descend the tree one `child` edge at a time, made `within` (the axis).
+    pub(in crate::code_rule_dsl) climbs: Vec<String>,
+    /// Merged classes named in the shared namespace (one relation of several programs).
+    pub(in crate::code_rule_dsl) shared: usize,
+    /// Relations equal to another up to constants, in that many groups, and a few groups.
+    pub(in crate::code_rule_dsl) similar: usize,
+    pub(in crate::code_rule_dsl) similar_groups: usize,
+    pub(in crate::code_rule_dsl) similar_examples: Vec<String>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -74,6 +85,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         prog.inputs.push(SPAN_WITHIN.to_owned());
     }
     report.existentials = project_existentials(prog);
+    report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         for rule in &mut prog.rules {
@@ -84,14 +96,26 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     if super::profile::on() {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
         let (w, y, u, x, s) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len(), report.within);
+        let h = report.shared;
+        if !report.climbs.is_empty() {
+            super::profile::decision("recursion along the tree made an axis", || {
+                format!("{} recursive components that step one `child` edge at a time read `within` instead: {}", report.climbs.len(), report.climbs.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
+        if report.similar > 0 {
+            super::profile::decision("relations equal up to their constants (not merged)", || {
+                format!("{} relations in {} groups, e.g. {}", report.similar, report.similar_groups, report.similar_examples.join("; "))
+            });
+        }
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {x} parts of bodies that meet the rest only at a document made relations of documents; {s} span comparisons of two nodes made `span_within`; {u} relations no output reads dropped")
+            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one ({h} classes shared across programs, `s_`); {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {x} parts of bodies that meet the rest only at a document made relations of documents; {s} span comparisons of two nodes made `span_within`; {u} relations no output reads dropped")
         });
     }
     report
 }
 
 const SPAN_WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::SPAN_WITHIN;
+const WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
 
 /// Replaces each pair `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` (one document variable
 /// `d`, either side of each comparison) by `span_within(a, b)`: the comparisons, not the atoms, which may bind or test
@@ -320,6 +344,15 @@ fn fold_constants(rule: &mut Rule) -> usize {
 
 /// Whether a relation's rules may not change: outputs, inputs, lattices, relations with facts, demanded relations and
 /// gates.
+/// A relation the merge leaves as it is: an input, a lattice, demanded, a gate. (An output merges, and keeps its name
+/// as a copy of its class.)
+fn fixed(prog: &Program, rel: &str) -> bool {
+    prog.inputs.iter().any(|i| i == rel)
+        || prog.lattice.contains_key(rel)
+        || prog.demand.iter().any(|d| d == rel)
+        || prog.gates.iter().any(|(g, _)| g == rel)
+}
+
 fn kept(prog: &Program, rel: &str) -> bool {
     prog.outputs.iter().any(|o| o == rel)
         || prog.inputs.iter().any(|i| i == rel)
@@ -689,8 +722,8 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
     before - rule.body.len()
 }
 
-/// A rule with its head named `@` and its variables numbered in order of first appearance.
-fn canonical(rule: &Rule) -> String {
+/// A rule with every relation named by `label` and its variables numbered in order of first appearance.
+fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
     let mut names: HashMap<String, String> = HashMap::new();
     let mut name = |v: &str| -> String {
         let k = names.len();
@@ -703,21 +736,14 @@ fn canonical(rule: &Rule) -> String {
             t => t.clone(),
         }
     }
-    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> String| Atom { args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
-    let mut head = atom(&rule.head, &mut name);
-    let own = rule.head.rel.clone();
-    head.rel = "@".into();
+    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> String| Atom { rel: label(&a.rel), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
+    // The head is the relation the signature is of: `@`, so two relations' rules compare by their bodies.
+    let head = Atom { rel: "@".into(), ..atom(&rule.head, &mut name) };
     let body: Vec<Literal> = rule
         .body
         .iter()
         .map(|l| match l {
-            Literal::Atom(a) => {
-                let mut a = atom(a, &mut name);
-                if a.rel == own {
-                    a.rel = "@".into();
-                }
-                Literal::Atom(a)
-            }
+            Literal::Atom(a) => Literal::Atom(atom(a, &mut name)),
             Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, &mut name), op, r: term(r, &mut name) },
             Literal::Agg { var, op, over, atom: a } => {
                 let var = name(var);
@@ -736,52 +762,366 @@ fn canonical(rule: &Rule) -> String {
     Rule { head, body }.to_string()
 }
 
-/// Whether anything merged.
-fn merge(prog: &mut Program, report: &mut Report) -> bool {
-    let mut any = false;
-    loop {
-        // Each mergeable relation's rules, canonical and sorted, with its declared types.
-        let mut by_rel: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-        for r in &prog.rules {
-            by_rel.entry(r.head.rel.as_str()).or_default().push(canonical(r));
-        }
-        let keep = |rel: &str| kept(prog, rel);
-        let mut first: HashMap<(Vec<String>, Vec<String>), String> = HashMap::new();
-        let mut rename: BTreeMap<String, String> = BTreeMap::new();
-        for (rel, mut rules) in by_rel {
-            if keep(rel) {
-                continue;
-            }
-            rules.sort();
-            let types: Vec<String> = prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
-            match first.get(&(rules.clone(), types.clone())) {
-                Some(kept) => {
-                    rename.insert(rel.to_owned(), kept.clone());
-                }
-                None => {
-                    first.insert((rules, types), rel.to_owned());
-                }
-            }
-        }
-        if rename.is_empty() {
-            return any;
-        }
-        any = true;
-        prog.rules.retain(|r| !rename.contains_key(&r.head.rel));
-        for rule in &mut prog.rules {
-            for l in &mut rule.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                    && let Some(to) = rename.get(&a.rel)
-                {
-                    a.rel = to.clone();
-                }
-            }
-        }
-        for (from, to) in rename {
-            prog.decls.remove(&from);
-            report.merged.push((to, from));
+/// The coarsest partition of the mergeable relations in which every two of a class have the same column types and
+/// the same rules once each relation is named by its class (partition refinement: start from one class per type
+/// signature and rule count, split until stable). It is the greatest such congruence, so it holds recursive
+/// relations that only equal each other (`p0_qn(…) :- …, p0_qn(…)` and `p1_qn`): their least models are equal,
+/// since at each step of the fixpoint every member of a class derives from equal classes by equal rules.
+/// `abstract_constants` names every constant `?` too: the classes are then relations equal up to their constants.
+fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
+    let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+    for r in &prog.rules {
+        rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    // Relations with facts merge too, when their facts are equal (a library's `cdef("class_definition").`).
+    let facts = |rel: &str| -> Vec<String> {
+        let mut f: Vec<String> = prog.facts.get(rel).into_iter().flatten().map(|row| format!("{row:?}")).collect();
+        f.sort();
+        f
+    };
+    let cands: Vec<&str> = rules_of
+        .keys()
+        .copied()
+        .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
+        .collect::<BTreeSet<&str>>()
+        .into_iter()
+        .filter(|r| !fixed(prog, r))
+        .collect();
+    let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
+    let mut class: HashMap<&str, usize> = HashMap::new();
+    {
+        let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
+        for &r in &cands {
+            let n = ids.len();
+            let rules = rules_of.get(r).map_or(0, Vec::len);
+            class.insert(r, *ids.entry((types(r), rules, facts(r))).or_insert(n));
         }
     }
+    let abstracted = |rule: &Rule| -> Rule {
+        if !abstract_constants {
+            return rule.clone();
+        }
+        fn t(x: &Term) -> Term {
+            match x {
+                Term::Int(_) | Term::Str(_) => Term::Var("?".into()),
+                Term::Call(f, a) => Term::Call(f.clone(), a.iter().map(t).collect()),
+                x => x.clone(),
+            }
+        }
+        let a = |x: &Atom| Atom { args: x.args.iter().map(t).collect(), ..x.clone() };
+        Rule {
+            head: a(&rule.head),
+            body: rule
+                .body
+                .iter()
+                .map(|l| match l {
+                    Literal::Atom(x) => Literal::Atom(a(x)),
+                    Literal::Cmp { l, op, r } => Literal::Cmp { l: t(l), op, r: t(r) },
+                    Literal::Agg { var, op, over, atom } => Literal::Agg { var: var.clone(), op: op.clone(), over: over.clone(), atom: a(atom) },
+                    l => l.clone(),
+                })
+                .collect(),
+        }
+    };
+    let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
+    let mut classes = class.values().collect::<BTreeSet<_>>().len();
+    loop {
+        let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
+        let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
+        let mut next: HashMap<&str, usize> = HashMap::new();
+        for &r in &cands {
+            let mut sig: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label)).collect();
+            sig.sort();
+            let n = ids.len();
+            next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
+        }
+        let now = ids.len();
+        class = next;
+        if now == classes {
+            break;
+        }
+        classes = now;
+    }
+    if std::env::var_os("RERAIL_MERGE_WHY").is_some() && !abstract_constants {
+        let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
+        let mut by_suffix: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for &r in &cands {
+            if let Some((_, sfx)) = namespace(r) {
+                by_suffix.entry(sfx).or_default().push(r);
+            }
+        }
+        for (sfx, rs) in by_suffix {
+            let distinct: BTreeSet<usize> = rs.iter().map(|r| class[r]).collect();
+            if rs.len() > 1 && distinct.len() > 1 {
+                let sig = |r: &str| -> Vec<String> {
+                    let mut v: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label)).collect();
+                    v.sort();
+                    v
+                };
+                let (a, b) = (sig(rs[0]), sig(rs[1]));
+                let only_a: Vec<&String> = a.iter().filter(|x| !b.contains(x)).collect();
+                let only_b: Vec<&String> = b.iter().filter(|x| !a.contains(x)).collect();
+                let name_of = |l: &str| -> Vec<&str> { cands.iter().copied().filter(|r| label(r) == l).take(3).collect() };
+                let refs = |x: Option<&&String>| -> Vec<String> {
+                    x.map(|x| x.split(|c: char| !(c == '#' || c.is_ascii_digit())).filter(|t| t.starts_with('#')).map(|t| format!("{t}={:?}", name_of(t))).collect()).unwrap_or_default()
+                };
+                eprintln!("  refs a {:?}\n  refs b {:?}", refs(only_a.first()), refs(only_b.first()));
+                eprintln!("MERGE-WHY {sfx}: {} vs {} ({} classes): types {:?} {:?}\n  only {}: {:?}\n  only {}: {:?}", rs[0], rs[1], distinct.len(), types(rs[0]), types(rs[1]), rs[0], only_a.first(), rs[1], only_b.first());
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for &r in &cands {
+        groups.entry(class[r]).or_default().push(r.to_owned());
+    }
+    groups.into_values().filter(|g| g.len() > 1).map(|mut g| {
+        g.sort();
+        g
+    }).collect()
+}
+
+/// A recursive component of unary node relations whose rules are bases (no member read), copies (`R(x) :- S(x)`)
+/// and steps along one `child` edge, all one way (`R(x) :- S(y), child(x, y, _)`: up; `child(y, x, _)`: down),
+/// is a closure along the tree: each member holds its bases' nodes that a path of copies reaches with no step, and
+/// their strict ancestors (descendants) that paths of every length from one step reach. That is `within` (decision
+/// 0050: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
+/// Rewritten so; the components rewritten, by their members.
+fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
+    let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
+    let mut done = Vec::new();
+    for scc in sccs {
+        let members: BTreeSet<String> = scc.into_iter().collect();
+        let unary_node = |r: &str| prog.decls.get(r).is_some_and(|c| c.len() == 1 && c[0].1 == "node");
+        if !members.iter().all(|r| unary_node(r) && !kept(prog, r)) {
+            continue;
+        }
+        let rules: Vec<&Rule> = prog.rules.iter().filter(|r| members.contains(&r.head.rel)).collect();
+        // (from, to, step) edges and (relation, base rule) pairs.
+        let mut edges: Vec<(String, String, bool)> = Vec::new();
+        let mut bases: Vec<(String, Rule)> = Vec::new();
+        let mut up = None;
+        let mut ok = true;
+        for rule in &rules {
+            let [Term::Var(x)] = rule.head.args.as_slice() else {
+                ok = false;
+                break;
+            };
+            let reads_member = rule.body.iter().any(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => members.contains(&a.rel),
+                _ => false,
+            });
+            if !reads_member {
+                bases.push((rule.head.rel.clone(), (*rule).clone()));
+                continue;
+            }
+            let atoms: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).collect();
+            if atoms.len() != rule.body.len() || atoms.iter().any(|a| a.neg) {
+                ok = false;
+                break;
+            }
+            match atoms.as_slice() {
+                [s] if members.contains(&s.rel) && s.args == [Term::Var(x.clone())] => edges.push((s.rel.clone(), rule.head.rel.clone(), false)),
+                [a, b] => {
+                    let (s, c) = if members.contains(&a.rel) { (a, b) } else { (b, a) };
+                    let (Some(Term::Var(y)), true) = (s.args.first(), members.contains(&s.rel) && s.args.len() == 1 && c.rel == "child" && c.args.len() == 3) else {
+                        ok = false;
+                        break;
+                    };
+                    let third_free = match &c.args[2] {
+                        Term::Wild => true,
+                        Term::Var(v) => v != x && v != y,
+                        _ => false,
+                    };
+                    let dir = match (&c.args[0], &c.args[1]) {
+                        (Term::Var(p), Term::Var(q)) if p == x && q == y && x != y => true,
+                        (Term::Var(p), Term::Var(q)) if p == y && q == x && x != y => false,
+                        _ => {
+                            ok = false;
+                            break;
+                        }
+                    };
+                    if !third_free || up.is_some_and(|u| u != dir) {
+                        ok = false;
+                        break;
+                    }
+                    up = Some(dir);
+                    edges.push((s.rel.clone(), rule.head.rel.clone(), true));
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let Some(up) = up else { continue };
+        if !ok {
+            continue;
+        }
+        // Depths of steps by which each base relation reaches each member, capped at n (n stands for n or more).
+        let n = 2 * members.len() + 2;
+        let mut new_rules: Vec<Rule> = Vec::new();
+        let mut valid = true;
+        let base_rels: BTreeSet<&String> = bases.iter().map(|(r, _)| r).collect();
+        let mut reach: BTreeMap<(&String, &String), BTreeSet<usize>> = BTreeMap::new();
+        for q in &base_rels {
+            let mut seen: BTreeSet<(String, usize)> = BTreeSet::new();
+            let mut todo = vec![((*q).clone(), 0usize)];
+            while let Some((r, d)) = todo.pop() {
+                if !seen.insert((r.clone(), d)) {
+                    continue;
+                }
+                for (from, to, step) in &edges {
+                    if *from == r {
+                        todo.push((to.clone(), (d + usize::from(*step)).min(n)));
+                    }
+                }
+            }
+            for m in &members {
+                let depths: BTreeSet<usize> = seen.iter().filter(|(r, _)| r == m).map(|(_, d)| *d).collect();
+                reach.insert((*q, m), depths);
+            }
+        }
+        for m in &members {
+            for q in &base_rels {
+                let depths = &reach[&(*q, m)];
+                let stepped: BTreeSet<usize> = depths.iter().copied().filter(|d| *d > 0).collect();
+                // Every depth from one step on, or none: else the closure is not the axis.
+                if !(stepped.is_empty() || stepped == (1..=n).collect::<BTreeSet<_>>()) {
+                    valid = false;
+                }
+                for (_, b) in bases.iter().filter(|(r, _)| r == *q) {
+                    let [t] = b.head.args.as_slice() else { valid = false; continue };
+                    let Term::Var(t) = t else { valid = false; continue };
+                    if depths.contains(&0) {
+                        new_rules.push(Rule { head: Atom { rel: m.clone(), ..b.head.clone() }, body: b.body.clone() });
+                    }
+                    if !stepped.is_empty() {
+                        let x = format!("{t}_axis");
+                        let (inner, outer) = if up { (Term::Var(t.clone()), Term::Var(x.clone())) } else { (Term::Var(x.clone()), Term::Var(t.clone())) };
+                        let mut body = b.body.clone();
+                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned(), args: vec![inner, outer], neg: false, gated: false }));
+                        new_rules.push(Rule { head: Atom { rel: m.clone(), args: vec![Term::Var(x)], neg: false, gated: false }, body });
+                    }
+                }
+            }
+        }
+        if !valid {
+            continue;
+        }
+        prog.rules.retain(|r| !members.contains(&r.head.rel));
+        prog.rules.extend(new_rules);
+        if !prog.decls.contains_key(WITHIN) {
+            prog.decls.insert(WITHIN.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        }
+        if !prog.inputs.iter().any(|i| i == WITHIN) {
+            prog.inputs.push(WITHIN.to_owned());
+        }
+        done.push(members.into_iter().collect::<Vec<_>>().join("/"));
+    }
+    done
+}
+
+/// Merges identical relations again (`merge`), for passes after `simplify` that make relations per rule (the
+/// file-local joins pushed into the chunks): the relations merged, and how many classes went to the shared namespace.
+pub(in crate::code_rule_dsl) fn merge_identical(prog: &mut Program) -> (usize, usize) {
+    let mut report = Report::default();
+    merge(prog, &mut report);
+    (report.merged.len(), report.shared)
+}
+
+/// The program prefix `combine` gives a program's own relations (`p3_qn`): the namespace of each program's rules.
+fn namespace(rel: &str) -> Option<(&str, &str)> {
+    let rest = rel.strip_prefix('p')?;
+    let digits = rest.find(|c: char| !c.is_ascii_digit())?;
+    (digits > 0 && rest[digits..].starts_with('_')).then(|| (&rel[..digits + 1], &rest[digits + 1..]))
+}
+
+/// Merges each class of `congruence` into one relation. A class whose members are one relation of several programs'
+/// namespaces (a library relation every program that includes the library has) is named in the shared namespace,
+/// `s_<name>`. Whether anything merged.
+fn merge(prog: &mut Program, report: &mut Report) -> bool {
+    let groups = congruence(prog, false);
+    if groups.is_empty() {
+        return false;
+    }
+    let mut rename: BTreeMap<String, String> = BTreeMap::new();
+    let mut taken: BTreeSet<String> = prog.decls.keys().cloned().collect();
+    for g in &groups {
+        let suffixes: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(_, s)| s)).collect();
+        let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
+        let is_output = |r: &str| prog.outputs.iter().any(|o| o == r);
+        let to = match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
+            (Some(Some(s)), 1, n) if n > 1 => {
+                let mut name = format!("s_{s}");
+                let mut k = 1;
+                while taken.contains(&name) {
+                    name = format!("s{k}_{s}");
+                    k += 1;
+                }
+                taken.insert(name.clone());
+                report.shared += 1;
+                name
+            }
+            // A class of outputs only, in one namespace: each output is the class, so a fresh name holds it.
+            _ if g.iter().all(|r| is_output(r)) => {
+                let mut name = format!("{}_class", g[0]);
+                let mut k = 1;
+                while taken.contains(&name) {
+                    name = format!("{}_class{k}", g[0]);
+                    k += 1;
+                }
+                taken.insert(name.clone());
+                name
+            }
+            _ => g.iter().find(|r| !is_output(r)).unwrap_or(&g[0]).clone(),
+        };
+        for r in g {
+            if *r != to {
+                rename.insert(r.clone(), to.clone());
+            }
+        }
+    }
+    // One class's rules are kept: its first member's, renamed. An output merged keeps its name, as a copy of the class.
+    let firsts: BTreeSet<String> = groups.iter().map(|g| g[0].clone()).collect();
+    let outputs: Vec<(String, String)> = rename.iter().filter(|(from, _)| prog.outputs.iter().any(|o| o == *from)).map(|(f, t)| (f.clone(), t.clone())).collect();
+    let mut copies: Vec<Rule> = Vec::new();
+    for (from, to) in &outputs {
+        let width = prog.decls.get(from).map_or(0, Vec::len);
+        let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}"))).collect();
+        copies.push(Rule { head: Atom { rel: from.clone(), args: args.clone(), neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: to.clone(), args, neg: false, gated: false })] });
+    }
+    prog.rules.retain(|r| !rename.contains_key(&r.head.rel) || firsts.contains(&r.head.rel));
+    let to = |rel: &mut String| {
+        if let Some(t) = rename.get(rel.as_str()) {
+            *rel = t.clone();
+        }
+    };
+    for rule in &mut prog.rules {
+        to(&mut rule.head.rel);
+        for l in &mut rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                to(&mut a.rel);
+            }
+        }
+    }
+    prog.rules.extend(copies);
+    for (from, t) in &rename {
+        let output = prog.outputs.iter().any(|o| o == from);
+        let cols = if output { prog.decls.get(from).cloned() } else { prog.decls.remove(from) };
+        if let Some(cols) = cols {
+            prog.decls.entry(t.clone()).or_insert(cols);
+        }
+        if let Some(rows) = prog.facts.remove(from) {
+            prog.facts.entry(t.clone()).or_insert(rows);
+        }
+        report.merged.push((t.clone(), from.clone()));
+    }
+    // Relations equal up to their constants (not merged: one relation keyed by the constant would serve them).
+    let similar = congruence(prog, true);
+    report.similar = similar.iter().map(Vec::len).sum();
+    report.similar_groups = similar.len();
+    report.similar_examples = similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect();
+    true
 }
 
 #[cfg(test)]
@@ -825,6 +1165,107 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// Two programs' copies of a recursive library relation (each reads its own copy) are one relation in the shared
+    /// namespace, with their equal facts; the programs' own rules, which differ, keep their namespaces.
+    #[test]
+    fn recursive_copies_merge_into_the_shared_namespace() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl edge(a: number, b: number)
+            .input edge
+            .decl p0_seed(a: number)
+            p0_seed(1).
+            .decl p1_seed(a: number)
+            p1_seed(1).
+            .decl p0_reach(a: number)
+            .decl p1_reach(a: number)
+            p0_reach(a) :- p0_seed(a).
+            p0_reach(b) :- p0_reach(a), edge(a, b).
+            p1_reach(a) :- p1_seed(a).
+            p1_reach(b) :- p1_reach(a), edge(a, b).
+            .decl p0_mine(a: number)
+            .decl p1_mine(a: number)
+            p0_mine(a) :- p0_reach(a), a > 2.
+            p1_mine(a) :- p1_reach(a), a > 3.
+            .decl out(a: number)
+            .output out
+            out(a) :- p0_mine(a).
+            out(a) :- p1_mine(a).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        let mut merged = report.merged.clone();
+        merged.sort();
+        assert_eq!(
+            merged,
+            vec![
+                ("s_reach".to_owned(), "p0_reach".to_owned()),
+                ("s_reach".to_owned(), "p1_reach".to_owned()),
+                ("s_seed".to_owned(), "p0_seed".to_owned()),
+                ("s_seed".to_owned(), "p1_seed".to_owned()),
+            ]
+        );
+        assert_eq!(report.shared, 2);
+        assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "s_reach").count(), 2);
+        assert_eq!(prog.facts["s_seed"].len(), 1);
+        assert!(prog.decls.contains_key("p0_mine") && prog.decls.contains_key("p1_mine"));
+        // p0_mine and p1_mine differ only in their constant.
+        assert_eq!((report.similar, report.similar_groups), (2, 1));
+    }
+
+    /// The converter's `has` with no stop: a node holding a match among its descendants, climbed one `child` edge a
+    /// wave. Made `within`: the matches, and the nodes they lie within.
+    #[test]
+    fn a_climb_through_child_is_the_within_axis() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl child(p: node, c: node, i: number)
+            .input child
+            .decl m23(n: node)
+            .decl m25(n: node)
+            .decl u19(n: node)
+            .decl out(n: node)
+            .output out
+            m23(n) :- node(_, n, "identifier", _, _).
+            m25(n) :- m23(n).
+            m25(n) :- child(n, v24, _), u19(v24).
+            u19(n) :- m25(n).
+            out(n) :- m25(n), node(_, n, "call", _, _).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.climbs, vec!["m25/u19".to_owned()]);
+        let m25: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "m25" || r.head.rel == "u19").map(|r| r.to_string()).collect();
+        assert!(m25.iter().all(|r| !r.contains("child(")), "{m25:?}");
+        assert!(m25.iter().any(|r| r.contains("within($n, $n_axis)")), "{m25:?}");
+        assert!(prog.inputs.iter().any(|i| i == "within"));
+    }
+
+    /// A step with a test of the node it reaches is no plain closure: left as it is.
+    #[test]
+    fn a_climb_that_tests_each_step_stays_recursive() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl child(p: node, c: node, i: number)
+            .input child
+            .decl r(n: node)
+            .decl out(n: node)
+            .output out
+            r(n) :- node(_, n, "identifier", _, _).
+            r(n) :- child(n, c, _), r(c), node(_, n, "attribute", _, _).
+            out(n) :- r(n).
+            "#,
+        )
+        .unwrap();
+        assert!(simplify(&mut prog).climbs.is_empty());
     }
 
     #[test]

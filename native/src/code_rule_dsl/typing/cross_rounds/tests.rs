@@ -19,7 +19,7 @@ reach(c, y) :- reach(c, x), reach(x, y).
 #[test]
 fn hops_read_the_previous_round_across_documents() {
     let prog = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
-    let b = bound(&prog).unwrap();
+    let b = bound(&prog, &BTreeMap::new()).unwrap();
     assert_eq!(b.hops, BTreeSet::from(["found".to_owned(), "reach".to_owned()]));
     let rules: Vec<String> = b.program.rules.iter().map(ToString::to_string).collect();
     assert!(rules.contains(&"found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found($b, $a, $x), @doc($b) = @doc($c)".to_owned()), "{rules:#?}");
@@ -31,6 +31,63 @@ fn hops_read_the_previous_round_across_documents() {
     assert_eq!(b.program.decls["found__prev"], prog.decls["found"]);
     assert!(b.unbounded.is_empty());
     front::strata(&b.program).unwrap();
+}
+
+/// A recursive atom whose node a same-document atom joins to the head's is not a hop: `look` (file-local) puts `$s` in
+/// `$n`'s document, so only the rule within the document is kept. `base` crosses files and still splits.
+#[test]
+fn same_document_joins_are_not_hops() {
+    let prog = crate::code_rule_dsl::logic::rr::parse(
+        r#"
+.decl look(n: node, s: node)
+.decl base(c: node, b: node)
+.input look, base
+.decl pv(n: node, v: node)
+pv(n, n) :- base(n, _).
+pv(n, v) :- look(n, s), pv(s, v).
+pv(n, v) :- base(n, b), pv(b, v).
+.output pv
+"#,
+    )
+    .unwrap();
+    let b = bound(&prog, &BTreeMap::from([("look".to_owned(), vec![0, 1])])).unwrap();
+    let rules: Vec<String> = b.program.rules.iter().map(ToString::to_string).collect();
+    assert!(rules.contains(&"pv($n, $v) :- look($n, $s), pv($s, $v)".to_owned()), "{rules:#?}");
+    assert!(rules.contains(&"pv($n, $v) :- base($n, $b), pv__prev($b, $v), @doc($b) != @doc($n)".to_owned()), "{rules:#?}");
+    assert_eq!(b.program.rules.len(), 1 + 1 + 2);
+}
+
+/// The rounds run the hops' cone (`found` and what it reads); `reach`, which no hop reads, runs once after them and
+/// reads `found`'s final rows as `found__done`.
+#[test]
+fn the_rest_reads_the_cone_once() {
+    let prog = crate::code_rule_dsl::logic::rr::parse(
+        r#"
+.decl base(c: node, b: node)
+.decl bound_in(c: node, a: symbol)
+.input base, bound_in
+.decl found(c: node, a: symbol, at: node)
+found(c, a, c) :- bound_in(c, a).
+found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
+.decl names(c: node, a: symbol)
+names(c, a) :- found(c, a, _).
+.output found, names
+"#,
+    )
+    .unwrap();
+    let b = bound(&prog, &BTreeMap::new()).unwrap();
+    let split = cone_split(&b.program, &b.hops).expect("names is outside the cone");
+    assert!(split.cone.rules.iter().all(|r| r.head.rel == "found"));
+    assert_eq!(split.cone.outputs, vec!["found".to_owned()]);
+    assert_eq!(split.reads, BTreeSet::from(["found".to_owned()]));
+    let rules: Vec<String> = split.rest.rules.iter().map(ToString::to_string).collect();
+    assert_eq!(rules, vec!["names($c, $a) :- found__done($c, $a, _)".to_owned()]);
+    assert!(split.rest.inputs.contains(&"found__done".to_owned()));
+    assert_eq!(split.rest.outputs, vec!["names".to_owned()]);
+    // A program that is all cone is not split.
+    let only = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
+    let b = bound(&only, &BTreeMap::new()).unwrap();
+    assert!(cone_split(&b.program, &b.hops).is_none());
 }
 
 #[test]

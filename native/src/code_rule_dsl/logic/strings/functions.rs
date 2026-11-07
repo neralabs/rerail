@@ -128,7 +128,14 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
             },
         }
     }
-    let t = |i: usize| text[i].as_str();
+    let text: Vec<&str> = text.iter().map(String::as_str).collect();
+    eval(name, &text, &numbers)
+}
+
+/// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
+/// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
+pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    let t = |i: usize| text[i];
     let out = match name {
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
