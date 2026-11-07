@@ -249,7 +249,8 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
    sources. Not yet: a workspace `.pyi` beside its `.py` (the corpus reads `.py` files); `partial` stub packages.
    `deps.rs`, `declare.rs` and `corpus/typing.rs` remain for `workload.rr` and its test, unreached by `calls.rr`;
    removing them is the user's call.*
-4. **§5.1–§5.3**, ordered by what the score says is left.
+4. **§5.1–§5.3**, ordered by what the score says is left. *Built: §5.1's first version and generic returns, §5.2,
+   §5.3 (§6b).*
 5. **A second language's `env.rr` and `modules.rr`** (TypeScript: `.d.ts` is the same shape), as the test that
    the blueprint is generic.
 
@@ -287,6 +288,41 @@ What it says:
 Next, in that order: literal values as instances of `builtins` classes (`"".join`, `[].append`), the per-call
 difference between the two converged runs (which calls the stubs decide, which they un-decide, and why), then E5
 and E6.
+
+## 6b. Checkpoint: step 4, §5.1 and §5.2 (2026-11-07)
+
+Built, in `calls.rr`:
+
+- **Generic substitution (§5.1).** A class's parameters are read as written (`Generic[K, V]`, `Protocol[T]`, else
+  the type variables its first generic base is given). An annotated instantiation (`x: dict[str, V]`) is a generic
+  value. A method declared to return its class's parameter returns the receiver's binding of it. A function
+  declared to return a generic (`-> Iterator[_T]`) returns a generic value of the declared class, its parameters
+  bound at the call. That class is exact: a subclass's method is typed by it.
+- **Implicit calls (§5.2).** A subscript `o[i]` is `o.__getitem__(i)`. `for x in e` binds x to
+  `e.__iter__().__next__()`, and `with e as x` binds x to `e.__enter__()`. Their `async` forms stay unknown (the
+  syntax producer marks them `op "async"`, as it marks `async def`).
+- **Class decorators.** One declared `(cls: type[T]) -> type[T]` gives back the class. Before, every subclass of a
+  decorated class had an open base, so a method call on a receiver that might be one was unknown.
+
+The 84 files, k = 4, debug build (Jedi on the whole repository):
+
+```text
+                                agree   unknown, Jedi decided   no edge, Jedi a definition   another definition
+before §5.1                     5,656   1,369                   412                          0
+generics, first version         5,895   1,130                   412                          0
++ implicit calls, generic
+  returns, class decorators     6,149     874                   412                          2
+```
+
+The two "another definition" calls are Jedi's error: `LazyWriteTransaction(LazyReadTransaction,
+WriteTransactionLazyMixin)` finds `query_lazy` on WriteTransactionLazyMixin by C3, where Jedi takes
+ReadTransactionLazyMixin's.
+
+Of the 874 unknowns, 305 are calls Jedi resolves to definitions outside the 84 files (it read the whole
+repository): no rule decides them on this corpus. 443 are workspace definitions in the corpus, 126 external.
+
+Not yet: a function's own type variable bound from an argument's generic (`sorted(xs: Iterable[T]) -> list[T]`),
+structural protocols as parameter types (`iter(x: SupportsIter[T])`), overloads chosen by argument.
 
 ## 7. Open questions
 
