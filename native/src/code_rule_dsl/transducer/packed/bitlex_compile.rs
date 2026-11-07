@@ -795,9 +795,16 @@ impl Lowering {
                 None => start,
             };
             covered = self.or(covered, span)?;
-            let inner = self.andnot(span, starts)?;
-            let continues = self.next(inner, 1)?;
-            let last = self.andnot(span, continues)?;
+            // A token's last byte: the last of its span before a byte that does not continue
+            // it. Without `through` the span is the start byte alone, which is the last.
+            let last = match through {
+                None => start,
+                Some(_) => {
+                    let inner = self.andnot(span, starts)?;
+                    let continues = self.next(inner, 1)?;
+                    self.andnot(span, continues)?
+                }
+            };
             match self.keywords.iter().position(|k| k.0 == kind) {
                 None => out.push((kind, start, last)),
                 Some(at) => {

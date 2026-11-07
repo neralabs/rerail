@@ -619,9 +619,19 @@ fn json_compiles_to_simdjsons_shape() {
     assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
 }
 
+/// A token without `through` is its start byte alone, so its last byte is its start: no carry
+/// finds it. JSON has seven: `{ } [ ] , :` and `"`.
+#[test]
+fn one_byte_tokens_end_at_their_start() {
+    let program = json_program();
+    let p = &program.block_programs()[0];
+    let same = p.nodes.iter().filter(|n| n.start == n.end).count();
+    assert_eq!(same, 7, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
+}
+
 /// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 527;
-const JSON_CARRIED_WORDS: usize = 90;
+const JSON_OPS: usize = 500;
+const JSON_CARRIED_WORDS: usize = 84;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -646,7 +656,7 @@ fn json_loop_keeps_values_in_registers() {
 }
 
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve, never
-/// raise them. The stack traffic is the spill of 90 carried words and their live values into
+/// raise them. The stack traffic is the spill of 84 carried words and their live values into
 /// 31 registers; the target is stage 1's 0.
-const JSON_LOOP: usize = 2163;
-const JSON_LOOP_STACK: usize = 510;
+const JSON_LOOP: usize = 2047;
+const JSON_LOOP_STACK: usize = 438;
