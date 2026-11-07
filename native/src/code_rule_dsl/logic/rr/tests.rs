@@ -288,7 +288,7 @@ agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k :
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `min`/`max` aggregates and the text functions as native steps (O85): the corpus runner's native engine takes
+/// `min`/`max` aggregates and the text functions as native steps (O90): the corpus runner's native engine takes
 /// the rules the SQL executor ran before, with the same rows.
 #[test]
 fn native_aggregates_and_text_functions_run() {

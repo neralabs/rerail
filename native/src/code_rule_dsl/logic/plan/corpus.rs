@@ -488,9 +488,12 @@ pub(crate) fn run_with_options(
     let mut prog = combine(programs, "")?;
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
-    for (rel, rows) in bridged {
-        prog.facts.entry(rel).or_default().extend(rows);
-    }
+    let add_bridged = |prog: &mut front::Program| {
+        for (rel, rows) in &bridged {
+            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+        }
+    };
+    add_bridged(&mut prog);
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
     // And the values derived from them (`logic::derived`): each chunk's join specs.
@@ -522,6 +525,7 @@ pub(crate) fn run_with_options(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = combine(programs, &facts)?;
+            add_bridged(&mut prog);
         }
         declared = d;
     }
@@ -563,6 +567,9 @@ pub(crate) fn run_with_options(
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
+    // of it the rule uses, not all of it (T's front prunes the same way).
+    prog = front::prune(prog);
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).

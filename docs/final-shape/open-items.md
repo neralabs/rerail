@@ -1631,6 +1631,33 @@ left.
 **Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and
 generic arguments carried as terms.
 
+**Annotations read (2026-11-07, `5cbb86a96`).** Parameters, returns and class attributes now declare what they hold,
+trusted as a type checker trusts them:
+- a workspace class C means an instance of C or of a workspace subclass, the closed world `self` already assumes;
+- a builtin class means its value, and `None` means None;
+- `A | B`, `Optional[A]` and `Union[A, B]` are their members;
+- a generic is its class, so `LazyResult[T]` is `LazyResult`;
+- `type[C]` means C's class objects, and `Self` means the method's class.
+
+A closed declaration closes the parameter, the function's calls and the attribute. A decorator declared
+`(fn: F) -> F`, with F a type variable, keeps the decorated function. Still open, as a lower bound:
+- **Quoted annotations** (`-> "LazySeq[int]"`). The facts held no parse of a string's contents; since
+  decision 0055 `parsed(s, "annotation", r)` has rows, and `calls.rr` does not read it yet. The data layer
+  has 146 quoted returns against about 118,000 annotated ones.
+- **External classes** (`p: Path`). They get no type name, so a pathlib receiver is unknown rather than "not
+  lazy". This needs the classes' supertypes, from stdlib summaries (t20 gap 6).
+- Type variables, `Any`, `Protocol`s, generic arguments, and variables annotated in a function or module body.
+
+## O94. `calls.rr` over the data layer's l1–l20 packages: cost and convergence
+
+On the data layer's l1–l20 packages (489 files, debug build), `calls.rr` takes 101.6 s of CPU with a peak RSS
+of 835 MB. Its rounds do not converge by k = 4: hop rows 498,860 → … → 753,630, so the pending round runs. On 84
+of those files it takes 15.3 s, 13.0 s before annotations were read. The Jedi score was therefore taken on the 84
+files (t20). LEG-083's own scope (`impl/`, `data_layer/` and every `l<n>` package) is several times larger.
+
+**Closure:** profile the 489 files as O90 profiled django; the per-document cutoff (O41) for the rounds; the
+full l1–l20 Jedi score; then the LEG-083 files.
+
 ## O90. Cross-file costs `calls.rr` works around
 
 Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program avoids them by

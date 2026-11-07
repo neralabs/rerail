@@ -55,7 +55,8 @@ fn logic(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    // A directory: every `.rr` in it, run as one program (each file parsed once for all of them).
+    // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
+    // `#include`s are read in.
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -63,9 +64,9 @@ fn logic(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
-        files.iter().map(|path| read(&path.to_string_lossy())).collect::<Result<Vec<_>, _>>()?
+        files.iter().map(|path| rerail_engine::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![read(program)?]
+        vec![rerail_engine::tools::program_text(Path::new(program.as_str()))?]
     };
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
