@@ -635,3 +635,26 @@ verified(name) :- candidate(name, message),
     assert_eq!(std::fs::read_to_string(out.join("verified.csv")).unwrap(), "original\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `@tree_digest(n)` compares trees as Python's `ast.dump` does: no positions, comments or punctuation, a
+/// parenthesized expression as what it holds, literals by value. Equal right-hand sides pair up; others do not.
+#[test]
+fn tree_digests_compare_subtrees_without_positions() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("digest");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "a = (1, 2)\nb = (1, 2,)\nc = 'x'\nd = \"x\"\ne = 16\nf = 0x10\ng = (h)\nh = h  # note\ni = [1, 2]\n";
+    std::fs::write(dir.join("a.py"), source).unwrap();
+    let rule = dir.join("digest.rr");
+    std::fs::write(&rule, r#"
+.decl rhs(l: symbol, r: node)
+rhs(l, r) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
+.decl same(l: symbol, m: symbol)
+same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
+.output same
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("same.csv")).unwrap(), "a\tb\nc\td\ne\tf\ng\th\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

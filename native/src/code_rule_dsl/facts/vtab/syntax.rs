@@ -458,6 +458,8 @@ impl Batch {
         let mut c = core_rr::CoreRows::default();
         let wants_text = core && projection.wants("text");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
+        // Only a program that reads it: every node's hash is a symbol.
+        let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
@@ -560,6 +562,9 @@ impl Batch {
             }
             if core {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens);
+                if wants_digests {
+                    c.digests(&p, dialect, &mut string);
+                }
             }
             docs.push(p);
         }

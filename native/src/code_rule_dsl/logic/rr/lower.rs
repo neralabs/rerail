@@ -531,6 +531,18 @@ impl Lowerer {
                 let agg = std::mem::replace(t, v.clone());
                 out.push(Lit::Cmp { l: v, op: "=", r: agg });
             }
+            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
+            STerm::Call { name, functor: true, args } if name == "tree_digest" && args.len() == 1 => {
+                self.hoist(&mut args[0], out, true);
+                let n = args[0].clone();
+                let v = STerm::Var(self.fresh("digest"));
+                *t = v.clone();
+                out.push(Lit::Atom { rel: "tree_digest".to_owned(), args: vec![n, v], neg: false });
+                if !self.prog.inputs.iter().any(|i| i == "tree_digest") {
+                    self.prog.inputs.push("tree_digest".to_owned());
+                    self.prog.decls.insert("tree_digest".to_owned(), vec![("n".to_owned(), "node".to_owned()), ("s".to_owned(), "sym".to_owned())]);
+                }
+            }
             STerm::Call { args, .. } => args.iter_mut().for_each(|a| self.hoist(a, out, true)),
             STerm::Bin { l, r, .. } => {
                 self.hoist(l, out, true);
