@@ -22,6 +22,7 @@
   publisher
 
 ## Repository
+- [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
   (`npm run check:structure`) that enforces them
 

@@ -461,7 +461,13 @@ pub(in crate::code_rule_dsl) struct Model {
 impl Model {
     /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
     fn col(&self, rel: &str, col: usize) -> String {
-        if self.derived.contains(rel) { format!("c{col}") } else { sql_col(rel, col) }
+        if self.derived.contains(rel) {
+            format!("c{col}")
+        } else if let Some((source, _)) = self.inputs.batch.get(rel) {
+            if source.positional { format!("c{col}") } else { source.columns.get(col).cloned().unwrap_or_else(|| sql_col(rel, col)) }
+        } else {
+            sql_col(rel, col)
+        }
     }
 }
 

@@ -360,10 +360,13 @@ enum Columns<'a> {
     Positional,
 }
 
-fn columns<'a>(relation: &Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
+fn columns<'a>(relation: &'a Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
     Ok(match relation {
-        // A batch source of a named input (a `py.*` family read by the demand statement) keeps its names.
-        Relation::Input { rel, .. } | Relation::Batch { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        Relation::Input { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        // A batch source declares its own SQL projection. Even a familiar fact relation may
+        // be supplied positionally, and an extension may supply arbitrary named columns.
+        Relation::Batch { source, .. } if source.positional => Columns::Positional,
+        Relation::Batch { source, .. } => Columns::Named(source.columns.iter().map(String::as_str).collect()),
         Relation::Derived { .. } | Relation::Bound { .. } => Columns::Positional,
         Relation::DocRange { .. } => Columns::Named(vec!["d", "lo", "hi"]),
         Relation::Integers => Columns::Named(vec!["i"]),
