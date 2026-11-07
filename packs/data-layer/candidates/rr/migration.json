@@ -1035,7 +1035,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "sha256": "579af201a320b13bd32056d503866d0a2bce315dfeec7739138623418306c0a3",
+      "sha256": "167a84be03a26095ad751b5ee6bb09ac643d7433b702ee6fdf46e4b650585c59",
       "origin": "authored",
       "upstreamPath": "scripts/lint_type_safety_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1185,7 +1185,7 @@
       "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "ruleSha256": "579af201a320b13bd32056d503866d0a2bce315dfeec7739138623418306c0a3"
+      "ruleSha256": "167a84be03a26095ad751b5ee6bb09ac643d7433b702ee6fdf46e4b650585c59"
     },
     {
       "check": "conn_or_txn_union",

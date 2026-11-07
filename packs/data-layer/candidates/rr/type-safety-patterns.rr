@@ -156,9 +156,9 @@ tsp_issue(d, l, c, column, 5 + i, suggestion, @replace_all(t, "\\A[\\x{9}-\\x{d}
 .decl tsp_earlier_signature(f: node, c: symbol)
 tsp_earlier_signature(f, c) :- tsp_signature_match(f, c, _), tsp_signature_match(g, c, _),
     docof(f, d), docof(g, d), line(f, l), line(g, l), earlier(g, f).
-.violation TypeSafety(at: span, category: symbol, column: number, ordinal: number, suggestion: symbol, snippet: symbol) code "TSP001"
-    "{category}: {suggestion}"
-TypeSafety(@place(p, l), c, column, ordinal, suggestion, snippet) :- tsp_issue(d, l, c, column, ordinal, suggestion, snippet), doc(d, p, _).
+.violation TypeSafety(at: span, category: symbol, column: number, ordinal: number, suggestion: symbol, snippet: symbol, label: symbol) code "TSP001"
+    "{label}: {suggestion}"
+TypeSafety(@place(p, l), c, column, ordinal, suggestion, snippet, label) :- tsp_issue(d, l, c, column, ordinal, suggestion, snippet), doc(d, p, _), tsp_category(c, label).
 .violation TspAllowed(at: span) code "TSP_ALLOWED" "allowlisted"
 TspAllowed(@place("input.py", 1)) :- option("entryPoint", "is_allowlisted"), option("category", c), tsp_normalized(p), tsp_allowed(c, p).
 .decl tsp_normalized(p: symbol)
