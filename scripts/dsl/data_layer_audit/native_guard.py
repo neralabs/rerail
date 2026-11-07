@@ -5,6 +5,7 @@ import dataclasses
 import reprlib
 import sys
 import threading
+import types
 from dataclasses import is_dataclass
 from pathlib import Path
 
@@ -38,7 +39,13 @@ def codes(modules):
                     wrapped_repr = (function.__name__ == '__repr__' and function.__code__.co_filename in STORAGE_WRAPPERS
                         and inspect.unwrap(function).__code__.co_filename == '<string>')
                     passive = storage and function.__name__.startswith('__') and (generated or wrapped_repr)
-                    result[function.__code__]=(check,function.__qualname__,passive)
+                    def register(code):
+                        result[code] = (check, function.__qualname__, passive)
+                        for constant in code.co_consts:
+                            if isinstance(constant, types.CodeType):
+                                register(constant)
+                    register(function.__code__)
+                    register(inspect.unwrap(function).__code__)
     return result
 
 
