@@ -397,10 +397,14 @@
 .functor tree_digest(n: node): symbol
 // There is no @ast_dump: a repository that stores hashes of ast.dump text (cached_pure_lazy_allowlist) is
 // re-signed once with @tree_digest, which compares the same way without reproducing CPython's text.
-// @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
-// message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
-// parts of trees with relations.
+// @unparse(n): CPython 3.13's ast.unparse of the `ast` node at n's span that n's kind is read as (W's pythonAst
+// worker's KINDS: an `identifier` a Name, a `call` a Call, a `type` any expression, …): `(a or b) and not c` is
+// "(a or b) and (not c)", `f"{x=}"` is "f'x={x!r}'", `1e400` is "1e309". An expression, a keyword argument, a
+// parameter or an import alias; no value for a statement, or where CPython raises (an int of more than 4300 digits).
+// Byte-exact, so it may be a key: `@py_repr(@unparse(n))` is W's `repr_unparse`.
 .functor unparse(n: node): symbol
+// @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
+.functor py_repr(s: symbol): symbol
 
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------

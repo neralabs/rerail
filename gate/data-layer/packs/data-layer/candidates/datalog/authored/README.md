@@ -274,8 +274,8 @@ unset(x)              x is -1, which no node, span or document is
 
 `child` has no comments, so `next_sibling` and `precedes` step over them, where W's `follows` and `precedes` see
 them (`prev_token`, `token` do). A relation nothing derives and the runner does not bind fails the run naming it;
-`str_part`, `@unparse` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the corpus runner
-does not run, `list_len` a pattern's list variable.
+`str_part` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the corpus runner does not
+run, `list_len` a pattern's list variable.
 
 `#include "python/ast.rr"` (with names, imports and flow; `#include "python/calls.rr"` beside it) works in a file
 here: the libraries' `.output`s are theirs, not the file's, and their fixes (`=> …`) are not run. What reads
@@ -292,6 +292,8 @@ engine cannot step through runs them in SQL. Beyond Soufflé's `cat`, `strlen`, 
 @ed25519_ok(key: symbol, message: symbol, sig: symbol): number   // 1 or 0
 @rx_replace(s: symbol, re: symbol, by: symbol): symbol           // every match of re in s replaced by by
 @nfkc(s: symbol): symbol                          // s under Unicode NFKC: CPython's identifier normalization
+@unparse(n: node): symbol                         // CPython 3.13's ast.unparse of n
+@py_repr(s: symbol): symbol                       // CPython's repr of the str s
 s = join x by (k, …) sep "," : { … }              // an ordered string aggregate
 s = sum x : { … }                                 // a number aggregate
 ```
@@ -313,6 +315,16 @@ s = sum x : { … }                                 // a number aggregate
   whitespace and line continuations taken out (`@rx_replace(t, "\\\\\\r?\\n|\\s+", "")` first). The engine's Unicode
   tables (`unicode-normalization` 0.1.26) are newer than CPython 3.13's (15.1), which changes no character 15.1
   assigns (Unicode's normalization stability), and an identifier CPython 3.13 reads has no other.
+- `@unparse(n)` (`cpython::unparse`) is CPython 3.13's `ast.unparse` of the `ast` node at n's span that n's kind is
+  read as (W's `KINDS`, as for `literal_json`, with any expression class: a `call` a Call, a `type` any expression):
+  an expression, a `keyword_argument`, a parameter, an import alias; `_Unparser`'s precedence (`(a or b) and not c`
+  is `(a or b) and (not c)`, `(x := a + b)` is `(x := (a + b))`, `f(x for x in y)` is `f((x for x in y))`),
+  constants' reprs (`1e400` is `1e309`, `0x1F` is `31`, `'it''s'` is `'its'`) and f-strings' quotes (`f"{x=}"` is
+  `f'x={x!r}'`). No value for a statement or a pattern, or where CPython raises (an int of more than 4300 digits). It
+  lowers to a relation the batches bind, `cpython_unparse(n, s)`, read in the rule's body: a rule has no row where
+  the node has no value, and it may not be called in an aggregate's atom. `@py_repr(s)` is `repr(s)` of a str (`'`
+  quotes unless s has `'` and no `"`, non-printable characters escaped as `str.isprintable` decides): W's
+  `repr_unparse` is `@py_repr(@unparse(n))`.
 - `join x by (k, …) sep "sep" : { … }` (`by k` for one key; `by` and `sep` optional, `""` the default separator) is
   the body's distinct `(k, …, x)` rows' `x`, ordered by `k, …` then `x`, numbers by value and symbols by code point
   (as W's `ORDER BY` over text and Python's `sorted()` order them), joined by `sep`; `""` over no rows. A number `x`

@@ -4,11 +4,12 @@ Run as `python3 -I -S -c <this> <mode>`: stdin is one path per line, stdout one 
 runs the files. Modes:
 
 - `syntax`: {"p", "e"}: e is null where `ast.parse` accepts the text, else [lineno, msg].
-- `ast`: {"p", "n"}: every located node of the file's tree (none where it does not parse), each
-  [start, end, type, unparse, dump_sha256, literal_json, names]: start and end are UTF-8 byte offsets, unparse is
-  `ast.unparse` (an expression's only), dump_sha256 the sha256 of `ast.dump(node, include_attributes=False)`,
-  literal_json `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` (null where either raises),
-  names the def's [body_sha256, signature_sha256] as W's python_ast worker hashed them (null but for a def).
+- `ast`: {"p", "n"}: every located node of the file's tree (none where it does not parse) but an f-string's own pieces
+  (a JoinedStr's values and their format specs; the expressions of its fields are kept), each
+  [start, end, type, unparse, dump_sha256, body_sha256, signature_sha256]: start and end are UTF-8 byte offsets,
+  unparse is `ast.unparse` of an expression, a keyword, an arg or an alias (null for another node or where it raises),
+  dump_sha256 the sha256 of `ast.dump(node, include_attributes=False)` (null where it raises), body_sha256 and
+  signature_sha256 a def's as W's python_ast worker hashed them (null but for a def).
 - `names`: {"p", "n"}: each Name id, Attribute attr, def/class name and arg, [start, end, text].
 - `literals`: {"p", "n"}: each expression but an f-string's own pieces, [start, end, type, literal_json] (literal_json as
   in `ast`, null where literal_eval or json.dumps raises).
@@ -50,11 +51,18 @@ def dump(node):
 
 
 def def_hashes(node):
-    body = dump(ast.Module(body=node.body, type_ignores=[]))
-    sig = dump(node.args)
-    sig += "|" + (dump(node.returns) if node.returns is not None else "None")
-    sig += "|" + dump(ast.Tuple(elts=node.type_params))
-    return [sha(body), sha(sig)]
+    try:
+        body = sha(dump(ast.Module(body=node.body, type_ignores=[])))
+    except Exception:
+        body = None
+    try:
+        sig = dump(node.args)
+        sig += "|" + (dump(node.returns) if node.returns is not None else "None")
+        sig += "|" + dump(ast.Tuple(elts=node.type_params))
+        sig = sha(sig)
+    except Exception:
+        sig = None
+    return [body, sig]
 
 
 def literal_json(node):
@@ -84,12 +92,19 @@ def one(path):
     offsets = offsets_of(source.encode("utf-8"))
     out = []
     if MODE == "ast":
+        pieces = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.JoinedStr):
+                for c in n.values:
+                    pieces.add(id(c))
+                    if isinstance(c, ast.FormattedValue) and c.format_spec is not None:
+                        pieces.add(id(c.format_spec))
         for node in ast.walk(tree):
-            if not hasattr(node, "lineno") or node.end_lineno is None:
+            if not hasattr(node, "lineno") or node.end_lineno is None or id(node) in pieces:
                 continue
             s, e = span(node, offsets)
             text = None
-            if isinstance(node, ast.expr):
+            if isinstance(node, (ast.expr, ast.keyword, ast.arg, ast.alias)):
                 try:
                     text = ast.unparse(node)
                 except Exception:
@@ -98,9 +113,8 @@ def one(path):
                 digest = sha(dump(node))
             except Exception:
                 digest = None
-            lit = literal_json(node) if isinstance(node, ast.expr) else None
-            names = def_hashes(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
-            out.append([s, e, type(node).__name__, text, digest, lit, names])
+            body, sig = def_hashes(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else (None, None)
+            out.append([s, e, type(node).__name__, text, digest, body, sig])
     elif MODE == "literals":
         pieces = {id(c) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for c in n.values}
         for node in ast.walk(tree):

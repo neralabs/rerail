@@ -222,14 +222,70 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
     run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
-/// The functors only CPython gives (core.rr): its printer and its dump of a tree.
-const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
+/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// (`facts::vtab::syntax::cpython`): `@unparse(n)` is the `s` of `cpython_unparse(n, s)`.
+const CPYTHON_FUNCTORS: [(&str, &str); 1] = [("unparse", syntax::cpython::UNPARSE)];
+
+/// core.rr's functors only CPython gives that nothing binds yet: its dump of a tree.
+const UNBOUND_FUNCTORS: [&str; 1] = ["ast_dump"];
+
+/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
+/// in the rule's body: `v(@py_repr(@unparse(n))) :- kind(n, "call").` is `v(@py_repr(x)) :- kind(n, "call"),
+/// cpython_unparse(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
+/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
+/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
+fn cpython_functors(prog: &mut front::Program) -> Result<()> {
+    fn lift(t: &mut front::Term, bound: &mut Vec<(&'static str, front::Term, String)>) {
+        let front::Term::Call(f, args) = t else { return };
+        args.iter_mut().for_each(|a| lift(a, bound));
+        let (Some(&(_, rel)), [arg]) = (CPYTHON_FUNCTORS.iter().find(|(g, _)| g == f), args.as_slice()) else { return };
+        let var = match bound.iter().find(|(r, a, _)| *r == rel && a == arg) {
+            Some((_, _, v)) => v.clone(),
+            None => {
+                let v = format!("{rel}_{}", bound.len());
+                bound.push((rel, arg.clone(), v.clone()));
+                v
+            }
+        };
+        *t = front::Term::Var(var);
+    }
+    fn calls(t: &front::Term) -> bool {
+        matches!(t, front::Term::Call(f, args) if CPYTHON_FUNCTORS.iter().any(|(g, _)| g == f) || args.iter().any(calls))
+    }
+    let mut used = BTreeSet::new();
+    for rule in &mut prog.rules {
+        let mut bound = Vec::new();
+        for l in &mut rule.body {
+            match l {
+                front::Literal::Atom(a) => a.args.iter_mut().for_each(|t| lift(t, &mut bound)),
+                front::Literal::Cmp { l, r, .. } => {
+                    lift(l, &mut bound);
+                    lift(r, &mut bound);
+                }
+                front::Literal::Agg { atom, .. } if atom.args.iter().any(calls) => {
+                    return Err(Error::Plan(format!("@unparse in an aggregate over {}: bind it to a variable outside the aggregate", atom.rel)));
+                }
+                _ => {}
+            }
+        }
+        rule.head.args.iter_mut().for_each(|t| lift(t, &mut bound));
+        for (rel, arg, var) in bound {
+            used.insert(rel);
+            rule.body.push(front::Literal::Atom(front::Atom { rel: rel.to_owned(), args: vec![arg, front::Term::Var(var)], neg: false, gated: false }));
+        }
+    }
+    for rel in used {
+        let cols = syntax::cpython::columns(rel);
+        prog.decls.entry(rel.to_owned()).or_insert_with(|| vec![(cols[0].to_owned(), "node".to_owned()), (cols[1].to_owned(), "sym".to_owned())]);
+    }
+    Ok(())
+}
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
-/// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
-/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), so
-/// are the facts the converter gives (`convert::GIVEN`: core.rr's `option_item` among them, empty for an option of
-/// no items), and the relations not made yet are empty (`NOT_MADE`, O76).
+/// (`value`, `str_part`, …), or calls a functor only CPython gives that nothing binds (`UNBOUND_FUNCTORS`): the planner
+/// would otherwise fail on its missing statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), so are the facts the converter
+/// gives (`convert::GIVEN`: core.rr's `option_item` among them, empty for an option of no items), and the relations not
+/// made yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
@@ -258,7 +314,7 @@ fn bound(prog: &front::Program) -> Result<()> {
         calls.extend(&rule.head.args);
         while let Some(t) = calls.pop() {
             if let front::Term::Call(f, args) = t {
-                if CPYTHON_FUNCTORS.contains(&f.as_str()) {
+                if UNBOUND_FUNCTORS.contains(&f.as_str()) {
                     return Err(Error::Plan(format!("@{f} is called, and it needs {cpython}")));
                 }
                 calls.extend(args);
@@ -344,6 +400,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // @unparse(n) reads the relation the batches bind it as.
+    cpython_functors(&mut prog)?;
     // The base relations it reads and does not derive are inputs, `.input` or not, as an authored file's are
     // (`convert::overlay`): the batches bind them, where a relation of its own would be an empty table.
     base_inputs(&mut prog);

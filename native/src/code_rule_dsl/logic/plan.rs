@@ -1295,6 +1295,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "string_annotation" => &[&["s"]],
         "parsed" => &[&["s"], &["root"]],
         "literal_json" => &[&["n"], &["v", "n"]],
+        "cpython_unparse" => &[&["n"], &["s", "n"]],
         "intval" | "op" | "tape" | "line" | "end_line" | "col" | "reference_open" => &[&["n"]],
         "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
@@ -1424,6 +1425,7 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 // `json_quote` of the text.
                 ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
                 ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
+                ("py_repr", [x]) => symbol_of(atoms, call("rr_py_repr", vec![text_of(atoms, x)])),
                 ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
                 ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {
@@ -3165,8 +3167,9 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 /// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,
 /// `$name`, `${name}` and `$$` as it reads them); `@ed25519_ok(key, message, sig)`, 1 where `crypto::ed25519_ok`
 /// holds, else 0; `@nfkc(s)`, `s` under Unicode NFKC, as CPython normalizes an identifier (PEP 3131: the parser's
-/// `unicodedata.normalize("NFKC", …)` of each non-ASCII one; `identifier::nfkc`). NULL gives NULL (`rr_ed25519_ok`:
-/// 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
+/// `unicodedata.normalize("NFKC", …)` of each non-ASCII one; `identifier::nfkc`); `@py_repr(s)`, CPython's `repr(s)` of
+/// the str `s` (`cpython::value::str_repr`: W's `repr_unparse` is `@py_repr(@unparse(n))`). NULL gives NULL
+/// (`rr_ed25519_ok`: 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
 /// `(k, …, x)` rows' `x` ordered by `k, …` then `x` (numbers by value, then text by code point, as `sorted()` orders a
 /// list of one type), joined by `sep`; `""` over no rows.
 fn register_functors(db: &Connection) -> rusqlite::Result<()> {
@@ -3195,6 +3198,9 @@ fn register_functors(db: &Connection) -> rusqlite::Result<()> {
         Ok(texts(ctx)?.is_some_and(|[key, message, sig]| super::crypto::ed25519_ok(&key, &message, &sig)))
     })?;
     db.create_scalar_function(c"rr_nfkc", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::identifier::nfkc(&s).into_owned())))?;
+    db.create_scalar_function(c"rr_py_repr", 1, flags, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::cpython::value::str_repr(&crate::code_rule_dsl::cpython::value::PyStr::Text(s))))
+    })?;
     db.create_aggregate_function(c"rr_join", -1, flags, OrderedJoin)
 }
 

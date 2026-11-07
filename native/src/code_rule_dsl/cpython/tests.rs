@@ -143,3 +143,107 @@ fn literal_json_is_cpythons() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// `ast.unparse` of an expression statement's value, as CPython 3.13.14 gives it: precedence and its quirks, constants'
+/// reprs, f-strings' quotes.
+#[test]
+fn unparse_is_cpythons() {
+    use super::ast::{F, module};
+    let cases: &[(&str, &str)] = &[
+        (r#"a or b or not c"#, r#"a or b or (not c)"#),
+        (r#"a and (b or c)"#, r#"a and (b or c)"#),
+        (r#"not (a and b)"#, r#"not (a and b)"#),
+        (r#"-x ** 2"#, r#"-x ** 2"#),
+        (r#"(-x) ** 2"#, r#"(-x) ** 2"#),
+        (r#"x ** -y"#, r#"x ** (-y)"#),
+        (r#"a - (b - c)"#, r#"a - (b - c)"#),
+        (r#"(a - b) - c"#, r#"a - b - c"#),
+        (r#"a if b else c if d else e"#, r#"a if b else c if d else e"#),
+        (r#"(a if b else c) if d else e"#, r#"(a if b else c) if d else e"#),
+        (r#"lambda: 0"#, r#"lambda: 0"#),
+        (r#"lambda x, /, y=1, *a, z, **k: x"#, r#"lambda x, /, y=1, *a, z, **k: x"#),
+        (r#"lambda *, k=2: k"#, r#"lambda *, k=2: k"#),
+        (r#"(yield)"#, r#"(yield)"#),
+        (r#"(yield x + 1)"#, r#"(yield (x + 1))"#),
+        (r#"(x := a + b)"#, r#"(x := (a + b))"#),
+        (r#"await f(x)"#, r#"await f(x)"#),
+        (r#"f(*a, **k, x=1)"#, r#"f(*a, **k, x=1)"#),
+        (r#"f(x for x in y)"#, r#"f((x for x in y))"#),
+        (r#"[x async for x in y if x if not z]"#, r#"[x async for x in y if x if not z]"#),
+        (r#"{k: v for k, v in d.items()}"#, r#"{k: v for k, v in d.items()}"#),
+        (r#"{**a, 'b': 1}"#, r#"{**a, 'b': 1}"#),
+        (r#"{*()}"#, r#"{*()}"#),
+        (r#"set()"#, r#"set()"#),
+        (r#"()"#, r#"()"#),
+        (r#"(1,)"#, r#"(1,)"#),
+        (r#"1, 2"#, r#"(1, 2)"#),
+        (r#"a[1:2, ::3]"#, r#"a[1:2, ::3]"#),
+        (r#"a[1:2]"#, r#"a[1:2]"#),
+        (r#"a[()]"#, r#"a[()]"#),
+        (r#"a[(1, 2)]"#, r#"a[1, 2]"#),
+        (r#"a[*b]"#, r#"a[*b,]"#),
+        (r#"1 .real"#, r#"1 .real"#),
+        (r#"True.real"#, r#"True .real"#),
+        (r#"1.5.real"#, r#"1.5.real"#),
+        (r#"x.y.z"#, r#"x.y.z"#),
+        (r#"'it''s'"#, r#"'its'"#),
+        (r#"'a"b' "c'd""#, r#"'a"bc\'d'"#),
+        (r#"b'\x00\'"'"#, r#"b'\x00\'"'"#),
+        (r#"u'x'"#, r#"u'x'"#),
+        (r#"1e400"#, r#"1e309"#),
+        (r#"1e400j"#, r#"1e309j"#),
+        (r#"2j"#, r#"2j"#),
+        (r#"0x1F"#, r#"31"#),
+        (r#"1_000_000"#, r#"1000000"#),
+        (r#"..."#, r#"..."#),
+        (r#"f'{x}'"#, r#"f'{x}'"#),
+        (r#"f'{x!r:{y}.{z}}'"#, r#"f'{x!r:{y}.{z}}'"#),
+        (r#"f'{ {1: 2}[1]}'"#, r#"f'{ {1: 2}[1]}'"#),
+        (r#"f"{'a'}""#, r#"f"{'a'}""#),
+        (r#"f'''{"a"}{'b'}'''"#, r#"f"{'a'}{'b'}""#),
+        (r#"f'\n{x}'"#, r#"f'\n{x}'"#),
+        (r#"f'{x:\n}'"#, r#"f'{x:\n}'"#),
+        (r#"f'a{{b}}c'"#, r#"f'a{{b}}c'"#),
+        (r#"f'{x=!s:>4}'"#, r#"f'x={x!s:>4}'"#),
+        (r#"f"'" f'"'"#, r#"f''''"'''"#),
+        (r#"'\t\x7f\u200b\U0001f600é'"#, r#"'\t\x7f\u200b😀é'"#),
+        (r#"a < b < c"#, r#"a < b < c"#),
+        (r#"a not in b is not c"#, r#"a not in b is not c"#),
+        (r#"*a, b"#, r#"(*a, b)"#),
+        (r#"a @ b // c % d"#, r#"a @ b // c % d"#),
+        (r#"a | b ^ c & d << e"#, r#"a | b ^ c & d << e"#),
+        (r#"~a"#, r#"~a"#),
+        (r#"+a"#, r#"+a"#),
+        (r#"(lambda: 1)()"#, r#"(lambda: 1)()"#),
+        (r#"(a or b).c"#, r#"(a or b).c"#),
+        (r#"x[a or b]"#, r#"x[a or b]"#),
+        (r#"f'{(yield)}'"#, r#"f'{(yield)}'"#),
+        (r#"f'{(lambda: 1)}'"#, r#"f'{(lambda: 1)}'"#),
+        (r#"[*a, *b]"#, r#"[*a, *b]"#),
+        (r#"print(*(a, b))"#, r#"print(*(a, b))"#),
+        (r#"{1, 2}"#, r#"{1, 2}"#),
+        (r#"a if (b := c) else d"#, r#"a if (b := c) else d"#),
+        (r#"'\ud800'"#, r#"'\ud800'"#),
+        (r#"f'{x!a}' 'tail\'s'"#, r#"f"{x!a}tail's""#),
+        (r#"f'''a
+b{x}'''"#, r#"f'a\nb{x}'"#),
+        (r#"None"#, r#"None"#),
+        (r#"True"#, r#"True"#),
+        (r#"-1"#, r#"-1"#),
+        (r#"1.0"#, r#"1.0"#),
+        (r#"0.1"#, r#"0.1"#),
+        (r#"1e16"#, r#"1e+16"#),
+        (r#"1e-5"#, r#"1e-05"#),
+        (r#"x[1:2:3]"#, r#"x[1:2:3]"#),
+        (r#"x[:]"#, r#"x[:]"#),
+        (r#"f(a)(b)[c].d"#, r#"f(a)(b)[c].d"#),
+        (r#"(a, *b) if c else ()"#, r#"(a, *b) if c else ()"#),
+    ];
+    for &(source, unparsed) in cases {
+        let root = module(source).unwrap_or_else(|| panic!("{source:?} parses"));
+        let Some(F::Node(stmt)) = root.list("body").first() else { panic!("{source:?} has a statement") };
+        let value = stmt.node("value").unwrap_or_else(|| panic!("{source:?} is an expression"));
+        assert_eq!(super::unparse::unparse(value).as_deref(), Some(unparsed), "unparse of {source:?}");
+    }
+}
+

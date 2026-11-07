@@ -110,6 +110,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "parsed" => &["s", "grammar", "root"],
         // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
         "literal_json" => &["n", "v"],
+        // core.rr's @unparse(n) (`facts::vtab::syntax::cpython`).
+        "cpython_unparse" => &["n", "s"],
         "intval" => &["n", "v"],
         "op_at" => &["n", "i", "s"],
         "op" => &["n", "s"],

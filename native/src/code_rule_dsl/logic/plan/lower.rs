@@ -44,7 +44,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         // W's semantics, ahead of `strings::functions`' (`plan::sql_term`'s arms for them).
         "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
-        "json_str" | "nfkc" => (vec![Some(Name)], Some(Name)),
+        "json_str" | "nfkc" | "py_repr" => (vec![Some(Name)], Some(Name)),
         "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),
         f if let Some((_, args, ret)) = crate::code_rule_dsl::logic::strings::functions::signature(f) => {
