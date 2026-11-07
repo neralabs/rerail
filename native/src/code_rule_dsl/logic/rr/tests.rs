@@ -1204,3 +1204,18 @@ fn error_directives_survive_public_report_transport() {
     assert_eq!(rows[0]["path"], "a.py");
     assert_eq!(rows[0]["line"], 1);
 }
+
+
+#[test]
+fn input_error_directives_survive_public_report_transport() {
+    let rows = finding_contract("", r#"
+.policy "contract:input-error-transport" revision 1
+.decl items(s: symbol)
+.input items(IO=lines, filename="missing.txt")
+.on input_error report NEED
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["code"], "NEED");
+    assert_eq!(rows[0]["path"], "missing.txt");
+    assert_eq!(rows[0]["line"], 1);
+}

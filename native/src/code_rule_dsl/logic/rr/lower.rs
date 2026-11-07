@@ -458,7 +458,7 @@ impl Lowerer {
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
         for (what, code, line_one) in on {
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
             let body = if what == "syntax_error" {
                 let line = if line_one { Term::Wild } else { v("rr_l") };
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
@@ -474,6 +474,7 @@ impl Lowerer {
                     self.prog.inputs.push(rel.to_owned());
                 }
             }
+            self.error_diagnostic(&policy, &what, &code, body.clone())?;
             self.prog.rules.push(Rule { head, body });
         }
         Ok(())

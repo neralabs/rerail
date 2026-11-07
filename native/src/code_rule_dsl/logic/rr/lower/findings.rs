@@ -18,6 +18,17 @@ fn json(value: Term) -> Term { call("json_str", vec![value]) }
 fn number(value: Term) -> Term { call("to_string", vec![value]) }
 
 impl Lowerer {
+    /// Error directives use the same public diagnostic transport as ordinary violations.
+    pub(super) fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: Vec<Literal>) -> Result<(), Error> {
+        self.prog.decls.insert(OUTPUT.to_owned(), vec![("json".to_owned(), "sym".to_owned())]);
+        if !self.prog.outputs.iter().any(|name| name == OUTPUT) { self.prog.outputs.push(OUTPUT.to_owned()); }
+        let finding = Violation {
+            name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
+            places: true, columns: vec![("at".to_owned(), "span".to_owned())], message: String::new(), tag: None,
+        };
+        self.diagnostic_rule(policy, &finding, &[Term::Int(0)], Term::Int(0), body, true)
+    }
+
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
         self.prog.decls.insert(OUTPUT.to_owned(), vec![("json".to_owned(), "sym".to_owned())]);
         if !self.prog.outputs.iter().any(|name| name == OUTPUT) {
