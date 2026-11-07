@@ -43,8 +43,11 @@ def run(args):
     report['harnessFiles'] = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths}
     for index, case in enumerate(corpus['cases']):
         if native:
-            rule = ROOT / 'packs/data-layer/candidates/rr' / (case['check'].replace('_', '-') + '.rr')
+            rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
             result = execute_native(engine, rule, case['files'], {})
+            report['sourceDetectorModules'] = [name for name in sys.modules if name.startswith('scripts.lint_')]
+            if report['sourceDetectorModules']:
+                raise ValueError('The native reporter imported source detectors')
             metadata = result['metadata']
             if len(metadata['policies']) != 1:
                 raise ValueError('Reporter contract requires one policy')
@@ -80,6 +83,8 @@ def run(args):
         # The upstream reporter specifies this ordering.
         actual.sort(key=lambda row: (row['path'], row['line'], row['message']))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
+        if native:
+            row['metadata'] = metadata
         report['results'].append(row)
         if native:
             expected = oracle['results'][index]
@@ -121,9 +126,12 @@ def main():
     parser.add_argument('--engine', type=Path)
     parser.add_argument('--oracle', type=Path)
     parser.add_argument('--cases', type=Path, required=True)
+    parser.add_argument('--rule-root', type=Path, default=ROOT / 'packs/data-layer/candidates/rr',
+                        help='Policy directory; mutation controls supply disabled policies')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     args.out = args.out.resolve()
+    args.rule_root = args.rule_root.resolve()
     report = run(args)
     write_json(args.out, report)
     print(json.dumps(dict(cases=len(report['results']), execution=report['execution'], fullMigrationAcceptance=False)))

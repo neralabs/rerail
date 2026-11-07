@@ -284,9 +284,34 @@ It records each transferred operation and retains the original assertion predica
 Its discovery and deduplication decisions run in SQL. The host supplies file metadata and typed input columns.
 Binary exception arguments and enum identity remain lossless in oracle records.
 
-Configured reporting still requires acceptance work. The type-safety draft currently formats the category name; upstream formats its label.
-The next reporting test must detect and correct that difference. Persistent workspaces and associated helper suites also remain required.
+At this checkpoint, the type-safety draft still formatted the category name where upstream used its label.
+The reporting ladder below corrects that difference. Persistent workspaces and associated helper suites still require acceptance work.
 
 The latest sibling commits add document-filtered indexes, ordered DFS, repeated regex captures, and syntax/input reporting.
 Those changes are not in this frozen engine. Review their batching and input-domain behavior before integration.
 In particular, per-match inserts need batching, and raw-text checks must retain access to invalid Python source.
+
+
+## Type-safety reporter ladder, 2026-11-07
+
+The engine now exposes compiler-decoded policy headers and settings in native snapshot reports.
+Its commit is `aa7ce065a5e9a9bee148a7905dde6be95628304b`.
+The frozen executable SHA-256 is `dce138fed59e4f7c565b8e1d4c1f81da5516f2746c5680516992f3cf0ce67d70`.
+Twenty-four focused reader tests pass, including the metadata regression.
+
+[Reporter contracts](../fixtures/host/data-layer-port/rr-type-safety-reporting-contracts.json.gz) compare all six fields returned by the unchanged upstream plugin reporter.
+All 26 cases pass. A disabled native policy fails the original positive reporter value.
+The native reporter harness imports no source detector modules. It supplies every case document to the native engine.
+The native rule selects production roots and exclusions itself, in SQL.
+
+The ladder first caught the enum-name message, then invalid-Python reporting, then missing directory exclusions.
+The rule now emits upstream labels, preserves the raw text API, and follows the plugin's AST and discovery contracts.
+Dynamic layer-package discovery also covers Unicode decimal digits and unusual directory names.
+
+The updated rule passes all 193 original direct cases, with 203 native calls and 51 complete API comparisons.
+[The direct receipt](../fixtures/host/data-layer-port/rr-type-safety-direct-contracts.json.gz) retains those runs and their positive mutation control.
+All 37 supplementary API cases also pass on this engine.
+The earlier thirteen-module receipt remains a historical checkpoint at its recorded engine and policy hashes.
+
+These contracts cover snapshot API and reporter values. They do not certify the production frontend, incremental workspaces, or every associated suite.
+The migration inventory remains 59 drafts and 41 absent translations, with no full acceptance claim.

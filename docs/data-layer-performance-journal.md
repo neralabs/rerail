@@ -7679,3 +7679,38 @@ Their document lookup, ordered DFS, capture, and error-reporting changes are not
 The capture implementation contains per-match inserts that must become bulk operations before adoption here.
 Withholding all source facts on parse failure would also break the proven raw-text scanner contract.
 No new Linear tickets were created.
+
+
+## 2026-11-07: Type-safety reporter parity ladder
+
+The reporter comparison found a gap that the direct DTO interface could not expose.
+The native policy formatted enum member names; the upstream reporter formats human-readable labels.
+A source-derived reporter contract now compares every `StructuredViolation` field, including severity and the complete message.
+Native mode metadata comes from the compiled rule. The adapter rejects modes it cannot map.
+
+The ladder retained three distinct failures before correction:
+
+1. The first source-positive case failed on its category label.
+2. After correcting labels, invalid Python still produced a native finding where the plugin reporter returned none.
+3. After separating raw text and framework behavior, a test-directory file still produced a finding.
+
+All 26 reporter cases now pass. They include all nine categories, clean input, invalid Python, allowlists, and production discovery.
+Unknown layer packages and Unicode decimal digits follow the source's dynamic directory predicate.
+The engine receives every supplied document; it does not borrow the oracle's selected file list.
+A disabled policy with the same id and blocking mode is rejected by the original positive reporter value.
+The native reporting process imports no original detector modules.
+
+The updated policy also passes all 193 original direct cases, making 203 native calls and comparing 51 complete API returns.
+Its original-positive mutation control still fails when detection is disabled.
+All 37 supplementary direct API contracts pass, including raw-text positives on invalid Python.
+The older thirteen-module receipt remains tied to the earlier policy and engine hashes.
+
+The engine commit is `aa7ce065a5e9a9bee148a7905dde6be95628304b`.
+The frozen executable SHA-256 is `dce138fed59e4f7c565b8e1d4c1f81da5516f2746c5680516992f3cf0ce67d70`.
+Its CLI build took 12.87 seconds. Twenty-four focused reader tests pass.
+The metadata test initially used the SQL keyword `Nothing` as a relation name and failed before reaching its assertion.
+After renaming the fixture, the regression reproduced missing metadata.
+Named `.policy` headers are settings in the parser; the metadata export now decodes them with that same native lexer.
+
+The reporter receipts keep full migration acceptance false. Production frontend and persistent-workspace acceptance remain outstanding.
+No repository performance comparison or whole-repository cold execution was performed. No Linear tickets were created.

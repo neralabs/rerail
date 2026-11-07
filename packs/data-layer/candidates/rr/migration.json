@@ -1035,7 +1035,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "sha256": "c19e729655f8ec848e77c464efa32c317e76f9a12c90e6f176f87d40cf945a56",
+      "sha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373",
       "origin": "authored",
       "upstreamPath": "scripts/lint_type_safety_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1185,7 +1185,7 @@
       "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "ruleSha256": "c19e729655f8ec848e77c464efa32c317e76f9a12c90e6f176f87d40cf945a56"
+      "ruleSha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373"
     },
     {
       "check": "conn_or_txn_union",
@@ -1966,7 +1966,7 @@
   ],
   "engineSource": {
     "branch": "jeremy/data-layer-rr-engine-20261106",
-    "commit": "93cee2a43e10020ca7639cf2ade1cb974c789c18",
+    "commit": "aa7ce065a5e9a9bee148a7905dde6be95628304b",
     "finalShapeCommit": "5332989f8",
     "qualityBaseCommit": "8f399baeae405bdad5fee4d65e123c25076f5ccf",
     "status": "Integration candidate; primary production addon unchanged",

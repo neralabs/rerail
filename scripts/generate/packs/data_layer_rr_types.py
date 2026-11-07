@@ -1,7 +1,7 @@
 """Translate the pinned type-safety scanner, including its textual signature windows."""
 import json
 import re
-from data_layer_rr_text import module, classes
+from data_layer_rr_text import module, classes, character_class
 
 
 def regex_search(pattern):
@@ -38,6 +38,16 @@ def type_safety_patterns(source, target, header):
     _, space, _ = classes()
     trim = r'\A' + space + '+|' + space + r'+\z'
     text = header('type_safety_patterns', target)
+    # Candidate roots can be broad; the SQL relation below matches the source's exact
+    # dynamic layer-package discovery, including pinned Unicode decimal digits.
+    text = re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"', text, flags=re.M)
+    text = re.sub(r'^\.scope exclude .*$', '.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"', text, flags=re.M)
+    digits = character_class(str.isdecimal)
+    text += '.decl tsp_policy_doc(d: number)\n'
+    layer = '(?s)l' + digits + r'{4}_[^/\n][^/]*/.*'
+    text += f'tsp_policy_doc(d) :- doc(d, p, _), (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; match({q(layer)}, p)), file_name(d, n), suffix(".py", n), !tsp_policy_skip(d).\n'
+    text += '.decl tsp_policy_skip(d: number)\n'
+    text += 'tsp_policy_skip(d) :- path_part(d, p), (p = "tests" ; p = "test" ; p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").\n'
     text += '.decl tsp_category(c: symbol, label: symbol)\n'
     text += ''.join(f'tsp_category({q(c.name)}, {q(c.value)}).\n' for c in original.IssueCategory)
     text += '.decl tsp_allowed(c: symbol, p: symbol)\n'
@@ -54,14 +64,14 @@ tsp_source(d, t) :- source(d, sp), text(sp, t).
         text += f'tsp_signature_trigger(d) :- tsp_source(d, t), contains({q(trigger)}, t).\n'
     text += r'''
 .decl tsp_text_mode(d: number)
-tsp_text_mode(d) :- doc(d, _, _), !option("entryPoint", _), !syntax_error(d, _, _).
+tsp_text_mode(d) :- tsp_policy_doc(d), !option("entryPoint", _), !syntax_error(d, _, _).
 tsp_text_mode(d) :- doc(d, _, _), option("entryPoint", e),
     (e = "check_file_for_patterns" ; e = "check_file_content_for_patterns").
 tsp_text_mode(d) :- tsp_fact_file(d), option("entryPoint", "_issues_for_files"), !syntax_error(d, _, _).
 .decl tsp_fact_file(d: number)
 tsp_fact_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test").
 .decl tsp_signature_mode(d: number)
-tsp_signature_mode(d) :- doc(d, _, _), !option("entryPoint", _).
+tsp_signature_mode(d) :- tsp_policy_doc(d), !option("entryPoint", _).
 tsp_signature_mode(d) :- tsp_fact_file(d), option("entryPoint", e),
     (e = "check_function_signatures" ; e = "check_function_signature_content" ; e = "_issues_for_files").
 // The content API uses its argument only as a trigger, then the framework reads the file.
