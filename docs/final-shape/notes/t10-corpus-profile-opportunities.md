@@ -473,6 +473,40 @@ The proposal, not done here: run the cross-file part as one fixpoint and drop th
 bounded rounds only where summaries really are per file, in typing over files that are not loaded together. The
 incremental case is then the memo's job: unchanged files replay their exports, and the fixpoint reruns over them.
 
+### 2h. Rounds declared, values derived, axes on demand, counters everywhere (2026-11-07)
+
+Three changes, each on the full corpus (9,010 files, 252 violations throughout), profiled cold, in instructions
+retired:
+
+| step | instructions | load |
+|---|---|---|
+| before | 697.8e9 | 14–19 |
+| join specs kept by their inputs' digest (`logic::derived`, 0053) | 690.5e9 | 33–47 |
+| kind-set axes made per looked-up node (`within::Axis`, 0053) | 635.5e9 | 55–68 |
+
+The counters were added after Homebrew's LLVM was replaced under its rustc. The build since then uses rustup's
+1.97.1, which has its own LLVM. The counters' run, 647.6e9 at load 92–115, includes the two new roofs' calibration,
+and its instructions do not compare with the rows above.
+
+- **Cross-file rounds (2g) are now the library's call (0052).** A program declares `.pragma "cross-rounds" "k"`
+  (the five typing programs say 4). Every other program runs its cross-file part as one fixpoint. Bridged typing
+  answers are one shared fact family, handed over as rows.
+- **Join specs.** 160,654 requests: 158,810 kept, 1,844 made. Writing the digest field by field, rather than as
+  text, took the spec's own CPU from 2.5 s to about 1 s.
+- **Axes.** The `nearest` span went from 2.59 s (1.03 s solving 1,453 sets, 1.56 s copying trees and expanding
+  chains) to 0.01 s. The rows are now made inside the joins that read them.
+- **Counters.** New units: `literal`, for the demand split and the strata (650 ns against a 163 ns roof), and
+  `file stat` (16.9 µs against 1.35 µs). `byte` now covers the tape parse's and the build's own work, and `value`
+  covers interning atoms. Spans with a counter rose from 78% to 90% of own CPU. No span without one is over 0.3 s:
+  `wait` is 0.30 s, the tape cache lookup's own 0.14 s, `worker parse`'s own 0.13 s.
+- **Next, by excess:**
+  - tree-sitter (10.6 s; no roof);
+  - the native joins (12.6 s over the join-row roof);
+  - nodes encoded and projected (8.2 s);
+  - bytes hashed and stored (9.4 s);
+  - the demand split (0.85 s per run). It is a pure function of the program and a few statistics, so it could be a
+    derived value, once the runner gives the program an identity that is cheaper than its digest.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
