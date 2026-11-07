@@ -718,7 +718,10 @@ class Run:
                     out.append({"path": path[r[0]], "line": 1 if at1 else int(r[1]), "col": 0, "code": code,
                                 "violation": None, "row": r, "message": r[2] if len(r) > 2 else "syntax error",
                                 "syntax_error": True, "at": None})
-        out = [f for f in out if self.in_scope(f["path"])]
+        # core.rr: @place of a missing path (a directory, a file not given) is a repository-level finding, which
+        # .scope does not filter; only findings on the run's documents are
+        docs = {f[2:] if f.startswith("./") else f for f in self.files}
+        out = [f for f in out if f["path"] not in docs or self.in_scope(f["path"])]
         out = self.suppress(out)
         uniq = {}
         for f in out:
