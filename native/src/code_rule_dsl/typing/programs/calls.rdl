@@ -406,7 +406,7 @@ rret($f, "inst", $k) :- rann($f, $t), !isasync($f), aleaf($t, $m), aself($m), me
 // cret(c, w, k): call c's declared return class. Joined with the subclasses last, so a new subclass row reaches
 // only the calls declared to return its base.
 .decl cret(c: node, w: sym, k: node)
-cret($c, $w, $k) :- callee($c, $e), pv($e, "fn", $f), rret($f, $w, $k), !rgen($f, _).
+cret($c, $w, $k) :- cfn($c, $e, $f), rret($f, $w, $k), !rgen($f, _).
 pv($c, $w, $s) :- cret($c, $w, $k), sub($k, $s).
 
 // ---- generics (t21 §5.1, first version) --------------------------------------------------------------------------
@@ -487,7 +487,7 @@ tvar_of($f, $z) :- rgen($f, $r), method($f, $a), sarg($r, _, $z), kind($z, "iden
 gret($f) :- rtvar($f, _, _).
 gret($f) :- rgen($f, _).
 .decl gfn(c: node, f: node)
-gfn($c, $f) :- callee($c, $e), pv($e, "fn", $f), gret($f).
+gfn($c, $f) :- cfn($c, $e, $f), gret($f).
 gfn($c, $f) :- ifn($c, $f), gret($f).
 .decl gcall(c: node, o: node, f: node)
 gcall($c, $o, $f) :- gfn($c, $f), callee($c, $n), attr_of($n, $o, _).
@@ -538,8 +538,42 @@ gcls($c, $x, $k) :- gbind($c, $x), ghead($x, $h), pv($h, "cls", $k).
 pv($c, "inst", $s) :- gcls($c, _, $k), sub($k, $s).
 pv($c, "gen", $x) :- gcls($c, $x, $k), ghead($x, $h), $x != $h, cparam($k, _, _).
 // A function's own type variable, from the argument its parameter is given (a method's arguments follow `self`).
-pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), rpvar($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
-pv($c, $k, $v) :- callee($c, $e), attr_of($e, _, _), pv($e, "fn", $f), method($f, _), rpvar($f, $i, _), pred($i, $j), posarg($c, $j, $a), pv($a, $k, $v).
+pv($c, $k, $v) :- cfn($c, $e, $f), !method($f, _), rpvar($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
+pv($c, $k, $v) :- cfn($c, $e, $f), attr_of($e, _, _), method($f, _), rpvar($f, $i, _), pred($i, $j), posarg($c, $j, $a), pv($a, $k, $v).
+// Or from the generic its parameter is declared (`sorted(iterable: Iterable[_T]) -> list[_T]`): ownvar(f, y), f's
+// return reads its own type variable y; fgp(f, i, ka, w, y), f's parameter i is declared a generic of class ka whose
+// parameter w is y; fbind(c, f, y, x), at call c the argument's generic value, or its class's bases, give w the
+// annotation x.
+.decl ownvar(f: node, y: sym)
+ownvar($f, $y) :- rann($f, $t), !isasync($f), aleaf($t, $r), kind($r, "identifier"), text($r, $y), !method($f, _).
+ownvar($f, $y) :- rann($f, $t), !isasync($f), aleaf($t, $r), kind($r, "identifier"), text($r, $y), method($f, $a), !cparam($a, _, $y).
+ownvar($f, $y) :- rgen($f, $r), sarg($r, _, $z), kind($z, "identifier"), text($z, $y), !method($f, _).
+ownvar($f, $y) :- rgen($f, $r), sarg($r, _, $z), kind($z, "identifier"), text($z, $y), !tvar_of($f, $z), method($f, _).
+.decl fgp(f: node, i: int, ka: node, w: sym, y: sym)
+fgp($f, $i, $ka, $w, $y) :- ownvar($f, $y), pann($f, $x, $pt), param($f, $x, $i), ann($pt, $g), gann_head($g, $h), pv($h, "cls", $ka), sarg($g, $j, $z),
+    kind($z, "identifier"), text($z, $y), cparam($ka, $j, $w).
+.decl fcall(c: node, f: node, i: int, a: node)
+fcall($c, $f, $i, $a) :- cfn($c, $e, $f), !method($f, _), fgp($f, $i, _, _, _), posarg($c, $i, $a).
+fcall($c, $f, $i, $a) :- cfn($c, $e, $f), attr_of($e, _, _), method($f, _), fgp($f, $i, _, _, _), pred($i, $j), posarg($c, $j, $a).
+.decl fbind(c: node, f: node, y: sym, x: node)
+fbind($c, $f, $y, $x) :- fcall($c, $f, $i, $a), fgp($f, $i, $ka, $w, $y), pv($a, "gen", $g), ghcls($g, $k), tmap($k, $i2, $ka, $w), garg($g, $i2, $x).
+fbind($c, $f, $y, $x) :- fcall($c, $f, $i, $a), fgp($f, $i, $ka, $w, $y), pv($a, "inst", $k), tfix($k, $ka, $w, $x).
+gbind($c, $x) :- fbind($c, $f, $y, $x), rann($f, $t), aleaf($t, $r), kind($r, "identifier"), text($r, $y).
+garg($c, $j, $x) :- fbind($c, $f, $y, $x), rgen($f, $r), sarg($r, $j, $z), kind($z, "identifier"), text($z, $y).
+// A protocol's parameter, which one of its methods is declared to return (`next(i: SupportsNext[_T]) -> _T`): f
+// returns what the argument's method of that name returns, as an implicit call (`i.__next__()`) does. Not an `icall`,
+// which is read before values (its receiver is a value root): pfn(c, o, f), call c runs o's method f.
+.decl pmeth(ka: node, w: sym, m: sym)
+pmeth($ka, $w, $m) :- rtvar($mm, $ka, $w), aproto($ka), field($mm, "name", $n), text($n, $m).
+.decl pcall(c: node, o: node, m: sym)
+pcall($c, $a, $m) :- fcall($c, $f, $i, $a), fgp($f, $i, $ka, $w, $y), pmeth($ka, $w, $m), rann($f, $t), aleaf($t, $r), kind($r, "identifier"), text($r, $y).
+need_attr($k, $m) :- pcall(_, $o, $m), pv($o, "inst", $k).
+.decl pfn(c: node, o: node, f: node)
+pfn($c, $o, $f) :- pcall($c, $o, $m), pv($o, "inst", $k), fv($k, $m, "fn", $f).
+pv($c, $k, $v) :- pfn($c, _, $f), !isasync($f), !isgen($f), fret($f, $k, $v).
+cret($c, $w, $k) :- pfn($c, _, $f), rret($f, $w, $k), !rgen($f, _).
+gfn($c, $f) :- pfn($c, _, $f), gret($f).
+gcall($c, $o, $f) :- gfn($c, $f), pfn($c, $o, $f).
 
 // ---- implicit calls -------------------------------------------------------------------------------------------
 // icall(c, o, a): c's value is what o's method a returns, a call with no node for the method: a subscript `o[i]` is
@@ -557,7 +591,7 @@ need_attr($k, $a) :- icall(_, $o, $a), pv($o, "inst", $k).
 ifn($c, $f) :- icall($c, $o, $a), pv($o, "inst", $k), fv($k, $a, "fn", $f).
 pv($c, $k, $v) :- ifn($c, $f), !isasync($f), !isgen($f), fret($f, $k, $v).
 cret($c, $w, $k) :- ifn($c, $f), rret($f, $w, $k), !rgen($f, _).
-tv($c, "decl", $m) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), rann($f, $t), aleaf($t, $m), dtype($m, _).
+tv($c, "decl", $m) :- cfn($c, $e, $f), !isasync($f), rann($f, $t), aleaf($t, $m), dtype($m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: sym, t: node)
 cann($c, $x, $t) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "type", $t), nearest($a, $c, scope),
@@ -707,11 +741,73 @@ pass($n, $c) :- kind($n, "named_expression"), field($n, "value", $c).
 pv($n, $k, $v) :- pass($n, $c), pv($c, $k, $v).
 // Calls: a class makes an instance; a function returns what its returns hold, or the argument it returns.
 pv($c, "inst", $k) :- callee($c, $e), pv($e, "cls", $k).
-pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), fret($f, $k, $v).
+// cfn(c, e, f): call c of e runs f, a function, or an overload its positional arguments fit (`iter(x)` is not typed
+// by `iter(f, sentinel)`). A call with a splat, a generator argument or more than eight positional arguments fits every
+// overload, and one with keywords every overload with room for its positional arguments. A method's `self` is bound
+// by an attribute call.
+.decl cfn(c: node, e: node, f: node)
+cfn($c, $e, $f) :- callee($c, $e), pv($e, "fn", $f), !ovlfn($f).
+cfn($c, $e, $f) :- callee($c, $e), pv($e, "fn", $f), ovlfn($f), cwild($c).
+cfn($c, $e, $f) :- callee($c, $e), pv($e, "fn", $f), ovlfn($f), !method($f, _), cpos($c, $n), ffit($c, $f, $n).
+cfn($c, $e, $f) :- callee($c, $e), pv($e, "fn", $f), ovlfn($f), method($f, _), !attr_of($e, _, _), cpos($c, $n), ffit($c, $f, $n).
+cfn($c, $e, $f) :- callee($c, $e), pv($e, "fn", $f), ovlfn($f), method($f, _), attr_of($e, _, _), cpos($c, $m), pred($n, $m), ffit($c, $f, $n).
+.decl ovlfn(f: node)
+ovlfn($f) :- ovlstmt($st), field($st, "definition", $f).
+.decl cwild(c: node)
+cwild($c) :- posarg($c, 8, _).
+cwild($c) :- kind($c, "call"), field($c, "arguments", $as), child($as, $a, _), kind($a, "list_splat").
+cwild($c) :- kind($c, "call"), field($c, "arguments", $as), child($as, $a, _), kind($a, "dictionary_splat").
+cwild($c) :- kind($c, "call"), field($c, "arguments", $g), kind($g, "generator_expression").
+.decl ckw(c: node)
+ckw($c) :- kind($c, "call"), field($c, "arguments", $as), child($as, $a, _), kind($a, "keyword_argument").
+// cpos(c, n): c has n positional arguments.
+.decl cpos(c: node, n: int)
+cpos($c, 0) :- kind($c, "call"), field($c, "arguments", $as), kind($as, "argument_list"), !posarg($c, _, _), !cwild($c).
+cpos($c, $n) :- posarg($c, $j, _), !posarg($c, $n, _), pred($n, $j), !cwild($c).
+// ffit(c, f, n): n positional arguments fit overload f: at least its required ones and none of its keyword-only ones
+// required (unless keywords may give them), at most its positional ones (unless it takes `*args`).
+.decl ffit(c: node, f: node, n: int)
+ffit($c, $f, $n) :- cpos($c, _), ovlfn($f), slot($n), fneed($f, $r), $r <= $n, fcap($f, $p), $n <= $p, !ckw($c), !fkwreq($f).
+ffit($c, $f, $n) :- cpos($c, _), ovlfn($f), slot($n), ckw($c), fcap($f, $p), $n <= $p.
+.decl slot(n: int)
+slot(0). slot(1). slot(2). slot(3). slot(4). slot(5). slot(6). slot(7). slot(8). slot(9).
+// An overload's parameters by position (`self` counted, `/` not), before any `*`, `*args` or `**kw`.
+.decl pstar(f: node, k: int)
+pstar($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), kind($p, "keyword_separator").
+pstar($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), kind($p, "list_splat_pattern").
+pstar($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), kind($p, "dictionary_splat_pattern").
+pstar($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), kind($p, "typed_parameter"), child($p, $s, 0), kind($s, "list_splat_pattern").
+pstar($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), kind($p, "typed_parameter"), child($p, $s, 0), kind($s, "dictionary_splat_pattern").
+.decl pstar_before(f: node, k: int)
+pstar_before($f, $k) :- pstar($f, $s), ovlfn($f), field($f, "parameters", $ps), child($ps, _, $k), $s <= $k.
+.decl psep_before(f: node, k: int)
+psep_before($f, $k) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $q, $s), kind($q, "positional_separator"), child($ps, _, $k), $s < $k.
+.decl ppos(f: node, i: int, p: node)
+ppos($f, $k, $p) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), !kind($p, "positional_separator"), !pstar_before($f, $k),
+    !psep_before($f, $k).
+ppos($f, $i, $p) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), !kind($p, "positional_separator"), !pstar_before($f, $k),
+    psep_before($f, $k), pred($k, $i).
+.decl preq(f: node, i: int)
+preq($f, $i) :- ppos($f, $i, $p), kind($p, "identifier").
+preq($f, $i) :- ppos($f, $i, $p), kind($p, "typed_parameter").
+.decl fneed(f: node, n: int)
+fneed($f, 0) :- ovlfn($f), !preq($f, _).
+fneed($f, $n) :- preq($f, $i), pred($n, $i), !preq($f, $n).
+.decl fkwreq(f: node)
+fkwreq($f) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), pstar_before($f, $k), !pstar($f, $k), kind($p, "identifier").
+fkwreq($f) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, $k), pstar_before($f, $k), !pstar($f, $k), kind($p, "typed_parameter").
+.decl fstar(f: node)
+fstar($f) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, _), kind($p, "list_splat_pattern").
+fstar($f) :- ovlfn($f), field($f, "parameters", $ps), child($ps, $p, _), kind($p, "typed_parameter"), child($p, $s, 0), kind($s, "list_splat_pattern").
+.decl fcap(f: node, n: int)
+fcap($f, 9) :- fstar($f).
+fcap($f, 0) :- ovlfn($f), !fstar($f), !ppos($f, _, _).
+fcap($f, $n) :- ppos($f, $i, _), pred($n, $i), !ppos($f, $n, _), !fstar($f).
+pv($c, $k, $v) :- cfn($c, $e, $f), !isasync($f), !isgen($f), fret($f, $k, $v).
 // fret(f, k, v): function f may return a k v.
 .decl fret(f: node, k: sym, v: node)
 fret($f, $k, $v) :- retval($f, $r), pv($r, $k, $v).
-pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
+pv($c, $k, $v) :- cfn($c, $e, $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
 pv($c, "super", $k) :- callee($c, $e), builtin_ref($e, "super"), nearest($c, $f, fdef), method($f, $k).
 // The standard library's `builtins`, where a run loads it (t21): a builtin name is that module's binding of the name
 // (`super` keeps its own value above), and a literal is an instance of its builtins class. Not `object`: every class
@@ -843,12 +939,12 @@ vopen($n) :- vpos($n), kind($n, "boolean_operator"), child($n, $c, _), vopen($c)
 // callable), when a workspace function's return is, and for coroutines and generators.
 vopen($c) :- vpos($c), callee($c, $e), vopen($e).
 vopen($c) :- vpos($c), callee($c, $e), !pv($e, _, _), !pv($c, "super", _), !bcall($c, _).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), isasync($f).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), isgen($f).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), retval($f, $r), !retparam($f, _, $r), vopen($r).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), retparam($f, $i, _), !posarg($c, $i, _).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), retparam($f, $i, _), posarg($c, $i, $a), vopen($a).
-vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), method($f, _), retparam($f, _, _).
+vopen($c) :- vpos($c), cfn($c, $e, $f), isasync($f).
+vopen($c) :- vpos($c), cfn($c, $e, $f), !rclosed($f), isgen($f).
+vopen($c) :- vpos($c), cfn($c, $e, $f), !rclosed($f), retval($f, $r), !retparam($f, _, $r), vopen($r).
+vopen($c) :- vpos($c), cfn($c, $e, $f), !rclosed($f), retparam($f, $i, _), !posarg($c, $i, _).
+vopen($c) :- vpos($c), cfn($c, $e, $f), !rclosed($f), retparam($f, $i, _), posarg($c, $i, $a), vopen($a).
+vopen($c) :- vpos($c), cfn($c, $e, $f), !rclosed($f), method($f, _), retparam($f, _, _).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "inst", _).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "mod", _).
 // An implicit call's value: unknown when its receiver is, when no workspace method is found, when the method's
@@ -1035,8 +1131,8 @@ tv($n, $k, $v) :- look($n, $x, $s), tbv($s, $x, $k, $v).
 tv($n, $k, $v) :- qn($n, $q), tqv($q, $k, $v).
 tv($n, $k, $v) :- alook($n, $c, $a), found($c, $a, $at), tbv($at, $a, $k, $v).
 tv($n, $k, $v) :- pass($n, $c), tv($c, $k, $v).
-tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), tv($r, $k, $v).
-tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), tv($a, $k, $v).
+tv($c, $k, $v) :- cfn($c, $e, $f), !isasync($f), !isgen($f), retval($f, $r), tv($r, $k, $v).
+tv($c, $k, $v) :- cfn($c, $e, $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), tv($a, $k, $v).
 // A workspace class's qualified name: a module's class, or a class's class. Classes in a function have none.
 .decl cls_q(c: node, q: sym)
 cls_q($c, @cat($m, $x)) :- modname($s, $m), rdefn($s, $x, $c), kind($c, "class_definition").

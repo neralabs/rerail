@@ -785,6 +785,69 @@ fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
+    // `pick(xs: It[S]) -> S` and `ordered(xs: It[S]) -> Seq[S]` (`min`, `sorted`): S is what the argument's class gives
+    // It's parameter, through its generic value (`Seq[V]`) or its class's bases (`class Vs(Seq[V])`). Every `run()`
+    // targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ownvar");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\nT = TypeVar(\"T\")\nS = TypeVar(\"S\")\nclass It(Generic[T]): ...\nclass Seq(It[T]):\n    def first(self) -> T: ...\nclass V:\n    def run(self) -> int: ...\nclass Vs(Seq[V]): ...\ndef ordered(xs: It[S]) -> Seq[S]: ...\ndef pick(xs: It[S], d: int = 0) -> S: ...\ndef f(xs: Seq[V], ys: Vs) -> None:\n    pick(xs).run()\n    ordered(xs).first().run()\n    pick(ys).run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    eprintln!("T {targets}\nO {open}");
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(targets.lines().count(), 7, "{targets}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
+    // `step(i: HasNext[S]) -> S` (`next`): Feed does not derive from HasNext; S is what `feed.__next__()` returns, a
+    // V, so `run()` targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protovar");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Protocol, TypeVar\nT = TypeVar(\"T\")\nS = TypeVar(\"S\")\nclass HasNext(Protocol[T]):\n    def __next__(self) -> T: ...\nclass V:\n    def run(self) -> int: ...\nclass Feed:\n    def __next__(self) -> V: ...\ndef step(i: HasNext[S]) -> S: ...\ndef f(feed: Feed) -> None:\n    step(feed).run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
+    // `get(1)` fits only the first overload (the second requires the keyword z), `get(1, 2, z=3)` only the second (the
+    // first takes one positional argument), and `k.m()`, its `self` bound, only the first. Each call is one class, so
+    // every `a()` and `b()` is a known method.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ovlarity");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import overload\nclass A:\n    def a(self) -> int: ...\nclass B:\n    def b(self) -> int: ...\n@overload\ndef get(x: int, /) -> A: ...\n@overload\ndef get(x: int, y: int = 0, *, z: int) -> B: ...\nclass K:\n    @overload\n    def m(self) -> A: ...\n    @overload\n    def m(self, y: int) -> B: ...\ndef f(k: K) -> None:\n    get(1).a()\n    get(1, 2, z=3).b()\n    k.m().a()\n    k.m(2).b()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.A") || l.ends_with("\tm.B")).count(), 4, "{types}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
