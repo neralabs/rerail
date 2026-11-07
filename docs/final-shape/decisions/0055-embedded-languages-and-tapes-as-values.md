@@ -1,6 +1,6 @@
 # 0055: Embedded languages are guest documents the library declares; a tape is a value rules can make
 
-Status: proposed (2026-11-07, revised the same day; design only, nothing built)
+Status: accepted (2026-11-07). The `.rr` path's guests are built for Python and Rust files: file-local embeds, `sub_tape` and `parsed` requests, embeds of embeds, `.guests` and `.on guest_error` (see [What was built](#what-was-built)). `@parse`, global embeds, the matcher path's guests and tape operations are not built yet.
 
 ## Intro
 
@@ -81,11 +81,11 @@ This record makes embedding one mechanism for both paths:
 // host_node(n, h): h is the innermost node of the host's tree that spans the bytes guest node n
 //   stands for (the matcher's `host`); none for a guest parsed from a decoded value.
 .decl host_node(n: node, h: node)
-// root(d, n): the root of document d's tree; for a fragment, the expression, not its wrapper.
-.decl root(d: number, n: node)
+// doc_root(d, n): the root of document d's tree; for a fragment, the expression, not its wrapper.
+.decl doc_root(d: number, n: node)
 
 // What core.rr declares today, as a view:
-parsed(s, g, r) :- guest(d, _, s, g), root(d, r).
+parsed(s, g, r) :- guest(d, _, s, g), doc_root(d, r).
 ```
 
 ### 2. The library declares embeds, as rules keyed by their host
@@ -248,7 +248,7 @@ cut off at a placeholder. So the policy says what a broken guest is:
 .functor parse(grammar: symbol, text: symbol): tape
 
 // The SQL a call runs, built from an f-string's pieces, checked as SQL:
-sql_root(c, r) :- query_call(c, s), sql_text(s, q), t = @parse("sql", q), tape_of(d, t), root(d, r).
+sql_root(c, r) :- query_call(c, s), sql_text(s, q), t = @parse("sql", q), tape_of(d, t), doc_root(d, r).
 ```
 
 - **`@parse` is `sub_tape` for text with no place.** It lowers as `match_all` over symbols does (0054
@@ -332,6 +332,101 @@ Each step keeps the replay and the converted gate unchanged, and stops for revie
 4. **Guests inside the evaluation:** `@parse`, `sub_tape`, and global embeds, with the chunk's
    documents rebound (§7).
 5. **Tape operations for fixes:** `@splice`, `@unparse`.
+
+## What was built
+
+A worked example first. This policy finds the names in string annotations:
+
+```
+// Each identifier inside a string annotation, at its place in the file.
+.decl ident(x: symbol, l: number, c: number)
+ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _),
+                  guest(g, _, s, _), node(g, i, "identifier", _, _),
+                  text(i, x), line(i, l), col(i, c).
+```
+
+Over this file:
+
+```python
+x: "List[int]" = []            # List at 1:4, int at 1:9: the string's bytes are copied
+z: "A\x42" = 1                 # AB at 4:3: a decoded value stands at its string
+q: "Opt['Baz']" = 3            # Baz at 6:9: the inner string is parsed in round 2
+b: b"Nope" = 4                 # nothing: a bytes literal is no annotation
+```
+
+How it runs, per chunk (`logic/plan/corpus.rs`, `logic/plan/corpus/guests.rs`):
+
+1. **The rule asks.** Lowering (`rr/lower.rs`, `embed_demand`) turns each `parsed(s, "g", r)` or
+   `sub_tape(s, "g", t)` into `rr_embed_req(s, "g")`. Its body is a context relation of the rule's
+   other literals that bind `s`. Literals that read the guest are left out: those joined to `r` or
+   `t`, and the guest relations themselves. Without that, the request would wait on its own answer.
+2. **The embed slice runs.** The rules that make `embed`, `embed_value` and `rr_embed_req` are cut
+   from the file-local program (`embed_slice`). They run over the chunk's batch before anything else.
+3. **The guests are parsed.** Each request names a host node (`host << 32 | local`). Its text is
+   chosen as follows:
+   - A plain string's contents are a copied stretch of the file, so positions map by an offset
+     (`Placement::Copied`).
+   - An escaped string, or a concatenation, gives its decoded value, and every node stands at the
+     string (`Placement::At`).
+   - Bytes and f-strings give no guest.
+   - Any other node gives its own text.
+
+   The tape comes from `core::build_cached`, keyed by text, so equal texts are parsed once.
+4. **The batch is rebuilt** with the hosts and the new guest documents. The slice runs again, up to
+   4 rounds. A string inside a parsed annotation is asked for in round 2, and its placement is
+   composed with its host's (`Placement::then`). After that, the file-local program runs once over
+   the final batch.
+
+What a guest document is (`facts/vtab/syntax.rs`, `facts/vtab/syntax/guests.rs`):
+
+- **Its key** is in `2^30..2^31`, hashed from its host's path, its place and its grammar. Files now
+  take `1..2^30` (`memo::doc_keys`). Every node id stays positive, and a memoised row's guest nodes
+  keep their ids.
+- **Its nodes** are its root's subtree. For the `annotation` grammar, the text is parsed as Python
+  `( … )`, and the root is the expression inside the parentheses, as rrlab does.
+- **Its positions** (`line`, `col`, `end_line`) are its file's, through the placement. It has no
+  `source`, `src_line` or `line_count` rows, because its text is the file's.
+- **Its rows:**
+  - `tape_of(d, t)`, `doc_role(d, r)` and `doc_root(d, n)`, for every document (`doc_root`, as
+    `root` is a name rule files already use);
+  - `guest(g, host, at, grammar)`, `parsed(at, grammar, root)` and `sub_tape(at, grammar, t)`, for
+    guests;
+  - `host_node(n, h)`, made only when a rule reads it.
+- **Its rows are its file's.** The memo attributes them to the host file (`host_of`).
+- **A broken guest** is withheld unless the policy says `partial`. Its `syntax_error` line is
+  mapped into the file. `.on guest_error … report CODE` lowers to a `violation` over
+  `syntax_error`, `guest` and `doc`. `warn` also sets `.severity guest_error warning`. A file's own
+  `.on syntax_error` now excludes guests (`!guest(d, _, _, _)`).
+
+The libraries' `parsed(s, "annotation", r)` (`names.rr`, `typing.rr`, `annotations.rr`,
+`ruff-classes.rr`, `typing-context.rr`) now has rows. `parsed` is no longer in the corpus runner's
+`NOT_MADE` list. `string_annotation` still is (O76), because Ruff's table of the call positions
+that take a type as a string is not built.
+
+Where this differs from the decision above:
+
+- **`.guests off` turns off the libraries' embeds, not a rule's own request.** A rule that writes
+  `parsed` or `sub_tape` asked for that guest, so it is made. Guests are documents of the batch
+  either way. Hiding a guest's nodes from rules that do not go through `guest` (§5) is not built:
+  `kind(n, "call")` sees a call inside a parsed annotation (O85).
+- **Grammars** are `annotation` or a language label from the registry (`python`, `rust`, `sql`,
+  `typescript`, …). Kinds resolve in the run's dialect, so a SQL guest's kinds do not match in a
+  Python run yet (O85).
+- **The corpus runner collects `.py` and `.rs` files only**, so Markdown, HTML, Vue and Blade hosts
+  wait for it. The matcher path's Vue and Blade guests are not yet these documents (step 1's test).
+- **Embeds are file-local.** An `embed` whose body reads another file's facts runs inside the chunk,
+  over the chunk's files only. Global embeds and `@parse` (§7) are not built.
+
+Tests (`logic/rr/tests.rs`):
+
+- `string_annotations_are_guests_at_their_host_lines`: plain, escaped, concatenated, nested and
+  bytes strings;
+- `guests_that_do_not_parse_follow_the_policy`: skip and report, then partial;
+- `embeds_declare_guests_and_guests_off_leaves_them_out`: `embed`, `embed_value`, `sub_tape`'s
+  shared tape, and `.guests off`.
+
+The replay is unchanged (3988 303 298 0; 47 s user and 11 s system CPU, load average about 127).
+The converted gate's checks read no `parsed`.
 
 ## Open
 

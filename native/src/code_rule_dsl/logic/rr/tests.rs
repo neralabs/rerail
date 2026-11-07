@@ -1298,3 +1298,113 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
     assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
 }
+
+/// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.
+fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (path, text) in files {
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    let path = dir.join("g.rr");
+    std::fs::write(&path, rule).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = outputs
+        .iter()
+        .map(|rel| {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        })
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// A string annotation is parsed where it stands: its names have the file's lines and columns when the string is
+/// plain, and the string's place when it is escaped or concatenated; a string inside a parsed one is parsed in the
+/// next round. Bytes give no guest.
+#[test]
+fn string_annotations_are_guests_at_their_host_lines() {
+    let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
+    let rule = r#"
+.decl ident(x: symbol, l: number, c: number)
+ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl whole(x: symbol, l: number, c: number)
+whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl roots(k: symbol)
+roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
+.output ident, whole, roots
+"#;
+    let [names, whole, roots] = <[Vec<String>; 3]>::try_from(guests_run("annotations", &[("a.py", py)], rule, &["ident", "whole", "roots"])).unwrap();
+    assert!(names.contains(&"List\t1\t4".to_owned()), "{names:?}");
+    assert!(names.contains(&"int\t1\t9".to_owned()), "{names:?}");
+    assert!(names.contains(&"Foo\t3\t20".to_owned()), "{names:?}");
+    assert!(names.contains(&"Bar\t3\t31".to_owned()), "{names:?}");
+    // "A\x42" is AB, at the string.
+    assert!(names.contains(&"AB\t4\t3".to_owned()), "{names:?}");
+    // ("Li" "st"): each part is a string of its own, and the concatenation is List, at the concatenation.
+    assert!(names.contains(&"Li\t5\t5".to_owned()), "{names:?}");
+    assert_eq!(whole, ["List\t5\t4"]);
+    assert_eq!(roots, ["identifier", "subscript"]);
+    // 'Baz' inside "Opt['Baz']": round 2.
+    assert!(names.contains(&"Baz\t6\t9".to_owned()), "{names:?}");
+    assert!(!names.iter().any(|n| n.starts_with("Nope")), "{names:?}");
+}
+
+/// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
+/// `report` gives a finding at its line in the host; the host's own `.on syntax_error` does not see it.
+#[test]
+fn guests_that_do_not_parse_follow_the_policy() {
+    let py = "x: \"int\" = 1\ny: \"List[\" = 2\n";
+    let rule = |on: &str| {
+        format!(
+            r#"
+.policy "t:guest" revision 1
+.on syntax_error report BAD000
+{on}
+.decl roots(l: number)
+roots(l) :- kind(s, "string"), parsed(s, "annotation", r), line(r, l).
+.decl kept(l: number)
+kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
+.output roots, kept
+"#
+        )
+    };
+    let [v, roots, kept] = <[Vec<String>; 3]>::try_from(guests_run("gskip", &[("a.py", py)], &rule(".on guest_error annotation report GBAD"), &["violation", "roots", "kept"])).unwrap();
+    assert_eq!(v, ["t:guest\tguest_error\tGBAD\ta.py\t2"]);
+    assert_eq!(roots, ["1"], "the broken guest has no tree");
+    assert_eq!(kept, ["1", "2"], "both are guests");
+    let [v, roots] = <[Vec<String>; 2]>::try_from(guests_run("gpartial", &[("a.py", py)], &rule(".on guest_error partial"), &["violation", "roots"])).unwrap();
+    assert!(v.is_empty(), "{v:?}");
+    assert_eq!(roots, ["1", "2"], "the broken guest keeps its partial tree");
+}
+
+/// A library's `embed` and `embed_value` declare guests of a role; `.guests off` leaves them out. `sub_tape` gives
+/// a guest's tape: equal texts share one. A rule's own request is made either way.
+#[test]
+fn embeds_declare_guests_and_guests_off_leaves_them_out() {
+    let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
+    let rule = |guests: &str| {
+        format!(
+            r#"
+{guests}
+embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
+embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
+.decl imp(r: symbol, x: symbol, l: number)
+imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
+.decl tapes(t: symbol)
+tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
+.output imp, tapes
+"#
+        )
+    };
+    let [imp, tapes] = <[Vec<String>; 2]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes"])).unwrap();
+    assert_eq!(imp, ["code\timport os\t1", "code\timport os\t2", "made\timport sys\t3"]);
+    assert_eq!(tapes.len(), 1, "{tapes:?}");
+    let [imp] = <[Vec<String>; 1]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp"])).unwrap();
+    // The rule's own `sub_tape` still asks for the strings, as fragments.
+    assert_eq!(imp, ["fragment\timport os\t1", "fragment\timport os\t2"]);
+}

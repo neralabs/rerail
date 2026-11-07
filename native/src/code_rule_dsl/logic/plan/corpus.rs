@@ -24,6 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
+mod guests;
 pub(in crate::code_rule_dsl) mod memo;
 mod inputs;
 mod typing;
@@ -213,10 +214,34 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
 }
 
 /// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
-const NOT_MADE: [(&str, &str); 2] = [
-    ("parsed", "strings are not parsed as code, so names in string annotations are not resolved"),
-    ("string_annotation", "read only with `parsed`"),
-];
+const NOT_MADE: [(&str, &str); 1] = [("string_annotation", "Ruff's table of the call positions that take a type as a string is not built")];
+
+/// The embed slice of a lowered file-local program (decision 0055): the rules its guest requests need (`embed`,
+/// `embed_value`, `rr_embed_req`), with those as its outputs; `None` when no rule makes a request.
+fn embed_slice(local: &front::Program) -> Option<front::Program> {
+    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain([guests::DEMAND]).filter(|r| local.rules.iter().any(|x| x.head.rel == *r)).collect();
+    if wanted.is_empty() {
+        return None;
+    }
+    let mut need: BTreeSet<String> = wanted.iter().map(|r| (*r).to_owned()).collect();
+    loop {
+        let more: BTreeSet<String> = local
+            .rules
+            .iter()
+            .filter(|r| need.contains(&r.head.rel))
+            .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))
+            .filter(|rel| !need.contains(rel))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        need.extend(more);
+    }
+    let mut slice = local.clone();
+    slice.rules.retain(|r| need.contains(&r.head.rel));
+    slice.outputs = wanted.iter().map(|r| (*r).to_owned()).collect();
+    Some(slice)
+}
 
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
@@ -479,6 +504,13 @@ pub(crate) fn run_with_options(
     }
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
+    // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them.
+    for rel in guests::LIBRARY.iter().copied().chain([guests::DEMAND]) {
+        if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
+            prog.outputs.push(rel.to_owned());
+        }
+    }
+    let library_guests = !prog.facts.get(syntax::GUEST_POLICY).into_iter().flatten().any(|row| matches!(row.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == "library" && v == "off"));
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
@@ -554,6 +586,12 @@ pub(crate) fn run_with_options(
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
     });
     let (local, cross) = (part(split.local), part(split.cross));
+    let slice = embed_slice(&local.program).map(part);
+    let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
+    crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
+        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055); library embeds {}", s.program.rules.len(), guests::DEPTH, if library_guests { "on" } else { "off (.guests off)" }),
+        None => "no rule asks for a guest".into(),
+    });
     // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made.
     let projection = syntax::Projection::of(&prog, read.clone());
@@ -676,7 +714,7 @@ pub(crate) fn run_with_options(
     // own thread and reported as `parse` and `batch`; the main thread's as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>);
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>, Vec<syntax::Document>);
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0053).
@@ -727,7 +765,7 @@ pub(crate) fn run_with_options(
             let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
             let digest = core::digest(&facts);
             drop(digest_span);
-            Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts })))
+            Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None })))
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {
@@ -752,7 +790,7 @@ pub(crate) fn run_with_options(
                     // Reading, hashing and looking files up is the worker's parse time.
                     add(&mut parse, t);
                     t = thread_usage();
-                    if send.send(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits)))).is_err() {
+                    if send.send(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits), Vec::new()))).is_err() {
                         break;
                     }
                 }
@@ -764,12 +802,14 @@ pub(crate) fn run_with_options(
             add(&mut parse, t);
             t = thread_usage();
             let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
+            // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
+            let kept_docs = if slice.is_some() { pending.clone() } else { Vec::new() };
             let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             let (docs_of, hits_of) = (std::mem::take(&mut pending_docs), std::mem::take(&mut hits));
-            if send.send(built.map(|sources| (n, sources, docs_of, hits_of))).is_err() {
+            if send.send(built.map(|sources| (n, sources, docs_of, hits_of, kept_docs))).is_err() {
                 break;
             }
             t = thread_usage();
@@ -778,7 +818,7 @@ pub(crate) fn run_with_options(
         (parse, batch, read_sources)
     });
     for built in chunks_in {
-        let (chunk_nodes_built, sources, chunk_docs, hits) = built?;
+        let (chunk_nodes_built, sources, chunk_docs, hits, documents) = built?;
         // The previous chunk's freed pages go back to the system: without this the footprint settles about 170 MB
         // over the live heap on the full corpus (550 MB against 300 to 350 MB), and the peak is 80 MB higher.
         crate::code_rule_dsl::prof::release();
@@ -847,6 +887,44 @@ pub(crate) fn run_with_options(
             chunk.apply(&mut stats);
             own_totals.add(&chunk);
         }
+        // Guests (decision 0055): the embed slice runs over the chunk, the guests it asks for are parsed, and the
+        // batch is built again with them, until a round asks for none new. The batch bound below holds them.
+        let mut host_of: HashMap<i64, i64> = HashMap::new();
+        let sources = match &slice {
+            Some(slice) if !documents.is_empty() => {
+                let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
+                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::default());
+                for _ in 0..guests::DEPTH {
+                    // The slice's planner statistics: what it reads, measured in this round's batch.
+                    let mut round = stats.clone();
+                    for (rel, source) in &sources {
+                        if slice_reads.contains(rel) {
+                            let measured = syntax::statistics(source.as_ref());
+                            round.measured(rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                        }
+                        modules.bind(&db, rel, Arc::clone(source))?;
+                    }
+                    let got = super::run_atoms_native_over(slice, &db, "main", round, BTreeSet::new(), modes)?;
+                    let new = made.make(guests::requests(&got.outputs, library_guests), &docs, tapes.as_ref()).map_err(Error::Plan)?;
+                    if new.is_empty() {
+                        break;
+                    }
+                    if own {
+                        let ranges = new.iter().map(|d| i64::from(d.key)).map(|k| vec![SqlValue::Integer(k), SqlValue::Integer(k << 32), SqlValue::Integer((k << 32) | 0xffff_ffff)]).collect();
+                        super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
+                    }
+                    docs.extend(new);
+                    sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
+                }
+                host_of = std::mem::take(&mut made.host_of);
+                sources
+            }
+            _ => sources,
+        };
+        let document_of = |v: i64| {
+            let d = memo::document_of(v);
+            host_of.get(&d).copied().unwrap_or(d)
+        };
         for (rel, source) in sources {
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
@@ -894,7 +972,7 @@ pub(crate) fn run_with_options(
             for (rel, lines) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied());
                 for line in lines {
-                    let doc = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(memo::document_of);
+                    let doc = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(document_of);
                     match doc.and_then(|d| entries.get_mut(&d)) {
                         Some(e) => e.lines.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), Vec::new())).1.push(line.clone()),
                         None => attributable = false,
@@ -913,7 +991,7 @@ pub(crate) fn run_with_options(
             };
             let width = rows.columns().len();
             for r in 0..rows.len() {
-                match entries.get_mut(&memo::document_of(rows.value(r, at))) {
+                match entries.get_mut(&document_of(rows.value(r, at))) {
                     Some(e) => {
                         let held = e.rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new()));
                         held.1.extend((0..width).map(|c| rows.value(r, c)));
@@ -1055,6 +1133,8 @@ pub(crate) fn run_with_options(
                 row.split('\t')
                     .enumerate()
                     .map(|(i, v)| match v.parse::<i64>() {
+                        // A guest's node (decision 0055): its document is no file of the run.
+                        Ok(v) if node_columns.contains(&i) && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
                         Ok(v) if node_columns.contains(&i) && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
                         Ok(v) if node_columns.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         _ => v.to_owned(),

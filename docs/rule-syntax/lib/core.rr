@@ -186,10 +186,27 @@
 // precedes_stop(a, b, stop): as precedes, with no sibling of `stop` between them. Lowers JSON's `precedes` and
 // `follows` with a `stopBy` rule.
 .decl precedes_stop(a: node, b: node, stop: relation)
+// ---- guests: code inside code (decision 0055) -------------------------------------------------------------
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
-// rules can resolve names in string annotations. Native because it runs the parser on the string's contents.
-// Cost: one parse per distinct string; ask for it only for strings that hold code (annotations, embedded SQL).
+// rules can resolve names in string annotations. A rule's parsed(s, "g", r) or sub_tape(s, "g", t) asks for
+// the guest at s (the literals beside it that bind s say which s); a library asks with embed. Each guest is a
+// document of its own: its nodes are node rows of its document, its lines and columns are the file's (a decoded
+// string's nodes all stand at the string). Cost: one parse per distinct text, cached by text.
+// Grammars: "annotation" (a Python expression), or a language label ("python", "sql", "typescript", …).
+// Guests have no source, src_line or line_count rows: their text is the host's.
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
+.decl sub_tape(at: node, grammar: symbol, t: symbol)     // the tape (content key) of the guest at `at`
+.decl guest(g: number, host: number, at: node, grammar: symbol)  // document g is the code at host node `at`
+.decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
+.decl doc_root(d: number, n: node)                       // the root of document d's tree
+.decl tape_of(d: number, t: symbol)                      // document d places tape t; equal texts share a tape
+.decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
+.input sub_tape, guest, doc_role, doc_root, tape_of, host_node
+// embed(d, at, "sql", "query"): a library declares that the code at node `at` of document d is a guest of that
+// grammar and role (`.guests off` leaves these out). embed_value(d, at, g, role, text) for a computed text,
+// which stands at `at`. Rules derive them; the engine makes the guests.
+.decl embed(d: number, at: node, grammar: symbol, role: symbol)
+.decl embed_value(d: number, at: node, grammar: symbol, role: symbol, text: symbol)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
 .decl spread(n: node)                                    // a spread element or argument (`*args`, `...xs`)
@@ -488,6 +505,13 @@
 // .on syntax_error report CODE [at line 1]    also report each syntax error as a finding. Either way the document
 //                                              is withheld (no facts) and its outcome is Unknown(parse).
 // .on input_error report CODE                 a repository input that is missing or malformed is a finding.
+// .guests on | off                            whether libraries' embeds are made (on by default); a rule's own
+//                                              parsed or sub_tape still asks for its guests.
+// .on guest_error [GRAMMAR] skip | partial [warn | report CODE]
+//                                              a guest that does not parse: skip (the default) has no nodes;
+//                                              partial keeps the tree the parser recovered. warn or report also
+//                                              gives a finding at the guest's line in its host (warn: severity
+//                                              warning). A file's own syntax_error is never a guest's.
 // .budget V by code { "A": 3 }                 findings may exist up to these counts without blocking. Counts are of
 //                                              distinct keys, suppressed ones included; a group without a ceiling
 //                                              has 0. by code | severity | group | path, or total.

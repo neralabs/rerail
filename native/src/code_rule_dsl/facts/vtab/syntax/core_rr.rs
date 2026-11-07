@@ -439,6 +439,14 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
     super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
 }
 
+/// A shared native grammar verdict. Raw text projections do not request it.
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+    if dialect.family == Family::Python {
+        return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
+    }
+    first_error(f, &Lines::new(&f.source, false), &|id| dialect.name(f, id))
+}
+
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
@@ -588,35 +596,33 @@ impl CoreRows {
         }
     }
 
-    /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_syntax_error: bool, wants_source_text: bool, wants_line_text: bool) {
+    /// A withheld document's one row: its first error (`verdict`).
+    pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
+        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+    }
+
+    /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
+    /// its tokens.
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
-        if wants_syntax_error {
-            let error = if dialect.family == Family::Python {
-                f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone()
-            } else {
-                first_error(f, &x.lines, &|id| dialect.name(f, id))
-            };
-            if let Some((l, msg)) = error {
-                self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
+        if own_text {
+            let source = p.len() + x.tokens;
+            self.source.push([key, p.global(source)]);
+            for l in 1..=x.lines.count() {
+                self.src_line.push([key, l as i64, p.global(source + l as u32)]);
             }
-        }
-        let source = p.len() + x.tokens;
-        self.source.push([key, p.global(source)]);
-        for l in 1..=x.lines.count() {
-            self.src_line.push([key, l as i64, p.global(source + l as u32)]);
-        }
-        self.line_count.push([key, x.lines.count() as i64]);
-        if wants_split_lines {
-            for (i, line) in Lines::split_python(&f.source).enumerate() {
-                self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
+            self.line_count.push([key, x.lines.count() as i64]);
+            if wants_split_lines {
+                for (i, line) in Lines::split_python(&f.source).enumerate() {
+                    self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
+                }
             }
-        }
-        if wants_lf_lines {
-            for (i, line) in f.source.split('\n').enumerate() {
-                self.lf_line.push([key, (i + 1) as i64, string(line) as i64]);
+            if wants_lf_lines {
+                for (i, line) in f.source.split('\n').enumerate() {
+                    self.lf_line.push([key, (i + 1) as i64, string(line) as i64]);
+                }
             }
         }
         if wants_text {

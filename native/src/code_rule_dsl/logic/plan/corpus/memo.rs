@@ -29,10 +29,11 @@ pub(super) struct Entry {
     pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
 }
 
-/// Each path's document key: from its hash, in `1..2^31` (so `key << 32` stays positive), the next free one on a
-/// collision. A key is in each entry, so a key a collision moved only misses the memo.
+/// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
+/// so a key a collision moved only misses the memo. Guests (decision 0055) take `2^30..2^31`, so every key's
+/// `key << 32` stays positive.
 pub(in crate::code_rule_dsl) fn doc_keys(paths: &[String]) -> Vec<i64> {
-    const SPAN: u64 = (1 << 31) - 1;
+    const SPAN: u64 = (1 << 30) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
     paths
         .iter()
@@ -193,7 +194,7 @@ mod tests {
         let keys = doc_keys(&paths);
         assert_eq!(keys, doc_keys(&paths));
         assert_eq!(doc_keys(&paths[1..]), keys[1..], "a key does not depend on the other paths");
-        assert!(keys.iter().all(|&k| (1..1 << 31).contains(&k)));
+        assert!(keys.iter().all(|&k| (1..1 << 30).contains(&k)));
         assert_eq!(document_of(keys[0] << 32 | 9), keys[0]);
         assert_eq!(document_of(keys[1]), keys[1]);
     }

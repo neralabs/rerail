@@ -1395,7 +1395,8 @@ Hand-written rules read relations the engine does not make yet: `parsed` and `st
 parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
 since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
-`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.)
+`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
+made (decision 0055); `string_annotation` is still empty.
 
 ## O77. Lowering shortcuts in `.rr`
 
@@ -1455,7 +1456,8 @@ tokens have no field.
 ## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
 
 - `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
-  into the batch's node space, on demand (rrlab answers requests in rounds); not built.
+  into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
+  is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
   per file and pattern) and over symbols (a native relation): decision 0054. Over a node's own text, `match_all`
   is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
@@ -1565,3 +1567,30 @@ after P's last native commit):
 
 To close: when O18 is decided, either the relational clause becomes production and these run by
 default, or the tests move with P's stage.
+
+## O85. Guests (decision 0055): what is not built yet
+
+Decision 0055's guests are built for `.py` and `.rs` corpus runs. These parts are not:
+
+- **Hiding guests from rules that do not ask for them.** Guests are documents of the batch, so
+  `kind(n, "call")` also matches a call inside a parsed string annotation. `.guests off` only stops
+  the libraries' `embed`s; a rule's own `parsed` or `sub_tape` still makes its guest. 0055 §5 wanted
+  `.guests off` to hide guests as documents and keep them as facts.
+- **Kind names across grammars.** Kinds resolve in the run's dialect. A SQL guest in a Python run
+  is parsed, but `kind(n, "select_statement")` names no Python kind.
+- **Hosts the corpus runner does not collect** (Markdown, HTML, Vue, Blade), and the matcher path's
+  Vue and Blade guests as these documents (0055 step 1).
+- **Global embeds** (an `embed` reading another chunk's facts), **`@parse`** (§7), and the tape
+  operations **`@splice` and `@unparse`**.
+- **The memo and guests.** A memoised file's rows include its guests' rows. Guest keys depend only
+  on the host's path, place and grammar, so they are stable. No test yet checks a memo hit against
+  a fresh run on a file with guests.
+- **Cost on the 9,010-file repository** (guests made, distinct texts, parse CPU): not measured yet.
+- **The shared tape cache races.** `core::build_cached` writes to one SQLite file in the temp dir,
+  which every run on the machine shares. Under parallel tests, a write sometimes fails with
+  `FOREIGN KEY constraint failed`. Guests write equal small texts often, so they hit it. A guest
+  whose cache write fails is parsed without the cache (`guests.cache_failed`). Primary files use
+  the same call and can fail the same way; the cause (probably a collector removing a source between
+  `put_source` and `put_tape`) is not investigated.
+
+To close: each part is built or decided against in a decision record.

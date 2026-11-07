@@ -92,6 +92,9 @@ impl LibraryFile {
 /// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
+/// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
+const LIBRARY_DERIVED: [&str; 2] = ["embed", "embed_value"];
+
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -112,6 +115,7 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
         .filter(|(file, _)| *file == core)
         .flat_map(|(_, statements)| statements)
         .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
+        .filter(|name| !LIBRARY_DERIVED.contains(&name.as_str()))
         .collect();
     for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {
         for (item, line) in statements {
