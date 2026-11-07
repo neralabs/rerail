@@ -3,9 +3,9 @@
 // line): the code is the row's `issue` (SPC-001 … SPC-005), the line its node's `line`.
 // The `pythonAst` rows (CPython `ast`, W's python_ast worker: `ast_name` the first str of a node's name/id/arg/attr,
 // `ast_annotation` `ast.unparse` of a node at field annotation/returns) are read over tree-sitter, as python/ast.rr
-// does (not included: only a few of its views are needed, written here per check). One GAP for every check:
-// CPython NFKC-normalizes identifiers and here an identifier is its text as written (no normalizing functor), so a
-// non-ASCII identifier whose normal form differs is compared as written. Others are named at their checks.
+// does (not included: only a few of its views are needed, written here per check). An identifier (a Name's id, an
+// attr, a def's or class's name, an import's dotted name parts, a keyword's name) is `@nfkc` of its text, as
+// CPython's parser normalizes it (PEP 3131). Gaps are named at their checks.
 // Clause `composition-runtime-observations` reads option `parameters` (JSON text) through option_json; see its
 // section at the end.
 .decl doc(d: number, path: symbol, module: symbol)
@@ -53,7 +53,7 @@ plan_import_dotted(y) :-
     field(x, "name", y).
 .decl plan_dotted(y: node, s: symbol)
 plan_dotted(y, s) :-
-    plan_import_dotted(y), s = join x by i sep "." : { child(y, c, i), node(_, c, "identifier", _, _), text(c, x) }.
+    plan_import_dotted(y), s = join x by i sep "." : { child(y, c, i), node(_, c, "identifier", _, _), text(c, t), x = @nfkc(t) }.
 .decl plan_imported(n: node, s: symbol)
 plan_imported(n, m) :-
     plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", y), plan_dotted(y, m).
@@ -104,7 +104,7 @@ plan_ann_string(a, x) :-
     plan_ann(a, t), plan_within(x, t), node(_, x, k, _, _), (k = "string" ; k = "concatenated_string"),
     !plan_concat_part(x).
 .decl plan_ann_token(a: node, s: symbol)
-plan_ann_token(a, s) :- plan_ann(a, t), plan_within(x, t), node(_, x, "identifier", _, _), text(x, s).
+plan_ann_token(a, s) :- plan_ann(a, t), plan_within(x, t), node(_, x, "identifier", _, _), text(x, u), s = @nfkc(u).
 plan_ann_token(a, s) :- plan_ann_string(a, x), fstring_template(x, "{}", s).
 plan_ann_token(a, s) :- plan_ann_string(a, x), !fstring_template(x, "{}", _), value_type_of(x, "str"), value(x, s).
 plan_ann_token(a, s) :- plan_ann_string(a, x), node(_, x, "string", _, _), value_type_of(x, "bytes"), str(x, s).
@@ -120,19 +120,20 @@ violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-0
 // ---- composition_methods: a FunctionDef (not async) in the body of a top-level class SemanticPlanBuilder ----
 .decl plan_toplevel_class(c: node)
 plan_toplevel_class(c) :-
-    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, "SemanticPlanBuilder"),
+    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder",
     child(m, c, _), node(_, m, "module", _, _).
 plan_toplevel_class(c) :-
-    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, "SemanticPlanBuilder"),
+    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder",
     child(dd, c, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
 // plan_method(d, f, class, name, start, end): start is the decorators' when decorated (CPython's subtree holds them).
 .decl plan_method(d: number, f: node, c: node, x: symbol, s: number, e: number)
 plan_method(d, f, c, x, s, e) :-
     plan_toplevel_class(c), field(c, "body", b), child(b, f, _), node(d, f, "function_definition", s, e),
-    !op(f, "async"), field(f, "name", y), text(y, x).
+    !op(f, "async"), field(f, "name", y), text(y, t), x = @nfkc(t).
 plan_method(d, f, c, x, s, e) :-
     plan_toplevel_class(c), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", s, _),
-    child(dd, f, _), node(d, f, "function_definition", _, e), !op(f, "async"), field(f, "name", y), text(y, x).
+    child(dd, f, _), node(d, f, "function_definition", _, e), !op(f, "async"), field(f, "name", y), text(y, t),
+    x = @nfkc(t).
 
 // ---- SPC-004: a public method returning dict/list/set or a subscript of one ----
 // `ast_name` of an Attribute is its attr. Parentheses are no node in `ast`: plan_unparen(e, m) strips them.
@@ -147,18 +148,22 @@ plan_paren_in(e, c) :- plan_paren_in(e, m), node(_, m, "parenthesized_expression
 plan_unparen(e, m) :- plan_paren_in(e, m), !node(_, m, "parenthesized_expression", _, _).
 .decl plan_mutable(x: symbol)
 plan_mutable("dict"). plan_mutable("list"). plan_mutable("set").
-// A Name or Attribute named so.
+// A Name or Attribute named so, among the return annotations and their subscripts' values.
+.decl plan_name_cand(v: node)
+plan_name_cand(v) :- plan_ret(_, v).
+plan_name_cand(r2) :- plan_ret(_, v), node(_, v, "subscript", _, _), field(v, "value", r), plan_unparen(r, r2).
 .decl plan_mutable_name(v: node)
-plan_mutable_name(v) :- node(_, v, "identifier", _, _), text(v, x), plan_mutable(x).
-plan_mutable_name(v) :- node(_, v, "attribute", _, _), field(v, "attribute", y), text(y, x), plan_mutable(x).
+plan_mutable_name(v) :- plan_name_cand(v), node(_, v, "identifier", _, _), text(v, t), x = @nfkc(t), plan_mutable(x).
+plan_mutable_name(v) :-
+    plan_name_cand(v), node(_, v, "attribute", _, _), field(v, "attribute", y), text(y, t), x = @nfkc(t), plan_mutable(x).
 .decl plan_mutable_ann(v: node)
 plan_mutable_ann(v) :- plan_ret(_, v), plan_mutable_name(v).
 plan_mutable_ann(v) :-
     plan_ret(_, v), node(_, v, "subscript", _, _), field(v, "value", r), plan_unparen(r, r2), plan_mutable_name(r2).
 // tree-sitter reads `list[int]` in a return annotation as a generic_type.
 plan_mutable_ann(v) :-
-    plan_ret(_, v), node(_, v, "generic_type", _, _), child(v, r, 0), node(_, r, "identifier", _, _), text(r, x),
-    plan_mutable(x).
+    plan_ret(_, v), node(_, v, "generic_type", _, _), child(v, r, 0), node(_, r, "identifier", _, _), text(r, t),
+    x = @nfkc(t), plan_mutable(x).
 .decl plan_returns(f: node, v: node)
 plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", t), node(_, t, "type", _, _), child(t, v, 0).
 plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", v), !node(_, v, "type", _, _).
@@ -177,7 +182,7 @@ plan_call(d, c, f) :- plan_method(d, f, _, _, s, e), node(d, c, "call", cs, ce),
 
 violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-003", p, l) :-
     plan_call(d, c, _), field(c, "function", fn), plan_unparen(fn, a), node(_, a, "attribute", _, _),
-    field(a, "attribute", y), text(y, x), plan_terminal(x), doc(d, p, _), line(c, l).
+    field(a, "attribute", y), text(y, t), x = @nfkc(t), plan_terminal(x), doc(d, p, _), line(c, l).
 
 // ---- SPC-005: the first add_fragment of a class without both RefRemap and rewrite_exact_plan_refs_payload ----
 .decl plan_later_fragment(f: node)
@@ -237,8 +242,8 @@ plan_not_name(n) :-
     node(_, n, "identifier", _, _).
 .decl plan_fragment_has(f: node, x: symbol)
 plan_fragment_has(f, x) :-
-    plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, x),
-    (x = "RefRemap" ; x = "rewrite_exact_plan_refs_payload"), !plan_not_name(n).
+    plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t),
+    x = @nfkc(t), (x = "RefRemap" ; x = "rewrite_exact_plan_refs_payload"), !plan_not_name(n).
 
 violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :-
     plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "RefRemap"),
