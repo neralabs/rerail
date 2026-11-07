@@ -1877,7 +1877,9 @@ impl Model {
             .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
             .collect::<Result<Vec<_>>>()?;
         if frm.is_empty() {
-            return Err(Error::Plan(format!("rule for {head} reads nothing")));
+            // A body of tests alone (`max_complexity(10) :- !option("max-complexity", _)`): one row to test them on,
+            // `rdl_int`'s first.
+            frm.push((FromItem::cross(Relation::Integers, "one"), vec![eq(col("one", "i"), integer(1))]));
         }
         let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
         let body = Select { distinct: true, columns, from, predicates: conds.into_iter().flatten().chain(wh).collect() };
