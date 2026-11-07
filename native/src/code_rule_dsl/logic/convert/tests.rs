@@ -614,7 +614,10 @@ fn measure_all(corpus: &Path, rules: &str) {
     let texts: Vec<String> = ids
         .iter()
         .map(|id| {
-            let written = id.strip_prefix("data-layer-").filter(|_| hand).and_then(|c| hand_written(&c.replace('-', "_")));
+            // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
+            let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
+            let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
+            let written = id.strip_prefix("data-layer-").filter(|c| hand && !skipped(c)).and_then(|c| hand_written(&c.replace('-', "_")));
             if written.is_some() {
                 println!("HAND {id}");
             }
@@ -634,7 +637,7 @@ fn measure_all(corpus: &Path, rules: &str) {
         let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
             (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
-        }).filter(|c| !ids.contains(&format!("data-layer-{c}"))).collect();
+        }).filter(|c| !ids.contains(&format!("data-layer-{c}"))).filter(|c| !std::env::var("RERAIL_HAND_SKIP").unwrap_or_default().split(',').any(|s| s.trim() == c)).collect();
         extra.sort();
         for c in extra {
             // A rule reading a repository input the engine does not make yet (`input_error`, O80) cannot run.

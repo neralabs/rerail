@@ -1570,7 +1570,11 @@ impl Lowerer {
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
-            let ctx = self.context(&needed)?;
+            // The context holds every variable the body shares with the rule, those the body binds too: projected on
+            // the tested ones alone (`ctx(j)`), it crossed every row of the body (`child(al, a, k)`, every argument of
+            // every call) with every j of the rule, 20.6M rows for 4,133 counts on 50 files.
+            let shared: Vec<String> = inner.iter().filter(|v| outer.contains(*v)).cloned().collect();
+            let ctx = self.context(&shared)?;
             for b in &mut bodies {
                 b.insert(0, Literal::Atom(ctx.clone()));
             }
