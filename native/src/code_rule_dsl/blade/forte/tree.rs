@@ -85,7 +85,7 @@ use super::directives::Directives;
 use super::node::{FlatNode, NodeKind};
 use super::token::{Token, TokenType};
 use super::{Budget, DepthLimits, ParseError, Parsed};
-use crate::code_rule_dsl::literal::{ID_FLAG, NEXT_TREE};
+use crate::code_rule_dsl::literal::{ID_FLAG, NEXT_TREE, TREE_MASK};
 use ast_grep_core::Position;
 use ast_grep_core::language::Language;
 use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
@@ -543,7 +543,7 @@ impl BladeTree {
         };
         tree.link(tokens, flat);
         let slots = (tree.nodes.len() >> SLOT_BITS) + 1;
-        let first = NEXT_TREE.fetch_add(slots, Ordering::Relaxed) & ((1 << 39) - 1);
+        let first = NEXT_TREE.fetch_add(slots, Ordering::Relaxed) & TREE_MASK;
         tree.base = ID_FLAG | (first << SLOT_BITS);
         tree
     }

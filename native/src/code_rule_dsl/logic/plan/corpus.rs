@@ -137,7 +137,12 @@ pub(crate) fn thread_usage() -> (f64, f64) {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         (t(info.user_time), t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm")))]
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
@@ -147,12 +152,20 @@ pub(crate) fn thread_usage() -> (f64, f64) {
 }
 
 pub(crate) fn usage() -> (f64, f64, f64) {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-    // macOS reports ru_maxrss in bytes, Linux in kilobytes.
-    let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
-    (s(u.ru_utime), s(u.ru_stime), rss)
+    // wasm32: the one thread's time as user CPU, and no resident-set counter.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0, 0.0)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        // macOS reports ru_maxrss in bytes, Linux in kilobytes.
+        let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
+        (s(u.ru_utime), s(u.ru_stime), rss)
+    }
 }
 
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
@@ -360,6 +373,32 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
 /// passes until one finds nothing twice or 200 ms have gone (`RERAIL_CORPUS_GC=off`: none). The history's high-water
 /// mark is `RERAIL_CORPUS_HISTORY_MB` (default 512), the low-water mark three quarters of it.
+/// The chunk builder's thread, in `scope`.
+#[cfg(not(target_family = "wasm"))]
+fn spawn_chunks<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    build: impl FnOnce() -> T + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, T> {
+    scope.spawn(build)
+}
+
+/// wasm32 has no threads: the chunk builder runs to its end here, before the chunks are evaluated.
+#[cfg(target_family = "wasm")]
+fn spawn_chunks<'scope, T>(_: &'scope std::thread::Scope<'scope, '_>, build: impl FnOnce() -> T) -> Ran<T> {
+    Ran(build())
+}
+
+/// A chunk builder that already ran (wasm32), joined as a thread would be.
+#[cfg(target_family = "wasm")]
+struct Ran<T>(T);
+
+#[cfg(target_family = "wasm")]
+impl<T> Ran<T> {
+    fn join(self) -> std::thread::Result<T> {
+        Ok(self.0)
+    }
+}
+
 fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -534,6 +573,9 @@ pub(crate) fn run_with_options(
     let library_guests = !prog.facts.get(syntax::GUEST_POLICY).into_iter().flatten().any(|row| matches!(row.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == "library" && v == "off"));
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
+    if !dialect.built() {
+        return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
+    }
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
     let cross_path = out.join("cross.sqlite");
@@ -745,7 +787,11 @@ pub(crate) fn run_with_options(
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>, Vec<syntax::Document>);
+    #[cfg(not(target_family = "wasm"))]
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
+    // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
+    #[cfg(target_family = "wasm")]
+    let (send, chunks_in) = std::sync::mpsc::channel::<Result<Chunk>>();
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -763,7 +809,7 @@ pub(crate) fn run_with_options(
     };
     let stat_index = &stat_index;
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
-    let worker = scope.spawn(|| {
+    let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
         let add = |acc: &mut (f64, f64), from: (f64, f64)| {
             let now = thread_usage();
@@ -905,8 +951,7 @@ pub(crate) fn run_with_options(
         }
         // `RERAIL_PROF_CHUNKS=1`: the memory held as each chunk arrives (footprint, live heap, cross-file rows).
         if std::env::var_os("RERAIL_PROF_CHUNKS").is_some() {
-            let _ = tikv_jemalloc_ctl::epoch::advance();
-            let live = tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20;
+            let live = crate::code_rule_dsl::prof::live_heap_mb();
             eprintln!(
                 "chunk {chunks}: footprint {} MB (max {}), heap live {live} MB, outputs {} lines",
                 crate::code_rule_dsl::prof::footprint_mb(),

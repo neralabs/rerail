@@ -23,11 +23,17 @@ pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
+// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
+#[cfg_attr(not(feature = "lang-rust"), allow(unused_imports))]
 pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
+// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
+#[cfg_attr(not(feature = "lang-sql"), allow(unused_imports))]
 pub(crate) use sql::Sql;
 pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
+// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
+#[cfg_attr(not(feature = "lang-vue"), allow(unused_imports))]
 pub(crate) use vue::Vue;
 
 use super::{

@@ -8,6 +8,23 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
+# Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
+# language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
+# `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
+default = ["all-languages"]
+all-languages = ["lang-blade", "lang-javascript", "lang-php", "lang-python", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+lang-blade = []
+lang-javascript = []
+lang-php = ["ast-grep-language/tree-sitter-php"]
+lang-python = []
+lang-rust = ["ast-grep-language/tree-sitter-rust"]
+lang-sql = []
+lang-typescript = []
+lang-vue = []
+# The engine without its Node addon (the `rerail-engine` CLI, the browser build): `#[napi]` items compile as plain
+# Rust and register nothing, so a binary links only what it calls rather than the addon's whole API (workspace
+# service, editor, suppressions, embeddings, git). Never on for the addon `npm run build` makes.
+headless = ["napi-derive/noop"]
 code-rule-profile = []
 # P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
@@ -23,12 +40,11 @@ ast-grep-core = "=0.50.0"
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
 # Ruff supplies a demanded Python grammar verdict; it does not replace the tape parser.
 # Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
-ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
+# PHP and Rust parse with its grammars when `lang-php` and `lang-rust` are on.
+ast-grep-language = { version = "=0.50.0", default-features = false }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
-# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
-cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
@@ -73,13 +89,23 @@ tree-sitter = "=0.27.1"
 unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build (wasm32-wasip1, `wasm/README.md`): a page has no executable memory, so the JIT's stand-in
+# fails to build a module and the transducer interprets, as it does before a background JIT compile lands.
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "wasm/cranelift-jit" }
+libc = "0.2.189"
+
 [target.'cfg(unix)'.dependencies]
 # G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
 mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
-# jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
-[target.'cfg(not(windows))'.dependencies]
+# jemalloc does not build for MSVC targets or wasm; both keep the system allocator (`lib.rs`).
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
 tikv-jemallocator = { version = "=0.6.1", features = ["disable_initial_exec_tls"] }
 tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }

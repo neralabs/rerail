@@ -93,6 +93,13 @@ impl FileStat {
         use std::os::unix::fs::MetadataExt as _;
         FileStat { size: metadata.len() as i64, mtime_ns: metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec()), inode: metadata.ino() as i64 }
     }
+
+    /// The stat of `metadata` where there are no inode numbers (Windows, wasm32): size and modification time.
+    #[cfg(not(unix))]
+    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
+        let mtime_ns = metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64);
+        FileStat { size: metadata.len() as i64, mtime_ns, inode: 0 }
+    }
 }
 
 /// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin

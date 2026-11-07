@@ -163,6 +163,12 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
+/// and `core.rr` resolved, as one program's text.
+pub fn flatten(path: &std::path::Path) -> Result<String, String> {
+    program_text(path)
+}
+
 /// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
 /// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
