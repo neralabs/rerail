@@ -83,6 +83,7 @@ impl CodeRuleSqlExecutor {
                 digest: [0; 32],
                 facts: Arc::new(facts),
                 guest: None,
+                module: None,
             });
         }
         let sources =

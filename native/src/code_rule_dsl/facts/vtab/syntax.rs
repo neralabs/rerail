@@ -229,6 +229,9 @@ pub(crate) struct Document {
     pub facts: Arc<Facts>,
     /// A guest's place in its host (decision 0055); `None` for a file's own tree. A guest's `path` is its host's.
     pub guest: Option<Arc<Guest>>,
+    /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
+    /// a file of the corpus, whose module follows from its path.
+    pub module: Option<Arc<str>>,
 }
 
 /// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
@@ -261,6 +264,12 @@ pub(crate) fn module(rel: &str) -> String {
 
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
+/// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
+pub(crate) fn package_of(path: &str, m: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
+}
+
 pub(crate) fn package(rel: &str) -> String {
     let m = module(rel);
     if rel.ends_with("__init__.py") || rel.ends_with("__init__.pyi") { m } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
@@ -710,10 +719,19 @@ impl Batch {
             // for every file.
             let python = d.path.ends_with(".py") || d.path.ends_with(".pyi");
             let dotted = python || d.path.ends_with(".rs");
-            let module = if shape == Shape::Core && !dotted { String::new() } else { module(&d.path) };
+            let named = d.module.as_deref();
+            let module = match named {
+                Some(m) => m.to_owned(),
+                None if shape == Shape::Core && !dotted => String::new(),
+                None => module(&d.path),
+            };
             doc.push([key, string(&d.path) as i64, string(&module) as i64]);
             if shape != Shape::Core || python {
-                pkg.push([key, string(&package(&d.path)) as i64]);
+                let package = match named {
+                    Some(m) => package_of(&d.path, m),
+                    None => package(&d.path),
+                };
+                pkg.push([key, string(&package) as i64]);
             }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {

@@ -205,15 +205,18 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
 /// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
 /// findings. T's facts reproduce one program's run only.
-pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
+/// `settings` are `--env key=value`s ([`settings`]).
+#[allow(clippy::too_many_arguments)]
+pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
-    let report = match programs {
-        [one] => super::logic::plan::corpus::run(one, root, t_facts, out, modes, binding, chunk_nodes),
-        _ if t_facts.is_some() => return Err("T facts reproduce one program's run, not several".into()),
-        _ => super::logic::plan::corpus::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), root, out, modes, binding, chunk_nodes),
+    if programs.len() > 1 && t_facts.is_some() {
+        return Err("T facts reproduce one program's run, not several".into());
     }
-    .map_err(|error| error.to_string())?;
+    let options = serde_json::json!({ "env": settings });
+    let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
+    let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
+        .map_err(|error| error.to_string())?;
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!("{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n", programs.len(), report.files, report.nodes, report.chunks, report.native);
     for (phase, user, sys, rss, statements) in &report.phases {

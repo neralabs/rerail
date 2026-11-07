@@ -127,19 +127,27 @@ across the workspace/library boundary. Namespace packages (a directory with no `
 
 ### 2.3 Loading
 
-Only the files a resolution reaches are read. A rule asks for a file with `load(path, grammar, role)`:
+Only the files a resolution reaches are read. A rule asks for a file with `load(path, module, grammar, role)`. The
+module is the resolution's answer. The engine names the document by it (its `doc` row's module and its `pkg`), as it
+names a workspace file by its path, so `modname` and relative imports work in a stub unchanged:
 
 ```text
 // An import the workspace makes, resolved into a library: read that stub, and later what it imports.
-load(p, "python", "library") :- impmod(_, q), resolves(q, p, layer), layer != "workspace".
+load(p, q, "python", "library") :- want(q), resolves(q, p, layer), layer != "workspace".
 // Every module reads builtins implicitly.
-load(p, "python", "library") :- resolves("builtins", p, _).
+load(p, "builtins", "python", "library") :- resolves("builtins", p, _).
 ```
 
-The engine reads each requested file as a document with `doc_role(d, "library")`. It then runs the requesting
-rules again over the new documents, until no new request appears or a budget is spent (E2). This is 03 §13's
-`demand module(M2) :- module(M), reexport(M, _, M2)`, written as a rule. It is the same loop 0055 runs for
-`parsed`.
+The engine reads each requested file as a document, named by its canonical path, so its key and memo entries are
+the same in every workspace. `loaded(path, module, grammar, role)` lists the documents loaded. The engine then runs
+the requesting rules again over the new documents, until no new request appears or a budget is spent (E2), and
+writes no output rows for loaded documents. This is 03 §13's `demand module(M2) :- module(M), reexport(M, _, M2)`,
+written as a rule.
+
+Built (`corpus/world.rs`): a round runs the program cut to its requests (`load`, and the `rr_dir_req` and
+`rr_file_req` that reading `dir_entry` and `file_line` derive), answers them, and runs again. The run proper then
+reads the answers as facts. A recursion that makes values is refused (O11), so a module's path is
+`@replace_all(q, "\\.", "/")` and its prefixes are `@pkg_up(q, 1)`, not a walk.
 
 ### 2.4 Stub meaning (`python/stubs.rr`)
 
@@ -181,7 +189,7 @@ A library file's facts are made once, by the mechanisms that already make a work
 | # | change | why generic |
 |---|---|---|
 | E1 | `dir_entry(dir, name, is_dir)` and `file_line(path, i, text)`: read-only, computed only for a bound `dir` or `path` (demand, 0048), and never for paths outside the configured roots | any language's lookup is a directory walk; config files are lines |
-| E2 | `load(path, grammar, role)` requests: the engine parses each requested file as a document with `doc_role(d, role)`, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
+| E2 | `load(path, module, grammar, role)` requests: the engine parses each requested file as a document with `doc_role(d, role)`, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
 | E3 | file extensions per language in the registry (`languages/python.json`: `.py`, `.pyi`), so the corpus reader and E2 take `.pyi` | data, not code |
 | E4 | `env(key, value)` facts from `--env k=v` and a project config file | settings as facts, read by rules |
 | E5 | the cross-file rows of an import-closed set of library documents recorded as a derivation in the existing store (03 §14), and replayed into the workspace run as fixed rows; no findings for non-primary documents | the derivation graph at one more granularity, not a new cache |

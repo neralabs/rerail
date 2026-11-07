@@ -762,6 +762,9 @@ impl Lowerer {
                 if !*neg && matches!(rel.as_str(), "parsed" | "sub_tape") {
                     self.embed_demand(args)?;
                 }
+                if let Some(demand) = world_demand(rel) {
+                    self.world_demand(demand, args)?;
+                }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
@@ -821,6 +824,62 @@ impl Lowerer {
         self.prog.decls.insert(demand.to_owned(), vec![("s".to_owned(), "node".to_owned()), ("g".to_owned(), "sym".to_owned())]);
         let head = Atom { rel: demand.to_owned(), args: vec![Term::Var(s.clone()), Term::Str(g.clone())], neg: false, gated: false };
         let rule = Rule { head, body: vec![Literal::Atom(ctx)] };
+        if !self.prog.rules.contains(&rule) {
+            self.prog.rules.push(rule);
+        }
+        Ok(())
+    }
+
+    /// `dir_entry(d, …)` or `file_line(p, …)`, read or negated, asks for the listing of d or the lines of p (t21 E1):
+    /// `rr_dir_req(d)` or `rr_file_req(p)` over the rule's other literals that bind it, those that read none of what
+    /// the atom gives. The corpus runner answers the requests and runs the rules again (`corpus::world`). A key
+    /// nothing else binds asks for nothing: the atom reads what other rules asked for.
+    fn world_demand(&mut self, demand: &str, args: &[STerm]) -> Result<(), Error> {
+        let Some(key) = args.first() else { return Ok(()) };
+        let head = |key: Term| Atom { rel: demand.to_owned(), args: vec![key], neg: false, gated: false };
+        self.prog.decls.insert(demand.to_owned(), vec![("k".to_owned(), "sym".to_owned())]);
+        let s = match key {
+            STerm::Str(k) => {
+                let rule = Rule { head: head(Term::Str(k.clone())), body: Vec::new() };
+                if !self.prog.rules.contains(&rule) {
+                    self.prog.rules.push(rule);
+                }
+                return Ok(());
+            }
+            STerm::Var(s) => s,
+            _ => return Ok(()),
+        };
+        // What the atom gives: its other arguments' variables, and every literal joined to them.
+        let mut reads = body_vars(&args[1..].iter().map(|a| Lit::Cmp { l: a.clone(), op: "=", r: a.clone() }).collect::<Vec<_>>());
+        reads.remove(s);
+        let mut keep: Vec<bool> = vec![true; self.siblings.len()];
+        loop {
+            let mut grew = false;
+            for (l, k) in self.siblings.iter().zip(keep.iter_mut()) {
+                let vars = body_vars(std::slice::from_ref(l));
+                if *k && vars.iter().any(|x| reads.contains(x)) {
+                    *k = false;
+                    reads.extend(vars.into_iter().filter(|x| x != s));
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let saved = self.siblings.clone();
+        let mut keep = keep.into_iter();
+        self.siblings.retain(|_| keep.next().unwrap_or(false));
+        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`).
+        let binds = self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && body_vars(std::slice::from_ref(l)).contains(s),
+            Lit::Cmp { l, op: "=", r } => matches!(l, STerm::Var(v) if v == s) || matches!(r, STerm::Var(v) if v == s),
+            _ => false,
+        });
+        let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
+        self.siblings = saved;
+        let Some(ctx) = ctx.transpose()? else { return Ok(()) };
+        let rule = Rule { head: head(Term::Var(s.clone())), body: vec![Literal::Atom(ctx)] };
         if !self.prog.rules.contains(&rule) {
             self.prog.rules.push(rule);
         }
@@ -1826,6 +1885,14 @@ fn groups(re: &str) -> Vec<String> {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
+/// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
+/// entries, `dir_entry(dir, name, is_dir)`, and a file's lines, `file_line(path, i, text)` (from 1).
+pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 2] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req")];
+
+fn world_demand(rel: &str) -> Option<&'static str> {
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+}
+
 const GUEST_RELATIONS: [&str; 7] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node"];
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

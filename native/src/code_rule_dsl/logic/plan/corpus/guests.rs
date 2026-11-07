@@ -243,6 +243,7 @@ impl Guests {
                 digest,
                 facts: Arc::new(facts),
                 guest: Some(Arc::new(Guest { host: host_key, at: r.at, grammar: r.grammar.clone(), role: r.role.clone(), root, place, in_file })),
+                module: host.module.clone(),
             });
         }
         Ok(out)

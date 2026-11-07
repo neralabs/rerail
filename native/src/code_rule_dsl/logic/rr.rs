@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+pub(in crate::code_rule_dsl) use lower::WORLD;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
 pub(in crate::code_rule_dsl) use translate::translate;

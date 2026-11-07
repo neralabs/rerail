@@ -102,9 +102,7 @@ fn logic(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    let settings = rerail_engine::tools::settings(Path::new(root.as_str()), &env)?;
-    let programs: Vec<String> = programs.iter().map(|p| rerail_engine::tools::with_settings(p, &settings)).collect();
-    rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+    rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env)
 }
 
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to
