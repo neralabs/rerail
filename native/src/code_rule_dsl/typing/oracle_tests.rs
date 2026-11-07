@@ -566,7 +566,8 @@ own(n) :- imp(n, _).
 fn calls_into_the_standard_library_reach_its_stubs() {
     // fixtures/python/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rr includes
     // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
-    // "b")` targets the stub's `join`, and no row is about a stub.
+    // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
+    // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();

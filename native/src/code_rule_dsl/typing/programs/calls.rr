@@ -20,8 +20,12 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl value(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl pkg(d: number, p: symbol)
-.input doc, node, child, field, text, op, pkg, kind, docof
+.input doc, node, child, field, text, op, op_at, name, str, value, pkg, kind, docof
 // Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is
 // the innermost host node over guest node n.
 .decl parsed(s: node, grammar: symbol, root: node)
@@ -36,6 +40,7 @@
 .decl load(path: symbol, module: symbol, grammar: symbol, role: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol, role: symbol)
 #include "python/modules.rr"
+#include "python/conditions.rr"
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -56,10 +61,10 @@ modname(m, q) :- modnode(d, m), doc(d, _, q).
 .decl nameref(n: node, x: symbol)
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
 .decl rdefn(s: node, x: symbol, f: node)
-rdefn(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
-rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+rdefn(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), !py_dead_at(f).
+rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), !py_dead_at(f).
 .decl rasg(s: node, x: symbol, r: node, a: node)
-rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope).
+rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope), !py_dead_at(a).
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
@@ -82,28 +87,28 @@ rotgt(s, x) :- tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, scope).
 
 // Imports, per scope: `ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.
 .decl impmod(i: node, m: symbol)
-impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m), !py_dead_at(i).
 impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "".
+    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
 impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "".
+    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
 .decl rifrom(s: node, x: symbol, m: symbol, y: symbol)
 rifrom(s, y, m, y) :- impmod(i, m), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
 rifrom(s, a, m, y) :- impmod(i, m), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, y),
     field(x, "alias", al), text(al, a), nearest(i, s, scope).
 .decl ribind(s: node, x: symbol, q: symbol)
 ribind(s, x, @dot(m, y)) :- rifrom(s, x, m, y).
-ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope).
+ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope), !py_dead_at(i).
 ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
-    field(x, "alias", al), text(al, a), nearest(i, s, scope).
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), !py_dead_at(i).
 // Two dots or more: `..` is the package's parent (`from .. import x` in `pkg.sub.deep` is `pkg`), one level up per dot.
 .decl updots(t: symbol, k: number)
 updots("..", 1). updots("...", 2). updots("....", 3).
 impmod(i, q) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, t), updots(t, k), !child(mn, _, 1), docof(i, d), pkg(d, p), q = @pkg_up(p, k), q != "".
+    child(mn, pre, 0), text(pre, t), updots(t, k), !child(mn, _, 1), docof(i, d), pkg(d, p), q = @pkg_up(p, k), q != "", !py_dead_at(i).
 impmod(i, @dot(q, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
     child(mn, pre, 0), text(pre, t), updots(t, k), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p),
-    q = @pkg_up(p, k), q != "".
+    q = @pkg_up(p, k), q != "", !py_dead_at(i).
 // A relative import the facts cannot place (more dots than packages, or outside a package): what it binds is unknown.
 .decl irel_open(i: node)
 irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), !impmod(i, _).
@@ -391,7 +396,7 @@ tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
 cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, scope),
-    kind(c, "class_definition").
+    kind(c, "class_definition"), !py_dead_at(a).
 bound_in(c, x) :- cann(c, x, _).
 // A class attribute's, only where it is read: through `found` (a name a lookup reads), or by name in the class
 // body (`look`).
@@ -407,7 +412,7 @@ tbv(c, x, "decl", m) :- cann(c, x, t), aleaf(t, m), dtype(m, _).
 stubdoc(d) :- doc(d, p, _), suffix(".pyi", p).
 .decl mann(m: node, x: symbol, t: node)
 mann(m, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t),
-    !field(a, "right", _), nearest(a, m, scope), kind(m, "module"), docof(a, d), stubdoc(d).
+    !field(a, "right", _), nearest(a, m, scope), kind(m, "module"), docof(a, d), stubdoc(d), !py_dead_at(a).
 bv(m, x, "inst", s) :- mann(m, x, t), uinst(t, k), sub(k, s).
 bv(m, x, "cls", s) :- mann(m, x, t), acls(t, k), sub(k, s).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
