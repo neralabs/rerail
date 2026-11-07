@@ -371,3 +371,24 @@ fn the_frontends_dumps_are_the_goldens() {
     let expected = std::fs::read_to_string(&golden).unwrap_or_default();
     assert!(expected == dump, "the dumps differ from {} (RERAIL_BLESS=1 to accept them)", golden.display());
 }
+
+/// A block program's tree rows (`13-tape-on-the-gpu.md` §3.1): node rows in rank order with an
+/// optional level and the extra flag, code rows; each mask must be an output and each code row's
+/// node a row.
+#[test]
+fn block_tree_rows_round_trip() {
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 node 0 kind 3 start %0 end %1 level %0 %1\n  block 0 node 1 kind 9 start %2 end %2 extra\n  block 0 code 1 field 4 when %2\n  block 0 code 0 supertype 12 when %0\n  0000 STOP 0\n";
+    let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
+    let block = &program.block_programs()[0];
+    assert_eq!(block.nodes.len(), 2);
+    assert_eq!(block.nodes[0].level, Some((0, 1)));
+    assert!(block.nodes[1].extra && block.codes[0].field && !block.codes[1].field);
+    let text = round_trip(&program, None);
+    assert!(text.contains("node 1 kind 9 start %2 end %2 extra"), "{text}");
+    let without = assemble(&rows.replace("  block 0 code 1 field 4 when %2\n", "")).unwrap_or_else(|e| panic!("{e}"));
+    assert_ne!(without.plain_digest(), program.plain_digest(), "the rows are in the digest");
+    assert!(refused(&rows.replace("node 1 kind", "node 2 kind")).contains("out of order"));
+    assert!(!refused(&rows.replace("  block 0 output %2\n", "")).is_empty(), "a row's mask must be an output");
+    assert!(!refused(&rows.replace("code 1 field", "code 5 field")).is_empty(), "a code row's node must be a row");
+    assert!(refused(&rows.replace("extra\n", "wide\n")).contains("wide"));
+}

@@ -71,25 +71,45 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 
 /// Every executor's outputs for the program's first block program, with the executor's name.
 pub(super) fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+    let (out, skipped) = executors_in_budget(p, bytes);
+    assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
+    out
+}
+
+/// The CPU executors alone: the interpreter and Cranelift.
+pub(super) fn cpu_executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+    vec![("cpu interpreter".to_owned(), block.interpret(bytes)), ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").run(bytes))]
+}
+
+/// As `executors`, without a Metal executor whose run would take more launches than the
+/// budget (`metal_launch_budget`): those are named in the second list.
+pub(super) fn executors_in_budget(p: &Program, bytes: &[u8]) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
     let block = &p.block_programs()[0];
     let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
     let mut out = vec![
         ("cpu interpreter".to_owned(), block.interpret(bytes)),
         ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").run(bytes)),
     ];
+    let mut skipped = Vec::new();
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
+        let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
+            Ok(got) => out.push((name, got)),
+            Err(Error::BackendLaunchLimit) => skipped.push(name),
+            Err(e) => panic!("{name} runs: {e:?}"),
+        };
         for width in LaneWidth::ALL {
             let w = width.bytes();
-            out.push((format!("metal interpreter, {w}-byte lanes"), interpret(block, bytes, width).expect("runs")));
+            keep(format!("metal interpreter, {w}-byte lanes"), interpret(block, bytes, width));
             for strategy in ClassStrategy::ALL {
-                let (got, _) = run_generated_with(&native, bytes, width, strategy).expect("runs");
-                out.push((format!("generated msl, {w}-byte lanes, {strategy:?}"), got));
+                keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&native, bytes, width, strategy).map(|(got, _)| got));
             }
         }
     }
-    out
+    (out, skipped)
 }
 
 /// Check a program's outputs against references on every input and every executor.

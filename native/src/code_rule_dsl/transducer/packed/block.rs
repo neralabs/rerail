@@ -268,6 +268,31 @@ impl ClassTable {
     }
 }
 
+/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1): its grammar
+/// id, its start and end masks, and its level's up and down masks if it has one. Its place in
+/// `BlockProgram::nodes` is its rank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct NodeRow {
+    pub(super) kind: u16,
+    pub(super) start: u16,
+    pub(super) end: u16,
+    pub(super) level: Option<(u16, u16)>,
+    /// The kind's nodes carry the extra flag.
+    pub(super) extra: bool,
+}
+
+/// A fact of a node kind's code, where a mask holds at the node's start: its field, or one of
+/// its supertypes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct CodeRow {
+    /// The node row the fact is about.
+    pub(super) node: u16,
+    /// A field (else a supertype), by grammar id.
+    pub(super) field: bool,
+    pub(super) id: u16,
+    pub(super) when: u16,
+}
+
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
 /// whose positions the extract pass writes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -283,6 +308,9 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
     pub(super) delay: u8,
+    /// The tree section's node kinds and code facts, for the tape writer; every mask an output.
+    pub(super) nodes: Vec<NodeRow>,
+    pub(super) codes: Vec<CodeRow>,
 }
 
 /// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
@@ -316,7 +344,10 @@ impl BlockProgram {
         // The extract pass writes undelayed positions only (a delay comes with the tape writer).
         let extracts = self.extracts.iter().all(|v| self.outputs.contains(v)) && (self.extracts.is_empty() || self.delay == 0);
         let delay = self.delay <= 63;
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay {
+        let output = |v: u16| self.outputs.contains(&v);
+        let nodes = self.nodes.iter().all(|r| output(r.start) && output(r.end) && r.level.is_none_or(|(u, d)| output(u) && output(d)))
+            && self.codes.iter().all(|c| usize::from(c.node) < self.nodes.len() && output(c.when));
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -349,6 +380,23 @@ impl BlockProgram {
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
+        }
+        // And the tree section's rows.
+        if !self.nodes.is_empty() || !self.codes.is_empty() {
+            out.extend_from_slice(b"tree");
+            out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
+            for r in &self.nodes {
+                let (u, d) = r.level.unwrap_or((u16::MAX, u16::MAX));
+                for x in [r.kind, r.start, r.end, u, d, u16::from(r.extra)] {
+                    out.extend_from_slice(&x.to_le_bytes());
+                }
+            }
+            out.extend_from_slice(&(self.codes.len() as u32).to_le_bytes());
+            for c in &self.codes {
+                for x in [c.node, u16::from(c.field), c.id, c.when] {
+                    out.extend_from_slice(&x.to_le_bytes());
+                }
+            }
         }
         out
     }

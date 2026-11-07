@@ -12,10 +12,29 @@
 //!   class is an `eq`.
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
+//! - **Counts** as bit-planes, and `C.frame(a)` (below).
+//! - **Tokens**, `keywords` and `skip`: each token kind's start and last-byte masks, and the
+//!   coverage and overlap checks.
+//! - **The tree section** (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1): its masks, and
+//!   its `node` and `code` rows, with grammar ids from `Symbols`.
 //! - **Errors and escapes.** Each mask joins the fallback output (`FALLBACK`); a file with a bit
 //!   of it goes to tree-sitter.
 //!
 //! Anything else is refused by name.
+//!
+//! # Counts and frames
+//!
+//! A count `count(up, down) max M` is kept as `w` bit-planes of its value after each byte, with
+//! `2^w >= M + 2`. Bit `k` flips at an up byte whose bits below `k` were all 1, and at a down
+//! byte whose bits below `k` were all 0, so plane `k` is a `toggle` of a mask of the planes
+//! below it one byte back: no new operation. The value is kept mod `2^w`; a count that leaves
+//! `0..=M` passes through `M + 1` or `-1`, both above `M` as `w`-bit numbers, and one compare
+//! escapes the file. (The evaluator holds a count at 0 instead: a file that goes below 0 escapes
+//! here and is lexed there; such a file is malformed for JSON.)
+//!
+//! `C.frame(a)` is one `fill` per level `L` in `1..=M` (`10-bit-programs.md` §2): from the
+//! openers at level `L` in `a` to the next opener at level `L` not in `a`, kept where the count
+//! before the byte is `L`.
 //!
 //! # Delays: `next` without lookahead
 //!
@@ -34,16 +53,26 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, ClassTable};
+use super::block::{BlockOp, BlockProgram, ClassTable, CodeRow, NodeRow};
 use ::bitlex::syntax::{Arg, Expr, Stmt};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 /// A compiled program: its `rir` rows (`block 0 …`), whose outputs are the requested masks in
 /// order.
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) rows: String,
+    /// Each requested name, then each row's mask (`node KIND start`, `node KIND end`,
+    /// `level KIND up`, `level KIND down`, `code KIND NAME`), and its output: a value asked for
+    /// twice is one output.
+    pub(super) labels: Vec<(String, u16)>,
+}
+
+/// The grammar's ids for the tree section's rows.
+pub(in crate::code_rule_dsl) struct Symbols<'a> {
+    /// A node kind's id (named first, then anonymous), or a supertype's.
+    pub(super) kind: &'a dyn Fn(&str) -> Option<u16>,
+    pub(super) field: &'a dyn Fn(&str) -> Option<u16>,
 }
 
 /// The output name for the fallback bit: set somewhere when the file goes to tree-sitter.
@@ -75,10 +104,36 @@ struct Lowering {
     names: HashMap<String, Val>,
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     fallbacks: Vec<Val>,
+    counts: HashMap<String, Count>,
+    tokens: Vec<(String, Val, Option<Val>)>,
+    keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
+    skip: Option<Val>,
+    tree: Tree,
 }
 
-/// Compile `stmts`, with `outputs` (mask names) as the block program's outputs.
-pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str]) -> Result<Compiled, String> {
+/// A count: its up and down bytes (an up wins at a byte that is both), its bound and its planes
+/// after each byte.
+#[derive(Clone)]
+struct Count {
+    up: Val,
+    down: Val,
+    max: u32,
+    planes: Vec<Val>,
+}
+
+/// The tree section, as read.
+#[derive(Default)]
+struct Tree {
+    nodes: Vec<(String, Val, Val, Option<String>)>,
+    facts: Vec<(bool, String, Vec<String>, Val)>,
+    extra: Vec<String>,
+    untoken: Vec<String>,
+}
+
+/// Compile `stmts`, with `outputs` (mask names, or `FALLBACK`) as the block program's first
+/// outputs, then the tree section's row masks. `symbols` names the grammar's ids; a program
+/// with a tree section needs it.
+pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) -> Result<Compiled, String> {
     let mut low = Lowering {
         program: BlockProgram::default(),
         seen: HashMap::new(),
@@ -86,6 +141,11 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str]) -> Res
         classes: HashMap::new(),
         names: HashMap::new(),
         fallbacks: Vec::new(),
+        counts: HashMap::new(),
+        tokens: Vec::new(),
+        keywords: Vec::new(),
+        skip: None,
+        tree: Tree::default(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -97,18 +157,92 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str]) -> Res
         }
     }
     low.stmts(stmts)?;
-    let mut vals = Vec::new();
+    let token_rows = low.tokens()?;
+    let mut vals: Vec<(String, Val)> = Vec::new();
     for name in outputs {
-        vals.push(if *name == FALLBACK { low.fallback()? } else { low.name(name)? });
+        let x = if *name == FALLBACK { low.fallback()? } else { low.name(name)? };
+        vals.push(((*name).to_owned(), x));
     }
-    let delay = vals.iter().map(|x| x.d).max().unwrap_or(0);
-    for x in vals {
+    // The rows: declared kinds in rank order, then the tokens; each mask an output.
+    let has_tree = !low.tree.nodes.is_empty();
+    let mut rows_of: Vec<(String, usize, usize, Option<(usize, usize)>)> = Vec::new();
+    let mut codes: Vec<(usize, bool, String, usize)> = Vec::new();
+    if has_tree {
+        let push = |vals: &mut Vec<(String, Val)>, label: String, x: Val| {
+            vals.push((label, x));
+            vals.len() - 1
+        };
+        let declared = std::mem::take(&mut low.tree.nodes);
+        for (kind, start, end, level) in declared {
+            let s = push(&mut vals, format!("node {kind} start"), start);
+            let e = push(&mut vals, format!("node {kind} end"), end);
+            let l = match level {
+                Some(c) => {
+                    let count = low.counts.get(&c).cloned().ok_or_else(|| format!("node {kind}: level `{c}` is not a count"))?;
+                    Some((push(&mut vals, format!("level {kind} up"), count.up), push(&mut vals, format!("level {kind} down"), count.down)))
+                }
+                None => None,
+            };
+            rows_of.push((kind, s, e, l));
+        }
+        for (kind, start, last) in token_rows {
+            if low.tree.untoken.contains(&kind) {
+                continue;
+            }
+            let s = push(&mut vals, format!("node {kind} start"), start);
+            let e = push(&mut vals, format!("node {kind} end"), last);
+            rows_of.push((kind, s, e, None));
+        }
+        let facts = std::mem::take(&mut low.tree.facts);
+        for (field, name, kinds, mask) in facts {
+            for kind in kinds {
+                let row = rows_of.iter().position(|r| r.0 == kind).ok_or_else(|| format!("a fact of `{kind}`, which has no row"))?;
+                let w = push(&mut vals, format!("code {kind} {name}"), mask);
+                codes.push((row, field, name.clone(), w));
+            }
+        }
+    }
+    let delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
+    // Each output once.
+    let mut index: HashMap<u16, u16> = HashMap::new();
+    let mut labels = Vec::new();
+    let mut at = Vec::new();
+    for (label, x) in &vals {
+        // Outputs hold no bits past the end: a file falls back on a bit of its own.
+        let x = if x.dirty {
+            let inside = low.within_val(x.d)?;
+            low.and(*x, inside)?
+        } else {
+            *x
+        };
         let v = low.at(x, delay)?;
-        low.program.outputs.push(v);
+        let k = *index.entry(v).or_insert_with(|| {
+            low.program.outputs.push(v);
+            (low.program.outputs.len() - 1) as u16
+        });
+        labels.push((label.clone(), k));
+        at.push(low.program.outputs[usize::from(k)]);
+    }
+    if has_tree {
+        let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
+        let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
+        for (kind, s, e, l) in &rows_of {
+            low.program.nodes.push(NodeRow {
+                kind: id(kind)?,
+                start: at[*s],
+                end: at[*e],
+                level: l.map(|(u, d)| (at[u], at[d])),
+                extra: low.tree.extra.contains(kind),
+            });
+        }
+        for (row, field, name, w) in codes {
+            let id = if field { (symbols.field)(&name).ok_or_else(|| format!("no field `{name}`"))? } else { id(&name)? };
+            low.program.codes.push(CodeRow { node: row as u16, field, id, when: at[w] });
+        }
     }
     low.program.delay = delay;
     let program = live(&low.program);
-    Ok(Compiled { rows: rows(&program) })
+    Ok(Compiled { rows: rows(&program), labels })
 }
 
 impl Lowering {
@@ -125,6 +259,46 @@ impl Lowering {
                     let value = self.expr(expr)?;
                     self.fallbacks.push(value);
                 }
+                Stmt::Count { name, up, down, reset, max } => {
+                    if reset.is_some() {
+                        return Err(format!("count {name}: `reset` is not compiled yet"));
+                    }
+                    let (up, down) = (self.expr(up)?, self.expr(down)?);
+                    let count = self.count(up, down, *max)?;
+                    self.counts.insert(name.clone(), count);
+                }
+                Stmt::Token { kind, start, through } => {
+                    let start = self.expr(start)?;
+                    let through = match through {
+                        Some(t) => Some(self.expr(t)?),
+                        None => None,
+                    };
+                    self.tokens.push((kind.clone(), start, through));
+                }
+                Stmt::Keywords { kind, words, soft, required } => {
+                    if !soft.is_empty() {
+                        return Err(format!("keywords {kind}: soft keywords are not compiled yet"));
+                    }
+                    self.keywords.push((kind.clone(), words.clone(), *required));
+                }
+                Stmt::Skip(expr) => {
+                    let x = self.expr(expr)?;
+                    self.skip = Some(match self.skip {
+                        Some(s) => self.or(s, x)?,
+                        None => x,
+                    });
+                }
+                Stmt::Tree { body, .. } => self.stmts(body)?,
+                Stmt::Node { kind, start, end, level } => {
+                    let (start, end) = (self.expr(start)?, self.expr(end)?);
+                    self.tree.nodes.push((kind.clone(), start, end, level.clone()));
+                }
+                Stmt::Fact { field, name, kinds, expr } => {
+                    let x = self.expr(expr)?;
+                    self.tree.facts.push((*field, name.clone(), kinds.clone(), x));
+                }
+                Stmt::Extra(kinds) => self.tree.extra.extend(kinds.iter().cloned()),
+                Stmt::Untoken(kinds) => self.tree.untoken.extend(kinds.iter().cloned()),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
             }
         }
@@ -340,6 +514,11 @@ impl Lowering {
                 self.xor(a, b)
             }
             Expr::Call(f, args) => self.call(f, args),
+            Expr::Test { target, method, arg: Some(arg), .. } if method == "frame" => {
+                let count = self.counts.get(target).cloned().ok_or_else(|| format!("{target}.frame: `{target}` is not a count"))?;
+                let a = self.expr(arg)?;
+                self.frame(&count, a)
+            }
             Expr::Test { target, method, .. } => Err(format!("not compiled yet: {target}.{method}")),
         }
     }
@@ -411,6 +590,187 @@ impl Lowering {
         }
     }
 
+    /// A count's planes (see the module's notes), and its range check as a fallback.
+    fn count(&mut self, up: Val, down: Val, max: u32) -> Result<Count, String> {
+        let down = self.andnot(down, up)?;
+        let mut w = 1u32;
+        while (1u64 << w) < u64::from(max) + 2 {
+            w += 1;
+        }
+        let mut planes: Vec<Val> = Vec::new();
+        let mut before: Vec<Val> = Vec::new();
+        for k in 0..w as usize {
+            let flips = if k == 0 {
+                self.or(up, down)?
+            } else {
+                // All of the planes below k were 1 (an up carries into k), or all 0 (a down
+                // borrows from it).
+                let mut ones = before[0];
+                let mut any = before[0];
+                for &b in &before[1..k] {
+                    ones = self.and(ones, b)?;
+                    any = self.or(any, b)?;
+                }
+                let carry = self.and(up, ones)?;
+                let borrow = self.andnot(down, any)?;
+                self.or(carry, borrow)?
+            };
+            let plane = self.carried(flips, BlockOp::Toggle);
+            before.push(self.prev(plane, 1)?);
+            planes.push(plane);
+        }
+        let over = self.above(&planes, u64::from(max))?;
+        self.fallbacks.push(over);
+        Ok(Count { up, down, max, planes })
+    }
+
+    /// The bytes where the value in `planes` is above `m` (as a `planes.len()`-bit number).
+    fn above(&mut self, planes: &[Val], m: u64) -> Result<Val, String> {
+        let mut out = self.leaf(BlockOp::Const(0), false);
+        // From the top bit down: above at bit k when the bits above k equal m's, bit k is 1 and
+        // m's bit k is 0.
+        let mut equal: Option<Val> = None;
+        for k in (0..planes.len()).rev() {
+            let p = planes[k];
+            if m >> k & 1 == 0 {
+                let here = match equal {
+                    Some(e) => self.and(e, p)?,
+                    None => p,
+                };
+                out = self.or(out, here)?;
+                equal = Some(match equal {
+                    Some(e) => self.andnot(e, p)?,
+                    None => self.not(p)?,
+                });
+            } else {
+                equal = Some(match equal {
+                    Some(e) => self.and(e, p)?,
+                    None => p,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// The bytes where the value in `planes` is `m`.
+    fn equals(&mut self, planes: &[Val], m: u64) -> Result<Val, String> {
+        let mut out: Option<Val> = None;
+        for (k, &p) in planes.iter().enumerate() {
+            out = Some(match (out, m >> k & 1 == 1) {
+                (None, true) => p,
+                (None, false) => self.not(p)?,
+                (Some(e), true) => self.and(e, p)?,
+                (Some(e), false) => self.andnot(e, p)?,
+            });
+        }
+        Ok(out.expect("a count has a plane"))
+    }
+
+    /// `C.frame(a)`: the frame open before each byte was opened by a byte of `a`. Per level
+    /// `L`, the openers there (`up` where the count after is `L`) fill from those in `a` to the
+    /// next one not in `a`; a byte reads its level's fill when the count before it is `L`.
+    fn frame(&mut self, count: &Count, a: Val) -> Result<Val, String> {
+        let before: Vec<Val> = count.planes.iter().map(|&p| self.prev(p, 1)).collect::<Result<_, _>>()?;
+        let mut out = self.leaf(BlockOp::Const(0), false);
+        for level in 1..=u64::from(count.max) {
+            let after = self.equals(&count.planes, level)?;
+            let openers = self.and(count.up, after)?;
+            let from = self.and(openers, a)?;
+            let to = self.andnot(openers, a)?;
+            let open = self.fill(from, to)?;
+            let here = self.equals(&before, level)?;
+            let kept = self.and(here, open)?;
+            out = self.or(out, kept)?;
+        }
+        Ok(out)
+    }
+
+    /// The tokens: each kind's start and last-byte masks (keywords retyped), and the overlap,
+    /// coverage and keyword checks as fallbacks.
+    fn tokens(&mut self) -> Result<Vec<(String, Val, Val)>, String> {
+        if self.tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tokens = std::mem::take(&mut self.tokens);
+        // Two kinds starting at one byte.
+        let mut starts = tokens[0].1;
+        let mut overlap = self.leaf(BlockOp::Const(0), false);
+        for t in &tokens[1..] {
+            let both = self.and(starts, t.1)?;
+            overlap = self.or(overlap, both)?;
+            starts = self.or(starts, t.1)?;
+        }
+        self.fallbacks.push(overlap);
+        let mut covered = self.leaf(BlockOp::Const(0), false);
+        let mut out = Vec::new();
+        for (kind, start, through) in tokens {
+            // A token runs from its start through `through`'s bytes, up to the next start.
+            let span = match through {
+                Some(t) => {
+                    let outside = self.not(t)?;
+                    let stop = self.or(outside, starts)?;
+                    let run = self.fill(start, stop)?;
+                    let inside = self.within_val(run.d)?;
+                    self.and(run, inside)?
+                }
+                None => start,
+            };
+            covered = self.or(covered, span)?;
+            let inner = self.andnot(span, starts)?;
+            let continues = self.next(inner, 1)?;
+            let last = self.andnot(span, continues)?;
+            match self.keywords.iter().position(|k| k.0 == kind) {
+                None => out.push((kind, start, last)),
+                Some(at) => {
+                    let (_, words, required) = self.keywords[at].clone();
+                    let mut any = self.leaf(BlockOp::Const(0), false);
+                    for (word, alias) in words {
+                        let here = self.keyword(start, last, &word)?;
+                        any = self.or(any, here)?;
+                        let back = self.prev(here, word.len() as u64 - 1)?;
+                        let word_last = self.and(last, back)?;
+                        let name = alias.unwrap_or_else(|| String::from_utf8_lossy(&word).into_owned());
+                        out.push((name, here, word_last));
+                    }
+                    let other = self.andnot(start, any)?;
+                    if !required {
+                        return Err(format!("keywords {kind}: only `required` keywords are compiled yet"));
+                    }
+                    self.fallbacks.push(other);
+                }
+            }
+        }
+        let skipped = match self.skip {
+            Some(s) => self.or(covered, s)?,
+            None => covered,
+        };
+        let gap = self.not(skipped)?;
+        self.fallbacks.push(gap);
+        Ok(out)
+    }
+
+    /// `within` as a value at delay `d`.
+    fn within_val(&mut self, d: u8) -> Result<Val, String> {
+        Ok(Val { v: self.within(d)?, d, dirty: false })
+    }
+
+    /// The starts of tokens whose text is `word`: the word's bytes from the start, and the
+    /// token's first last byte at its length.
+    fn keyword(&mut self, start: Val, last: Val, word: &[u8]) -> Result<Val, String> {
+        if word.is_empty() {
+            return Err("an empty keyword".into());
+        }
+        let mut out = start;
+        for (j, &b) in word.iter().enumerate() {
+            let byte = self.leaf(BlockOp::Eq(b), b == 0);
+            let at = self.next(byte, j as u64)?;
+            out = self.and(out, at)?;
+            let end = self.next(last, j as u64)?;
+            out = if j + 1 == word.len() { self.and(out, end)? } else { self.andnot(out, end)? };
+        }
+        Ok(out)
+    }
+
     /// `aligned(a, k)`: the bytes of `a` at offsets 0, k, 2k, … in their run. For each residue
     /// `r` of a run's start mod `k`, a fill over the runs that start there, kept at the
     /// positions of the same residue. `k` divides 64, so the residues repeat every word.
@@ -476,25 +836,16 @@ fn live(program: &BlockProgram) -> BlockProgram {
             out.ops.push(op.renumbered(|v| number[usize::from(v)]));
         }
     }
-    out.outputs = program.outputs.iter().map(|&v| number[usize::from(v)]).collect();
+    let n = |v: u16| number[usize::from(v)];
+    out.outputs = program.outputs.iter().map(|&v| n(v)).collect();
+    out.nodes = program.nodes.iter().map(|r| NodeRow { start: n(r.start), end: n(r.end), level: r.level.map(|(u, d)| (n(u), n(d))), ..*r }).collect();
+    out.codes = program.codes.iter().map(|c| CodeRow { when: n(c.when), ..*c }).collect();
     out
 }
 
 fn rows(program: &BlockProgram) -> String {
     let mut out = String::new();
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    for (t, table) in program.tables.iter().enumerate() {
-        let _ = writeln!(out, "  block 0 table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
-    }
-    for (value, op) in program.ops.iter().enumerate() {
-        let _ = writeln!(out, "  block 0 %{value} = {}", op.text());
-    }
-    for value in &program.outputs {
-        let _ = writeln!(out, "  block 0 output %{value}");
-    }
-    if program.delay != 0 {
-        let _ = writeln!(out, "  block 0 delay {}", program.delay);
-    }
+    super::rir::block_rows(&mut out, 0, program);
     out
 }
 

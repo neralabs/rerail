@@ -1,9 +1,11 @@
 # Parser generators: the tape from a Bitlex file
 
 Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator runs the tree
-section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) handles
-classes, masks (with `fill`, a new carried block operation, and `next` by delaying values),
-errors and escapes, equal to the evaluator on every executor.
+section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) compiles all
+of `json.bitlex` (classes, masks, counts as bit-planes, frames, tokens, keywords, errors,
+escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on the
+CPU interpreter and Cranelift. On Metal the program is too large yet: generated MSL inlines
+each round's cone per carry-in, and the interpreter needs more launches than the budget.
 
 ## Intro
 

@@ -151,8 +151,9 @@ tree json {
   mask first_solid = solid & ~prev(fill(solid, empty))
   mask last_byte   = ~next(~empty)
 
-  # Bracket depth, after each byte.
-  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 100000
+  # Bracket depth, after each byte. A compiled count is 4 bit-planes and a deeper file goes to
+  # tree-sitter: 4 of the 28,470 data-layer files nest past 13 (the deepest, 28).
+  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 13
 
   # The first solid byte after a ':', and after a '{' or ','.
   mask after_colon = fill(prev(code & colon), prev(solid)) & solid

@@ -247,6 +247,35 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
+/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, node and code rows.
+pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for (t, table) in block.tables.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+    }
+    for (value, op) in block.ops.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
+    }
+    for value in &block.outputs {
+        let _ = writeln!(out, "  block {at} output %{value}");
+    }
+    for value in &block.extracts {
+        let _ = writeln!(out, "  block {at} extract %{value}");
+    }
+    if block.delay != 0 {
+        let _ = writeln!(out, "  block {at} delay {}", block.delay);
+    }
+    for (r, row) in block.nodes.iter().enumerate() {
+        let level = row.level.map(|(u, d)| format!(" level %{u} %{d}")).unwrap_or_default();
+        let extra = if row.extra { " extra" } else { "" };
+        let _ = writeln!(out, "  block {at} node {r} kind {} start %{} end %{}{level}{extra}", row.kind, row.start, row.end);
+    }
+    for c in &block.codes {
+        let what = if c.field { "field" } else { "supertype" };
+        let _ = writeln!(out, "  block {at} code {} {what} {} when %{}", c.node, c.id, c.when);
+    }
+}
+
 /// The program as `rir`, its kinds and fields named by `names` where given.
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
@@ -272,22 +301,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         let _ = writeln!(out, "  predicate {at} {kind} s{source}");
     }
     for (at, block) in program.block_programs.iter().enumerate() {
-        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        for (t, table) in block.tables.iter().enumerate() {
-            let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
-        }
-        for (value, op) in block.ops.iter().enumerate() {
-            let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
-        }
-        for value in &block.outputs {
-            let _ = writeln!(out, "  block {at} output %{value}");
-        }
-        for value in &block.extracts {
-            let _ = writeln!(out, "  block {at} extract %{value}");
-        }
-        if block.delay != 0 {
-            let _ = writeln!(out, "  block {at} delay {}", block.delay);
-        }
+        block_rows(&mut out, at, block);
     }
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
@@ -694,6 +708,46 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     return Err(format!("block {at} output after an extract"));
                 }
                 program.outputs.push(line.number("%")?);
+            } else if first == "node" {
+                // `block N node R kind K start %s end %e [level %u %d] [extra]`, in rank order.
+                let r: usize = line.number("")?;
+                if r != program.nodes.len() {
+                    return Err(format!("block {at} node {r} out of order (expected {})", program.nodes.len()));
+                }
+                let want = |line: &mut Line<'_>, key: &str| -> Result<(), String> {
+                    let word = line.word()?;
+                    if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
+                };
+                want(line, "kind")?;
+                let kind = line.number("")?;
+                want(line, "start")?;
+                let start = line.number("%")?;
+                want(line, "end")?;
+                let end = line.number("%")?;
+                let (mut level, mut extra) = (None, false);
+                while let Ok(word) = line.word() {
+                    match word.as_str() {
+                        "level" => level = Some((line.number("%")?, line.number("%")?)),
+                        "extra" => extra = true,
+                        other => return Err(format!("a node row has no `{other}`")),
+                    }
+                }
+                program.nodes.push(block::NodeRow { kind, start, end, level, extra });
+            } else if first == "code" {
+                // `block N code R field|supertype ID when %m`.
+                let node = line.number("")?;
+                let field = match line.word()?.as_str() {
+                    "field" => true,
+                    "supertype" => false,
+                    other => return Err(format!("a code row is a field or a supertype, not `{other}`")),
+                };
+                let id = line.number("")?;
+                let word = line.word()?;
+                if word != "when" {
+                    return Err(format!("expected `when`, found `{word}`"));
+                }
+                let when = line.number("%")?;
+                program.codes.push(block::CodeRow { node, field, id, when });
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;

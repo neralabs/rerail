@@ -267,6 +267,31 @@ about the bracket frames it counts:
 - `C.since(a)`: whether that frame already holds a byte of `a` at its own level. The lexer asks
   whether the field has passed its `:`, so that the byte is format-spec text.
 
+How the compiler lowers a count, with no operation of its own:
+
+- **Bit-planes.** The count after each byte is `w` masks, one per bit, with `2^w` at least
+  `D + 2`. Bit `k` flips at an up byte whose lower bits were all 1, and at a down byte whose
+  lower bits were all 0. So each plane is a `toggle` of a mask of the planes below it, one
+  byte back.
+- **The bound.** The planes hold the count modulo `2^w`. A count that goes above `D` passes
+  `D + 1`, and one that goes below 0 passes `-1`, which is `2^w - 1`. Both read as more than
+  `D`, and one compare sends the file to tree-sitter. The evaluator holds a count at 0
+  instead, so a file that goes below 0 falls back here and is lexed there. For brackets such
+  a file is malformed.
+- **`frame(a)`** is one `fill` per level `L` from 1 to `D`. It runs from an opener at level `L`
+  in `a` to the next opener at level `L` not in `a`, and holds where the count before the byte
+  is `L`.
+
+```
+# JSON's depth: 4 planes, for depth 0 to 13.
+scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 13
+# A key's quote opens inside an object: 13 fills, one per level.
+mask key_quote = opening & after_open & depth.frame(code & lbrace)
+```
+
+A small `D` keeps the lowering small: JSON's 13 covers all but 4 of the 28,470 data-layer
+files.
+
 **`hypotheses NAME split E lanes L1 L2 …`** cuts the input into segments; a byte of `E` ends its
 segment. Its statements run once per lane, and in each run:
 
