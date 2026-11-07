@@ -18,17 +18,13 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn boolean_lookbehind_is_not_a_named_capture() {
-    let rows = finding_contract("x = 1\n", r#"
-.policy "contract:boolean-lookbehind" revision 1
-.language python
-.decl sample(s: symbol)
-sample("str|Expression"). sample("Bstr|Expression"). sample("éstr|Expression").
-.violation Boundary(at: span, spelling: symbol) code "BOUNDARY" "{spelling}"
-Boundary(@place("input.py", 1), s) :- sample(s), match("(?s:.*?)(?<![A-Za-z_é])str\\|Expression(?s:.*)", s).
-"#);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["parameters"]["spelling"], "str|Expression");
+fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
+    for pattern in ["[", "(?<![A-Za-z_é])str"] {
+        let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
+        let error = parse(&rule).err().expect("unsupported regex must fail, never report a clean source").to_string();
+        assert!(error.contains("regex"), "{error}");
+        assert!(!error.contains("named groups"), "lookbehind is not a capture: {error}");
+    }
 }
 
 /// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
