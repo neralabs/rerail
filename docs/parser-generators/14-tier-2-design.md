@@ -63,9 +63,11 @@ JSON's values:
 Two choices made by this table:
 
 - **Keys are found backward.** A key is a string whose next token is `:`. That depends only on
-  tier 1, so it is depth 2. The forward rule ("after `{` or `,`, when the parent is an
-  object") needs the stack, which makes keys and so every `ord` one scan deeper. The two rules
-  agree on valid JSON, and pass B's checks refuse a file where they would not.
+  tier 1, so it is depth 2, and a block's node count depends on it through one bit at the
+  block's right edge. The forward rule ("after `{` or `,`, when the parent is an object")
+  needs the parent at each `,`. That depends on the incoming stack, up to 13 entries deep, so
+  no small set of candidates covers it, and the counts would need another pass over the bytes.
+  The two rules agree on valid JSON, and pass B's checks refuse a file where they would not.
 - **Pairs need no stack entry.** Every open object below the innermost has an open pair, since
   the deeper container is that pair's value. Only the innermost object's pair is in doubt: one
   bit, "after a `:`, before the next `,` or `}`".
