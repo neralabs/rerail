@@ -22,7 +22,7 @@ from migration import ROOT, PIN, sha, git, write_json, compare, compare_inputs, 
 from dto import canonical
 
 sys.path.insert(0, str(ROOT / 'scripts/dsl/data_layer_audit'))
-from native_guard import codes
+from native_guard import codes, bind_aliases
 
 ENTRIES = {
     'removed_compat_surfaces': ['scan_file'],
@@ -442,6 +442,7 @@ class Suite:
 
     def pytest_configure(self):
         self.modules = {check: importlib.import_module('scripts.lint_' + check) for check in self.checks}
+        bind_aliases(self.modules)
         originals = codes(self.modules)
         for check, module in self.modules.items():
             if check == 'data_layer_compat_aliases':

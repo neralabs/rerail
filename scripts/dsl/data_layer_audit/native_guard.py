@@ -22,6 +22,16 @@ HOST = {
 STORAGE_WRAPPERS = {inspect.getsourcefile(reprlib.recursive_repr), inspect.getsourcefile(dataclasses.dataclass)}
 
 
+def bind_aliases(modules):
+    """Keep standalone and package imports on the same guarded module object."""
+    for module in modules.values():
+        alias = module.__name__.removeprefix('scripts.')
+        previous = sys.modules.get(alias)
+        if previous is not None and previous is not module:
+            raise RuntimeError('Conflicting linter module alias: ' + alias)
+        sys.modules[alias] = module
+
+
 def codes(modules):
     result={}
     for check,module in modules.items():
