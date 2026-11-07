@@ -10,6 +10,8 @@
 //   mf_class(n, k)   k is the innermost class around n, whatever defs lie between
 //   mf_def(n, f)     f is the innermost def (async too) around n, whatever classes lie between
 //   mf_walk(n, o)    n is in `ast.walk(o)` for a def or class o, o itself excluded: below it or in its decorators
+//   mf_fn(c, x)      call c's callee is the bare name x: `x(…)`, `(x)(…)`
+//   mf_call_name(c, x)  the scripts' _call_name: the bare callee's name, or an attribute callee's last name
 //
 //   class A:
 //       @wrap(x)                 mf_class(<x>, A), mf_def(<x>, m): the decorator belongs to m
@@ -17,7 +19,8 @@
 //           def helper():
 //               call()           mf_class(<call()>, A), mf_def(<call()>, helper), mf_walk(<call()>, m)
 
-#include "python/names.rr"   // decorator
+#include "python/names.rr"   // decorator, attr_of
+#include "python/ast.rr"     // unparen
 
 // mf_up(n, o): o is the innermost def or class around n; a decorator stands for the definition it decorates.
 .decl mf_mark(k: symbol)
@@ -39,3 +42,11 @@ mf_def(n, f) :- mf_up(n, k), kind(k, "class_definition"), mf_def(k, f).
 .decl mf_walk(n: node, o: node)
 mf_walk(n, o) :- (kind(o, "function_definition") ; kind(o, "class_definition")), within(n, o).
 mf_walk(n, o) :- decorator(o, e), (n = e ; within(n, e)).
+
+// mf_fn(c, x) / mf_call_name(c, x): e.g. `f(1)` gives mf_fn(<f(1)>, "f") and mf_call_name(<f(1)>, "f");
+// `a.b.g(2)` gives only mf_call_name(<a.b.g(2)>, "g"); `f()()` gives neither.
+.decl mf_fn(c: node, x: symbol)
+mf_fn(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), kind(f, "identifier"), text(f, x).
+.decl mf_call_name(c: node, x: symbol)
+mf_call_name(c, x) :- mf_fn(c, x).
+mf_call_name(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, _, x).

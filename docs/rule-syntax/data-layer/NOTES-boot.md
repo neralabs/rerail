@@ -11,7 +11,7 @@ clause lowers.
 | bootstrap_eager_resolve | 12 | 13 (+ the same lib) | 2 / 2 | yes |
 | bootstrap_engine_invariants | 2,163 | 415 + 412 (generated tables) | 143 / 145: file scan 74 / 75, fake executor 10 / 11, coverage 59 / 59 | yes |
 | schema_bootstrap_contracts | 387 | 97 | 16 / 16 | yes |
-| schema_architecture | 232 + 239 (plugin) | 94 | 10 / 10 | yes |
+| schema_architecture | 232 + 239 (plugin) | 131 | 10 / 10 | yes |
 | schema_introspection_data_paths | 612 | 51 + 27 (generated tables) | 54 / 54 | yes |
 
 bootstrap_engine_invariants takes over 115 s in one run, so it is scored in pieces (`--entry`, and `--test` for the
@@ -54,9 +54,14 @@ Remaining misses:
 - **schema_architecture** is two scripts under one name. The suite's plugin (SAP000 … SAP005) and the standalone
   `lint_schema_architecture.py` (three rule ids) are both in the rule. The standalone script's findings have no
   code, so the rule reports them as `schema_architecture` with the rule id as a `tag`, which matches the recording.
-  One `.scope include` covers the plugin's three directories and the script's two files outside them. So each half
-  also runs on the other's files: the plugin's checks on sql_schema_services.py and sql_versioning_services.py, the
-  script's in all of l2000_connection. This is a deliberate difference.
+  The `.scope include` is the union of the two linters' files, and each half has its own: `sap_doc` is the
+  plugin's three directories, for files that mention one of its source triggers (SchemaTransaction, Callable,
+  _schema_operation_plan), and `cli_doc` is the script's six TARGETS. SAP000 is an explicit rule over
+  `syntax_error` for a triggered file in the plugin's directories, at line 1, not `.on syntax_error` (which would
+  report every unparsable file in the scope). A file outside both halves can only be one handed to a linter
+  directly (the tests' `schema_fixture.py`, `schema.py`), and both halves read it; in production every file is in
+  one half or the other. Messages name the def through a `fn` column (`def_name`), and SAP001 names its class and
+  field, as the plugin does.
 - **schema_introspection_data_paths:** the "allowed path markers" (`/schema/`, `_metadata`, `/bootstrap`, …) are
   tested in the rule, as `contains(marker, "/" + path)`, as the linter does. The 14 markers would take 28 globs in
   `.scope exclude`, and those would only approximate the substring test. The empty, unsigned approval list (and

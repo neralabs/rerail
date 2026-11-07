@@ -12,9 +12,9 @@ engine's reader (`rr-census` prints nothing for any of them).
 | grammar_mutation_invalidation | 303 | 86 | 45 / 45 | lowers |
 | declared_fact_interrogation | 321 | 64 | 42 / 42 | lowers |
 | history_serverplan_projection | 380 | 59 | 12 / 12 | lowers |
-| versioned_merged_identity | 383 | 100 | 10 / 13 | lowers |
-| post_op_side_effects | 1,329 | 236 | 18 / 22 | lowers |
-| **total** | **3,632** | **713 + 34** | **194 / 199** | |
+| versioned_merged_identity | 383 | 109 | 10 / 13 | lowers |
+| post_op_side_effects | 1,329 | 235 | 18 / 22 | lowers |
+| **total** | **3,632** | **717 + 34** | **191 / 199** | |
 
 The tables (forbidden names, reviewed callers, fate overrides) are short, 4 to 16 entries, so they are inline facts
 and not generated `.part.rr` files.
@@ -38,11 +38,30 @@ same file with no findings, and the rule matches it.
   VMI001 is a repository-level finding ("a reviewed caller has no constructor"). On any file the rule reports it, at
   the recorded key (`impl/common/l2070_server_plan/steps`, line 1).
 
-**post_op_side_effects: 1 miss.** `test_runtime_allowlist_governance_rejects_boolean_opt_out` calls
+**versioned_merged_identity, fixed after review:**
+- A constructor in a decorator, a default or a base belongs to that def or class, as on the linter's scope stack:
+  vmi_caller and vmi_known use match-frames' mf_up and mf_def. `@deco(SqlVersionedMergedCte(…))` on an expected
+  `def build()` is now clean; before, it gave VMI002 with caller `dec.py:` and VMI001. The scope chain above the
+  def stays on `nearest`, because no def or class sits inside a decorator. The reader also refuses a value-building
+  recursion through mf_up (UnboundedValueCycle).
+- `(SqlVersionedMergedCte)(…)` is a constructor: vmi_callee takes parentheses off.
+- vmi_backed is one recursive relation (a builder call, or a name whose known value is backed). VMI003 is a
+  reviewed constructor with no backed read_projection.
+- Duplicate file names. The plugin reports each finding at the last path recorded for its caller, and both roots
+  can hold a `dup.py` with the same `build`. The linter then gives one key, where the rule gave two.
+  vmi_report_path now puts them on the l9700_sql_graph_query file, taking the files in PRODUCTION_ROOTS order. That
+  order is how `source_files` lists them; that `view.files` keeps it is unconfirmed.
+- A walrus binding (`if (p := catalog…(…))`) is not an assignment to the linter (only Assign and AnnAssign are
+  recorded), and the rule agrees: VMI003.
+
+**grammar_mutation_invalidation, fixed after review:** `.scope tests false` replaces `exclude "**/tests/**"`, which
+let `test/` directories through. 45 / 45 still.
+
+**post_op_side_effects: 4 misses, entry emulations.** `test_runtime_allowlist_governance_rejects_boolean_opt_out` calls
 `_collect_runtime_allowlist_bypass_violations_from_tree` on `input.py`. The rule reads the bypass only in
 `l2070_batching/post_op_allowlist.py`, and reports it at line 1 of post_op.py, as the plugin does. This is an
-entry-emulation miss. (rrlab now verifies Ed25519 with libsodium; before that the stub failed every signature. An
-openssl check of the messages the rule rebuilds had already given the same 21 / 22.)
+entry-emulation miss. The other three are the bare-entry-list events below. (rrlab now verifies Ed25519 with
+libsodium; before that the stub failed every signature, and an openssl check of the rebuilt messages agreed.)
 
 **post_op_side_effects, fixed after review:**
 - POSTOP000 is now gated on "no other plugin code fired" (`pos_any`). The earlier gate also asked for an empty
@@ -114,7 +133,7 @@ also splits at `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, U+2028 and U+2029. A test on
    gives 1 whatever the line. The same capture outside an aggregate gives the right line. revision_ancestry_invariants
    puts the matches in a relation first (`rai_chain_at`), which is also clearer.
 4. **rrlab: `@ed25519_ok`.** Done: rrlab now verifies with libsodium.
-5. **python/ast.rr, `ast_name` (changes POSTOP200).** It counts names that are strings in `ast`, and misses one Name.
+5. **python/ast.rr, `ast_name` (changes POSTOP200). Done in bd0bb04d8.** It counted names that are strings in `ast`, and misses one Name.
    - It counts `case` captures (`case x`, `P(a=px)`, `… as q`, `*rest`, `**more`), the later parts of a
      dotted value pattern (`RED` in `Color.RED`), and PEP 695 type parameters (`T`, `*Ts`, `**P`).
    - It misses the walrus target (`w` in `(w := 1)`), which nameref leaves out as a `name` field.

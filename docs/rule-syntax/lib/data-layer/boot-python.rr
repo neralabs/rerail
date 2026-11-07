@@ -6,7 +6,7 @@
 //   callee_name(c, x)  call c's callee is the Name x or an Attribute `….x`: `f(…)` and `a.b.f(…)` give f;
 //                      `f()()`, `t[0]()` give nothing (call_name, python/ast, also takes a subscript's leaf)
 //   deco_word(f, x)    def or class f carries a decorator named x: its Name id or Attribute attr, through a
-//                      call (`@pure_lazy`, `@lazy.pure_lazy()` give pure_lazy)
+//                      call and parentheses (`@pure_lazy`, `@lazy.pure_lazy()`, `@(pure_lazy)` give pure_lazy)
 //   def_walk(n, f)     n is in def f as ast.walk(f) or a def-stack visitor sees it: body, parameters,
 //                      defaults, annotations, decorators, nested defs and lambdas included
 //   ann_word(a, x)     x is the id of a Name or the attr of an Attribute at or under annotation a (ast.walk):
@@ -34,8 +34,10 @@
 callee_name(c, x) :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, x).
 callee_name(c, x) :- kind(c, "call"), field(c, "function", g), attr_of(g, _, x).
 .decl deco_word(f: node, x: symbol)
-deco_word(f, x) :- decorator(f, d), (e = d ; kind(d, "call"), field(d, "function", e)), kind(e, "identifier"), text(e, x).
-deco_word(f, x) :- decorator(f, d), (e = d ; kind(d, "call"), field(d, "function", e)), attr_of(e, _, x).
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), kind(e, "identifier"), text(e, x).
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), attr_of(e, _, x).
 // def_walk: tree-sitter puts a def's decorators beside it (in a decorated_definition), so they are added.
 .decl def_walk(n: node, f: node)
 def_walk(n, f) :- inside(n, f, "function_definition").

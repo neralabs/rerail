@@ -87,6 +87,24 @@ edge, target and roots relations, rrlab searches them and feeds the answers back
 
 `dl.py` has the details.
 
+## Typing programs (`rrlab typing-oracle`)
+
+A rule reads a typing program's answers through relations named `typing_<program>__<output>`, which
+`python/calls` and `python/types` declare and join back to nodes. When a rule's findings or outputs depend on one
+of them, rrlab runs `typing/programs/<program>.rr` first, as the engine does: lowered like any rule, run by
+Soufflé over the same facts, and each node column of its output written as four columns (path, kind, start byte,
+end byte). A rule that includes `python/calls` only for its syntax helpers does not run the program.
+
+The engine runs a program file by file and then in bounded cross-file rounds; rrlab runs it once over every file
+of the run, which is the fixpoint those rounds converge to. A program that needs rounds of its own (`match`
+requests, `dfs_first`, `ordered by`, `parsed`) is refused.
+
+    rrlab typing-oracle [--fixture DIR]    # default: the Typing-support worktree's fixtures/python/calls
+
+scores the Python program against the CPython runtime oracle, with the engine's scoring (`typing/oracle_tests.rs`).
+On 2026-11-07, with the program copied from Typing-support-final-shape@b193a9209: calls 113 agree, 9 depart (all
+unknown, the 9 the engine's test lists), 0 wrong; receivers 44 of 44 exact. 0.2 s CPU.
+
 ## Scores (2026-11-05)
 
 On the Data-layer-rule-expressivity recording (ESLint 10.11.0, eslint-plugin-n 18.4.1), matched on
@@ -185,6 +203,7 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
 - **Dropped:** rules with `=> edits` (fixes are not applied), `may` rules (`must` rules run as plain rules), and
   the policy directives (`.policy`, `.mode`, `.scope` and so on). `.lattice` is dropped with a warning.
 - **Types:** node, span, loc and number subtypes erase to number; relation and symbol subtypes erase to symbol.
+- **Names:** a variable or column named as a Soufflé keyword (`as`, `ord`, `count`) gets a `_` suffix.
 - **earlier(a, b):** a `visit_index` comparison inside the same document. Under `!` it reads a materialised
   `rr_earlier`.
 - **Axes:** `within`, and `inside`/`has`/`nearest`/`within_stop`/`precedes_stop` with a relation-valued set, get
@@ -198,7 +217,8 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
 - **Captures:** `(?<X>…)` binds X to the captured *text*. A capture used as a span (a finding's `at`, an edit
   target) is warned about, not modelled.
 - **split_dot:** becomes functors, whichever way it is bound.
-- **Aggregates:** count, sum, min, max and mean are Soufflé's own. `join x by k sep s` becomes rows, a rank by
+- **Aggregates:** count, sum, min, max and mean are Soufflé's own, except min and max over symbols, which
+  Soufflé refuses: those keep the rows and take the one no other row is below (or above), by bytes. `join x by k sep s` becomes rows, a rank by
   (k…, x), a concatenation chain, and `""` when there are no rows. Symbols compare by bytes, which for UTF-8 is
   code-point order.
 - **ordered by earlier:** a self-use under `!` or inside an aggregate reads `R__prev`. rrlab reruns Soufflé until
