@@ -21,12 +21,15 @@
 //   parameters: a def's `arg`s, by ast field: args (positional, after any `/`), posonlyargs (before `/`), vararg
 //     (`*a`), kwonlyargs (after `*` or `*a`), kwarg (`**k`). In tree-sitter, a parameter is kwonly when a
 //     keyword_separator or list splat precedes it in `parameters`, posonly when a positional_separator follows it.
-//   source_parameters: args/kwonlyargs named `source`, with the annotation's `annotation` column, ast.unparse of
-//     it: 'IndexSource' exactly when the annotation is the Name IndexSource (parentheses dropped).
+//   source_parameters: the FIRST arg/kwonly arg named `source` of a def (min ast preorder id among the def's
+//     args/kwonlyargs named source: args precede kwonlyargs in both ast and the source text, so it is the least
+//     child index in tree-sitter's `parameters`), with the annotation's `annotation` column, ast.unparse of it:
+//     'IndexSource' exactly when the annotation is the Name IndexSource (parentheses dropped).
 //   the kw_defaults row at a kwonly arg's position is that arg's default (ast keeps a None slot per kwonly arg).
 // The query's five parts: an index call outside a def named _generated_index; one inside it whose first
 // `source=` keyword is not the Name `source`; a FunctionDef _generated_index with no source parameter; one whose
-// source parameter is not annotated IndexSource; one whose kwonly `source` defaults to MODEL_DECLARED or
+// first source parameter is not annotated IndexSource; one whose LAST kwonly `source` (max kwonlyargs position,
+// i.e. the greatest child index among kwonly params named source) defaults to MODEL_DECLARED or
 // IndexSource.MODEL_DECLARED. Lines: a Call's and a FunctionDef's lineno are where tree-sitter's node starts.
 .decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
@@ -126,6 +129,17 @@ generated_before_slash(ps, i) :- generated_factory(f), field(f, "parameters", ps
 generated_source_param(f, p) :- generated_param(f, p, "source", _).
 .decl generated_has_source(f: node)
 generated_has_source(f) :- generated_source_param(f, _).
+// source_parameters: the first source parameter (least child index in `parameters`).
+.decl generated_source_at(f: node, p: node, i: number)
+generated_source_at(f, p, i) :- generated_source_param(f, p), field(f, "parameters", ps), child(ps, p, i).
+.decl generated_first_source(f: node, p: node)
+generated_first_source(f, p) :- generated_source_at(f, p, i), i = min j : { generated_source_at(f, _, j) }.
+// the last kwonly source parameter (greatest child index among kwonly params named source).
+.decl generated_kwonly_source_at(f: node, p: node, i: number)
+generated_kwonly_source_at(f, p, i) :- generated_param(f, p, "source", "kwonlyargs"), field(f, "parameters", ps),
+    child(ps, p, i).
+.decl generated_last_kwonly_source(f: node, p: node)
+generated_last_kwonly_source(f, p) :- generated_kwonly_source_at(f, p, i), i = max j : { generated_kwonly_source_at(f, _, j) }.
 .decl generated_annotated(p: node)
 generated_annotated(p) :- field(p, "type", t), child(t, e0, 0), generated_unparen(e0, e), node(_, e, "identifier", _, _),
     text(e, "IndexSource").
@@ -145,10 +159,10 @@ generated_forwards(c) :- generated_first_kw(c, s), generated_source_kw(c, k, s),
 generated_issue(n) :- generated_index_call(n), !generated_in_factory(n).
 generated_issue(n) :- generated_index_call(n), generated_in_factory(n), !generated_forwards(n).
 generated_issue(f) :- generated_factory(f), !generated_has_source(f).
-generated_issue(f) :- generated_source_param(f, p), !generated_annotated(p).
-generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v),
+generated_issue(f) :- generated_first_source(f, p), !generated_annotated(p).
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v),
     node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
-generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v),
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v),
     node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0),
     generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
 
