@@ -12,6 +12,21 @@ spec.loader.exec_module(guard)
 
 
 class GuardTests(unittest.TestCase):
+    def test_bare_and_package_imports_share_guarded_module(self):
+        module = types.ModuleType('scripts.lint_rr_alias_fixture')
+        alias = 'lint_rr_alias_fixture'
+        self.addCleanup(lambda: sys.modules.pop(alias, None))
+        guard.bind_aliases({'fixture': module})
+        self.assertIs(sys.modules[alias], module)
+
+    def test_import_alias_cannot_hide_another_module(self):
+        module = types.ModuleType('scripts.lint_rr_conflict_fixture')
+        alias = 'lint_rr_conflict_fixture'
+        sys.modules[alias] = types.ModuleType(alias)
+        self.addCleanup(lambda: sys.modules.pop(alias, None))
+        with self.assertRaisesRegex(RuntimeError, 'alias'):
+            guard.bind_aliases({'fixture': module})
+
     def module(self):
         module = types.ModuleType('_rr_guard_fixture')
         sys.modules[module.__name__] = module
