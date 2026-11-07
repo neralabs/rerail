@@ -39,13 +39,15 @@ cache a library run.
 | | files | nodes | CPU |
 |---|---|---|---|
 | data layer, 84 files (`calls.rr`) | 84 | 250,862 | 12.0 s |
-| typeshed stdlib reached from those 84 files' imports | 199 of 742 | 446,466 | 28 s (7.3 local, 20.1 cross), rounds not converged |
+| typeshed stdlib reached from those 84 files' imports | 199 of 742 | 446,466 | 28 s before `88cda9248`, then about 21 s at load 95; rounds not converged |
 | … from the 489-file data layer | 214 of 742 | — | — |
 
 - The import closure into the standard library saturates. It covers 199 stubs for 84 files and 214 for 489
   files (about 1.5 MB and 40k lines). That is close to a fixed set per interpreter version.
-- Running it with every workspace run would more than triple the cost. The library part must be summarised
-  once and reused (§4, E5).
+- That first figure was mostly the program's own fault, not the stubs'. Two declared-type rules multiplied out:
+  14M of the 28M join rows. With them fixed, the closure takes 12M join rows (`88cda9248`). The timings are from
+  an unoptimised build of the engine itself, so its Rust loops run several times slower than shipped.
+- Whatever it costs, it is paid once. The library's facts are made by the existing memo and derivations (§2.5).
 - The corpus reader skips `.pyi` files today. The measurement above copied the stubs as `.py`.
 
 **Built earlier, not reached in production** (the CLI and `corpus::run` pass `Typing::default()`):
@@ -76,7 +78,7 @@ There are five layers. The engine owns two of them, the generic ones. Each langu
 | resolution | which file a module name means | `python/modules.rr` | — |
 | loading | which files become documents | `python/modules.rr` asks | `load` requests, the library role (E2, E3) |
 | stub meaning | conditions, re-exports, overloads, `...` | `python/stubs.rr` | — |
-| summaries | rows a workspace run reuses | the program's own rows | the library stage and its cache (E5) |
+| summaries | rows a workspace run reuses | the program's own rows | the per-file memo and the derivation store (E5) |
 
 ### 2.1 Environment (`python/env.rr`)
 
@@ -156,21 +158,23 @@ A stub is Python with a few conventions. The rules that give them meaning are Py
 - **Accelerators.** `try: from _x import f` followed by `except ImportError: def f(...)`: both bindings are
   possible. This explains 130 of the Jedi divergences in t20 gap 6.
 
-### 2.5 Summaries: the library stage
+### 2.5 Summaries: the existing derivation store, no new cache
 
-A library never imports the workspace. Its rows therefore depend only on the library files, the settings and
-the program, which makes them cacheable:
+A library file's facts are made once, by the mechanisms that already make a workspace file's facts once:
 
-1. **Library stage.** The engine runs the program over the library documents alone: the loaded closure,
-   iterated to its fixpoint with its own rounds. No findings are reported for library documents.
-2. **Workspace stage.** The run over the workspace starts from the library stage's rows as fixed input facts, as
-   the bridge hands rows over today (0056 item 2). The rounds then cross only workspace files. A library
-   document's rows are already final, so the per-document cutoff (O41) skips them.
-
-The key is (program digest, the digests of the closure's files, the settings the rules read). Entries are
-stored machine-wide in the content store, as 0052 stores per-file rows. Two workspaces with the same interpreter
-share the standard library's entry. For stdlib-heavy work a background run can build the whole of typeshed's
-`stdlib` once per (typeshed, version, platform, program). A workspace then selects from it by demand.
+- **File-local rows**: the per-file memo (decision 0052) keys a document's rows by its content, its path and the
+  plan. A stub is a document, so its rows are replayed from the memo after the first run that reads it, in any
+  workspace on the machine.
+- **Cross-file rows**: these are the rows only the rounds make, such as a library class's inherited attributes
+  or a re-export's target. Here the derivation graph (03 §14, `content_store::derivation`) is the mechanism.
+  - A library never imports the workspace, so the cross-file rows of a set of library documents closed under
+    their imports are a derivation. Its inputs are those files' digests, the settings the rules read (`env`)
+    and the program.
+  - The workspace run reads that derivation's output as fixed rows and does not recompute them. A changed stub
+    rebinds its name and invalidates the derivation, as any changed file does.
+  - What is new is the granularity: one derivation per import-closed set of documents, not per file. 0052
+    memoises only the file-local part today, because the cross-file part was 0.01 s for its rules. For a
+    typing program it is not.
 
 ## 3. Engine changes (generic, minimal)
 
@@ -180,11 +184,10 @@ share the standard library's entry. For stdlib-heavy work a background run can b
 | E2 | `load(path, grammar, role)` requests: the engine parses each requested file as a document with `doc_role(d, role)`, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
 | E3 | file extensions per language in the registry (`languages/python.json`: `.py`, `.pyi`), so the corpus reader and E2 take `.pyi` | data, not code |
 | E4 | `env(key, value)` facts from `--env k=v` and a project config file | settings as facts, read by rules |
-| E5 | the library stage: a run over the `library` documents first, cached by its key, with its rows seeded into the workspace run as fixed inputs; no findings for non-primary documents | the bridge's rows-as-values plus 0052's store, applied to a stage |
+| E5 | the cross-file rows of an import-closed set of library documents recorded as a derivation in the existing store (03 §14), and replayed into the workspace run as fixed rows; no findings for non-primary documents | the derivation graph at one more granularity, not a new cache |
 | E6 | the per-document cutoff in the rounds (O41, O86): needed in any case for cost; more so while E5 is missing | already open |
 
-E1–E4 are small. E5 is the real one. Until it exists, step 1 below runs the library stage inside every run and
-pays the 28 s; that is only acceptable for measurement.
+E1–E4 are small. E5 reuses the store's derivations and the per-file memo, which already make a file's facts once.
 
 No Rust in this list knows Python. The Python-specific Rust that exists (`deps.rs`, `declare.rs`,
 `corpus/typing.rs::facts`) is retired once step 3 is in. `RECORD` and lockfiles are not needed to resolve a
@@ -203,7 +206,7 @@ Each language writes the same three `.rr` layers over the same engine abilities:
 | Rust | `Cargo.lock`, the registry source cache, the sysroot's `library/` | `extern crate` / `use` paths, crate roots | the source itself (public items only) |
 | PHP | `composer.json` autoload, `vendor/`, phpstorm-stubs | PSR-4 | stub `.php` files |
 
-The library stage, its cache, `load`, `env`, `dir_entry` and `file_line` are shared. 03 §13's measurement for Rust
+The memo and derivations, `load`, `env`, `dir_entry` and `file_line` are shared. 03 §13's measurement for Rust
 (3 hops reach 14% of registry bytes) is the same saturation as typeshed's 199 of 742 above.
 
 ## 5. What it needs from the typing program
@@ -228,8 +231,8 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
 1. **E3, E1, E4, E2; `env.rr` and `modules.rr` for typeshed's stdlib and `builtins` only.** No cache yet.
    This finds out how many of the 1,571 calls become decided. The ceiling is about 760 (the categories above),
    less what needs §5.1.
-2. **E5, the library stage and its cache.** The goal is a warm workspace run that costs at most 10% more than
-   today, with the cold library stage built once, in the background.
+2. **E5: library cross-file rows as a derivation.** The goal is a warm workspace run that costs at most 10% more
+   than today.
 3. **Site directories, stub packages, `py.typed`, `.pth`, user declarations as `.pyi`.** Retire `deps.rs`,
    `declare.rs` and the `declared_ret` facts.
 4. **§5.1–§5.3**, ordered by what the score says is left.
