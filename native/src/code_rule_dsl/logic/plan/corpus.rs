@@ -25,6 +25,7 @@ use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 mod memo;
+mod inputs;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -180,28 +181,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
-/// The inputs read from a file in the repository (`.input r(IO=json, filename="…")`, rr's `input` setting): with
-/// no such file the relation is empty, so it is no input but a relation without rules. Reading the files
-/// themselves is not written yet (open item O76), so a file that exists is an error, not an empty relation.
+/// Repository readers publish typed rows once, before file-local partitioning.
 fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
-    let params: Vec<(String, String)> = prog
-        .settings
-        .iter()
-        .filter(|(k, _)| k == "input")
-        .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
-        .collect();
-    for (rel, params) in params {
-        let file = params.split("filename=").nth(1).and_then(|f| f.split('"').nth(1));
-        if let Some(f) = file
-            && root.join(f).exists()
-        {
-            return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
-        }
-        if file.is_none() && !params.contains("artifact=") {
-            continue;
-        }
-        prog.inputs.retain(|i| *i != rel);
-    }
+    inputs::populate(prog, root)?;
     // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
         if prog.inputs.iter().any(|i| i == rel) {
@@ -456,7 +438,6 @@ pub(crate) fn run_with_options(
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
-    external_inputs(&mut prog, root)?;
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -468,6 +449,8 @@ pub(crate) fn run_with_options(
         }
         declared = d;
     }
+    // Typing may rebuild the combined program. Publish external facts after that rebuild.
+    external_inputs(&mut prog, root)?;
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;

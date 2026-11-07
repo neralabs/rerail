@@ -355,7 +355,9 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
                 merged = rest;
                 merged.push(all);
             }
-            merged.len() <= 1
+            // A constant-only rule has no document owner. Run it once in the cross-file phase,
+            // including an empty corpus. Vocabulary filters remain per-chunk producers.
+            merged.len() == 1 || (merged.is_empty() && filters.contains(&rule.head.rel))
         };
         let before = local.len();
         let failing: Vec<String> = prog.rules.iter().filter(|r| local.contains(&r.head.rel) && !rule_local(r)).map(|r| r.head.rel.clone()).collect();
