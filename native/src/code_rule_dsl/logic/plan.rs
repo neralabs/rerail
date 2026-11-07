@@ -3252,7 +3252,9 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // Flushed while still held: the run's symbols are the table's next rows.
+    let flush = super::profile::span(|| "flush symbols".into());
     let flushed = super::native::flush_symbols(db);
+    drop(flush);
     super::native::hold_symbols(db, false)?;
     flushed?;
     out

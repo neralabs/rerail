@@ -1128,25 +1128,32 @@ pub(crate) fn with_nearest(
 /// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
 pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
-    // Postings by sorting (no map per value): a run of equal values is one value's postings.
-    let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {
-        values.sort_unstable();
-        let (mut ndv, mut sq, mut at) = (0, 0, 0);
-        while at < values.len() {
-            let run = values[at..].iter().take_while(|v| **v == values[at]).count();
-            ndv += 1;
-            sq += (run * run) as i64;
-            at += run;
-        }
-        (ndv, sq)
-    };
+    let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
+    // One sort per column by (value, document): a run of one value is its postings (ndv, and the sum of squares of
+    // their lengths), and within it a run of one document is that document's (the sum of squares per document).
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let (ndv, sq) = moments((0..rows).map(|row| (0, source.value(row, c))).collect());
-            let (_, sqd) = moments((0..rows).map(|row| (source.value(row, 0) >> 32, source.value(row, c))).collect());
+            let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
+            values.sort_unstable();
+            let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let mut at = 0;
+            while at < values.len() {
+                let v = values[at].0;
+                let end = at + values[at..].partition_point(|x| x.0 == v);
+                ndv += 1;
+                sq += ((end - at) * (end - at)) as i64;
+                let mut d = at;
+                while d < end {
+                    let doc = values[d].1;
+                    let de = d + values[d..end].partition_point(|x| x.1 == doc);
+                    sqd += ((de - d) * (de - d)) as i64;
+                    d = de;
+                }
+                at = end;
+            }
             (name, rows as i64, ndv, sq, sqd)
         })
         .collect()

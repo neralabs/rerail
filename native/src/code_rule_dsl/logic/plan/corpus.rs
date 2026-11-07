@@ -444,6 +444,7 @@ pub(crate) fn run_with_options(
     let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<String>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
+        let _gather = crate::code_rule_dsl::logic::profile::span(|| "gather outputs".into());
         for (rel, lines) in got.outputs {
             if keep(&rel) {
                 outputs.entry(rel.clone()).or_default().extend(lines);
@@ -559,6 +560,7 @@ pub(crate) fn run_with_options(
         let kept = got.kept.clone();
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
+        let _export = crate::code_rule_dsl::logic::profile::span(|| "export to cross".into());
         db.execute_batch("BEGIN")?;
         for rel in &split.exports {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
@@ -635,6 +637,7 @@ pub(crate) fn run_with_options(
             }
             // The cone's final rows the rest reads, as `<rel>__done` inputs held in memory and measured.
             let mut rest = cone.rest;
+            let done_span = crate::code_rule_dsl::logic::profile::span(|| "done inputs".into());
             let mut st = cross_stats.clone();
             let mut done = Totals::default();
             for rel in &cone.reads {
@@ -648,6 +651,7 @@ pub(crate) fn run_with_options(
                 modules.bind(&db, &name, source)?;
             }
             done.apply(&mut st);
+            drop(done_span);
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
             // A pending round's marks hold for the rest as for the cone.
             if rounds.pending && let Some(f) = rest.facts.get_mut(cross_rounds::UNCONVERGED) {
@@ -756,18 +760,22 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
     for r in 0..=k + 1 {
+        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
+        let bind = crate::code_rule_dsl::logic::profile::span(|| "bind previous rows".into());
         for (rel, rows) in &prev_rows {
             let width = types(rel).len();
             let columns = (0..width).map(|i| format!("c{i}")).collect();
             let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
             modules.bind(db, &format!("{rel}{}", cross_rounds::PREV), component::columns_source(columns, values))?;
         }
+        drop(bind);
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
         let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
         let got = super::run_atoms_native_over(&round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
+        let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
         let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
         prev_totals = Totals::default();
         for rel in hops {
@@ -784,7 +792,9 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             prev_totals.alias(&format!("{rel}{}", cross_rounds::PREV), rel);
             rows.insert(rel.clone(), (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
         }
-        let digest = cross_rounds::digest(&rows);
+        drop(measure);
+        let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
+        let digest = { let _d = digest; cross_rounds::digest(&rows) };
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
         if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
@@ -796,6 +806,7 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
         last = Some(digest);
+        let _keep = crate::code_rule_dsl::logic::profile::span(|| "previous rows: sort".into());
         for (rel, mut rows) in rows {
             rows.sort_unstable();
             rows.dedup();
