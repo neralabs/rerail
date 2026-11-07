@@ -102,7 +102,8 @@ def run(args):
         engine = args.engine.resolve()
         report['engineSha256'] = sha(engine.read_bytes())
         report['oracleSha256'] = sha(args.oracle.read_bytes())
-        backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve())
+        rule_root=getattr(args,'rule_root',None)
+        backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
@@ -211,6 +212,7 @@ def main():
     parser.add_argument('--engine', type=Path)
     parser.add_argument('--oracle', type=Path)
     parser.add_argument('--baseline', type=Path)
+    parser.add_argument('--rule-root', type=Path, help='Policy directory, including disabled policies for positive controls')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)
     parser.add_argument('--out', type=Path, required=True)
