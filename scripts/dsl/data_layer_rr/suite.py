@@ -44,6 +44,7 @@ ENTRIES = {
     'conn_or_txn_union': ['analyze_file'],
     'async_patterns': ['lint_file', 'analyze_source', 'should_exclude'],
     'async_sync_boundary': ['scan_tree', '_get_call_name', '_is_allowlisted', '_is_informational'],
+    'plan_scope_ownership':['lint','_lint_file','_source_facts'],
     'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
     'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
     'no_api_root_imports': ['check_file', 'check_file_content'],
@@ -143,7 +144,10 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
+        if check=='plan_scope_ownership':
+            from plan_ownership_port import snapshot
+            files,scope,root=snapshot(module,entry,args,kwargs)
+        elif check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
             from unresolved_port import supplied_snapshot, analyzed_state
             owner = args[0]
             tree = args[1] if len(args) > 1 else kwargs['tree']
@@ -240,6 +244,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='plan_scope_ownership':
+            from plan_ownership_port import scan
+            return scan(self,entry,module,arguments)
         if check == 'async_sync_boundary':
             from boundary_port import scan
             return scan(self, entry, module, arguments)
@@ -540,6 +547,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check=='plan_scope_ownership':
+                from plan_ownership_port import install
+                install(self,module)
             if check == 'async_sync_boundary':
                 from boundary_port import install
                 install(self, module)

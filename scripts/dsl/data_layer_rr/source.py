@@ -15,9 +15,16 @@ def main():
                            ('backend_type_strings', 'find_python_files', 'backend_helper'),
                            ('error_handling', 'scan_file_content', 'error_file'),
                            ('connection_caches', 'find_violations', 'connection_targets'),
-                           ('data_layer_facade_purity', 'lint_targets', 'facade_targets'))
+                           ('data_layer_facade_purity', 'lint_targets', 'facade_targets'),
+                           ('plan_scope_ownership','lint','ownership_lint'),
+                           ('plan_scope_ownership','_lint_file','ownership_file'),
+                           ('plan_scope_ownership','_source_facts','ownership_source'))
     original_snapshot = recording.snapshot
     def input_snapshot(module, kind, args, kwargs):
+        if kind in {'ownership_lint','ownership_file','ownership_source'}:
+            from plan_ownership_port import snapshot
+            entry={'ownership_lint':'lint','ownership_file':'_lint_file','ownership_source':'_source_facts'}[kind]
+            return snapshot(module,entry,args,kwargs)
         if kind == 'error_file':
             from error_handling_port import snapshot
             return snapshot(module, 'scan_file_content', args, kwargs)
