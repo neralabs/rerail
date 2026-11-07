@@ -352,7 +352,11 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
          \x20   device atomic_uint* states [[buffer(3)]],\n\
          \x20   device const ulong* halos [[buffer(4)]],\n\
          \x20   constant uint& len [[buffer(5)]],\n\
-         \x20   device uint* counts [[buffer(6)]],\n\
+         \x20   device atomic_uint* extract_states [[buffer(6)]],\n\
+         \x20   device uint* positions [[buffer(7)]],\n\
+         \x20   device atomic_uint* deferred [[buffer(8)]],\n\
+         \x20   constant uint& capacity [[buffer(9)]],\n\
+         \x20   device uint* counts [[buffer(10)]],\n\
          \x20   uint gl [[thread_position_in_grid]],\n\
          \x20   uint g [[threadgroup_position_in_grid]],\n\
          \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
@@ -365,10 +369,13 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
     for (k, v) in native.outputs.iter().enumerate() {
         out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
     }
-    // The extract pass's sizes: each extract's count per group, from the plane just written.
+    // The extract pass, in the common case here: each extract's positions, from the plane just
+    // written, at offsets found by look-back (`extract_write`). Its fallback is a second command
+    // buffer, not a recompute, so it polls longer than the rounds do (still bounded).
+    let extract_spins = spins * EXTRACT_POLLS;
     for (e, &k) in native.extracts.iter().enumerate() {
         out.push_str(&format!(
-            "  extract_count(uint(popcount(extract_word(v{}, gl, len))), g, counts + {e}u * groups);\n",
+            "  extract_write(v{}, gl, g, l, len, extract_states + {e}u * groups, positions + {e}u * capacity, capacity, deferred + {e}u, counts + {e}u * groups, {extract_spins}u);\n",
             native.outputs[k]
         ));
     }
@@ -383,6 +390,8 @@ pub(in crate::code_rule_dsl) fn rounds(native: &BlockNative) -> usize {
 
 /// Polls of a predecessor's state before computing it here.
 const SPINS: u32 = 64;
+/// The extract look-back's polls per predecessor, as a multiple of the rounds'.
+const EXTRACT_POLLS: u32 = 64;
 
 /// A round: up to three scanned carries (`toggle`, `after_odd_run`) resolved by one scan, and the
 /// `prev`s of carried values whose halos it publishes (`06-block-parallel.md` §3.3's fused
@@ -909,9 +918,16 @@ pub(in crate::code_rule_dsl) fn run_source(
     let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups * CANDIDATES * plan.halo_stride)?;
     let lanes = stream.lanes as u32;
     let len = bytes.len() as u32;
-    // `tempo_block` writes each extract's chunk counts as it writes the plane.
-    let extract = Extract::new(source, &stream, width, bytes.len(), native.extracts.len())?;
-    let mut passes: Vec<Pass<'_>> = pipelines
+    // `tempo_block` writes each extract's positions itself (`extract_write`), into buffers of
+    // an upper bound: a plane has at most one position per byte.
+    let extracts = native.extracts.len();
+    let capacity = bytes.len().max(1);
+    let extract = Extract::new(source, &stream, width, bytes.len(), extracts)?;
+    let extract_states = MappedBuffer::zeroed::<u32>(device, extracts.max(1) * stream.groups)?;
+    let written = MappedBuffer::zeroed::<u32>(device, extracts.max(1) * capacity)?;
+    let deferred = MappedBuffer::zeroed::<u32>(device, extracts.max(1))?;
+    let capacity_arg = capacity as u32;
+    let passes: Vec<Pass<'_>> = pipelines
         .iter()
         .map(|pipeline| Pass {
             pipeline,
@@ -920,21 +936,44 @@ pub(in crate::code_rule_dsl) fn run_source(
                 (1, &*stream.values.buffer, 0),
                 (3, &*states.buffer, 0),
                 (4, &*halos.buffer, 0),
-                (6, &*extract.counts.buffer, 0),
+                (6, &*extract_states.buffer, 0),
+                (7, &*written.buffer, 0),
+                (8, &*deferred.buffer, 0),
+                (10, &*extract.counts.buffer, 0),
             ],
-            args: vec![(2, bytes_of(&lanes)), (5, bytes_of(&len))],
+            args: vec![(2, bytes_of(&lanes)), (5, bytes_of(&len)), (9, bytes_of(&capacity_arg))],
             groups: stream.groups,
             threads: GROUP,
         })
         .collect();
-    passes.extend(extract.scan_passes());
     let seconds = encode_passes(&passes)?;
-    let planes: Vec<u64> = native.extracts.iter().map(|&k| (k * stream.slot_bytes) as u64).collect();
-    let positions = extract.scatter(&stream, &planes)?;
+    // Each group's count, as `tempo_block` wrote it; their sum is the total.
+    let read = |buffer: &MappedBuffer, at: usize| -> u32 {
+        // SAFETY: every index read is inside the buffer's allocation (sizes above).
+        unsafe { *buffer.buffer.contents().cast::<u32>().add(at) }
+    };
+    let complete = (0..extracts).all(|e| read(&deferred, e) == 0);
+    let positions = if complete {
+        (0..extracts)
+            .map(|e| {
+                let total: usize = (0..stream.groups).map(|g| read(&extract.counts, e * stream.groups + g) as usize).sum();
+                (0..total).map(|i| read(&written, e * capacity + i)).collect()
+            })
+            .collect()
+    } else {
+        // The fallback, when a look-back ran out of polls: the scan of the counts, then the scatter.
+        EXTRACT_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        encode_passes(&extract.scan_passes())?;
+        let planes: Vec<u64> = native.extracts.iter().map(|&k| (k * stream.slot_bytes) as u64).collect();
+        extract.scatter(&stream, &planes)?
+    };
     let words = stream.slots(native.outputs.len());
     let outputs = words.iter().map(|w| finish(w, bytes.len())).collect();
     Ok((BlockRun { outputs, positions }, seconds))
 }
+
+/// Runs of generated MSL whose extract pass needed the fallback (a second command buffer).
+pub(in crate::code_rule_dsl) static EXTRACT_FALLBACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The extract pass's buffers (`metal_block_extract.metal`): each extract's chunk counts (a
 /// chunk is a group's span), and its chunk offsets with the total after them.

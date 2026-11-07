@@ -799,8 +799,21 @@ fn extract_equals_reference_on_every_executor() {
         let ones: Vec<u32> = (0..bytes.len() as u32).collect();
         let quotes: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == b'"').collect();
         let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
+        let want = vec![ones.clone(), quotes.clone(), soh.clone()];
         for (name, got) in extract_executors(&p, &bytes) {
-            assert_eq!(got.positions, vec![ones.clone(), quotes.clone(), soh.clone()], "{name}, {} bytes", bytes.len());
+            assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
+        }
+        // No polls: every group but the first defers, and the fallback (scan, then scatter)
+        // writes the positions.
+        #[cfg(target_os = "macos")]
+        {
+            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
+            let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+            for width in LaneWidth::ALL {
+                let source = generate_polling(&native, width, ClassStrategy::Planes, 0);
+                let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
+                assert_eq!(got.positions, want, "no polls, {}-byte lanes, {} bytes", width.bytes(), bytes.len());
+            }
         }
     }
 }
@@ -954,11 +967,14 @@ fn stage1_cost_per_block() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        // The mask passes alone, and with the extract pass's count and scan (its scatter is a
-        // second command buffer, not timed here).
+        // The mask passes alone, and with the extract pass (in the same dispatch unless a
+        // look-back runs out of polls; the fallback's second command buffer is not timed, and
+        // its runs are counted).
         let mut masks = native.clone();
         masks.extracts.clear();
-        for (what, program) in [("masks", &masks), ("masks + extract sizes", &native)] {
+        use metal_program_backend::block_program::EXTRACT_FALLBACKS;
+        let before = EXTRACT_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed);
+        for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
                     let s = (0..5)
@@ -972,5 +988,7 @@ fn stage1_cost_per_block() {
                 }
             }
         }
+        let fallbacks = EXTRACT_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed) - before;
+        println!("extract fallbacks (second command buffer): {fallbacks} of 30 runs with the extract");
     }
 }

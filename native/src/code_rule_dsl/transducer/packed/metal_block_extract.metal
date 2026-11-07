@@ -38,6 +38,47 @@ kernel void block_extract_scan(device const uint* counts [[buffer(0)]], device u
   if (l == 0u) offsets[chunks] = running;
 }
 
+// The common case in one dispatch (generated MSL's `tempo_block`): each group publishes its
+// count, finds its offset by a bounded look-back over the groups before (the carries' flagged
+// states), and writes its positions directly into a buffer of `capacity` (an upper bound: for
+// positions, the stream's length). A group whose look-back runs out of polls writes nothing and
+// sets `deferred`; the host then runs the scan and the scatter above, which write every group.
+// Data-dependent, so not lane code: plain `inline`, outside the mask pass's straight-line code.
+template <typename M>
+inline void extract_write(M v, uint gl, uint g, uint l, uint len, device atomic_uint* state, device uint* positions,
+                          uint capacity, device atomic_uint* deferred, device uint* counts, uint spins) {
+  const uint W = uint(sizeof(M)) * 8u;
+  M w = extract_word(v, gl, len);
+  const uint n = uint(popcount(w));
+  const uint agg = simd_sum(n);
+  if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);
+  counts[g] = agg;
+  uint prefix = 0u;
+  bool known = true;
+  for (uint back = 1u; back <= g; back++) {
+    uint st = 0u;
+    for (uint spin = 0u; spin < spins && (st >> 30u) == 0u; spin++) {
+      st = simd_broadcast(atomic_load_explicit(&state[g - back], memory_order_relaxed), ushort(0));
+    }
+    if ((st >> 30u) == 0u) {
+      known = false;
+      break;
+    }
+    prefix += st & CARRY_VALUE;
+    if ((st >> 30u) == 2u) break;
+  }
+  if (!known) {
+    if (l == 0u) atomic_store_explicit(deferred, 1u, memory_order_relaxed);
+    return;
+  }
+  if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | (prefix + agg), memory_order_relaxed);
+  const uint at = prefix + simd_prefix_exclusive_sum(n);
+  for (uint j = 0u; j < W && w != M(0); j++) {
+    if (at + j < capacity) positions[at + j] = gl * W + uint(ctz(w));
+    w = M(w & M(w - M(1)));
+  }
+}
+
 #define EXTRACT_KERNELS(W, M)                                                                         \
   kernel void block_extract_count_##W(device const M* plane [[buffer(0)]], device uint* counts [[buffer(1)]], \
                                       constant uint& len [[buffer(2)]], uint gl [[thread_position_in_grid]], \
