@@ -8153,3 +8153,51 @@ The targeted 67-rule reader check is separate and completed successfully.
 This work aligns the runtime; it does not certify all migration contracts.
 The inventory remains 67 drafts and 33 absent translations, with full acceptance false.
 `serverplan_grammar_surface` remains the next missing translation. Its source survey is not a completed port.
+
+### Native grammar-surface draft: exact source assertions and shape repairs (2026-11-07)
+
+The 68th draft translates `serverplan_grammar_surface` into `.rr` on the root Final shape engine.
+The upstream branch remains at `ee59790f0`; no sibling changes or retired-engine code were copied.
+Detection, scope, triggers, file selection, and helper-name tables execute in native relations.
+The Python harness transports I/O, CLI output, and passive DTOs. It guards the linter and its shared fact module against semantic fallback.
+
+The first native original-suite run passed eight cases and failed one complete result comparison.
+Ruff reported a malformed parameter differently from CPython. The source assertion checks less text, but the stronger result comparison retained the failure.
+An independent corpus then found 20 diagnostic mismatches among 183 cases. The other 163 matched.
+The existing parser adapter now formats the 21 recorded error forms, with native regression coverage.
+No interpreter is linked or invoked by rules.
+
+Further probes exposed ten failures across 11 cases. They covered future imports, match-pattern attributes, conditional order, and wrapper-sensitive breadth-first order.
+The shared `python/ast-shape.rr` projection expands dotted pattern attributes and computes semantic depth over existing child edges.
+The child edge stays explicit so the compiler can prove that numeric recursion terminates.
+The native tape visitor now visits conditional expressions as test, body, then else, matching Python's AST fields.
+The final reporter check also caught an incorrect severity directive. It now uses `.severity Surface error`.
+
+| Contract | Final result |
+| --- | --- |
+| Original unchanged suite | Nine passed; seven complete API comparisons; 12 native calls; no excluded or skipped cases |
+| Supplemental public APIs and discovery | All 197 passed; 174 positive file scans, including 21 syntax errors; one positive discovery result |
+| Configured reporter | All 207 passed; 155 finding-positive cases; complete fields, order, and multiplicity compared |
+| Original positive control | Disabling detection fails the unchanged original positive assertion |
+| Selective controls | Each of the six disabled detection families independently fails complete reporter parity |
+| Native reader/execution tests | 56 passed; two upstream file-writing tests ignored; whole-library validation remains outside this bounded subset |
+| Native parser regressions | Two passed, including all 21 recorded diagnostic forms |
+| Tooling and format | 48 Python tests and two gate tests passed |
+| Current draft reader | All 68 passed |
+
+The larger final acceptance shards hit the 115-second cap under concurrency. Those runs do not count as acceptance.
+Eight disjoint shards per corpus then covered every case exactly once. Two workers ran at a time.
+The recorded remaining shards took 45–54 seconds each. No full repository or whole-batch cold run was performed.
+
+The original-suite receipt is [here](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-direct-contracts.json.gz).
+The [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-supplemental-contracts.json.gz) retains every final shard, source oracle, selective control, validation script, and earlier red result.
+Separate red receipts preserve the [original diagnostic failure](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-original-red.json.gz) and [shape failures](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-projection-red.json.gz).
+
+Full migration acceptance is not done. Production and persistent-workspace contracts remain outstanding.
+Diagnostic compatibility covers 21 recorded forms; other parser variants still need parity work.
+The `backend_coupling` draft also uses raw tape depth. Audit it with wrapper-sensitive ordering cases before acceptance.
+The inventory remains 68 drafts and 32 absent translations. No new Linear ticket was created.
+
+The next missing translation is `unresolved_forward_refs`. Its source survey and offline run cover all 116 original cases.
+The recording captures 62 outer calls and identifies 54 cases without one. Those helper, configuration, and CLI assertions still require native transfers.
+No native port or acceptance is claimed for that next rule.

@@ -14,7 +14,9 @@ Build and develop the engine in this repository root. Its baseline is Final rera
 `ee59790f00ba0688e42da4313bcaa042fa18ba69`. That branch includes the earlier migration and regex fixes,
 the shared guest/value runtime, and the current world-demand and environment-fact model.
 Merge its committed engine, frontend, libraries, build files, and locks into this root.
-The only local native repair normalizes Boolean contexts created after demand planning (`25b580262`).
+Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
+format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
+The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 Uncommitted sibling work is not part of this baseline.
 
 The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
@@ -45,7 +47,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **67 target drafts and 33 absent translations**. None has full acceptance yet.
+The current inventory contains **68 target drafts and 32 absent translations**. None has full acceptance yet.
+The grammar-surface draft passes all nine original cases, 197 public/helper contracts, and 207 reporter cases.
+Its [direct-suite receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-supplemental-contracts.json.gz) retain the complete results.
+Production and persistent-workspace acceptance remain outstanding. Diagnostic compatibility beyond the 21 recorded forms also needs further work.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
