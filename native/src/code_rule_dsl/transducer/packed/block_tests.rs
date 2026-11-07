@@ -1263,6 +1263,29 @@ fn stage1_loop_is_simdjsons_size() {
     assert!(lines.len() <= 150, "stage 1's loop: {} instructions (at most 150):\n{}", lines.len(), lines.join("\n"));
 }
 
+/// A lab: the Cranelift loop of the program in the `.rir` file `RERAIL_RIR`, its size and its
+/// opcodes, for measuring variants of a program.
+#[test]
+#[cfg(target_arch = "aarch64")]
+#[ignore = "a lab; run by name with RERAIL_RIR"]
+fn rir_loop_size() {
+    let text = std::fs::read_to_string(std::env::var("RERAIL_RIR").expect("RERAIL_RIR")).expect("reads");
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for l in &lines {
+        *ops.entry(l.split_whitespace().next().unwrap_or("")).or_default() += 1;
+    }
+    let mut ops: Vec<_> = ops.into_iter().collect();
+    ops.sort_by_key(|o| std::cmp::Reverse(o.1));
+    eprintln!("loop: {} instructions, {} stack; {ops:?}", lines.len(), loop_costs(&lines).0);
+    if std::env::var("RERAIL_ASM").is_ok() {
+        eprintln!("{}", lines.join("\n"));
+    }
+}
+
 /// A program's carried state in bits (decision 0048): one bit per `toggle`, `after_odd_run` and
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
