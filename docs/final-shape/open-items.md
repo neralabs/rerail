@@ -1550,3 +1550,12 @@ each of them by how its rules are written; another program would meet them again
 
 **Closure:** each cost fixed in the engine and measured on the same slices with the program's rules written
 plainly.
+
+## O86. Bridged typing answers are recomputed every run
+
+A rule that reads `typing_<program>__<output>` runs the program in full before the rule (decision 0052). The rows
+are a derivation of the program's digest and the run's sources (its manifest, 0051), but they are not recorded as
+one. An unchanged corpus therefore reruns the typing program's rounds.
+
+**Closure:** the rows are kept as a derivation (03 §14, `content_store::derivation`), valid while the program and
+the files its rounds read are unchanged, and a run with a valid derivation reads them instead.

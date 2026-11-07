@@ -28,6 +28,16 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 const PREFIX: &str = "typing_";
 const SEP: &str = "__";
 
+/// Whether `rel` is a bridged relation's name (`typing_<program>__<output>`). Such a relation is one fact family
+/// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rr`'s are: the program's answers
+/// are the same whichever rule reads them.
+pub(crate) fn is_bridged(rel: &str) -> bool {
+    rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
+}
+
+/// The bridged relations' rows, by relation.
+pub(crate) type Facts = BTreeMap<String, Vec<Vec<front::Value>>>;
+
 /// A bridged relation: the program, its output, and the output's node columns.
 struct Bridged {
     rel: String,
@@ -57,16 +67,16 @@ fn source(name: &str) -> Result<String> {
 /// What the bridged runs did: each program's report.
 pub(crate) type Runs = Vec<(String, Report)>;
 
-/// The facts of the bridged relations `prog` reads, as `.rr` text, and each program's run. `scratch` holds the
-/// programs' runs (`<scratch>/typing-<program>`).
+/// The facts of the bridged relations `prog` reads, as rows, and each program's run (each program once, however many
+/// rules read it). `scratch` holds the programs' runs (`<scratch>/typing-<program>`).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(String, Runs)> {
+pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
     let wanted = wanted(prog);
     let mut by_program: BTreeMap<&str, Vec<&Bridged>> = BTreeMap::new();
     for b in &wanted {
         by_program.entry(b.program.as_str()).or_default().push(b);
     }
-    let (mut text, mut runs) = (String::new(), Vec::new());
+    let (mut facts, mut runs): (Facts, Runs) = (BTreeMap::new(), Vec::new());
     for (name, bridged) in by_program {
         let src = source(name)?;
         let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
@@ -117,27 +127,29 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             let path = r[0].rsplit_once(':').map(|(p, _)| p.to_owned()).ok_or_else(|| Error::Plan(format!("{name}: node {}", r[0])))?;
             at.insert(r[0].clone(), [path, r[1].clone(), r[2].clone(), r[3].clone()]);
         }
-        let quote = crate::code_rule_dsl::logic::rr::quote;
+        use front::Value;
+        let int = |v: &str| v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("{name}: {v} is not a number")));
         for b in &bridged {
             let nodes = &columns[b.output.as_str()];
             let types: Vec<&str> = program.decls[&b.output].iter().map(|(_, ty)| ty.as_str()).collect();
+            let out = facts.entry(b.rel.clone()).or_default();
             for r in rows(&b.output)? {
                 let mut args = Vec::new();
                 for ((v, &node), ty) in r.iter().zip(nodes).zip(&types) {
                     if node {
                         let [p, k, s, e] = at.get(v).ok_or_else(|| Error::Plan(format!("{name}: no span for {v}")))?;
-                        args.extend([quote(p), quote(k), s.clone(), e.clone()]);
-                    } else if *ty == "sym" {
-                        args.push(quote(v));
+                        args.extend([Value::Str(p.clone()), Value::Str(k.clone()), int(s)?, int(e)?]);
+                    } else if *ty == "sym" || *ty == "symbol" {
+                        args.push(Value::Str(v.clone()));
                     } else {
-                        args.push(v.clone());
+                        args.push(int(v)?);
                     }
                 }
-                text.push_str(&format!("{}({}).\n", b.rel, args.join(", ")));
+                out.push(args);
             }
         }
         let _ = std::fs::remove_dir_all(&out);
         runs.push((name.to_owned(), report));
     }
-    Ok((text, runs))
+    Ok((facts, runs))
 }

@@ -654,6 +654,17 @@ impl Parser<'_> {
                     prog.demand.extend(names);
                 }
             }
+            // `.pragma "cross-rounds" "k"`, as `.rr` writes it (decision 0052).
+            "pragma" => {
+                let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
+                    return self.fail("a pragma's two strings");
+                };
+                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
+                }
+                self.i += 2;
+                prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+            }
             "kindset" => {
                 let name = self.id()?;
                 self.p("=")?;

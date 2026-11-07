@@ -263,7 +263,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
             // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047).
-            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r))
+            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -430,8 +430,8 @@ pub(crate) fn run_with_options(
     let mut prog = combine(programs, "")?;
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
-    if !bridged.is_empty() {
-        prog = combine(programs, &bridged)?;
+    for (rel, rows) in bridged {
+        prog.facts.entry(rel).or_default().extend(rows);
     }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
@@ -1042,11 +1042,20 @@ pub(crate) fn run_with_options(
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
-        let got = if bounded.hops.is_empty() {
+        // Bounded rounds only for a program that declares them (decision 0052: a typing program); a rule's
+        // cross-file part is one fixpoint, which no chain length cuts.
+        let declared = cross_rounds::declared(&prog);
+        let got = if bounded.hops.is_empty() || declared.is_none() {
+            if !bounded.hops.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
+                    format!("none: the program declares no `.pragma \"{}\"`, so its {} hop relations are one fixpoint", cross_rounds::PRAGMA, bounded.hops.len())
+                });
+            }
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
         } else {
-            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?;
+            let k = cross_rounds::k(declared.expect("declared"));
+            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k, &mut rounds)?;
             crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
                 format!(
                     "{} hop relations ({}); {} rounds run, {}; hop rows per round {:?}",
@@ -1152,7 +1161,7 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
     // The previous round's rows of each hop relation (none before round 1), bound as `<rel>__prev` from memory.
@@ -1165,7 +1174,6 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
         prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), 0, &empty, &t.iter().map(String::as_str).collect::<Vec<_>>());
     }
     let mut last = None;
-    let k = cross_rounds::k();
     // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
