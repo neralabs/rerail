@@ -8,3 +8,10 @@
 // All call receivers in a demanded prepared file batch are formatted; this is not a per-node scalar callback.
 .decl call_receiver_text(n: node, s: symbol)
 .input call_receiver_text
+
+// Canonical whole Call expression and its callee expression, keyed by the actual Call node.
+// These share the same native parse with annotations and receivers. Only requested columns are formatted.
+.decl call_text(n: node, s: symbol)
+.input call_text
+.decl call_function_text(n: node, s: symbol)
+.input call_function_text

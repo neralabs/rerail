@@ -497,13 +497,15 @@ pub(super) struct CoreRows {
     tree_digest: Vec<[i64; 2]>,
     annotation_text: Vec<[i64; 2]>,
     call_receiver_text: Vec<[i64; 2]>,
+    call_text: Vec<[i64; 2]>,
+    call_function_text: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
     /// One native pass per demanded Python file. Type wrappers retain their own lookup keys.
-    pub(super) fn printed_expressions(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, annotations: bool, receivers: bool) -> Result<(), String> {
-        let rows = super::python_print::texts(&p.facts.source, annotations, receivers)?;
+    pub(super) fn printed_expressions(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, requested: super::python_print::Requested) -> Result<(), String> {
+        let rows = super::python_print::texts(&p.facts.source, requested)?;
         for (local, &original) in p.core.iter().enumerate() {
             let mut id = original;
             while matches!(dialect.name(&p.facts, id), "type" | "parenthesized_expression") {
@@ -520,6 +522,12 @@ impl CoreRows {
                 let span = (p.facts.start[original as usize], p.facts.end[original as usize]);
                 if let Some(text) = rows.receivers.get(&span) {
                     self.call_receiver_text.push([p.global(local as u32), string(text) as i64]);
+                }
+                if let Some(text) = rows.calls.get(&span) {
+                    self.call_text.push([p.global(local as u32), string(text) as i64]);
+                }
+                if let Some(text) = rows.functions.get(&span) {
+                    self.call_function_text.push([p.global(local as u32), string(text) as i64]);
                 }
             }
         }
@@ -848,6 +856,8 @@ impl CoreRows {
             ("tree_digest", node_sym(&self.tree_digest)),
             ("annotation_text", node_sym(&self.annotation_text)),
             ("call_receiver_text", node_sym(&self.call_receiver_text)),
+            ("call_text", node_sym(&self.call_text)),
+            ("call_function_text", node_sym(&self.call_function_text)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }

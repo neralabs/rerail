@@ -574,10 +574,21 @@ fn float(f: f64) -> String {
 pub(super) struct Texts {
     pub annotations: HashMap<(u32, u32), String>,
     pub receivers: HashMap<(u32, u32), String>,
+    pub calls: HashMap<(u32, u32), String>,
+    pub functions: HashMap<(u32, u32), String>,
 }
 
-/// One parse for both demanded text columns. Receiver text is keyed by its Call, never by wrapper nodes.
-pub(super) fn texts(source: &str, annotations: bool, receivers: bool) -> Result<Texts> {
+/// Columns requested by the program's relation projection, not runtime feature flags.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Requested {
+    pub annotations: bool,
+    pub receivers: bool,
+    pub calls: bool,
+    pub functions: bool,
+}
+
+/// One parse for the demanded text columns. Call columns use actual Call keys, never wrapper nodes.
+pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
     let parsed = parse_unchecked(
         source,
         ParseOptions::from(Mode::Module).with_target_version(ast::PythonVersion::PY313),
@@ -588,13 +599,12 @@ pub(super) fn texts(source: &str, annotations: bool, receivers: bool) -> Result<
     struct Collect<'a> {
         printer: Printer<'a>,
         rows: Texts,
-        annotations: bool,
-        receivers: bool,
+        requested: Requested,
         error: Option<String>,
     }
     impl<'a> Visitor<'a> for Collect<'a> {
         fn visit_annotation(&mut self, e: &'a Expr) {
-            if self.annotations {
+            if self.requested.annotations {
                 match self.printer.expr(e, TEST) {
                     Ok(s) => {
                         let r = e.range();
@@ -608,7 +618,7 @@ pub(super) fn texts(source: &str, annotations: bool, receivers: bool) -> Result<
             visitor::walk_annotation(self, e);
         }
         fn visit_expr(&mut self, e: &'a Expr) {
-            if self.receivers
+            if self.requested.receivers
                 && let Expr::Call(call) = e
                 && let Expr::Attribute(attribute) = &*call.func
             {
@@ -622,14 +632,28 @@ pub(super) fn texts(source: &str, annotations: bool, receivers: bool) -> Result<
                     Err(e) => self.error = Some(e),
                 }
             }
+            if let Expr::Call(call) = e {
+                let range = (u32::from(e.range().start()), u32::from(e.range().end()));
+                if self.requested.calls {
+                    match self.printer.expr(e, TEST) {
+                        Ok(text) => { self.rows.calls.insert(range, text); }
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+                if self.requested.functions {
+                    match self.printer.expr(&call.func, TEST) {
+                        Ok(text) => { self.rows.functions.insert(range, text); }
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
             visitor::walk_expr(self, e);
         }
     }
     let mut c = Collect {
         printer: Printer { source },
         rows: Texts::default(),
-        annotations,
-        receivers,
+        requested,
         error: None,
     };
     c.visit_body(
@@ -654,7 +678,7 @@ mod tests {
             serde_json::from_str(include_str!("python_print/expressions.json")).unwrap();
         for row in rows.as_array().unwrap() {
             let source = row["source"].as_str().unwrap();
-            let values = super::texts(source, true, false).unwrap().annotations;
+            let values = super::texts(source, super::Requested { annotations: true, ..Default::default() }).unwrap().annotations;
             let expected: Vec<_> = row["annotations"]
                 .as_array()
                 .unwrap()
