@@ -43,3 +43,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0042 | One text layer: every text test (regex, glob, affix, name set) is normalized to a canonical matcher and key, so a regex costs what its best rewrite costs; vocabulary text runs once per distinct string, other text by one file scan placed on nodes through the tape | proposed |
 | 0043 | Every rule the engine runs is `.rr` (Soufflé Datalog plus `core.rr`): one reader, one printer, the converter writes `.rr`; `.rdl` stays only as T's copies until step 31 | accepted |
 | 0044 | Block programs run a batch of files in one launch: file-aligned groups, a file table, persistent workers, a function per program in one kernel (or the interpreter over a program table), one re-launch fallback | accepted |
+| 0045 | A batch's files are read in place in residency slabs: sources admitted once by hash, up to four slabs bound, a slab per file row | accepted |

@@ -76,7 +76,9 @@ struct FileRow {
     halo_base: u32,
     ext_base: u32,
     pos_base: u32,
-    pad: [u32; 2],
+    /// The batch's slab binding the file's bytes are in (`SLAB_BUFFERS`).
+    slab: u32,
+    pad: u32,
 }
 
 /// A program of a batch, as the interpreter reads it (`ProgramRow` in the interpreter).
@@ -134,6 +136,9 @@ pub(in crate::code_rule_dsl) struct BatchRun {
 /// Workers of the persistent dispatch: SIMD groups that take the batch's groups in order.
 const WORKERS: usize = 256;
 
+/// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
+const SLAB_BUFFERS: [u64; crate::code_rule_dsl::residency::slabs::MAX_SLABS] = [0, 16, 17, 18];
+
 /// Launches repeated because a look-back ran out of polls.
 pub(in crate::code_rule_dsl) static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -156,8 +161,16 @@ pub(in crate::code_rule_dsl) fn run_batch(
         .collect();
     let carried: Vec<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+    // The files' bytes, resident in slabs (decision 0045): read in place, at most `MAX_SLABS`
+    // slabs a batch; past that the caller splits the batch.
+    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
+    let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
+    let (slabs, slab_of) = crate::code_rule_dsl::residency::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    if files.is_empty() {
+        return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
+    }
     // The file table, and each base after the files before.
-    let (mut src16, mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base) = (0, 0, 0, 0, 0, 0, 0);
+    let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base) = (0, 0, 0, 0, 0, 0);
     let mut rows = Vec::with_capacity(files.len());
     let mut group_file: Vec<u32> = Vec::new();
     for (i, file) in files.iter().enumerate() {
@@ -165,7 +178,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
         let len = file.bytes.len();
         let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
         rows.push(FileRow {
-            src16: fit(src16)?,
+            src16: fit(sources[i].offset / 16)?,
             len: fit(len)?,
             program: fit(file.program)?,
             group0: fit(group0)?,
@@ -175,10 +188,10 @@ pub(in crate::code_rule_dsl) fn run_batch(
             halo_base: fit(halo_base)?,
             ext_base: fit(ext_base)?,
             pos_base: fit(pos_base)?,
-            pad: [0; 2],
+            slab: slab_of[i],
+            pad: 0,
         });
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
-        src16 += len.div_ceil(16).max(1);
         group0 += groups;
         out_base += n.outputs.len() * groups * GROUP;
         state_base += carried[file.program] * groups;
@@ -187,13 +200,6 @@ pub(in crate::code_rule_dsl) fn run_batch(
         pos_base += n.extracts.len() * len.max(1);
     }
     let total = group0;
-    // Each file at a 16-byte boundary, as a slab holds it (decision 0032).
-    let mut source = vec![0u8; src16.max(1) * 16];
-    for (row, file) in rows.iter().zip(files) {
-        let at = row.src16 as usize * 16;
-        source[at..at + file.bytes.len()].copy_from_slice(file.bytes);
-    }
-    let source = super::blocks::upload(&source)?;
     let table = super::blocks::upload(&rows)?;
     let group_file = super::blocks::upload(&group_file)?;
     let out = super::blocks::zeroed::<u8>(out_base.max(1) * word)?;
@@ -208,7 +214,6 @@ pub(in crate::code_rule_dsl) fn run_batch(
     let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
     let params = [fit(total)?, spins, fit(most)?, 0];
     let mut buffers: Vec<(u64, &metal::BufferRef, u64)> = vec![
-        (0, source.buffer(), 0),
         (1, out.buffer(), 0),
         (2, table.buffer(), 0),
         (3, group_file.buffer(), 0),
@@ -220,6 +225,10 @@ pub(in crate::code_rule_dsl) fn run_batch(
         (9, tickets.buffer(), 0),
         (10, done.buffer(), 0),
     ];
+    // The slabs, each bound as it is (no copy); unused bindings repeat the first.
+    for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
+        buffers.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+    }
     let interpreter;
     let pipeline = match executor {
         Executor::Interpreter => {
@@ -497,11 +506,12 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
         "// Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
          // file's program over the group. `p`: the batch's groups, the polls after the first.\n\
          kernel void tempo_batch(\n\
-         \x20   device const uint4* bytes [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
+         \x20   device const uint4* s0 [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
          \x20   device const uint* group_file [[buffer(3)]], device atomic_uint* states [[buffer(4)]],\n\
          \x20   device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],\n\
          \x20   device uint* positions [[buffer(7)]], device uint* counts [[buffer(8)]], device atomic_uint* tickets [[buffer(9)]],\n\
-         \x20   device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20   device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], device const uint4* s1 [[buffer(16)]],\n\
+         \x20   device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], uint l [[thread_index_in_simdgroup]]) {{\n\
          \x20 for (uint round = 0u; round < p.x; round++) {{\n\
          \x20   uint ticket = 0u;\n\
          \x20   if (l == 0u) ticket = atomic_fetch_add_explicit(&tickets[0], 1u, memory_order_relaxed);\n\
@@ -509,6 +519,8 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
          \x20   if (t >= p.x) return;\n\
          \x20   if (done[t] != 0u) continue;\n\
          \x20   const FileRow f = files[group_file[t]];\n\
+         \x20   // The slab the file's bytes are in (decision 0045): the same in every lane.\n\
+         \x20   device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;\n\
          \x20   bool ok = false;\n\
          \x20   // The same program in every lane: the group holds one file.\n\
          \x20   switch (f.program) {{\n{cases}\
@@ -528,13 +540,13 @@ fn batch_helpers() -> String {
     format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXTRACT}\n", table_helpers(1))
 }
 
-/// A file of a batch, and its bytes read in place: 16-byte chunks from `src16`, zero at and past
-/// its length (a neighbour's bytes never read as its own).
+/// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
+/// at and past its length (a neighbour's bytes never read as its own).
 const FILE_ROW: &str = "// A file of the batch (decision 0044). Lane words are indexed in the file: output k of lane gl at
 // out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
 // three words from halo_base + (j * groups + g) * 3); extract e's state and count of group g at
 // ext_base + e * groups + g, its positions from pos_base + e * max(len, 1).
-struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, pad0, pad1; };
+struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, pad; };
 static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
   const uint chunks = max((f.len + 15u) / 16u, 1u);
   const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];

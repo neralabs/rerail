@@ -401,6 +401,11 @@ and a group of programs, one per language:
 - **A group of lanes holds one file.** So it runs one program, chosen by a switch that is the same
   in every lane. The padding to whole groups costs 0.8% to 4.1% of the bytes.
 - **A file table** gives each file its bytes, its program and where its states and outputs go.
+- **The bytes are read where they are resident** (decision 0045). Each file is admitted to a
+  slab once, keyed by its hash, and the launch binds up to four slabs. A file table row names
+  its slab and its offset in it. A file already resident is not copied again.
+- **The CPU executors take the same batch.** The interpreter runs each step once over every
+  file of a program. Cranelift's function loops over the files and then over their blocks.
 - **Carries stay inside a file.** A file's first group starts from the identity; its other groups
   look back only to earlier groups of the same file.
 - **Generated MSL** has a function per program and one kernel. **The interpreter** reads each

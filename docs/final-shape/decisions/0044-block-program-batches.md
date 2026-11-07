@@ -64,6 +64,7 @@ groups:   [a a a][b b][c][d d d d][e e]     one file per group; each group runs 
 
 ## Not decided here
 
-- Binding residency slabs as the source buffer (the kernels already read through offsets).
-- The CPU executors' batch form (a loop over files today).
+- Binding residency slabs as the source buffer: decided in 0045.
+- The CPU executors' batch form: since built. The interpreter runs each step over all of a
+  program's files at once, and Cranelift's function loops over a table of files.
 - Packing several small files of one language into a group (segmented scans), if padding grows.

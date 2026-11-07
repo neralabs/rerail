@@ -126,16 +126,17 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
 }
 
 // Persistent workers (decision 0027): each takes group numbers in launch order and interprets
-// its file's program over the group. `p`: the batch's groups, the polls after the first, the
+// its file's program over the group, reading the file in its slab (decision 0045). `p`: the batch's groups, the polls after the first, the
 // most steps of any program.
 #define BATCH_KERNEL(W, M)                                                                                       \
   kernel void block_batch_##W(                                                                                   \
-      device const uint4* bytes [[buffer(0)]], device M* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], \
+      device const uint4* s0 [[buffer(0)]], device M* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], \
       device const uint* group_file [[buffer(3)]], device atomic_uint* states [[buffer(4)]],                     \
       device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],                     \
       device uint* positions [[buffer(7)]], device uint* counts [[buffer(8)]], device atomic_uint* tickets [[buffer(9)]], \
       device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], device const ProgramRow* programs [[buffer(12)]], \
       device const BlockStep* steps [[buffer(13)]], device const uint* outs [[buffer(14)]], device M* scratch [[buffer(15)]], \
+      device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], \
       uint w [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {                           \
     device M* slots = scratch + w * p.z * 32u;                                                                   \
     for (uint round = 0u; round < p.x; round++) {                                                               \
@@ -145,6 +146,7 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
       if (t >= p.x) return;                                                                                      \
       if (done[t] != 0u) continue;                                                                               \
       const FileRow f = files[group_file[t]];                                                                    \
+      device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;                \
       const bool ok = interpret_file<M>(bytes, f, t - f.group0, l, p.y, programs, steps, outs, slots, out, states, halos, \
                                         ext_states, positions, counts);                                          \
       if (l == 0u && ok) done[t] = 1u;                                                                           \

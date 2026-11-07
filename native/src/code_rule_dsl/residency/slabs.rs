@@ -14,6 +14,10 @@
 //!   decompresses each straight into its slab and checks the bytes against the tape's and the
 //!   source's SHA-256 and the image's header against the source, once. A failed check is an
 //!   error, never an empty document.
+//! - **A resident source** is a file's bytes alone, keyed by their SHA-256: a parser's input,
+//!   which has no tape yet (decision 0045). Block programs read it in place
+//!   (`metal_block_program::run_batch`); it shares the slabs, the budget, retirement and the drop
+//!   with the documents.
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.
 //! - **Budget.** Slabs are reserved against the Metal buffer budget before they are mapped (as
@@ -143,6 +147,44 @@ impl Resident {
     }
 }
 
+/// A resident source: a file's bytes at a 16-byte offset of its slab (at least 16 bytes of room,
+/// so a 16-byte read of an empty file stays inside it).
+pub(in crate::code_rule_dsl) struct ResidentSource {
+    pub(in crate::code_rule_dsl) digest: [u8; 32],
+    pub(in crate::code_rule_dsl) slab: Arc<Slab>,
+    pub(in crate::code_rule_dsl) offset: usize,
+    pub(in crate::code_rule_dsl) len: usize,
+}
+
+impl ResidentSource {
+    /// Its bytes, as the device reads them.
+    pub(in crate::code_rule_dsl) fn bytes(&self) -> &[u8] {
+        assert!(self.offset + self.len <= self.slab.buffer.byte_length(), "a resident source inside its slab");
+        // SAFETY: admission wrote these bytes before publishing the source, and nothing writes
+        // them again: a slab is append-only and the source's range is its own.
+        unsafe { std::slice::from_raw_parts(self.slab.buffer.host().add(self.offset), self.len) }
+    }
+}
+
+/// The slabs a batch of sources binds, at most `MAX_SLABS`, and each source's binding; `None`
+/// when they span more (the caller splits the batch).
+pub(in crate::code_rule_dsl) fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, Vec<u32>)> {
+    let mut slabs: Vec<Arc<Slab>> = Vec::new();
+    let mut at = Vec::with_capacity(sources.len());
+    for source in sources {
+        let k = match slabs.iter().position(|slab| slab.id == source.slab.id) {
+            Some(k) => k,
+            None if slabs.len() < MAX_SLABS => {
+                slabs.push(Arc::clone(&source.slab));
+                slabs.len() - 1
+            }
+            None => return None,
+        };
+        at.push(k as u32);
+    }
+    Some((slabs, at))
+}
+
 /// A batch's document table (`batch.doctable`): each document's view with its slab binding and
 /// first node in the batch's numbering, and the slabs bound, at most `MAX_SLABS`.
 pub(in crate::code_rule_dsl) struct DocTable {
@@ -203,6 +245,7 @@ struct SlabEntry {
 struct State {
     slabs: Vec<SlabEntry>,
     documents: HashMap<[u8; 32], Arc<Resident>>,
+    sources: HashMap<[u8; 32], Arc<ResidentSource>>,
     next_slab: u64,
     clock: u64,
     /// Bytes per pool, of the documents held.
@@ -217,12 +260,13 @@ static STATE: LazyLock<(Mutex<State>, Condvar)> = LazyLock::new(Default::default
 pub(in crate::code_rule_dsl) struct Held {
     pub(in crate::code_rule_dsl) slabs: usize,
     pub(in crate::code_rule_dsl) documents: usize,
+    pub(in crate::code_rule_dsl) sources: usize,
     pub(in crate::code_rule_dsl) pools: [usize; 3],
 }
 
 pub(in crate::code_rule_dsl) fn held() -> Held {
     let state = STATE.0.lock().expect("residency poisoned");
-    Held { slabs: state.slabs.len(), documents: state.documents.len(), pools: state.pools }
+    Held { slabs: state.slabs.len(), documents: state.documents.len(), sources: state.sources.len(), pools: state.pools }
 }
 
 /// The residency's limit: its share of the Metal buffer budget.
@@ -337,6 +381,13 @@ impl State {
             }
             !gone
         });
+        self.sources.retain(|_, source| {
+            let gone = source.slab.id == entry.slab.id;
+            if gone {
+                pools[1] -= source_room(source.len);
+            }
+            !gone
+        });
         self.pools = pools;
         crate::code_rule_dsl::prof::count("residency.retired", 1);
         true
@@ -385,6 +436,52 @@ pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::T
         insert(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
     }
     resident(&digests)
+}
+
+/// The room a resident source takes: its bytes, 16-byte aligned, at least 16.
+fn source_room(len: usize) -> usize {
+    aligned(len.max(1))
+}
+
+/// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
+/// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of
+/// every source asked for are kept while the misses are placed.
+pub(in crate::code_rule_dsl) fn admit_sources(files: &[&[u8]]) -> Result<Vec<Arc<ResidentSource>>, Error> {
+    let digests: Vec<[u8; 32]> = files.iter().map(|bytes| Sha256::digest(bytes).into()).collect();
+    let _admit = crate::code_rule_dsl::prof::Stage::start("residency.sources");
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    state.clock += 1;
+    let clock = state.clock;
+    let mut keep = Vec::new();
+    for digest in &digests {
+        if let Some(id) = state.sources.get(digest).map(|source| source.slab.id) {
+            keep.push(id);
+            if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == id) {
+                entry.last_use = clock;
+            }
+        }
+    }
+    let mut misses = 0usize;
+    for (digest, bytes) in digests.iter().zip(files) {
+        if state.sources.contains_key(digest) {
+            continue;
+        }
+        misses += 1;
+        let room = source_room(bytes.len());
+        let (at, offset) = state.room(room, &keep)?;
+        let entry = &mut state.slabs[at];
+        // SAFETY: `room` gave this range to this source alone, inside the slab's mapping.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.buffer.host().add(offset), bytes.len()) };
+        entry.used = offset + room;
+        entry.last_use = clock;
+        let slab = Arc::clone(&entry.slab);
+        keep.push(slab.id);
+        state.pools[1] += room;
+        state.sources.insert(*digest, Arc::new(ResidentSource { digest: *digest, slab, offset, len: bytes.len() }));
+    }
+    crate::code_rule_dsl::prof::count("residency.source_hits", files.len() - misses);
+    crate::code_rule_dsl::prof::count("residency.source_misses", misses);
+    digests.iter().map(|digest| state.sources.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
 }
 
 /// The digests the residency does not hold (each once); the hits' slabs are marked used.
@@ -599,6 +696,7 @@ fn place(
 pub(in crate::code_rule_dsl) fn drop_all() {
     if let Ok(mut state) = STATE.0.lock() {
         state.documents.clear();
+        state.sources.clear();
         state.slabs.clear();
         state.pools = [0; 3];
         state.deadline = None;
