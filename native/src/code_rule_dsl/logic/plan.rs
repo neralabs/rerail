@@ -2002,6 +2002,30 @@ struct Run<'a> {
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
+    /// Relations whose one rule projects one atom (`kind($n, $k) :- node(_, $n, $k, _, _)`, variables distinct): a
+    /// native join reads such a view from its input in place. Found once per program, not per atom of each spec.
+    projections: HashSet<String>,
+    /// Each rule's number in the program, by address: for spans, EXPLAIN and the engine's reasons. Made once per
+    /// program (a map of every rule per stratum cost more than the stratum's own planning).
+    numbers: rustc_hash::FxHashMap<*const Rule, usize>,
+}
+
+/// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
+fn projections(prog: &Program) -> HashSet<String> {
+    let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
+    for r in &prog.rules {
+        by_head.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    by_head
+        .into_iter()
+        .filter(|(_, rules)| {
+            matches!(rules.as_slice(), [r] if matches!(r.body.as_slice(), [Literal::Atom(a)] if {
+                let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+                a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
+            }))
+        })
+        .map(|(rel, _)| rel.to_owned())
+        .collect()
 }
 
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
@@ -2386,13 +2410,7 @@ impl Run<'_> {
             let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
             // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
             // in place: its columns are the input's.
-            let projected = self.model.view_src.get(&l.rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| {
-                let rules: Vec<&Rule> = prog.rules.iter().filter(|r| r.head.rel == l.rel).collect();
-                matches!(rules.as_slice(), [r] if matches!(r.body.as_slice(), [Literal::Atom(a)] if {
-                    let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-                    a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
-                }))
-            });
+            let projected = self.model.view_src.get(&l.rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains(&l.rel));
             let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
@@ -2526,6 +2544,9 @@ impl Run<'_> {
         // A gate's rule only placed it here.
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
+        // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
+        // is the joins' specs and their checks; planning is in its `plan #…` spans).
+        let spec_span = super::profile::span(|| "spec".into());
         let mut lines = vec![format!("name {name}")];
         // A stratum's relations were made empty by `run` unless the program states facts of them.
         lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
@@ -2534,7 +2555,7 @@ impl Run<'_> {
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
-        let numbers: HashMap<*const Rule, usize> = prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect();
+        let numbers = &self.numbers;
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
                 let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
@@ -2608,6 +2629,7 @@ impl Run<'_> {
                 if deps.is_empty() { "-".to_owned() } else { deps }
             ));
         }
+        drop(spec_span);
         let started = std::time::Instant::now();
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
@@ -2668,6 +2690,8 @@ impl Run<'_> {
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
                 super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
             }
+            // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
+            let _record = super::profile::span(|| "profile record".into());
             let key = stratum_key(scc);
             super::profile::stratum(&key, "native set engine", || {
                 format!(
@@ -2708,7 +2732,10 @@ impl Run<'_> {
                 let _ = f.write_all(text.as_bytes());
             }
         }
-        self.fx().close(&name)?;
+        {
+            let _close = super::profile::span(|| "engine close".into());
+            self.fx().close(&name)?;
+        }
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)
     }
@@ -3292,7 +3319,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.

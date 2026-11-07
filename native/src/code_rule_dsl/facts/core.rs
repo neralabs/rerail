@@ -290,12 +290,15 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     hash.update(f.source.as_bytes());
     hash.update((f.len() as u64).to_le_bytes());
     // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
+    let mut bytes = f.source.len() + f.flags.len() + std::mem::size_of_val(&f.field[..]);
     for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
         hash.update((column.len() as u64).to_le_bytes());
         update_le(&mut hash, column);
+        bytes += std::mem::size_of_val(&column[..]);
     }
     hash.update(&f.flags);
     update_le(&mut hash, &f.field);
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()
 }

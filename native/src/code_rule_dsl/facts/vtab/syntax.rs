@@ -799,6 +799,27 @@ impl Source for Viewed {
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
+        self.value_at(p, i, column)
+    }
+    /// Document by document, with no search for each row's document.
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        let offsets = self.batch.offsets(self.view);
+        let mut out = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            for i in 0..offsets[doc + 1] - base {
+                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+                    out.push((base + i) as u32);
+                }
+            }
+        }
+        out
+    }
+}
+
+impl Viewed {
+    /// Column `column` of row `i` of document `p` in this view.
+    fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
         if let View::Loc(place) = self.view {
             let local = i as u32;
             if column == 0 {

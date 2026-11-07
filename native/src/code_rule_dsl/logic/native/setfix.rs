@@ -196,6 +196,7 @@ impl Rel {
     fn add_multi(&mut self, cols: &[usize]) {
         if self.idx.iter().any(|ix| ix.cols == cols) { return; }
         let mut ix = Index { cols: cols.to_vec(), table: HashTable::new(), next: Vec::with_capacity(self.n) };
+        charge(Unit::IndexEntry, self.n as u64);
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
@@ -299,6 +300,8 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     }
 }
 
+use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
+
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
     let mut st = conn.prepare(&format!("SELECT {} FROM {table}", cols.join(", ")))?;
@@ -309,6 +312,10 @@ fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) 
         for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms)?); }
         out.push(row);
     }
+    drop(rows);
+    // The roofline's work: the statement's VM steps, and each row entered in a component relation or edge map.
+    charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
+    charge(Unit::IndexEntry, out.len() as u64);
     Ok(out)
 }
 
@@ -1057,6 +1064,7 @@ impl InRel {
                 // hash table of every row.
                 Csr { lead, ..empty(!sorted, sorted) }
             } else {
+                charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
@@ -1146,8 +1154,17 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
         None
     } else {
         let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(eqs[0]);
-        let cands: Vec<usize> = src.lookup(c, &[v]).unwrap_or_else(|| (0..src.len()).collect());
-        Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+        // The roofline's work: each candidate's filter values read.
+        match src.lookup(c, &[v]) {
+            Some(cands) => {
+                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
+                Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+            }
+            None => {
+                charge(Unit::Value, (src.len() * eqs.len()) as u64);
+                Some(src.filter_eq(&eqs))
+            }
+        }
     };
     Some(View { src, cols, ids, eqs })
 }
@@ -1163,6 +1180,7 @@ impl Stored {
     fn index(&self, c: usize) -> &[u32] {
         self.index[c].get_or_init(|| {
             let col = self.col(c);
+            charge(Unit::IndexEntry, col.len() as u64);
             let mut ids: Vec<u32> = (0..col.len() as u32).collect();
             ids.sort_by_key(|&r| col[r as usize]);
             ids
@@ -1188,6 +1206,8 @@ impl Stored {
                     match r.get_ref(i)? { ValueRef::Integer(x) => v.push(x), _ => return Ok(None) }
                 }
             }
+            drop(q);
+            charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
             Ok(Some(values))
         };
         let Ok(Some(values)) = read() else { return false };

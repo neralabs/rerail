@@ -93,6 +93,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
     let set = plan(program);
     let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
     Ok(())
 }

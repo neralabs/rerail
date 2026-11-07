@@ -33,10 +33,13 @@ pub(in crate::code_rule_dsl) enum Unit {
     Candidate,
     /// A byte of a source or tape read, hashed, compressed or written (content addressing).
     Byte,
+    /// A row entered in an engine index or set when a component opens: a row loaded from SQLite into a component
+    /// relation, or a row of an input or derived relation entered in a hash index for a join's lookup.
+    IndexEntry,
 }
 
 impl Unit {
-    pub(super) const ALL: [Unit; 8] = [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Byte, Unit::Candidate];
+    pub(super) const ALL: [Unit; 9] = [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Byte, Unit::IndexEntry, Unit::Candidate];
 
     pub(super) fn name(self) -> &'static str {
         match self {
@@ -48,6 +51,7 @@ impl Unit {
             Unit::Cell => "cell",
             Unit::Candidate => "candidate",
             Unit::Byte => "byte",
+            Unit::IndexEntry => "index entry",
         }
     }
 
@@ -62,6 +66,7 @@ impl Unit {
             Unit::Cell => "reading and writing 8 bytes per cell, sequentially (memory bandwidth)",
             Unit::Candidate => "none: the planner's own rate is shown, with no roof",
             Unit::Byte => "SHA-256 of 64 MB in memory (the content key every stored byte needs)",
+            Unit::IndexEntry => "entering 1M row ids of 2-column rows in a hash table (foldhash), not presized",
         }
     }
 }
@@ -183,6 +188,22 @@ fn roof(u: Unit) -> Option<f64> {
                 let t = Instant::now();
                 std::hint::black_box(sha2::Sha256::digest(&buf));
                 (t.elapsed().as_secs_f64(), buf.len() as u64)
+            }))
+        }
+        Unit::IndexEntry => {
+            use std::hash::BuildHasher as _;
+            let n = 1usize << 20;
+            let rows: Vec<[i64; 2]> = (0..n as i64).map(|i| [i.wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64), i & 1023]).collect();
+            let state = foldhash::fast::FixedState::default();
+            Some(best(5, || {
+                let t = Instant::now();
+                let mut table: hashbrown::HashTable<u32> = hashbrown::HashTable::new();
+                for (id, row) in rows.iter().enumerate() {
+                    let h = state.hash_one(row);
+                    table.insert_unique(h, id as u32, |&i| state.hash_one(rows[i as usize]));
+                }
+                std::hint::black_box(&table);
+                (t.elapsed().as_secs_f64(), n as u64)
             }))
         }
         Unit::Candidate => None,
