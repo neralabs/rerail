@@ -969,6 +969,19 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
     }
 }
 
+/// Drops the input relations loaded on `conn`'s database that read any of `tables` (their views and indexes), and
+/// the stored tables of those names: no later stratum reads them.
+pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
+    let path = conn.path().unwrap_or_default().to_owned();
+    let names = |spec: &str| -> Vec<String> {
+        let Some(hex) = spec.split(':').nth(1) else { return Vec::new() };
+        let Ok(text) = unhex(hex) else { return Vec::new() };
+        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_owned).collect()
+    };
+    INPUTS.lock().unwrap().retain(|(p, spec), _| *p != path || !names(spec).iter().any(|w| tables.contains(w)));
+    STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
+}
+
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
 pub fn forget_derived(conn: &Connection) {
     let at = scope(conn);

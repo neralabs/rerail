@@ -483,6 +483,11 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The first chunk's nodes, at most: what it adds per node sizes the rest.
+const PROBE_NODES: usize = 65_536;
+/// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
+const CHUNK_MB: f64 = 384.0;
+
 pub(crate) fn run_with_options(
     programs: &[&str],
     root: &Path,
@@ -831,6 +836,11 @@ pub(crate) fn run_with_options(
         crate::content_store::StatIndex::default()
     };
     let stat_index = &stat_index;
+    // The chunks' size: the caller's, at most, but sized to what a chunk's run holds (`CHUNK_MB`): the first chunk is
+    // `PROBE_NODES` nodes, and each run measures the footprint it adds per node. 64 data-layer rules hold about
+    // 5 KB a node at their peak, so the caller's 262,144 nodes took 1.3 GB; the converted rules hold much less.
+    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(PROBE_NODES)));
+    let worker_target = Arc::clone(&chunk_target);
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
     let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
@@ -939,7 +949,7 @@ pub(crate) fn run_with_options(
                 }
                 continue;
             }
-            if pending_nodes < chunk_nodes && at.peek().is_some() {
+            if pending_nodes < worker_target.load(std::sync::atomic::Ordering::Relaxed) && at.peek().is_some() {
                 continue;
             }
             add(&mut parse, t);
@@ -987,6 +997,7 @@ pub(crate) fn run_with_options(
         }
         phase("wait", statements.count());
         statements.enter("local");
+        let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
         // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
         if !hits.is_empty() {
             let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
@@ -1144,9 +1155,19 @@ pub(crate) fn run_with_options(
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 Ok(())
             };
-            super::run_atoms_native_handing(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, &mut hand)?
+            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), ..Default::default() })?
         };
         drop(running);
+        if chunk_nodes_built > 0 {
+            // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
+            let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+            let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
+            let per_node = added as f64 * 1048576.0 / chunk_nodes_built as f64;
+            let budget = std::env::var("RERAIL_CHUNK_MB").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(CHUNK_MB);
+            let next = ((budget * 1048576.0 / per_node) as usize).clamp(PROBE_NODES.min(chunk_nodes), chunk_nodes);
+            chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
+            crate::code_rule_dsl::logic::profile::decision("chunk size", || format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({per_node:.0} bytes a node); the next are about {next} nodes ({budget} MB a chunk, at most {chunk_nodes})"));
+        }
         let handed = got.handed.clone();
         let kept = got.kept.clone();
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
@@ -1260,6 +1281,8 @@ pub(crate) fn run_with_options(
         own_totals.apply(&mut cross_stats);
     }
     totals.apply(&mut cross_stats);
+    // Applied: the chunks' per-value counts are not read again.
+    totals.vals = BTreeMap::new();
     repository_stats(&mut cross_stats);
     // With no documents there was no batch to bind or measure base relations.
     // They are known empty, but global rules (including absence checks) still execute.
@@ -1318,10 +1341,24 @@ pub(crate) fn run_with_options(
         }
         modules.bind(&db, &rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
     }
+    // One fixpoint (no bounded rounds) reads each export from `x` when its first reader runs and drops it, and each
+    // base relation held for it, after its last; rounds read them all, every round.
+    let one_fixpoint = !cross.program.rules.is_empty() && {
+        let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
+        bounded.hops.is_empty() || cross_rounds::declared(&prog).is_none()
+    };
     for rel in &split.exports {
+        if one_fixpoint {
+            let width = lowered.program.decls[rel].len();
+            let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
+            modules.bind(&db, rel, empty)?;
+            continue;
+        }
         let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
         modules.bind(&db, rel, source)?;
     }
+    // The chunks' freed pages go back before the cross part builds its own.
+    crate::code_rule_dsl::prof::release();
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
@@ -1342,7 +1379,25 @@ pub(crate) fn run_with_options(
         let k = declared.map(cross_rounds::k);
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
-            let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
+            let exports: BTreeSet<&String> = split.exports.iter().collect();
+            let mut load = |rels: &[String]| -> Result<()> {
+                for rel in rels.iter().filter(|r| exports.contains(r)) {
+                    let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
+                    modules.bind(&db, rel, source)?;
+                }
+                Ok(())
+            };
+            // `node` and `doc` decode the findings once the run ends.
+            let mut unload = |rels: &[String]| -> Result<()> {
+                for rel in rels.iter().filter(|r| !matches!(r.as_str(), "node" | "doc")) {
+                    if let Some(b) = modules.get(rel) {
+                        b.clear();
+                    }
+                }
+                Ok(())
+            };
+            let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), ..Default::default() } } else { super::Hooks::default() };
+            let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }

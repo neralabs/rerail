@@ -552,7 +552,44 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 ///
 /// A component that is one atom of only variables filters nothing and is left; so is one that reads no base
 /// relation. A made relation the split does not find file-local is undone. Returns the relations made.
+///
+/// A component that narrows no node, only lookups of a node's attributes (`docof(n, d), doc(d, p, _), line(n, l)`,
+/// a finding's location) or relations of documents (`p9_path_module(d, m)`), is a row per node of the chunk: on 200
+/// files, 611,865 rows for each such rule, every one held by the cross part. It is pushed only when that keeps the
+/// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
+/// these lookups there too.
 pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+    let original = prog.clone();
+    let made = push_with(prog, false);
+    if cross_reads_base(prog) {
+        *prog = original;
+        return push_with(prog, true);
+    }
+    made
+}
+
+/// Whether a rule outside the chunks reads a base relation.
+fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program) -> bool {
+    let local = split(prog);
+    prog.rules.iter().filter(|r| !local.contains(&r.head.rel)).any(|r| {
+        r.body.iter().any(|l| l.atom().is_some_and(|a| prog.inputs.iter().any(|i| *i == a.rel)))
+    })
+}
+
+/// Whether nothing in `atoms` narrows a node: each is a plain lookup of a node's attributes (no constant, no repeated
+/// variable) or has no node column, and some node is read.
+fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
+    use crate::code_rule_dsl::logic::front::Term;
+    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node" | "doc");
+    let plain = |a: &crate::code_rule_dsl::logic::front::Atom| {
+        let named: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(x) = t { Some(x) } else { None }).collect();
+        a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && named.iter().collect::<std::collections::BTreeSet<_>>().len() == named.len()
+    };
+    atoms.iter().any(|a| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node"))
+        && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
+}
+
+fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> Vec<String> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // An atom such as field(parent, name, child) connects its node columns. Document equality
@@ -622,6 +659,11 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
                     if a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && distinct.len() == named.len() {
                         continue;
                     }
+                }
+                // A component that holds a row for every node of the chunk (nothing in it narrows its nodes) is left
+                // when the cross part reads base relations anyway (`push_local_joins`).
+                if keep_unrestricted && unrestricted(prog, &atoms) {
+                    continue;
                 }
                 // Comparisons and negated file-local reads over only this component's variables go with it.
                 for (j, l) in rule.body.iter().enumerate() {
