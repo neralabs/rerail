@@ -204,3 +204,186 @@ fn native_shards_match_the_original_batch_and_both_probe_directions() {
         }
     }
 }
+
+fn patch(e: &mut CodeRuleSqlExecutor, upsert: &[(&str, &str)], delete: &[&str]) -> Value {
+    let batch = json!({"upsert":upsert.iter().map(|(p,s)|json!({"path":p,"language":"python","source":s})).collect::<Vec<_>>(),"delete":delete});
+    serde_json::from_str(&e.apply_file_changes(batch.to_string(), None).unwrap()).unwrap()
+}
+
+#[test]
+fn file_patches_are_atomic_and_interoperate_with_complete_snapshots() {
+    let (_dir, mut e) = executor();
+    e.bind_snapshot(snapshot(&[("a.py", "alpha = 1\n"), ("b.py", "beta = 1\n")]))
+        .unwrap();
+    e.run(NAMES.into(), "python".into(), None).unwrap();
+    let stable = Arc::clone(&e.documents.as_ref().unwrap()["b.py"].sources["node"]);
+    let report = patch(
+        &mut e,
+        &[("a.py", "gamma = 2\n"), ("c.py", "delta = 1\n")],
+        &[],
+    );
+    assert_eq!(report["examined_files"], 2);
+    assert_eq!(report["rebuilt_files"], 2);
+    assert!(Arc::ptr_eq(
+        &stable,
+        &e.documents.as_ref().unwrap()["b.py"].sources["node"]
+    ));
+    let before = rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1");
+    assert!(e.apply_file_changes(json!({"upsert":[{"path":"a.py","language":"python","source":"bad(\n"}],"delete":["b.py"]}).to_string(),None).is_err());
+    e.set_limits("{\"max_steps\":1}".into()).unwrap();
+    assert!(
+        e.apply_file_changes(json!({"delete":["b.py"]}).to_string(), None)
+            .is_err()
+    );
+    e.set_limits("{}".into()).unwrap();
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
+        before
+    );
+    let noop = patch(&mut e, &[("b.py", "beta = 1\n")], &["missing.py"]);
+    assert_eq!(noop["metadata_nodes"], 0);
+    assert_eq!(noop["programs"], json!([]));
+    patch(&mut e, &[], &["b.py"]);
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
+        json!([["delta"], ["gamma"]])
+    );
+    e.apply_snapshot(snapshot(&[("c.py", "delta = 1\n")]), None)
+        .unwrap();
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c0) FROM names"),
+        json!([["delta"]])
+    );
+    patch(&mut e, &[("z.py", "zeta = 1\n")], &["c.py"]);
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c0) FROM names"),
+        json!([["zeta"]])
+    );
+    for batch in [
+        json!({"upsert":[{"path":"z.py","source":"x=1","language":"python"}],"delete":["z.py"]}),
+        json!({"delete":["z.py","z.py"]}),
+        json!({"unknown":[]}),
+    ] {
+        assert!(e.apply_file_changes(batch.to_string(), None).is_err());
+    }
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c0) FROM names"),
+        json!([["zeta"]])
+    );
+}
+
+#[test]
+fn shared_literal_reference_indexes_handle_partial_deletions_and_retry() {
+    let (_dir, mut e) = executor();
+    e.bind_snapshot(snapshot(&[
+        ("a.py", "a = 1\n"),
+        ("b.py", "b = 1\n"),
+        ("c.py", "c = 2\n"),
+    ]))
+    .unwrap();
+    e.run(".decl value_type(v:symbol,t:symbol)\n.input value_type\n.decl result(v:symbol,t:symbol)\nresult(v,t) :- value_type(v,t).\n.output result\n".into(),"python".into(),None).unwrap();
+    patch(&mut e, &[("a.py", "a = 2\n")], &[]);
+    assert_eq!(rows(&e, "SELECT count(*) FROM value_type"), json!([[2]]));
+    e.set_limits("{\"max_steps\":1}".into()).unwrap();
+    assert!(
+        e.apply_file_changes(json!({"delete":["b.py"]}).to_string(), None)
+            .is_err()
+    );
+    e.set_limits("{}".into()).unwrap();
+    assert_eq!(rows(&e, "SELECT count(*) FROM result"), json!([[2]]));
+    patch(&mut e, &[], &["b.py"]);
+    assert_eq!(rows(&e, "SELECT sym_text(c0) FROM result"), json!([["2"]]));
+    patch(&mut e, &[], &["a.py"]);
+    assert_eq!(
+        rows(
+            &e,
+            "SELECT sym_text(v) FROM value_type WHERE t=sym_atom('int')"
+        ),
+        json!([["2"]])
+    );
+    patch(&mut e, &[], &["c.py"]);
+    assert_eq!(rows(&e, "SELECT * FROM result"), json!([]));
+}
+
+#[test]
+fn a_file_patch_updates_logarithmic_metadata_and_does_not_visit_the_inventory() {
+    let mut work = vec![];
+    for n in [100, 1000] {
+        let (_dir, mut e) = executor();
+        let files = (0..n)
+            .map(|i| (format!("m{i}.py"), format!("value{i} = {i}\n")))
+            .collect::<Vec<_>>();
+        let all = files
+            .iter()
+            .map(|(p, s)| (p.as_str(), s.as_str()))
+            .collect::<Vec<_>>();
+        e.bind_snapshot(snapshot(&all)).unwrap();
+        e.run(NAMES.into(), "python".into(), None).unwrap();
+        let first = patch(&mut e, &[("m0.py", "new_value = 10001\n")], &[]);
+        let second = patch(&mut e, &[("m0.py", "final_value = 10002\n")], &[]);
+        assert_eq!(first["examined_files"], 1);
+        assert_eq!(second["examined_files"], 1);
+        assert_eq!(second["rebuilt_files"], 1);
+        assert!(
+            second["metadata_nodes"].as_u64().unwrap() < 2000,
+            "{second}"
+        );
+        assert_eq!(rows(&e, "SELECT count(*) FROM names"), json!([[n]]));
+        assert_eq!(rows(&e, "SELECT count(*) FROM value_type"), json!([[n]]));
+        work.push(second["metadata_nodes"].as_u64().unwrap());
+    }
+    assert!(
+        work[1] < work[0] * 2,
+        "metadata must follow search depth, not inventory size: {work:?}"
+    );
+}
+
+#[test]
+fn mixed_file_patches_match_cold_execution_with_shared_values_and_lazy_queries() {
+    let (_dir, mut e) = executor();
+    e.bind_snapshot(snapshot(&[])).unwrap();
+    e.run(NAMES.into(), "python".into(), None).unwrap();
+    let mut files = BTreeMap::<String, String>::new();
+    let mut seed = 91u32;
+    for step in 0..40 {
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        let path = format!("m{}.py", seed % 13);
+        if seed % 4 == 0 {
+            files.remove(&path);
+            patch(&mut e, &[], &[&path]);
+        } else {
+            let source = format!("def f{}():\n    return {}\n", step % 7, step % 3);
+            files.insert(path.clone(), source.clone());
+            patch(&mut e, &[(&path, &source)], &[]);
+        }
+        let (_cold_dir, mut cold) = executor();
+        let all = files
+            .iter()
+            .map(|(p, s)| (p.as_str(), s.as_str()))
+            .collect::<Vec<_>>();
+        cold.bind_snapshot(snapshot(&all)).unwrap();
+        cold.run(NAMES.into(), "python".into(), None).unwrap();
+        for q in [
+            "SELECT sym_text(c0) FROM names ORDER BY 1",
+            "SELECT sym_text(v),sym_text(t) FROM value_type ORDER BY 1,2",
+            "SELECT count(*) FROM within",
+            "SELECT count(*) FROM span_within",
+        ] {
+            assert_eq!(rows(&e, q), rows(&cold, q), "step {step}: {q}");
+        }
+    }
+}
+
+#[test]
+fn standalone_file_changes_maintain_rules_and_reject_unknown_patch_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("content.sqlite");
+    let request=json!({"snapshot":{"files":[]},"program":NAMES,"file_changes":[{"upsert":[{"path":"a.py","language":"python","source":"alpha = 1\n"}]},{"upsert":[{"path":"b.py","language":"python","source":"beta = 2\n"}],"delete":["a.py"]}],"queries":[{"sql":"SELECT sym_text(c0) FROM names"}]}).to_string();
+    let result: Value =
+        serde_json::from_str(&super::super::super::tools::sql(&store, &request).unwrap()).unwrap();
+    assert_eq!(result["queries"][0]["rows"], json!([["beta"]]));
+    assert_eq!(result["updates"][1]["examined_files"], 2);
+    assert_eq!(result["updates"][1]["rebuilt_files"], 1);
+    let invalid = json!({"snapshot":{"files":[]},"file_changes":[{"unknown":[]}]}).to_string();
+    assert!(super::super::super::tools::sql(&store, &invalid).is_err());
+}

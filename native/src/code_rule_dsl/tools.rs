@@ -47,6 +47,8 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
         changes: Vec<Vec<serde_json::Value>>,
         #[serde(default)]
         snapshots: Vec<serde_json::Value>,
+        #[serde(default)]
+        file_changes: Vec<serde_json::Value>,
     }
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -105,6 +107,16 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
             updates.push(
                 session
                     .apply_snapshot(snapshot.to_string(), request.max_waves)
+                    .and_then(|s| {
+                        serde_json::from_str::<serde_json::Value>(&s)
+                            .map_err(|e| napi::Error::from_reason(e.to_string()))
+                    })?,
+            );
+        }
+        for batch in request.file_changes {
+            updates.push(
+                session
+                    .apply_file_changes(batch.to_string(), request.max_waves)
                     .and_then(|s| {
                         serde_json::from_str::<serde_json::Value>(&s)
                             .map_err(|e| napi::Error::from_reason(e.to_string()))

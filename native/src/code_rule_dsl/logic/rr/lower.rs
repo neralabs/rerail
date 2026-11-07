@@ -129,10 +129,16 @@ struct Lowerer {
     /// The relations declared `must, may`, and the rules a `must` or `may` head wrote (by index).
     three: BTreeSet<String>,
     modal: BTreeMap<usize, String>,
+    // Printed programs already contain their guest demand rules. Keep that lowering idempotent.
+    explicit_demands: BTreeSet<String>,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     let mut l = Lowerer::default();
+    l.explicit_demands = statements.iter().flat_map(|(item, _)| match item {
+        Item::Clause { heads, .. } => heads.iter().map(|h|h.rel.clone()).collect::<Vec<_>>(),
+        _ => vec![],
+    }).filter(|rel| matches!(rel.as_str(), "rr_embed_req" | "rr_parse_req" | "rr_splice_req")).collect();
     let mut clauses = Vec::new();
     for (item, line) in statements {
         let at = |e: Error| match e {
@@ -829,6 +835,7 @@ impl Lowerer {
     /// The corpus runner runs these rules first, makes what is asked for and rebinds the batch with it. A given
     /// variable nothing else binds asks for nothing.
     fn demand(&mut self, req: &str, given: &[(STerm, &str)], out: &STerm, guests: bool) -> Result<(), Error> {
+        if self.explicit_demands.contains(req) { return Ok(()); }
         let vars: Vec<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).collect();
         if given.iter().any(|(t, _)| !matches!(t, STerm::Var(_) | STerm::Str(_))) {
             return Ok(());

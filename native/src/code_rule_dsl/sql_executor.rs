@@ -94,8 +94,7 @@ impl CodeRuleSqlExecutor {
     /// Build everything before replacing bindings; a malformed/unparsed file fails the call.
     #[napi]
     pub fn bind_snapshot(&mut self, snapshot_json: String) -> Result<()> {
-        let (docs, _) = documents::prepare(&self.store, &snapshot_json, None)?;
-        let sources = documents::sources(&self.store, &docs)?;
+        let (docs, sources) = documents::bind(&self.store, &snapshot_json)?;
         self.replace_sources(sources.into_iter().collect())?;
         self.documents = Some(docs);
         Ok(())
@@ -110,6 +109,17 @@ impl CodeRuleSqlExecutor {
         max_waves: Option<u32>,
     ) -> Result<String> {
         self.change_snapshot(snapshot_json, max_waves)
+    }
+
+    /// Apply an atomic {upsert: [snapshot files], delete: [paths]} batch. Unmentioned files
+    /// retain their native facts and metadata without another inventory scan.
+    #[napi]
+    pub fn apply_file_changes(
+        &mut self,
+        changes_json: String,
+        max_waves: Option<u32>,
+    ) -> Result<String> {
+        self.change_files(changes_json, max_waves)
     }
 
     /// Bind current core facts from the database, without source files or a new snapshot.

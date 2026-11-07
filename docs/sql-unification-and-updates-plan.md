@@ -172,9 +172,9 @@ String aggregates, computed correlations, aggregate-dependent correlations, and 
 - Old SQL-result reads use disjoint query variants. Several changed SQL atoms in one body can multiply those variants.
   Native inputs use indexed overlays; sparse native deletions no longer reconstruct or index the full input.
 - Overdelete/rederive can revisit many facts with alternate support. Retained derivation support could reduce this work.
-- `applySnapshot` now feeds native file-fact deltas into retained maintenance. It still parses a complete snapshot request.
-  Document metadata, shared literal-type composition, and cross-shard probes remain host-work costs.
-  An editor patch API and persistent shared-fact reference counts could reduce them.
+- `applyFileChanges` now feeds file patches into retained maintenance without a complete inventory.
+  `applySnapshot` retains compatibility with complete replacement requests and must read those inventories.
+  Queries without document constraints can still probe several document shards.
 - SQL corpus execution still creates control tables per component. The call workload remains slower than native execution.
   Shared scheduling removes semantic duplication; it does not remove every schema-management cost.
 - SQL budgets cover SQL statements. Native input migration and atom interning need separate host-work limits if callers require them.
@@ -233,9 +233,78 @@ The standalone SQL request and Node API expose the same snapshot operation.
 
 ### Remaining improvements
 
-1. Add an editor patch API so one changed file does not require another complete snapshot JSON document.
-2. Retain shared literal-type reference counts and per-relation shard metadata across edits.
-3. Add document routing for more native input columns, with explicit schema metadata for their domains.
-4. Bound old SQL-result branch multiplication, using a compact indexed representation for large bodies.
-5. Extend retained support to the documented aggregate, lattice, and tree-walk fallback cases.
-6. Add host-work limits for parsing, native journals, atom interning, and first-edit migrations.
+Editor patches, retained literal reference counts, and per-family document indexes are complete in the metadata follow-up.
+
+1. Extend document routing to remaining producer schemas, such as the `py_*` families.
+2. Bound old SQL-result branch multiplication, using a compact indexed representation for large bodies.
+3. Extend retained support to the documented aggregate, lattice, and tree-walk fallback cases.
+4. Add host-work limits for parsing, native journals, atom interning, and first-edit migrations.
+
+
+## Remove snapshot-wide metadata work
+
+The final-shape branch was merged at `ca76fe78f` before this change.
+The merge commit on this branch is `4a7998ff6`.
+
+The previous warm edit recreated every fact family's document vector and planner estimates.
+It also rescanned all shared literal-type facts and copied unchanged document records into a new inventory.
+Complete snapshot JSON parsing added another cost proportional to the repository size.
+
+The native session now retains immutable balanced document indexes for each fact family.
+Each node caches row counts, index availability, and lookup estimates for its subtree.
+An edit replaces only its document entries and copies their search paths.
+All untouched subtrees remain shared. SQL readers and rollback retain the previous roots.
+Shared literal facts retain document reference counts, with ordered indexes on both literal value and type.
+Their updates read only the literal facts in changed files.
+
+`applyFileChanges` accepts `{upsert: [snapshot files], delete: [paths]}`.
+It reads only those paths and sources. Complete `applySnapshot` requests use the same retained indexes.
+They still scan the incoming and old inventories to determine additions, replacements, and omissions.
+Both APIs use the existing atomic fact-change transaction and retained SQL scheduler.
+Neither API lowers AST matching into SQL.
+
+The response records `examined_files` and `metadata_nodes`.
+The first counts supplied entries and deletions, or both inventories for complete snapshots.
+The second counts rebuilt balanced-index nodes across all fact families and shared-fact indexes.
+A regression compares 100 and 1,000 files and requires metadata growth to follow index depth.
+Another regression compares mixed file patches with cold execution, including shared literals and both containment directions.
+The persistent-index regression compares ordered lookups and retained historical versions with a standard ordered map.
+
+
+### Metadata follow-up measurements
+
+Each edit changes one file and one `name` fact. The workload retains a projected relation and a global count.
+These optimized measurements include tracing overhead and come from one run on a shared host.
+
+| Files | Warm file-patch insertion | Warm file-patch retraction | Metadata nodes rebuilt | Files examined per patch |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 1.42 ms CPU | 1.28 ms CPU | 226 / 224 | 1 |
+| 1,000 | 2.04 ms CPU | 1.50 ms CPU | 337 / 335 | 1 |
+| 10,000 | 1.55 ms CPU | 1.43 ms CPU | 448 / 446 | 1 |
+
+Warm insertion uses 4,254 SQLite instructions at every size. Warm retraction uses 4,265 at every size.
+The previous 1,000-file complete-snapshot insertion used 20.15 ms CPU and 4,599 instructions.
+The new complete-snapshot API uses the retained indexes too: its measured warm insertion is 2.42 ms at 1,000 files.
+At 10,000 files it takes 13.93 ms because it still reads and compares complete inventories.
+The file-patch API avoids that inventory cost.
+
+The first edit still initializes projection and aggregate support. Its instructions grow from 13,917 at 100 files to 904,917 at 10,000 files.
+That is retained-rule initialization over the existing facts, not document metadata reconstruction.
+Subsequent edits reuse that state.
+
+Retraction support queries also need a bound node's document. Common native schemas now identify their document and location columns explicitly.
+An indexed number column is not assumed to contain node ids. Routing uses the declared domains and preserves sentinel lookups.
+Both fact scans and probes are compared with the original batch adapter.
+
+The merge check exposed a separate guest-demand round-trip regression in the new quoted-annotation rules.
+Printed rules already contain their demand helpers. The reader now preserves those explicit demands instead of generating another copy.
+The dialect parity check normalizes legacy guest requests through the same lowering step.
+
+
+### Final checks
+
+- 57 SQL and persistent-index tests pass.
+- 52 rule-language tests pass. Two report/write tests are ignored, and the separate syntax census is excluded.
+- 312 selected TypeScript integration tests pass, with one platform-dependent skip.
+- TypeScript, the JavaScript build, and the layer-boundary check pass.
+- The headless engine compiles. Both SQL CLIs accept file additions and deletions and return the updated retained result.

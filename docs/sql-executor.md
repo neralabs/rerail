@@ -98,6 +98,7 @@ const result = JSON.parse(session.query(
 |---|---|
 | `bindSnapshot(snapshotJson)` | Replaces inputs with core fact virtual tables over a repository snapshot. |
 | `applySnapshot(snapshotJson, maxWaves?)` | Rebuilds changed files and maintains retained SQL results atomically. |
+| `applyFileChanges(changesJson, maxWaves?)` | Applies file additions, replacements, and deletions without another complete inventory. |
 | `bindStored(scope, paths?)` | Binds current core documents from the content store without reading source files. |
 | `bindRelation(relationJson)` | Adds or replaces facts with integer values or string symbols. Duplicate rows collapse. |
 | `lower(program, dialect)` | Returns the setup SQL and wave program without executing its rules. |
@@ -207,7 +208,7 @@ The wave limit applies to each propagation phase; SQL work and deadline limits c
 Native input migration and atom interning run outside the SQLite VM budget.
 Successful symbol interning may persist even when the fact batch fails.
 
-Core snapshot facts remain native virtual tables. Refresh them through `bindSnapshot` or `bindStored`.
+Core snapshot facts remain native virtual tables. Use `applyFileChanges` or `applySnapshot` to maintain results across source edits.
 Row changes currently require an explicit `bindRelation` input.
 Replacing a binding still invalidates its dependents; use `applyChanges` to maintain them.
 Rust clients can query the underlying connection, but direct writes to owned results bypass maintenance.
@@ -286,11 +287,36 @@ A parse error or SQL failure preserves the old bindings, document membership, an
 `applySnapshot` requires an initial `bindSnapshot`; `bindStored` does not establish editable snapshot membership.
 A native snapshot family cannot be overwritten with `bindRelation`.
 
-Snapshot JSON parsing and native fact preparation run outside SQL instruction limits.
-The current adapter enumerates document metadata and shared literal-type facts when it composes a snapshot.
-A lookup without document constraints can probe several document shards.
-A retained program that reads containment may enumerate the changed file's containment pairs to produce its journal.
-These costs need separate host-work limits if callers require an end-to-end execution budget.
+For editor updates, use `applyFileChanges`:
+
+```js
+const report = JSON.parse(session.applyFileChanges(JSON.stringify({
+  upsert: [
+    {path: "a.py", language: "python", source: "def renamed():\n    return 44\n"},
+  ],
+  delete: ["obsolete.py"],
+})));
+```
+
+Unmentioned files keep their sources and metadata. `upsert` uses the same file shape as `bindSnapshot`.
+An existing path is replaced. A missing deletion is a no-op.
+Duplicate paths, including a path in both lists, fail the entire batch. Parse and SQL failures preserve the previous state.
+Both lists are optional. `applyFileChanges` requires an initial `bindSnapshot` and accepts the same optional wave limit.
+The request-file API accepts a `file_changes` array of these batches.
+
+Each fact family retains an immutable balanced document index with cached subtree estimates.
+An edit copies only the changed search paths. Shared literal facts retain document reference counts and indexes on both columns.
+These indexes preserve old versions during SQL maintenance and rollback. They do not copy AST rows into SQL.
+Complete snapshots use these same indexes. Reading the submitted inventory and finding omitted paths still requires a complete inventory scan.
+
+The response includes `examined_files` and `metadata_nodes`.
+`examined_files` counts submitted file entries and delete paths. Complete snapshots count both old and submitted inventories.
+`metadata_nodes` counts rebuilt index nodes across document families and shared literal indexes.
+One-file patches rebuild a number of metadata nodes proportional to the index depth, rather than the number of documents.
+First-edit reducer initialization and projection migration can still read all participating facts.
+Queries without a document constraint can probe several document shards to find their results.
+A retained program that reads containment can enumerate the changed file's containment pairs for its journal.
+JSON parsing and native fact preparation remain outside SQL instruction limits.
 
 Symbols are integer atoms. `sym_text(atom)` reads their text, and `sym_atom(text)` interns text.
 The connection also registers native lattice and text functions, including Unicode `lower`, `sha256`, and `rr_join`.
