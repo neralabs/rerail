@@ -580,6 +580,37 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+#[test]
+fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order() {
+    // fixtures/python/world_site/ws: a venv, the user's declarations and a miniature typeshed (rerail.env). Each
+    // module of main.py resolves at one layer of python/modules.rr: alpha's stub package before its typed package,
+    // beta's typed package from its `.py`, gamma (installed untyped, so not read) from typeshed's stubs/, delta from
+    // a directory a `.pth` file names, eps from the declarations before its stub package. zeta, a single-file module
+    // in site-packages, is not a typed package: its call has no target.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_site/ws");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("site");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let mut got: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(_, t)| t.rsplit_once(':').unwrap().0.split("world_site/").nth(1).unwrap().to_owned())
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "decls/eps.pyi",
+            "ts/stubs/types-gamma/gamma/__init__.pyi",
+            "venv/extra/delta/__init__.pyi",
+            "venv/lib/python3.13/site-packages/alpha-stubs/__init__.pyi",
+            "venv/lib/python3.13/site-packages/beta/__init__.py",
+        ],
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
