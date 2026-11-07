@@ -39,6 +39,7 @@ ENTRIES = {
     'type_safety_patterns': ['check_file_for_patterns', 'check_file_content_for_patterns', 'check_function_signatures',
         'check_function_signature_content', 'normalize_path', 'is_allowlisted', 'find_python_files', '_issues_for_files', '_dedupe_issues'],
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
+    'sync_async_signatures': ['analyze_file'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -127,6 +128,8 @@ class Suite:
         elif check == 'data_layer_compat_aliases':
             from aliases_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs, self.item, self.source)
+        elif check == 'sync_async_signatures':
+            files, scope, root = snapshot(module, 'file', args, kwargs)
         elif check == 'admin_async_purity':
             from data_layer_batch_two import normalize as normalize_two
             root = Path(args[0] if args else kwargs['project_root'])
@@ -150,6 +153,10 @@ class Suite:
         if check == 'data_layer_compat_aliases':
             from data_layer_batch_five import normalize as normalize_five
             actual = normalize_five(check, result, root, files)
+        elif check == 'sync_async_signatures':
+            from signatures_port import legacy_message
+            actual = [dict(path=files[0]['path'], line=v.async_func.line, column=None,
+                code='sync_async_signature_mismatch', message=canonical(legacy_message(v), root)) for v in result]
         elif check == 'versioned_lifecycle_legacy_surfaces':
             # This DTO has no message field. Use the engine's complete diagnostic instead of
             # calling the source Violation.render() from the legacy recording normalizer.
@@ -174,6 +181,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'sync_async_signatures':
+            from signatures_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'hnsw_architecture':
             from hnsw_port import scan
             return scan(self, entry, module, arguments)

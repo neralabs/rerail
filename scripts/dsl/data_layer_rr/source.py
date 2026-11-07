@@ -18,6 +18,7 @@ def main():
             super().pytest_configure()
             adapters = {(check, entry): kind for check, entry, kind in
                         (*recording.ADAPTERS, *recording.batch_two.ADAPTERS)}
+            adapters[('sync_async_signatures', 'analyze_file')] = 'file'
             adapters.update({('data_layer_compat_aliases', entry): 'facade_aliases'
                 for entry in ['lint_file', 'lint_file_content']})
             for module, entry, _ in self.originals:
@@ -49,6 +50,9 @@ def main():
                         if (event['check'], event['entry']) != (check, entry):
                             raise AssertionError('Original call identity changed during lossless capture')
                         event['sourceResult'] = canonical(result, root)
+                        if check == 'sync_async_signatures':
+                            for finding in event.get('findings', []):
+                                finding['message'] = canonical(finding['message'], root)
                         return result
                     return run
 
