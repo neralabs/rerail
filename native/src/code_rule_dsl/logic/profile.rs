@@ -350,9 +350,6 @@ pub(in crate::code_rule_dsl) fn planned(
     if !on() {
         return;
     }
-    if planning > 0.0 {
-        work(Unit::Candidate, plan.candidates);
-    }
     let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
     let mut state = STATE.lock().unwrap();
     let t = state.plans.entry((key.to_owned(), kind.to_owned(), text)).or_default();

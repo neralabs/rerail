@@ -540,8 +540,16 @@ thread_local! {
     /// Plans kept across a corpus run's chunks, on the thread that runs them: per rule (head, body, delta, the
     /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
     /// searched.
-    static PLANS: std::cell::RefCell<Option<HashMap<String, (Vec<Step>, f64)>>> = const { std::cell::RefCell::new(None) };
+    /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
+    static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
 }
+
+/// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
+/// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
+type PlanKey = String;
+
+/// A kept plan: its order, its work per node when searched, and when profiling its EXPLAIN.
+type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>);
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
 pub(in crate::code_rule_dsl) struct KeepPlans;
@@ -597,7 +605,7 @@ impl Model {
         body: &[Literal],
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
-        self.plan_inner(prog, head, body, first, None)
+        self.plan_inner(prog, head, body, first, None, true)
     }
 
     /// `plan_rule_explained`, reusing this rule's plan from an earlier chunk (decision 0038): the kept order is
@@ -612,16 +620,21 @@ impl Model {
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let key_span = super::profile::span(|| "key".into());
-        let key = format!("{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","));
+        let key: PlanKey = format!("{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","));
         drop(key_span);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
-            return self.plan_inner(prog, head, body, first, None);
+            return self.plan_inner(prog, head, body, first, None, true);
         };
-        if let Some((order, per_node)) = kept {
+        if let Some((order, per_node, searched)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
-                self.plan_inner(prog, head, body, first, Some(&order))
+                // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
+                // steps priced: not built again per chunk.
+                self.plan_inner(prog, head, body, first, Some(&order), false).map(|(got, _)| {
+                    let x = searched.map(|x| super::profile::RulePlan { work: got.1, rows: got.2, subsets: 0, candidates: order.len() as u64, ..x });
+                    (got, x)
+                })
             };
             match priced {
                 Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
@@ -636,11 +649,11 @@ impl Model {
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
-            self.plan_inner(prog, head, body, first, None)?
+            self.plan_inner(prog, head, body, first, None, true)?
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone(), got.0.1 / nodes));
+                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone()));
             }
         });
         Ok(got)
@@ -654,6 +667,7 @@ impl Model {
         body: &[Literal],
         first: Option<usize>,
         fixed: Option<&[Step]>,
+        explain: bool,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
         // var → constant kind, from kind($v, "k") atoms.
@@ -870,10 +884,14 @@ impl Model {
         let (work, rows, order, subsets) = if let Some(fixed) = fixed {
             // The kept order, priced now: each join step as the search prices it, each filter once ready.
             let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, BTreeSet::new(), Vec::new());
+            if fixed.len() != body.len() {
+                return Err(Error::Plan("a kept plan of another body".into()));
+            }
             for s in fixed {
                 let l = body.get(s.at).filter(|l| **l == s.lit).ok_or_else(|| Error::Plan("a kept plan of another body".into()))?;
                 if is_join(l) {
                     let (w, out, mode) = step(l, rows, &bound).ok_or_else(|| Error::Plan("a kept step cannot run".into()))?;
+                    candidates += 1;
                     work += w;
                     rows = out;
                     order.push(Step { at: s.at, lit: l.clone(), mode });
@@ -1144,8 +1162,10 @@ impl Model {
         }
         (work, rows, order, subsets)
         };
-        let _explain = super::profile::span(|| "explain record".into());
-        let explained = super::profile::on().then(|| {
+        // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
+        super::profile::work(super::profile::Unit::Candidate, candidates);
+        let explained = (explain && super::profile::on()).then(|| {
+            let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
             let mut r = 1.0;
@@ -2514,14 +2534,15 @@ impl Run<'_> {
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
+        let numbers: HashMap<*const Rule, usize> = prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect();
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
-                let no = prog.rules.iter().position(|x| std::ptr::eq(x, r)).map_or("?".to_owned(), |k| format!("{k:04}"));
+                let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
                 format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
             })
         };
         let profiling = super::profile::on();
-        let rule_no = |r: &Rule| prog.rules.iter().position(|x| std::ptr::eq(x, r));
+        let rule_no = |r: &Rule| numbers.get(&(r as *const Rule)).copied();
         // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
         let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
@@ -3241,7 +3262,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
-    let model = make_plan(prog, db, inputs)?;
+    let model = {
+        let _span = super::profile::span(|| "statistics".into());
+        make_plan(prog, db, inputs)?
+    };
+    let demand_span = super::profile::span(|| "demand".into());
     // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
     // 0046); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
@@ -3256,11 +3281,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         None => prog,
     };
+    drop(demand_span);
+    let strata_span = super::profile::span(|| "strata".into());
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
+    drop(strata_span);
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
