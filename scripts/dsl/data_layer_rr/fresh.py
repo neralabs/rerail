@@ -17,6 +17,13 @@ from dto import canonical
 from migration import ROOT, PIN, git, sha, compare, read_json, write_json
 
 
+def selected_cases(cases, part, parts):
+    """Partition by corpus position while retaining indices into the complete source oracle."""
+    if not 0 <= part < parts <= len(cases):
+        raise ValueError('Invalid fresh-contract partition')
+    return [(index, case) for index, case in enumerate(cases) if index % parts == part]
+
+
 def arguments(values, root):
     def convert(value):
         if isinstance(value, dict) and set(value) == {'path', 'relative'} and value['relative'] is True:
@@ -60,6 +67,9 @@ def run(args):
             raise ValueError('Changed original module: ' + name)
         source_files[name] = sha(raw)
     native = args.command == 'native'
+    if not native and (args.part, args.parts) != (0, 1):
+        raise ValueError('Record the complete offline source oracle before native sharding')
+    selected = selected_cases(corpus['cases'], args.part, args.parts)
     recorded = read_json(args.oracle) if native else None
     if recorded is not None and (recorded['sourcePin'] != PIN or recorded['casesSha256'] != sha(args.cases.read_bytes()) or recorded['sourceFiles'] != source_files):
         raise ValueError('Fresh oracle belongs to different source or cases')
@@ -71,7 +81,9 @@ def run(args):
         raise ValueError('Duplicate fresh case identities')
     report = dict(format='rerail.rr-fresh-contract/v1', fullMigrationAcceptance=False, sourcePin=PIN, originalPytestCases=0,
         execution='native-snapshot' if native else 'offline-source', sourceFiles=source_files,
-        casesSha256=sha(args.cases.read_bytes()), results=[], semanticFallbacks=[])
+        casesSha256=sha(args.cases.read_bytes()), results=[], semanticFallbacks=[],
+        part=args.part, parts=args.parts, totalCases=len(corpus['cases']),
+        selectedCaseIndices=[index for index, _ in selected])
     backend = None
     harness_paths = [Path(__file__), *[Path(__file__).with_name(p) for p in ['suite.py', 'replay.py', 'dto.py', 'migration.py']],
         ROOT / 'scripts/dsl/data_layer_audit/native_guard.py']
@@ -96,7 +108,7 @@ def run(args):
     previous_directory = Path.cwd()
     os.chdir(source)
     try:
-        for index, case in enumerate(corpus['cases']):
+        for index, case in selected:
             with tempfile.TemporaryDirectory(prefix='rerail-fresh-contract-') as temporary:
                 root = Path(temporary)
                 for file in case['files']:
@@ -173,6 +185,8 @@ def main():
     parser.add_argument('--engine', type=Path)
     parser.add_argument('--oracle', type=Path)
     parser.add_argument('--baseline', type=Path)
+    parser.add_argument('--part', type=int, default=0)
+    parser.add_argument('--parts', type=int, default=1)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     args.out = args.out.resolve()
