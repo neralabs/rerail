@@ -53,6 +53,8 @@ pub(crate) struct Facts {
     pub class_offsets: Vec<u32>,
     pub class_nodes: Vec<u32>,
     pub syntax_errors: bool,
+    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
+    pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
 }
 
 pub(crate) enum Built {
@@ -143,6 +145,7 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
         class_offsets: Vec::new(),
         class_nodes: Vec::new(),
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
+        python_syntax: Default::default(),
     };
     for id in 0..n as u32 {
         f.kind.push(kind_atom(tag, doc.transducer_kind(id)));

@@ -43,6 +43,7 @@ pub(crate) const WITHIN: &str = "within";
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
 mod python_order;
+mod python_syntax;
 use core_rr::Family;
 
 /// Which projection of the tree a batch serves.
@@ -583,7 +584,7 @@ impl Batch {
                 }
             }
             if core {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines, wants_lf_lines);
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines, wants_lf_lines, projection.wants("syntax_error"));
             }
             docs.push(p);
         }

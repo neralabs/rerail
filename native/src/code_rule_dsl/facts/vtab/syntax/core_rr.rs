@@ -698,12 +698,19 @@ impl CoreRows {
     }
 
     /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool) {
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_syntax_error: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
-        if let Some((l, msg)) = first_error(f, &x.lines, &|id| dialect.name(f, id)) {
-            self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
+        if wants_syntax_error {
+            let error = if dialect.family == Family::Python {
+                f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone()
+            } else {
+                first_error(f, &x.lines, &|id| dialect.name(f, id))
+            };
+            if let Some((l, msg)) = error {
+                self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
+            }
         }
         let source = p.len() + x.tokens;
         self.source.push([key, p.global(source)]);

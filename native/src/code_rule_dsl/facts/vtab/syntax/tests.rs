@@ -486,3 +486,18 @@ fn lookups_with_a_bound_document_read_that_document_only() {
     assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
 }
 
+
+#[test]
+fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
+    let store = ContentStore::open(&temp("python-verdict")).unwrap();
+    let doc = document(0, "a.py", "python", "print \"legacy\"\n");
+    let source_only = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &source_only).unwrap();
+    assert!(doc.facts.python_syntax.get().is_none(), "raw text must not request grammar validation");
+    let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
+    assert!(verdict.is_some());
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
