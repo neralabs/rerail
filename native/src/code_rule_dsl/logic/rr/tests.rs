@@ -834,3 +834,20 @@ Leaked(@place("bad.json", 1)) :- bad(_).
     actual.sort();
     assert_eq!(actual, [("bad.json", "malformed"), ("missing.txt", "missing")]);
 }
+
+#[test]
+fn shared_signing_library_verifies_an_existing_empty_allowlist() {
+    let rows = finding_contract("", r#"
+.policy "contract:shared-signature" revision 1
+#include "data-layer/signing.rr"
+allow_sig("original", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
+allow_sig("tampered", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
+allow_entry("tampered", "added.py").
+allow_sig("unsigned", "lint_admin_async_purity", "UNSIGNED").
+.violation Status(at: span, name: symbol, status: symbol) "{name}:{status}"
+Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
+"#);
+    let mut actual: Vec<_> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    actual.sort();
+    assert_eq!(actual, ["original:valid", "tampered:invalid", "unsigned:unsigned"]);
+}
