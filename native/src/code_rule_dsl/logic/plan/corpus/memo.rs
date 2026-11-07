@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
-const SCHEMA: u32 = 3;
+const SCHEMA: u32 = 4;
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,6 +27,9 @@ pub(super) struct Entry {
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
     /// Per file-local output: its node columns and its lines.
     pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
+    /// Per base relation the cross-file part reads: the relation's columns, those it holds, and its rows of them,
+    /// flat (decision 0056).
+    pub base: BTreeMap<String, (Vec<String>, Vec<usize>, Vec<i64>)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^31` (so `key << 32` stays positive), the next free one on a
@@ -107,6 +110,72 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: 
     Ok(())
 }
 
+/// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
+/// rows are under the session store's atoms and live as long as the session.
+#[derive(Clone, Copy)]
+pub(super) enum Memo<'a> {
+    Stored(&'a ContentStore),
+    Held(&'a Held),
+}
+
+/// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
+pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
+
+/// A file's content as the memo knows it: its stored source, or (held) its digest.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Content {
+    Stored(SourceId),
+    Held([u8; 32]),
+}
+
+impl Content {
+    /// The stored source, which a run's manifest names (decision 0053).
+    pub(super) fn stored(self) -> Option<SourceId> {
+        match self {
+            Content::Stored(id) => Some(id),
+            Content::Held(_) => None,
+        }
+    }
+}
+
+/// The most entries a session holds: past it, the memo starts again empty (its entries are a cache).
+const HELD_ENTRIES: usize = 4096;
+
+impl Memo<'_> {
+    /// `text` as the memo knows it.
+    pub(super) fn content(self, text: &str) -> StoreResult<Content> {
+        match self {
+            Memo::Stored(store) => source(store, text).map(Content::Stored),
+            Memo::Held(_) => Ok(Content::Held(Sha256::digest(text.as_bytes()).into())),
+        }
+    }
+
+    pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+        match (self, content) {
+            (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
+            (Memo::Held(held), Content::Held(digest)) => {
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+        match (self, content) {
+            (Memo::Stored(store), Content::Stored(id)) => remember(store, id, path, key, program, entry),
+            (Memo::Held(held), Content::Held(digest)) => {
+                let mut held = held.lock().expect("the session memo");
+                if held.len() >= HELD_ENTRIES {
+                    held.clear();
+                }
+                held.insert((digest, path.to_owned(), *program), Entry { key, ..entry.clone() });
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
 pub(super) fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
@@ -140,6 +209,22 @@ fn encode(entry: &Entry) -> Vec<u8> {
         put(&mut out, lines.len() as u64);
         for line in lines {
             text(&mut out, line);
+        }
+    }
+    put(&mut out, entry.base.len() as u64);
+    for (rel, (have, held, values)) in &entry.base {
+        text(&mut out, rel);
+        put(&mut out, have.len() as u64);
+        for c in have {
+            text(&mut out, c);
+        }
+        put(&mut out, held.len() as u64);
+        for c in held {
+            put(&mut out, *c as u64);
+        }
+        put(&mut out, values.len() as u64);
+        for v in values {
+            out.extend_from_slice(&v.to_le_bytes());
         }
     }
     out
@@ -182,6 +267,17 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         let columns = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
         let lines = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
         entry.lines.insert(rel, (columns, lines));
+    }
+    for _ in 0..r.u64()? {
+        let rel = r.text()?;
+        let have = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
+        let held = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
+        let n = r.u64()? as usize;
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            values.push(i64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes")));
+        }
+        entry.base.insert(rel, (have, held, values));
     }
     if r.at != bytes.len() {
         return Err(StoreError::Invalid("a corpus memo entry has trailing bytes".into()));

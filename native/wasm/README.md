@@ -64,6 +64,29 @@ without `tape-cache` has no store and needs neither. A rule as written in the
 library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and name it in `RERAIL_RR_LIB`
 (`--dir docs/rule-syntax/lib::/lib --env RERAIL_RR_LIB=/lib`); `logic` flattens its includes (`tools::flatten`).
 
+## A long-lived engine (the explorer's)
+
+The binary is a WASI command: each run instantiates it, runs `main` and is done, so nothing survives from one
+run to the next. The explorer runs a rule at every keystroke, so it uses the library instead, built as a WASI
+reactor: instantiated once, `_initialize`d, then called once per command line (`src/reactor.rs`):
+
+    . native/wasm/env.sh
+    CARGO_TARGET_DIR=target/wasm-reactor \
+    CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="${CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS/crt1-command.o/crt1-reactor.o}" \
+      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python
+
+The module is `target/wasm-reactor/wasm32-wasip1/release/rerail_engine.wasm`. Its own target directory keeps the
+command build's objects: the two link different start files, so they share nothing cargo can reuse.
+
+- `rerail_alloc(len)`, `rerail_command(at, len)`, `rerail_free(at, len)`: the host writes the arguments (each
+  ended by NUL) into the buffer, runs them as the binary would (`tools::cli`) and reads stdout and stderr as it
+  does for the command. The filesystem is the instance's for its life, so the host changes the files in place.
+- With `RERAIL_SESSION=<dir>` in the instance's environment, `logic` runs in a corpus session (decision 0056,
+  `corpus::session`): the store in `<dir>`, the last program as combined and compiled, and each file's
+  file-local rows are kept, so a run after an edit parses and evaluates the files that changed, then runs the
+  cross-file part.
+- A trap (a Rust panic aborts) leaves the instance unusable: the host instantiates another.
+
 ## What differs from a native build
 
 - **No JIT.** A page has no executable memory. `cranelift-jit` is replaced on wasm by `wasm/cranelift-jit`,

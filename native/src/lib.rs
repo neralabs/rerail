@@ -21,6 +21,9 @@ pub mod git_workspace;
 mod main_instance;
 mod model;
 pub mod process;
+/// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
+#[cfg(target_family = "wasm")]
+pub mod reactor;
 mod rules;
 
 use model::{ModelFingerprint, load_model};
