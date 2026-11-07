@@ -1,5 +1,5 @@
 // One `rerail-engine` command over an in-memory filesystem: the browser build (native/wasm/README.md) under WASI
-// preview 1, as `@bjorn3/browser_wasi_shim` provides it. `shim` is that module, passed in so the page (from the CDN)
+// preview 1, as `@bjorn3/browser_wasi_shim` provides it. `shim` is that module, passed in so the page (served beside the page)
 // and a test (from a local copy) run the same code.
 //
 // A mount is a plain object: a name maps to a string (a text file), a Uint8Array (a file) or another object (a
@@ -75,6 +75,37 @@ export async function command(shim, module, args, env, mounts) {
   return { code, stdout: lines(outBytes), stderr: lines(errBytes), ms, mounts: after };
 }
 
+// Downloads and compiles the engine, telling `progress` how far it got: ("download", bytes so far, bytes in all),
+// then ("compile"). `expected` is the size the build wrote, for a response that does not say its length.
+export async function loadEngine(url, expected, progress) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`the engine did not download (HTTP ${response.status})`);
+  const total = Number(response.headers.get("content-length")) || expected;
+  const chunks = [];
+  let received = 0, told = 0;
+  progress("download", 0, total);
+  if (response.body && response.body.getReader) {
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (received - told > 256 * 1024) { told = received; progress("download", received, total); }
+    }
+  } else {
+    const all = new Uint8Array(await response.arrayBuffer());
+    chunks.push(all);
+    received = all.length;
+  }
+  progress("download", received, Math.max(total, received));
+  const bytes = new Uint8Array(received);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.length; }
+  progress("compile", received, received);
+  return WebAssembly.compile(bytes);
+}
+
 // Files named by path ("python/ast.rr") as the nested directories a mount takes.
 export function nest(flat) {
   const root = {};
@@ -92,11 +123,14 @@ export function nest(flat) {
 export async function explore(shim, module, { id, rr, parts, sources, lib: libFiles }) {
   const lib = nest(libFiles);
   const rule = { [`${id}.rr`]: rr, ...parts };
+  // A few rules include their part files as the repository lays them out ("../packs/python/<id>.<part>.rr",
+  // from the rule's folder), so the parts are also mounted there.
+  const packs = { python: { ...parts } };
   const env = { RERAIL_RR_LIB: "/lib", RERAIL_PROFILE: "/w/prof" };
   const run = await command(shim, module, ["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out"], env,
-    { "/w": { rule, src: sources, out: {}, prof: {} }, "/lib": lib });
+    { "/w": { rule, packs, src: sources, out: {}, prof: {} }, "/lib": lib });
   const flat = await command(shim, module, ["flatten", `/w/rule/${id}.rr`], { RERAIL_RR_LIB: "/lib" },
-    { "/w": { rule }, "/lib": lib });
+    { "/w": { rule, packs }, "/lib": lib });
   const w = run.mounts["/w"];
   const text = (bytes) => (bytes instanceof Uint8Array ? new TextDecoder().decode(bytes) : "");
   const out = {};

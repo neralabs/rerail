@@ -1,0 +1,5 @@
+{
+  "title": "Bare except clauses",
+  "rule": "ruff-e722-bare-except",
+  "note": "E722 flags except: with no exception named: it also catches KeyboardInterrupt and SystemExit. except Exception: is the usual meaning."
+}

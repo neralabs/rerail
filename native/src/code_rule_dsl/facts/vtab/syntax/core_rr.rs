@@ -676,25 +676,32 @@ impl CoreRows {
     }
 
     /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
-    /// one of its lines (`src_line`), is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
+    /// one of its lines (`src_line`) or a comment node, is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
     /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
     /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
-    pub(super) fn matches(&mut self, p: &mut Projected, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
         use crate::code_rule_dsl::logic::front::SpanIn;
         let facts = std::sync::Arc::clone(&p.facts);
         let src = facts.source.as_str();
         let base = p.len();
+        // Comment nodes, by local id: their own spans.
+        let comments: Vec<([u32; 2], u32)> = if patterns.iter().any(|(w, _, _)| *w == SpanIn::Comment) {
+            (0..base).filter(|&l| is_comment(dialect.name(&facts, p.core[l as usize]))).map(|l| (p.span(l), l)).collect()
+        } else {
+            Vec::new()
+        };
         let x = p.extra.as_mut().expect("core.rr's spans");
         let source = x.tokens;
         for &(within, pattern, ref re) in patterns {
             let pat = string(pattern) as i64;
-            let containers: Vec<u32> = match within {
-                SpanIn::Source => vec![source],
-                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| source + l).collect(),
+            // Each container's text and its local id.
+            let containers: Vec<([u32; 2], u32)> = match within {
+                SpanIn::Source => vec![(x.spans[source as usize], base + source)],
+                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| (x.spans[(source + l) as usize], base + source + l)).collect(),
+                SpanIn::Comment => comments.clone(),
             };
-            for c in containers {
-                let [a, b] = x.spans[c as usize];
-                let cid = i64::from(p.key) << 32 | i64::from(base + c);
+            for ([a, b], c) in containers {
+                let cid = i64::from(p.key) << 32 | i64::from(c);
                 for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
                     for (g, name) in re.capture_names().enumerate() {
                         let name = match (g, name) {

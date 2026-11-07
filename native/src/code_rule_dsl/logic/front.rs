@@ -344,11 +344,13 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), or each line (`src_line`).
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
+/// comment node (`kind(c, "comment")`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
+    Comment,
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).

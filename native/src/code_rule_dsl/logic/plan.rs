@@ -2629,7 +2629,7 @@ impl Run<'_> {
                         .args
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
-                        .map(|c| prog.decls[&l.rel][c].1.clone()),
+                        .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
                     _ => None,
                 }),
                 _ => None,
@@ -2670,7 +2670,9 @@ impl Run<'_> {
                     wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
                 }
             }
-            let decl = prog.decls.get(&l.rel).unwrap_or_else(|| panic!("{} is read and not declared", l.rel));
+            // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
+            // reads it.
+            let decl = prog.decls.get(&l.rel)?;
             let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &decl[c].1)).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();

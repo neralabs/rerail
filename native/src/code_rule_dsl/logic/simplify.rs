@@ -26,6 +26,12 @@
 //!   `exists_k($d)` (a semi-join). The same set of rows: the part's other variables appear nowhere else. A part moves
 //!   when it has two literals or more, a variable of its own, no aggregate, `nearest` or `ast`, and every variable
 //!   it names bound by a positive atom of its own. A document variable is one in `node`'s or `doc`'s first column.
+//! - **A relation of no columns has one.** `version_given()` is `version_given(1)` where it is made and
+//!   `version_given(_)` where it is read: a table needs a column, and the one row says what the empty tuple did.
+//! - **A rule of constants alone is facts.** `q(@dot("builtins", $x)) :- $x = "bool"` (a disjunction of constants,
+//!   split into one rule per arm) reads no relation, so it has no SQL to run: it is the fact `q("builtins.bool")`.
+//!   A rule whose body is only equations of a variable and a constant, and whose head is then constants (`@dot` of
+//!   two constants included), becomes its facts; one that equates a variable with two different constants goes.
 //! - **Relations no output reads go.** A derived relation that no output, demanded or kept relation reads,
 //!   directly or through others, is not computed.
 //! - **Identical relations merge.** Derived relations whose rules are equal once their variables are renamed in
@@ -35,7 +41,7 @@
 //!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
 //!   as they are.
 
-use super::front::{Atom, Literal, Program, Rule, Term};
+use super::front::{Atom, Literal, Program, Rule, Term, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
@@ -71,8 +77,11 @@ pub(in crate::code_rule_dsl) struct Report {
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
+    unit_columns(prog);
+    report.constants += ground_rules(prog);
     report.inlined = inline_node_tests(prog);
     for rule in &mut prog.rules {
+        cat_variables(rule);
         report.constants += fold_constants(rule);
         report.within += span_containment(rule);
         report.keyed += merge_keyed(rule);
@@ -284,6 +293,131 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
 
 /// Replaces each variable the body equates to a constant (`$v = "s"`, `$v = 3`) by the constant, in the head and
 /// every literal, and drops the equation. Returns how many variables went.
+/// Gives each derived relation of no columns one integer column (above).
+fn unit_columns(prog: &mut Program) {
+    let units: BTreeSet<String> =
+        prog.decls.iter().filter(|(rel, cols)| cols.is_empty() && !prog.inputs.contains(rel)).map(|(rel, _)| rel.clone()).collect();
+    if units.is_empty() {
+        return;
+    }
+    for rel in &units {
+        prog.decls.insert(rel.clone(), vec![("unit".to_owned(), "int".to_owned())]);
+        if let Some(rows) = prog.facts.get_mut(rel) {
+            rows.iter_mut().for_each(|r| *r = vec![Value::Int(1)]);
+        }
+    }
+    let read = |a: &mut Atom| {
+        if a.args.is_empty() && units.contains(&a.rel) {
+            a.args.push(Term::Wild);
+        }
+    };
+    for rule in &mut prog.rules {
+        if rule.head.args.is_empty() && units.contains(&rule.head.rel) {
+            rule.head.args.push(Term::Int(1));
+        }
+        for l in &mut rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                read(a);
+            }
+        }
+    }
+}
+
+/// Rules whose bodies are only `$v = constant` equations, made facts (above). Returns the rules replaced.
+fn ground_rules(prog: &mut Program) -> usize {
+    let constant = |t: &Term| match t {
+        Term::Int(i) => Some(Value::Int(*i)),
+        Term::Str(s) => Some(Value::Str(s.clone())),
+        _ => None,
+    };
+    let mut replaced = 0;
+    let mut kept = Vec::with_capacity(prog.rules.len());
+    for rule in std::mem::take(&mut prog.rules) {
+        if rule.body.is_empty() || prog.lattice.contains_key(&rule.head.rel) {
+            kept.push(rule);
+            continue;
+        }
+        // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
+        let mut binds: HashMap<&str, Value> = HashMap::new();
+        let mut consistent = true;
+        let all_equations = rule.body.iter().all(|l| {
+            let (v, c) = match l {
+                Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } => match constant(r) {
+                    Some(c) => (v.as_str(), c),
+                    None => return false,
+                },
+                _ => return false,
+            };
+            match binds.get(v) {
+                Some(old) if *old != c => consistent = false,
+                _ => {
+                    binds.insert(v, c);
+                }
+            }
+            true
+        });
+        if !all_equations {
+            kept.push(rule);
+            continue;
+        }
+        let value = |t: &Term| -> Option<Value> {
+            match t {
+                Term::Var(v) => binds.get(v.as_str()).cloned(),
+                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
+                    let part = |t: &Term| match t {
+                        Term::Var(v) => binds.get(v.as_str()).cloned(),
+                        _ => constant(t),
+                    };
+                    match (part(&args[0])?, part(&args[1])?) {
+                        // `@dot("", y)` is `y` (`core.rr`).
+                        (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}") })),
+                        _ => None,
+                    }
+                }
+                _ => constant(t),
+            }
+        };
+        let row: Option<Vec<Value>> = rule.head.args.iter().map(value).collect();
+        match row {
+            Some(row) => {
+                if consistent {
+                    let facts = prog.facts.entry(rule.head.rel.clone()).or_default();
+                    if !facts.contains(&row) {
+                        facts.push(row);
+                    }
+                }
+                replaced += 1;
+            }
+            None => kept.push(rule),
+        }
+    }
+    prog.rules = kept;
+    replaced
+}
+
+/// `$q = @cat("builtins", $x)` (`split_dot(q, "builtins", x)`) as `$q = @cat($k, $x), $k = "builtins"`: `@cat` runs
+/// backwards over variables only, and `fold_constants` leaves those in place.
+fn cat_variables(rule: &mut Rule) {
+    let mut added = Vec::new();
+    for l in &mut rule.body {
+        let Literal::Cmp { l: lhs, op: "=", r } = l else { continue };
+        for t in [lhs, r] {
+            if let Term::Call(f, args) = t
+                && f == "cat"
+                && matches!(args.as_slice(), [_, _])
+            {
+                for a in args.iter_mut() {
+                    if matches!(a, Term::Int(_) | Term::Str(_)) {
+                        let v = format!("cat_k{}", added.len());
+                        added.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: std::mem::replace(a, Term::Var(v)) });
+                    }
+                }
+            }
+        }
+    }
+    rule.body.extend(added);
+}
+
 fn fold_constants(rule: &mut Rule) -> usize {
     let constant = |t: &Term| matches!(t, Term::Str(_) | Term::Int(_));
     // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
@@ -305,6 +439,15 @@ fn fold_constants(rule: &mut Rule) -> usize {
                 named.insert(document.clone());
                 named.insert(node.clone());
                 named.extend(captures.iter().map(|(_, v)| v.clone()));
+            }
+            // `$q = @cat($m, $x)` runs backwards (splitting a bound $q) only over variables: a constant folded into
+            // it (`split_dot(q, m, x), m = "typing"`) would leave it runnable in neither direction.
+            Literal::Cmp { l, r, .. } => {
+                for t in [l, r] {
+                    if t.is_cat() {
+                        t.vars(&mut named);
+                    }
+                }
             }
             _ => {}
         }

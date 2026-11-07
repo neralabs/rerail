@@ -104,7 +104,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -804,8 +804,8 @@ impl Batch {
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if !rx_spans.is_empty() && guest.is_none() {
-                c.matches(&mut p, &rx_spans, &mut string);
+            if !rx_spans.is_empty() && guest.is_none() && !withheld {
+                c.matches(&mut p, dialect, &rx_spans, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));
