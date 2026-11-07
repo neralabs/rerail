@@ -963,6 +963,51 @@ Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
     assert_eq!(actual, ["original:valid", "tampered:invalid", "unsigned:unsigned"]);
 }
 
+/// `@ed25519_ok` through a rule: an existing signature verifies, a tampered message does not.
+#[test]
+fn signatures_verify_through_rules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("signatures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl candidate(name: symbol, message: symbol)
+candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+.decl verified(name: symbol)
+verified(name) :- candidate(name, message),
+    @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
+    "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
+.output verified
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("verified.csv")).unwrap(), "original\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@tree_digest(n)` compares structural trees: no positions, comments or punctuation, a
+/// parenthesized expression as what it holds, literals by value. Equal right-hand sides pair up; others do not.
+#[test]
+fn tree_digests_compare_subtrees_without_positions() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("digest");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "a = (1, 2)\nb = (1, 2,)\nc = 'x'\nd = \"x\"\ne = 16\nf = 0x10\ng = (h)\nh = h  # note\ni = [1, 2]\n";
+    std::fs::write(dir.join("a.py"), source).unwrap();
+    let rule = dir.join("digest.rr");
+    std::fs::write(&rule, r#"
+.decl rhs(l: symbol, r: node)
+rhs(l, r) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
+.decl same(l: symbol, m: symbol)
+same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
+.output same
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("same.csv")).unwrap(), "a\tb\nc\td\ne\tf\ng\th\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `match_all` and `match` with captures (`core.rr`): over a `source` or `src_line` span each group is a span, with
 /// its text and line (`rx_span`); over a symbol, `match_all` gives a row per match with its groups' text.
 #[test]
@@ -1030,6 +1075,88 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Error directives report rejected syntax while raw-source consumers keep their document views.
+#[test]
+fn syntax_error_directives_preserve_raw_source_relations() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("withheld");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("good.py"), "x = 1\n").unwrap();
+    std::fs::write(dir.join("bad.py"), "y = 2\ndef (:\n").unwrap();
+    let rule = dir.join("w.rr");
+    std::fs::write(&rule, r#"
+.policy "t:withheld" revision 1
+.on syntax_error report BAD000 at line 1
+.violation ASSIGN(at: node) "an assignment"
+ASSIGN(n) :- kind(n, "assignment"), docof(n, d), !syntax_error(d, _, _).
+.decl lines(d: number, k: number)
+lines(d, k) :- line_count(d, k).
+.decl err(d: number)
+err(d) :- syntax_error(d, _, _).
+.output lines, err
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let mut v: Vec<String> = read("violation").lines().map(str::to_owned).collect();
+    v.sort();
+    assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1"]);
+    assert_eq!(read("lines").lines().count(), 2, "raw-text policies retain both documents");
+    assert_eq!(read("err").lines().count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run's outputs do not depend on how its files are chunked: one chunk, or chunks of a few files whose mix (small
+/// files or large ones) changes from chunk to chunk, each mix measured for itself, give the same rows, cross-file
+/// ones too.
+#[test]
+fn outputs_do_not_depend_on_the_chunk_size() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("chunks");
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..6 {
+        std::fs::write(dir.join(format!("m{i}.py")), format!("def f{i}(x):\n    return g{}(x) + len(x)\n\ndef g{i}(y):\n    return f{i}(y)\n", (i + 1) % 6)).unwrap();
+    }
+    for j in 0..2 {
+        let body: String = (1..30).map(|k| format!("def b{j}_{k}():\n    return b{j}_{}()\n\n", k - 1)).collect();
+        std::fs::write(dir.join(format!("big{j}.py")), format!("def b{j}_0():\n    return 0\n\n{body}")).unwrap();
+    }
+    let rule = dir.join("c.rr");
+    std::fs::write(&rule, r#"
+.decl defined(x: symbol)
+defined(x) :- kind(n, "function_definition"), field(n, "name", m), text(m, x).
+.decl called(x: symbol, p: symbol)
+called(x, p) :- kind(c, "call"), field(c, "function", f), text(f, x), defined(x), docof(c, d), doc(d, p, _).
+.violation UNKNOWN(at: node, x: symbol) "call of {x}"
+UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(x).
+.output called
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let run = |chunk_nodes: usize| {
+        let out = dir.join(format!("out{chunk_nodes}"));
+        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        ["called", "violation"].map(|rel| {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        })
+    };
+    let whole = run(1 << 18);
+    assert_eq!(whole[0].len(), 12 + 2 * 29, "every call of a defined function: {:?}", whole[0]);
+    assert_eq!(whole[1].len(), 6, "len, once per Python file: {:?}", whole[1]);
+    for chunk_nodes in [60, 400] {
+        assert_eq!(run(chunk_nodes), whole, "chunks of {chunk_nodes} nodes");
+    }
+    // Every chunk's batch (its facts) is released when the run returns: no binding keeps one.
+    let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|f| f.ends_with(".py")).collect();
+    files.sort();
+    let keys: std::collections::BTreeSet<u32> = crate::code_rule_dsl::logic::plan::corpus::memo::doc_keys(&files).into_iter().map(|k| k as u32).collect();
+    let batches = crate::code_rule_dsl::facts::vtab::syntax::BATCHES.lock();
+    let ours: Vec<_> = batches.iter().filter(|(k, _)| k.iter().any(|k| keys.contains(k))).collect();
+    assert!(ours.len() >= 6, "the runs' batches were recorded: {}", ours.len());
+    assert!(ours.iter().all(|(_, b)| b.upgrade().is_none()), "a released batch is still held");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `dfs_first` and `dfs_first_memo` through rules: the first target by edge order from each root, the ord of the
 /// root's edge that starts the path, and the memo variant over its roots in order.
 #[test]
@@ -1062,4 +1189,18 @@ none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
     assert_eq!(read("hm"), "10\t30\t1\n40\t30\t2\n");
     assert_eq!(read("none"), "50\n");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+#[test]
+fn error_directives_survive_public_report_transport() {
+    let rows = finding_contract("def (:\n", r#"
+.policy "contract:error-transport" revision 1
+.language python
+.on syntax_error report BAD000 at line 1
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["code"], "BAD000");
+    assert_eq!(rows[0]["path"], "a.py");
+    assert_eq!(rows[0]["line"], 1);
 }

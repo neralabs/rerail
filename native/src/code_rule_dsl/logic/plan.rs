@@ -868,8 +868,8 @@ impl Model {
         }
         let mut candidates = 0u64;
         let (work, rows, order, subsets) = if joins.is_empty() {
-            // The relational unit is one empty binding. Ground negations and constant
-            // expressions filter it; unbound variables still fail the readiness check.
+            // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
+            // binding: ground negations and constant expressions filter it; an unbound variable still fails.
             let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), (0..body.len()).collect());
             let rows = close(&mut order, 1.0, &mut bound, &mut rest);
             if !rest.is_empty() {
@@ -1336,6 +1336,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "tree_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
         "first_token" | "last_token" => &[&["n"]],
@@ -1737,8 +1738,8 @@ impl Model {
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
                     let value = Expr::Scalar(Box::new(query));
-                    // Planning may bind the result first (for example `n = 0` before a count).
-                    // The aggregate then tests that binding; replacing it drops the equality.
+                    // Planning may bind the result first (`n = 0` before the count): the aggregate then tests that
+                    // binding, which replacing it would drop.
                     if let Some(bound) = env.get(var) {
                         wh.push(eq(bound.clone(), value));
                     } else {

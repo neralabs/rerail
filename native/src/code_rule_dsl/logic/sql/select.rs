@@ -118,6 +118,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
+        "tree_digest" => &["n", "s"],
         "rx_span" => &["p", "c", "j", "g", "m"],
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],

@@ -12,7 +12,7 @@ fn observe_output<T>(
     let trace = scope.snapshot();
     if actual.is_ok() {
         assert!(!trace.is_empty());
-        assert!(trace.len() <= 600);
+        assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
         assert!(
             trace
                 .iter()

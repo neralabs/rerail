@@ -24,7 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
-mod memo;
+pub(in crate::code_rule_dsl) mod memo;
 mod inputs;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
@@ -192,6 +192,24 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A chunk's mix, for which statistics measured on one chunk stand for another, scaled by nodes: the file types
+/// (extensions) holding a tenth of its nodes or more, in order, and its files' size, as the power of 4 of its mean
+/// nodes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
+/// files is not a chunk of a few large ones scaled. Documents are `(path, nodes)`.
+fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
+    let mut by: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut files = 0;
+    for (path, n) in docs {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        *by.entry(name.rsplit_once('.').map_or("", |(_, ext)| ext)).or_default() += n.max(1);
+        files += 1;
+    }
+    let total: usize = by.values().sum();
+    let size = (total / files.max(1)).max(1).ilog2() / 2;
+    let types = by.into_iter().filter(|(_, n)| n * 10 >= total).map(|(ext, _)| ext).collect::<Vec<_>>().join(",");
+    format!("{types}/{size}")
 }
 
 /// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
@@ -401,7 +419,10 @@ pub(crate) fn run_with_options(
         }
         last = now;
     };
-    let profiling = crate::code_rule_dsl::logic::profile::on();
+    // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
+    // profiling on may have turned it off meanwhile.
+    let _profile = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+    let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
@@ -561,10 +582,12 @@ pub(crate) fn run_with_options(
     }
     let constants = Own::constants(&lowered.program);
     let mut own_totals = Own::default();
-    // Measured once (`Own::measure` and `syntax::statistics` read every row, sorting every column): the first
-    // chunk's, with its nodes or rows, scaled to each later chunk's.
-    let mut own_once: Option<(usize, Own)> = None;
-    let mut measured_once: HashMap<String, (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
+    // Measured once per mix (`Own::measure` and `syntax::statistics` read every row, sorting every column): the
+    // first chunk of a mix, with its nodes or rows, scaled to each later chunk of that mix. A chunk's mix is the file
+    // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
+    // measured again, and a stray file is not a new mix.
+    let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
+    let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
@@ -810,13 +833,14 @@ pub(crate) fn run_with_options(
         chunks += 1;
         let mut stats = t_stats.clone();
         repository_stats(&mut stats);
+        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, n)| (path.as_str(), *n as usize)));
         if own {
-            let chunk = match &own_once {
+            let chunk = match own_once.get(&mix) {
                 Some((first, measured)) if *first > 0 => measured.scaled(chunk_nodes_built as f64 / *first as f64),
                 _ => {
-                    let _measure = crate::code_rule_dsl::logic::profile::span(|| "measure constants".into());
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure constants ({mix})"));
                     let measured = Own::measure(&sources, &constants);
-                    own_once = Some((chunk_nodes_built, measured.clone()));
+                    own_once.insert(mix.clone(), (chunk_nodes_built, measured.clone()));
                     measured
                 }
             };
@@ -840,12 +864,13 @@ pub(crate) fn run_with_options(
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
             }
-            let measured = match measured_once.get(&rel) {
+            let key = (mix.clone(), rel.clone());
+            let measured = match measured_once.get(&key) {
                 Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.estimated_len()),
                 _ => {
-                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = syntax::statistics(source.as_ref());
-                    measured_once.insert(rel.clone(), (source.estimated_len(), measured.clone()));
+                    measured_once.insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
             };
@@ -1561,5 +1586,17 @@ impl Own {
         for (rel, vals) in by {
             stats.measured(rel, [], vals);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
+        assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
+        assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
+        assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
+        // Many small files and a few large ones of one language are two mixes.
+        assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
     }
 }

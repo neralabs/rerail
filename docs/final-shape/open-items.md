@@ -1461,7 +1461,11 @@ tokens have no field.
   is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
   (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
+- `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
+  last on the pinned toolchain; 2026-11-07), not tree-sitter's; compile-time errors CPython's compiler raises after
+  parsing (`return` outside a function) are not checked, and its cost on the full corpus is not measured yet. A
+  document with one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
+  [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document.
 - `static_value` is `value`: file-local constants are not followed.
 - `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
   `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
@@ -1493,14 +1497,42 @@ device tests. It was not checked whether this predates O81's change; nothing in 
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
 
-## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then: closed (2026-11-06)
 
-- With `--features metal-tests` (profiling build), `transducer::packed` runs 733 tests and about 440 fail.
-  `metal_backend::launch::tests::command_boundaries_and_nested_scopes_do_not_reset_the_limit` fails alone
-  (`assertion failed: !reserve()`, `metal_launch.rs:324`), also on final-rerail-shape-rr-align's and
-  Parser-generators' own builds; others (e.g. `phase_four::literal_predicates::…`) pass alone and fail in the
-  batch, which points at the launch guard's process-wide budget carried from test to test.
-- `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed twice in a `logic::` run at
-  load 50-80 and passed on its own each time.
-**Closure:** the launch guard's budget is per test (or the suite runs its Metal tests in one thread), and the
-packed suites and `explain` pass in a filtered run.
+Found (2026-11-06). Of the 750 `transducer::packed` tests with `--features metal-tests`, about 440 failed in
+one run. There were five causes:
+
+1. **Poisoned locks.** `METAL_EXECUTION_LOCK` and `METAL_ALLOCATION_LOCK` guard no data, but one panicking
+   test poisoned them, and every later test failed with `BackendFailure` (443 failures down to 43).
+   Fixed: both locks recover from poisoning (`PoisonError::into_inner`).
+2. **Tests written for the old 600-launch limit.** The launch budget is per thread and per evaluation
+   (`thread_local! EVALUATION`), so it is not carried from test to test, as this item first guessed.
+   Copied tests wrote the limit as the literal 600 (or 599), and three launch-guard tests as 11 x 9 = 99.
+   Fixed: they use `KERNEL_LAUNCH_LIMIT`. The source scan for bypassing encoders skips `*_tests.rs`
+   test modules. 7 tests pass again.
+3. **G's grid executor over the bounds since list step 13.** 35 tests of the grid executor (superseded,
+   decision 0028, O33) need more than 200 launches per evaluation, or more than the 256 MiB device pool
+   (was 2 GB). 22 of them pass when the limit is set back to 600. They are ignored with this item, and they
+   go with the executor at list step 31.
+4. **A real bug: the label sweep did not compile.** `metal_label_sweep.metal`'s `SWEEP_NODE(local)` declared
+   `uint local=(local)` inside `for(uint local...)`, a redefinition and a read of itself (since b995b972e,
+   11-04). The sweep runs only under `RERAIL_HOST_SWEEPS`, but `MetalBackground`, which napi's `"metal"` uses,
+   compiles it before the JIT. So the background compile always failed, and `"metal"` ran the interpreter
+   and never swapped to the compiled kernel. Fixed by renaming the variable. The replay gives the same
+   findings.
+5. **A process-wide device pool.** `METAL_BUFFER_BYTES` (256 MiB) is shared by every thread, which is right
+   for production, but parallel tests then fill it for each other. About 16 tests fail only in a batch
+   (`BackendCapacity`, or a peak-bytes assertion). With `--test-threads=1` all of them pass.
+   Fixed (user decision: a resource lock on memory, so that small tests still run together):
+   `metal_test_pool.rs`. In a test build each thread has its own pool ledger and peak, and the driver's
+   process-wide figure is left out, so a test sees the pool as it would alone. A weighted lock over bytes
+   bounds what all tests hold at once at 1 GiB (the RAM budget). A reservation that would pass it waits for
+   others to release, for at most 30 s, then goes ahead: the bound is on memory, never on results.
+   Production is unchanged.
+- The admission spike's oracle snapshot (`execute_roots_from` as at f5de8998d) is ignored. The interpreter
+  has since gained set mode, lazy cursors and `Reach` pruning.
+- `explain` (`logic::profile::tests`): a concurrent corpus run's `profile::reset()` raced it. Profiled runs
+  and the profile tests now hold `profile::one_run()`. `logic::` passed twice at load 50 or more.
+
+**Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
+executor's, and the admission spike), 104 s at load 40-73.

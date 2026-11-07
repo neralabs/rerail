@@ -103,7 +103,7 @@ fn shared_regex_queries_preserve_unicode_looks_priority_and_duplicate_captures()
     let actual = execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors);
     assert_eq!(actual, Ok(expected));
     let trace = scope.snapshot();
-    assert!(trace.len() <= 600);
+    assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(
         trace
             .iter()
@@ -323,7 +323,7 @@ fn cooperative_regex_frontiers_preserve_exact_budget_edges_and_saved_utf8_bounda
             .count()
             >= 2
     );
-    assert!(trace.len() <= 600);
+    assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(
         trace
             .iter()
@@ -640,7 +640,7 @@ fn cooperative_regex_find_preserves_ordered_ranges_full_input_context_and_exact_
                     }
                 );
             }
-            assert!(trace.len() <= 600);
+            assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
             assert!(
                 trace
                     .iter()

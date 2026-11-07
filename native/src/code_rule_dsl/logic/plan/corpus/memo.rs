@@ -31,7 +31,7 @@ pub(super) struct Entry {
 
 /// Each path's document key: from its hash, in `1..2^31` (so `key << 32` stays positive), the next free one on a
 /// collision. A key is in each entry, so a key a collision moved only misses the memo.
-pub(super) fn doc_keys(paths: &[String]) -> Vec<i64> {
+pub(in crate::code_rule_dsl) fn doc_keys(paths: &[String]) -> Vec<i64> {
     const SPAN: u64 = (1 << 31) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
     paths

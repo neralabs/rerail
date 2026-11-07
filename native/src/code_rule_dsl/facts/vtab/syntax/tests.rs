@@ -525,3 +525,4 @@ fn unread_python_literal_columns_are_not_materialized() {
         assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
     }
 }
+

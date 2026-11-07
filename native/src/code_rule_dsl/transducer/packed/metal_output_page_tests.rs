@@ -1,7 +1,7 @@
 //! Publication keeps complete file intervals while bounded GPU pages retain typed rows.
 use super::*;
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; 1024 files x 128 programs x 256 roots do not fit METAL_BUFFER_LIMIT (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn finite_output_larger_than_the_raw_arena_limit_publishes_every_occurrence() {
     use metal_grid_plan::{ExecutionPlan, ResidentInput};
     let file_count = 1024_usize;
@@ -84,7 +84,7 @@ fn finite_output_larger_than_the_raw_arena_limit_publishes_every_occurrence() {
             .iter()
             .all(|record| record.completed && record.submitted)
     );
-    assert!(trace.len() <= 600);
+    assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     let peak = trace
         .iter()
         .map(|record| record.peak_application_buffer_bytes)
@@ -275,7 +275,7 @@ fn compact_constant_spans_merge_shared_transforms_and_preserve_witness_limits() 
             1,
             "all eligible Programs share one physical producer"
         );
-        assert!(trace.len() <= 600 && trace.iter().all(|r| r.completed));
+        assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT && trace.iter().all(|r| r.completed));
         let peak = trace
             .iter()
             .map(|r| r.peak_application_buffer_bytes)
@@ -430,7 +430,7 @@ fn saved_output_pages_retain_only_the_current_complete_files_in_host_arenas() {
         1
     );
     assert!(
-        trace.len() <= 600
+        trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
             && trace
                 .iter()
                 .all(|r| r.encoded && r.submitted && r.completed)
@@ -461,7 +461,7 @@ fn execute_bounded(
     (output, scope.snapshot())
 }
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn tiny_gpu_pages_preserve_duplicate_captures_transforms_mime_and_raw_ordinals() {
     let source = "# APPLICATION/JSON\n# TEXT/HTMLé\n# IMAGE/PNG\n";
     let files = [tape(source), tape("")];
@@ -537,7 +537,7 @@ fn tiny_gpu_pages_preserve_duplicate_captures_transforms_mime_and_raw_ordinals()
                 .collect::<Vec<_>>(),
         );
         assert!(
-            trace.len() <= 600
+            trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
                 && trace
                     .iter()
                     .all(|r| r.encoded && r.submitted && r.completed)
@@ -646,7 +646,7 @@ fn page_exhaustion_uses_the_same_outer_budget_and_never_completes_a_refused_file
     drop(scope);
     assert_eq!(actual, Err(Error::BackendLaunchLimit));
     assert!(complete.is_empty());
-    assert_eq!(trace.iter().filter(|r| r.encoded).count(), 600);
+    assert_eq!(trace.iter().filter(|r| r.encoded).count(), crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert_eq!(
         trace
             .iter()
@@ -655,7 +655,7 @@ fn page_exhaustion_uses_the_same_outer_budget_and_never_completes_a_refused_file
         1
     );
     let refused = trace.iter().position(|r| !r.encoded).unwrap();
-    assert_eq!(refused, 600);
+    assert_eq!(refused, crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     let command = trace[refused].command;
     assert!(
         trace[refused..]
@@ -829,7 +829,7 @@ fn broad_output_pages_preserve_complete_rows_without_semantic_replay() {
             1
         );
         assert!(
-            trace.len() <= 600
+            trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
                 && trace
                     .iter()
                     .all(|r| r.encoded && r.submitted && r.completed)

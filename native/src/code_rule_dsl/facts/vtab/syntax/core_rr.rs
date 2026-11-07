@@ -440,7 +440,7 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
-/// MISSING nodes; a Python verdict from a parser that follows CPython's grammar is not built yet (O80).
+/// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors {
         return None;
@@ -483,6 +483,7 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    tree_digest: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
 }
 
@@ -700,6 +701,62 @@ impl CoreRows {
         }
     }
 
+    /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
+    /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
+    /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
+    /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
+    /// program reads it: every node's hash is a 64-character symbol.
+    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        use sha2::{Digest, Sha256};
+        let f = &*p.facts;
+        // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
+        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        for id in (0..f.len() as u32).rev() {
+            let kind = dialect.name(f, id);
+            let kept: Vec<u32> = f
+                .children(id)
+                .iter()
+                .copied()
+                .filter(|&c| {
+                    let k = dialect.name(f, c);
+                    !is_comment(k) && (f.named(c) || !is_punct(k))
+                })
+                .collect();
+            if kind == "parenthesized_expression" && kept.len() == 1 {
+                hash[id as usize] = hash[kept[0] as usize];
+                continue;
+            }
+            let interpolated = dialect.family == Family::Python
+                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+            let mut h = Sha256::new();
+            h.update(kind.as_bytes());
+            h.update([0]);
+            match literal(dialect.family, kind, f.text(id), interpolated).value {
+                Some((value, ty)) => {
+                    h.update(b"=");
+                    h.update(ty.as_bytes());
+                    h.update([0]);
+                    h.update(value.as_bytes());
+                }
+                None if kept.is_empty() => {
+                    h.update(b"'");
+                    h.update(f.text(id).as_bytes());
+                }
+                None => {
+                    for &c in &kept {
+                        h.update(f.field[c as usize].to_le_bytes());
+                        h.update(hash[c as usize]);
+                    }
+                }
+            }
+            hash[id as usize] = h.finalize().into();
+        }
+        for local in 0..p.len() {
+            let digest: String = hash[p.core[local as usize] as usize].iter().map(|b| format!("{b:02x}")).collect();
+            self.tree_digest.push([p.global(local), string(&digest) as i64]);
+        }
+    }
+
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
@@ -744,6 +801,7 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("tree_digest", node_sym(&self.tree_digest)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }
@@ -752,6 +810,17 @@ impl CoreRows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
+    /// `match` statement is not; the line is the first error's.
+    #[test]
+    fn python_syntax_errors_follow_cpythons_grammar() {
+        use super::super::python_syntax::error as python_error;
+        assert_eq!(python_error("x = 1\n"), None);
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+    }
 
     #[test]
     fn lines_follow_each_languages_terminators() {
