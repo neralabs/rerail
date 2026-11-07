@@ -1,7 +1,7 @@
-# 0060: Typing's cross-file facts are one fixpoint, over stored derivations, keyed by type terms
+# 0060: Typing's cross-file facts are one fixpoint, recorded by the store, keyed by type terms
 
 Status: draft for review (2026-11-07). Reverses parts of 03 §13 (an adopted Typing-branch resolution), I10, I11,
-0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0059.
+0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0058 and 0059.
 
 ## Intro
 
@@ -30,8 +30,8 @@ Three costs follow, each measured this week:
 
   At k = 4 the call is unknown. It needs k = 8.
 - **Depth costs a full run per crossing.** On that probe, rounds 1 to 7 each derive 112k to 191k hop rows again
-  to add a few thousand. The cut considered in 0059 would still re-derive 12% to 84% of them, and its dependency
-  rules cost a further 60%.
+  to add a few thousand. Cutting each round down to what changed (0059, measured and withdrawn) would still
+  re-derive 12% to 84% of them, and tracking what changed cost a further 60%.
 - **A frozen library is derived again in every run.** builtins.pyi's cross-file rows change in almost every
   round. That is not because the file changes. Its own closure takes rounds to settle, and the workspace's demand
   grows round by round.
@@ -57,26 +57,29 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
 - Unknown stays what it means elsewhere: a value no rule decides (an untyped parameter, a dynamic attribute).
 - `typing::cross_rounds` stays in the engine for a program that declares rounds. None of ours will.
 
-### 2. A library closure's cross-file facts are a stored derivation
+### 2. Library documents are ordinary documents, and the store records their rows
 
-- **The unit** is a set of library documents closed under their imports. A library never imports the workspace,
-  so its cross-file facts depend only on its files' contents.
-- **The derivation** (03 §14):
+- **No separate library run.** Library roots are settings (`python.typeshed`, the site directories). Imports
+  resolve to files under them (`modules.rr`), and each file becomes a document, its tape and per-file rows
+  memoised like any source file's (0052). The one fixpoint (1) derives the rows about library documents along with
+  the workspace's.
+- **The store records them.** A library never imports the workspace, so the rows about a set of library documents
+  closed under their imports are a function of those files' contents. They are a derivation (03 §14):
   - inputs: each document's path bound to its content digest, and the settings the program reads;
   - producer: the cross-file part as lowered, and the engine build;
-  - output: its rows, in the store.
+  - output: the rows about those documents.
 
-  The first run that loads the closure derives it to its fixpoint and records it. Later runs, in any workspace,
-  read it.
-- **Read in place, once per run.** 0058 replayed such rows and lost, for two reasons:
-  - It loaded and indexed a million rows each round. One fixpoint reads them once. The rows are read by index, as
-    the workspace's rules probe them, not loaded whole.
-  - It derived every attribute of every class, to serve any workspace. Measured again under one fixpoint, this
-    decides between storing the whole closure and storing it per class (the facts one class's lookups need).
-- **No workspace facts in library rows.**
+  The run that first derives them records them. A later run, in any workspace, reads them in place: they are the
+  component's rows from the start, read by index as rules probe them. The fixpoint then derives only what is new.
+- **Discovery joins the fixpoint.** Today the runner re-runs the program, cut to its file requests, until no new
+  import appears (12 runs, 11 s CPU on the 84 files). Instead an import's resolved file joins the run when the
+  fixpoint reaches it, and its per-file rows come from the memo or a parse.
+- **No workspace facts in library rows.** Otherwise the recorded rows would hold for one workspace only.
   - Demand (0048) applies to workspace rows only. A library's rows are the same whoever asks.
   - A relation that names a workspace node in a row about a library node is derived from the workspace side. For
-    example, the subclasses of a library class are found from each workspace class's bases.
+    example, a library class's subclasses are found from each workspace class's bases.
+  - Measured in step 2: how many rows a library closure has with no demand. If the whole closure is too large,
+    the derivation is recorded per class (the rows one class's lookups need), not per closure.
 
 ### 3. Types are terms, and instantiation is a fact about a signature
 
@@ -119,16 +122,17 @@ next step.
 
 1. **One fixpoint.** Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
    chains no longer cut (`next(iter(xs))` decided), and the cost of one deep fixpoint compared with four rounds.
-2. **The library derivation.** It is built in its first run, then stored and read in place. This step includes
-   the demand split and moving `sub` to the workspace side. It is measured warm and cold, with whole-closure
-   storage against per-class storage.
+2. **Library rows recorded and read in place, and discovery in the fixpoint.** This includes the demand split and
+   moving `sub` to the workspace side. Measured warm and cold, with the rows recorded per closure and per class.
+   Two engine questions are answered here: how the native fixpoint takes in a document that arrives mid-run, and
+   how it starts from recorded rows.
 3. **Type terms.** First interned terms from annotations (per file). Then `inst_ret` in place of the call-site
    bindings, with widening.
 4. **The workspace derivation,** and the typing runs' per-file memo turned on (0052 turns it off when a run uses
    typing).
 
-Steps 1 and 3 change `calls.rr` throughout. Step 2 changes `logic/plan/corpus.rs`, `corpus/library.rs` and the
-store. The wolfeel session owns the final shape, so each step lands on a sibling `final-rerail-shape-*` branch.
+Steps 1 and 3 change `calls.rr` throughout. Step 2 changes `logic/plan/corpus.rs`, `corpus/world.rs`, the native
+fixpoint (`setfix`) and the store. The wolfeel session owns the final shape, so each step lands on a sibling `final-rerail-shape-*` branch.
 
 ## What it reverses
 
@@ -136,8 +140,9 @@ store. The wolfeel session owns the final shape, so each step lands on a sibling
   fixpoint, over stored derivations.
 - **0035, 0047:** k, the hop rules, the pending round and `unconverged`, for the typing programs.
 - **0056:** the typing programs no longer declare rounds. The declaration stays as a mechanism.
-- **0058, Measured:** replay is replaced by an in-place read under one fixpoint. Its derivation record is kept.
-- **0059:** withdrawn. Its measurements are the evidence above. Its dependency records may serve step 4.
+- **0058:** withdrawn and its code removed. A library is not a separate stage, and its rows are not replayed into
+  rounds.
+- **0059:** withdrawn and its code removed. Its measurements are the evidence above.
 
 ## Prior work consulted
 

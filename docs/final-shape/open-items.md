@@ -1209,7 +1209,9 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
   round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
   is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
   - pending marking for the other programs (`calls_rust.rr`, workload);
-  - the per-document cutoff, since each round still reruns the whole cross-file part.
+  - the per-document cutoff, since each round still reruns the whole cross-file part. *Superseded by decision 0060
+    (draft):* no rounds at all. The cross-file part becomes one fixpoint, so nothing is cut and nothing is
+    pending. The cutoff (0059) was measured and withdrawn.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 

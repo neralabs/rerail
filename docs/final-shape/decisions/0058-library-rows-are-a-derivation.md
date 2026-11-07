@@ -1,6 +1,11 @@
 # 0058: A library's cross-file rows are a derivation, replayed into the workspace run
 
-Status: built, off by default (2026-11-07): measured, replay costs more than it saves; see Measured
+Status: withdrawn (2026-11-07); the code is removed. Replaced by 0060.
+
+**Why withdrawn.** It made the library a second, separate run (a "stage"), and copied its rows into every round of
+the workspace run. Both are wrong in shape. A library's documents are ordinary documents, the normal fixpoint
+derives their rows, and the store records them (0060). The measurements below are kept as evidence: replay into
+bounded rounds cost more than it saved.
 
 ## Intro
 
