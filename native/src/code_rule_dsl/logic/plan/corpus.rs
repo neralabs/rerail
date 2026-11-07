@@ -1719,7 +1719,7 @@ fn dirty_documents(now: &BTreeMap<String, Vec<Vec<i64>>>, before: &BTreeMap<Stri
         return None;
     }
     let mut dirty = BTreeSet::new();
-    for dep in cutoff.0 {
+    for dep in cutoff.0.iter().filter(|d| !d.inround) {
         if let Some(c) = dep.head {
             dirty.extend(changed(&dep.rel).into_iter().map(|r| unit(r[c])));
             continue;
@@ -1735,6 +1735,34 @@ fn dirty_documents(now: &BTreeMap<String, Vec<Vec<i64>>>, before: &BTreeMap<Stri
         }
     }
     Some(dirty)
+}
+
+/// `dirty` nodes closed over the same-document reads of the round's own rows (decision 0059, Measured): a reader of a
+/// dirty node's rows is dirty. A read keyed without the row's node makes its readers dirty when any node is.
+fn close_dirty(mut dirty: BTreeSet<i64>, deps: &BTreeMap<String, Vec<Vec<i64>>>, cutoff: Cutoff) -> BTreeSet<i64> {
+    let mut readers: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut unkeyed: Vec<i64> = Vec::new();
+    for dep in cutoff.0.iter().filter(|d| d.inround && d.head.is_none()) {
+        let at = dep.first.and_then(|f| dep.cols.iter().position(|&c| c == f));
+        for row in deps.get(&dep.name).into_iter().flatten() {
+            match at {
+                Some(k) => readers.entry(row[1 + k]).or_default().push(row[0]),
+                None => unkeyed.push(row[0]),
+            }
+        }
+    }
+    if !dirty.is_empty() {
+        dirty.extend(unkeyed);
+    }
+    let mut work: Vec<i64> = dirty.iter().copied().collect();
+    while let Some(n) = work.pop() {
+        for &r in readers.get(&n).into_iter().flatten() {
+            if dirty.insert(r) {
+                work.push(r);
+            }
+        }
+    }
+    dirty
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1856,6 +1884,15 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
                 };
                 let mut out = share(&by_doc, "documents");
                 out.push_str(&share(&|n| n, "nodes"));
+                if let Some(d) = dirty_documents(&rows, &prev_rows, &dep_rows, cutoff, &|n| n) {
+                    let d = close_dirty(d, &dep_rows, cutoff);
+                    let (mut part, mut all) = (0usize, 0usize);
+                    for v in rows.values() {
+                        all += v.len();
+                        part += v.iter().filter(|r| d.contains(&r[0])).count();
+                    }
+                    out.push_str(&format!("; closed over same-document reads {} holding {part} of {all}", d.len()));
+                }
                 // Rows a round took back: none, and the rounds are monotone (each could continue the last).
                 let removed: usize = rows.iter().map(|(rel, v)| prev_rows[rel].iter().filter(|r| v.binary_search(r).is_err()).count()).sum();
                 out.push_str(&format!("; {removed} rows removed since the round before"));

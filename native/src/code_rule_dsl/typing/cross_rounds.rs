@@ -123,6 +123,10 @@ pub(crate) struct Dep {
     pub(crate) cols: Vec<usize>,
     pub(crate) name: String,
     pub(crate) head: Option<usize>,
+    /// A same-document read of the round's own rows, not of the previous round's.
+    pub(crate) inround: bool,
+    /// `rel`'s first node column: a row's node.
+    pub(crate) first: Option<usize>,
 }
 
 /// The per-document cutoff's setting (decision 0059, step 1): `RERAIL_CROSS_CUTOFF=measure` derives the dependency
@@ -237,6 +241,44 @@ fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<usize>>, v: &
     }
 }
 
+/// Adds the dependency rule of `body[i]`, an atom of `rel` read by a rule whose head node is `h` (`dep_rule`), to
+/// `dep_rules`, its relation to `deps` and `out`'s declarations; or names `rel` in `deps` by its head column, or in
+/// `global`. `inround`: a same-document read of the round's own rows, not a hop.
+#[allow(clippy::too_many_arguments)]
+fn push_dep(prog: &Program, out: &mut Program, deps: &mut Vec<Dep>, dep_rules: &mut Vec<Rule>, global: &mut BTreeSet<String>, body: &[Literal], i: usize, h: &str, rel: &str, inround: bool) {
+    match dep_rule(body, i, h) {
+        Some((cols, key, dep_body)) => {
+            let name = format!("{DEP}{}{rel}__{}", if inround { "in__" } else { "" }, cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
+            if !deps.iter().any(|d| d.name == name) {
+                let mut decl = vec![("reader".to_owned(), "node".to_owned())];
+                decl.extend(cols.iter().map(|&c| prog.decls[rel][c].clone()));
+                out.decls.insert(name.clone(), decl);
+                deps.push(Dep { rel: rel.to_owned(), cols, name: name.clone(), head: None, inround, first: first_col(prog, rel) });
+            }
+            let mut args = vec![Term::Var(h.to_owned())];
+            args.extend(key);
+            dep_rules.push(Rule { head: Atom { rel: name, args, neg: false, gated: false }, body: dep_body });
+        }
+        None => match body[i].atom().expect("an atom").args.iter().position(|t| matches!(t, Term::Var(v) if v == h)) {
+            Some(c) => {
+                if !deps.iter().any(|d| d.rel == rel && d.head == Some(c) && d.inround == inround) {
+                    deps.push(Dep { rel: rel.to_owned(), cols: Vec::new(), name: String::new(), head: Some(c), inround, first: first_col(prog, rel) });
+                }
+            }
+            // A same-document read whose reader cannot be named is not counted (the measure's closure is a lower
+            // bound for it).
+            None if inround => {}
+            None => {
+                global.insert(rel.to_owned());
+            }
+        },
+    }
+}
+
+fn first_col(prog: &Program, rel: &str) -> Option<usize> {
+    prog.decls.get(rel)?.iter().position(|(_, t)| t == "node")
+}
+
 /// The cross-file part `prog` with its hops reading the previous round. `same_doc` holds the same-document columns of
 /// the relations `prog` reads that cross no file (`file_local::Programs::same_doc`).
 pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Bounded, front::Error> {
@@ -256,14 +298,27 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
         let head_node = first_node_var(prog, &rule.head);
         let local_to_head = head_node.as_deref().map(|h| same_document(&rule.body, same_doc, h)).unwrap_or_default();
         let mut found = Vec::new();
+        let mut inround = Vec::new();
         for &i in &recursive {
             let a = rule.body[i].atom().expect("recursive literals are atoms");
             match (&head_node, first_node_var(prog, a)) {
-                (Some(h), Some(v)) if *h == v || local_to_head.contains(&v) => {}
+                (Some(h), Some(v)) if *h == v || local_to_head.contains(&v) => {
+                    if matches!(rule.body[i], Literal::Atom(_)) && *h != v {
+                        inround.push(i);
+                    }
+                }
                 (Some(h), Some(v)) if matches!(rule.body[i], Literal::Atom(_)) => found.push((i, h.clone(), v)),
                 _ => {
                     unbounded.insert(rule.head.rel.clone());
                 }
+            }
+        }
+        // Same-document reads of the round's own rows (decision 0059, Measured): what a dirty node makes dirty in
+        // the same round.
+        if measure && let Some(h) = &head_node {
+            for &i in &inround {
+                let rel = rule.body[i].atom().expect("an atom").rel.clone();
+                push_dep(prog, &mut out, &mut deps, &mut dep_rules, &mut global, &rule.body, i, h, &rel, true);
             }
         }
         if found.is_empty() || found.len() > MAX_HOPS {
@@ -287,33 +342,9 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
             }
             if measure {
                 for (bit, (i, h, _)) in found.iter().enumerate() {
-                    if choice & (1 << bit) == 0 {
-                        continue;
-                    }
-                    let rel = rule.body[*i].atom().expect("an atom").rel.clone();
-                    match dep_rule(&body, *i, h) {
-                        Some((cols, key, dep_body)) => {
-                            let name = format!("{DEP}{rel}__{}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
-                            if !deps.iter().any(|d| d.name == name) {
-                                let mut decl = vec![("reader".to_owned(), "node".to_owned())];
-                                decl.extend(cols.iter().map(|&c| prog.decls[&rel][c].clone()));
-                                out.decls.insert(name.clone(), decl);
-                                deps.push(Dep { rel: rel.clone(), cols, name: name.clone(), head: None });
-                            }
-                            let mut args = vec![Term::Var(h.clone())];
-                            args.extend(key);
-                            dep_rules.push(Rule { head: Atom { rel: name, args, neg: false, gated: false }, body: dep_body });
-                        }
-                        None => match rule.body[*i].atom().expect("an atom").args.iter().position(|t| matches!(t, Term::Var(v) if v == h)) {
-                            Some(c) => {
-                                if !deps.iter().any(|d| d.rel == rel && d.head == Some(c)) {
-                                    deps.push(Dep { rel: rel.clone(), cols: Vec::new(), name: String::new(), head: Some(c) });
-                                }
-                            }
-                            None => {
-                                global.insert(rel);
-                            }
-                        },
+                    if choice & (1 << bit) != 0 {
+                        let rel = rule.body[*i].atom().expect("an atom").rel.clone();
+                        push_dep(prog, &mut out, &mut deps, &mut dep_rules, &mut global, &body, *i, h, &rel, false);
                     }
                 }
             }

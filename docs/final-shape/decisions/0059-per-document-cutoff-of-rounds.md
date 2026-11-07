@@ -105,6 +105,27 @@ what the next round would derive again:
 - The dirty sets were checked against the pending round: it changes rows that no dependency predicts. That is
   right, since the pending round adds `unconverged(1)`, which every reader of it reads.
 
+**The rounds are not monotone.** They negate 16 relations that change with them (`pv`, `found`, `ifn`,
+`call_target`, `aknown`, …), and rounds 1 to 6 each take back 10 to 855 rows. So a round cannot simply continue
+the last one's fixpoint with the new `__prev` rows as deltas. Rows must be derived again, and the cut decides which.
+
+**Closed over same-document reads of the component's own rows**, the dirty nodes' share of the hop rows is:
+
+```text
+// round      0     1     2     3     4     5     6     7
+// closed   62%   26%   29%   13%    9%   10%    8%  1.4%
+```
+
+That is 12% of the rows of rounds 1 to 7, which leaves a cut room to save most of a later round. Two gaps remain:
+
+- Reads of a lower component's rows in the same round are not closed over. A dependency rule on every such atom
+  cost more than the run: past the 2-minute cap, against 67 s with same-component reads only. Step 2 needs them
+  closed. It needs them as cheap reads, not as one rule per atom: a lower component's changed rows can be
+  diffed the way hop rows are.
+- A same-document read whose reader cannot be named is not counted.
+
+The dependency rules cost 42 s → 67 s CPU at k = 8 over all readers. Step 2 runs them for dirty readers only.
+
 A cut finer than a document needs something a document cut gets for free. Within a round, rows of one document read
 each other: `found(c, a, x) :- base(c, b), found(b, a, x)`, with b in c's document, is not a hop. So a dirty node
 makes dirty every node of its document that reads it in the same round. Step 2 therefore records same-document
