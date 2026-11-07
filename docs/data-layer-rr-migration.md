@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **59 target drafts and 41 absent translations**. None has full acceptance yet.
+The current inventory contains **60 target drafts and 40 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 

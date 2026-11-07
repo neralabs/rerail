@@ -6,14 +6,15 @@ def data_layer_compat_aliases(source, target, header):
     from data_layer_rr_author import constants
     messages = constants(source / 'scripts/lint_data_layer_compat_aliases.py')['VIOLATIONS']
     text = header('data_layer_compat_aliases', target)
+    text = text.replace('.scope include "data_layer/**/*.py"', '.scope include "data_layer/**/*.py", "testing.py"')
     text += '''
 // Function and class scopes suppress aliases, including their decorators and signatures.
 .decl alias_scope(n: node)
 alias_scope(n) :- kind(f, "function_definition"), (within(n, f) ; decorator(f, n) ; decorator(f, d), within(n, d)).
 alias_scope(n) :- kind(c, "class_definition"), (within(n, c) ; decorator(c, n) ; decorator(c, d), within(n, d)).
 .decl alias_selected(d: number)
-alias_selected(d) :- doc(d, _, _), option("entryPoint", _).
-alias_selected(d) :- doc(d, p, _), !option("entryPoint", _), (prefix("data_layer/", p) ; p = "testing.py"),
+alias_selected(d) :- doc(d, _, _), file_name(d, n), suffix(".py", n), option("entryPoint", _).
+alias_selected(d) :- doc(d, p, _), file_name(d, n), suffix(".py", n), !option("entryPoint", _), (prefix("data_layer/", p) ; p = "testing.py"),
     !alias_hidden(d), !path_part(d, "test"), !path_part(d, "tests").
 .decl alias_hidden(d: number)
 alias_hidden(d) :- path_part(d, ".git").

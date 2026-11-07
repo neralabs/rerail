@@ -400,6 +400,118 @@
         },
         "source": "not used"
       }
+    },
+    {
+      "id": "alias-python2-print",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\nprint \"legacy\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-invalid-escape",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\n\"\\x\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-parenthesized-tuple",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "(A,) = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-nested-parens",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "((A)) = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-tab-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo\tas\tbar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-continued-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo as\\\n bar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-tab-import-trigger",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo\tas\tbar\n# =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
     }
   ]
 }
