@@ -271,17 +271,6 @@ pv($c, "inst", $k) :- callee($c, $e), pv($e, "cls", $k).
 pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), pv($r, $k, $v).
 pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
 pv($c, "super", $k) :- callee($c, $e), builtin_ref($e, "super"), nearest($c, $f, fdef), method($f, $k).
-// A value of a builtin type (`btype`), where the program reads one: a literal, or a call of a builtin class. Its
-// methods are no workspace definition. It flows as any value does, so `x = str(y)` gives `x` the type `str`.
-pv($n, "builtin", $n) :- vpos($n), kind($n, $k), lit_type($k, _).
-pv($c, "builtin", $c) :- vpos($c), bcall($c, _).
-// A value from outside the workspace (`ext`): a name an import of an external module binds, a builtin name, an
-// attribute of such a value, a comparison. The program names no class for it; it flows so that a name bound both to
-// one and to a modelled value (`f = None` in an `except`, else an import) is known to hold more than the latter.
-bv($s, $x, "ext", $s) :- ext_import($s, $x).
-pv($n, "ext", $n) :- builtin_ref($n, _).
-pv($n, "ext", $n) :- attr_of($n, $o, _), pv($o, "ext", _).
-pv($n, "ext", $n) :- vpos($n), kind($n, "comparison_operator").
 
 // ---- unknown values -------------------------------------------------------------------------------------------
 // Positions whose value is read: what `vopen` is asked about.
@@ -375,10 +364,7 @@ vopen($n) :- vpos($n), kind($n, "named_expression"), field($n, "value", $c), vop
 // A call's value: unknown when the callee is, when no workspace definition is called (an external or builtin
 // callable), when a workspace function's return is, and for coroutines and generators.
 vopen($c) :- vpos($c), callee($c, $e), vopen($e).
-vopen($c) :- vpos($c), callee($c, $e), !wpv($e), !pv($c, "super", _), !bcall($c, _).
-// A value a call of which may run a workspace definition: neither a builtin value nor one from outside.
-.decl wpv(e: node)
-wpv($e) :- pv($e, $k, _), $k != "builtin", $k != "ext".
+vopen($c) :- vpos($c), callee($c, $e), !pv($e, _, _), !pv($c, "super", _), !bcall($c, _).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), isasync($f).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), isgen($f).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), retval($f, $r), !retparam($f, _, $r), vopen($r).
@@ -538,11 +524,42 @@ bclass("list"). bclass("dict"). bclass("set"). bclass("frozenset"). bclass("tupl
 .decl bcall(c: node, x: sym)
 bcall($c, $x) :- callee($c, $e), builtin_ref($e, $x), bclass($x).
 .decl btype(v: node, t: sym)
-btype($v, $t) :- pv(_, "builtin", $v), kind($v, $k), lit_type($k, $t), !bytes_lit($v).
-btype($v, "bytes") :- pv(_, "builtin", $v), bytes_lit($v).
-btype($v, $x) :- pv(_, "builtin", $v), bcall($v, $x).
+btype($v, $t) :- tv(_, "builtin", $v), kind($v, $k), lit_type($k, $t), !bytes_lit($v).
+btype($v, "bytes") :- tv(_, "builtin", $v), bytes_lit($v).
+btype($v, $x) :- tv(_, "builtin", $v), bcall($v, $x).
 // Declared returns (`typing::declare`, `typing::deps`: the corpus runner adds a `declared_ret(q, t)` per member
 // of a closed declared return) type a call of a name the workspace does not define.
+// Values of builtin and external classes (`tv(n, k, v)`, read by the types only). `builtin`: a literal, or a call of a
+// builtin class (`btype` gives v's class). `ext`: a value from outside the workspace (a name an import of an
+// external module binds, a builtin name, an attribute of such a value, a comparison), whose class is not named. They
+// flow as `pv`'s values do, so `x = str(y)` gives `x` the class `str`, and a name bound both to `None` and to an
+// external import is known to hold more than `None`. `tv` reads `pv` and `pv` does not read it: the points-to
+// component, which every attribute and cross-file join reads, holds only functions, classes, instances and modules.
+.decl tv(n: node, k: sym, v: node)
+.decl tbv(s: node, x: sym, k: sym, v: node)
+.decl tqv(q: sym, k: sym, v: node)
+tv($n, "builtin", $n) :- vpos($n), kind($n, $k), lit_type($k, _).
+tv($c, "builtin", $c) :- vpos($c), bcall($c, _).
+tv($n, "ext", $n) :- vpos($n), builtin_ref($n, _).
+tv($n, "ext", $n) :- vpos($n), kind($n, "comparison_operator").
+tv($n, "ext", $n) :- vpos($n), attr_of($n, $o, _), tv($o, "ext", _).
+tbv($s, $x, "ext", $s) :- ext_import($s, $x).
+tbv($s, $x, $k, $v) :- live_asg($s, $x, $r), tv($r, $k, $v).
+tbv($s, $x, $k, $v) :- ibind($s, $x, $q), tqv($q, $k, $v).
+tqv(@cat($q, $x), $k, $v) :- modname($m, $q), tbv($m, $x, $k, $v).
+tv($n, $k, $v) :- look($n, $x, $s), tbv($s, $x, $k, $v).
+tv($n, $k, $v) :- qn($n, $q), tqv($q, $k, $v).
+tv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "cls", $c), found($c, $a, $at), tbv($at, $a, $k, $v).
+tv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "inst", $c), found($c, $a, $at), tbv($at, $a, $k, $v).
+tv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "left", $c), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "right", $c), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "assignment"), field($n, "right", $c), tv($c, $k, $v).
+tv($n, $k, $v) :- kind($n, "named_expression"), field($n, "value", $c), tv($c, $k, $v).
+tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), tv($r, $k, $v).
+tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), tv($a, $k, $v).
 .decl declared_ret(q: sym, t: sym)
 .decl declared_call(c: node)
 declared_call($c) :- vpos($c), callee($c, $e), qn($e, $q), !qknown($q), declared_ret($q, _).
@@ -553,7 +570,7 @@ cls_q($c, @cat($q, $x)) :- cls_q($o, $q), rdefn($o, $x, $c), kind($c, "class_def
 
 .decl type_of(n: node, t: sym)
 type_of($n, $q) :- vpos($n), pv($n, "inst", $c), cls_q($c, $q).
-type_of($n, $t) :- vpos($n), pv($n, "builtin", $v), btype($v, $t).
+type_of($n, $t) :- vpos($n), tv($n, "builtin", $v), btype($v, $t).
 type_of($c, $t) :- declared_call($c), callee($c, $e), qn($e, $q), declared_ret($q, $t).
 // A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
 // (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
@@ -570,10 +587,10 @@ meta_open($c) :- anc($c, $b), basex($b, $e), extb($e), !builtin_ref($e, _).
 meta_open($c) :- anc($c, $b), base_open($b).
 .decl type_open(n: node)
 type_open($n) :- vpos($n), vopen($n), !declared_call($n), !ext_mod($n).
-type_open($n) :- vpos($n), !vopen($n), !pv($n, _, _), !declared_call($n), !ext_mod($n).
+type_open($n) :- vpos($n), !vopen($n), !pv($n, _, _), !tv($n, _, _), !declared_call($n), !ext_mod($n).
 // Functions and `super()` objects are values the relations do not name a class for.
-type_open($n) :- vpos($n), pv($n, $k, _), $k != "inst", $k != "builtin", $k != "cls", $k != "mod", $k != "ext".
-type_open($n) :- vpos($n), pv($n, "ext", _), !ext_mod($n).
+type_open($n) :- vpos($n), pv($n, $k, _), $k != "inst", $k != "cls", $k != "mod".
+type_open($n) :- vpos($n), tv($n, "ext", _), !ext_mod($n).
 type_open($n) :- vpos($n), pv($n, "cls", $c), meta_open($c).
 type_open($n) :- vpos($n), pv($n, "inst", $c), !cls_q($c, _).
 // A class whose `__new__` or metaclass `__call__` the workspace defines may make something else than its instance.
