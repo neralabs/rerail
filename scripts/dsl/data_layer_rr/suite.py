@@ -43,6 +43,7 @@ ENTRIES = {
     'sync_async_signatures': ['analyze_file'],
     'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
     'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
+    'no_api_root_imports': ['check_file', 'check_file_content'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -203,6 +204,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'no_api_root_imports':
+            from api_imports_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'connection_caches':
             from connection_caches_port import scan
             return scan(self, entry, module, arguments)

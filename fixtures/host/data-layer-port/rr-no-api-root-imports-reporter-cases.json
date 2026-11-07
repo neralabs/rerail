@@ -1,0 +1,370 @@
+{
+  "format": "rerail.rr-reporter-cases/v1",
+  "cases": [
+    {
+      "id": "simple",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import LENGTH\n"
+        }
+      ]
+    },
+    {
+      "id": "aliases",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import B as Q, A, C\n"
+        }
+      ]
+    },
+    {
+      "id": "multiline",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import (B as Q,\n A, C,)\n"
+        }
+      ]
+    },
+    {
+      "id": "star",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import *\n"
+        }
+      ]
+    },
+    {
+      "id": "layer",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api.l1400_types import X\n"
+        }
+      ]
+    },
+    {
+      "id": "relative-gated",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "# from api import\nfrom ..api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "relative-ungated",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from ..api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "normalized",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "# from api import\nfrom ａｐｉ import Ｘ as y\n"
+        }
+      ]
+    },
+    {
+      "id": "spaced-module",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "# from api import\nfrom api . sub import X\n"
+        }
+      ]
+    },
+    {
+      "id": "live-import",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "import api\n"
+        }
+      ]
+    },
+    {
+      "id": "example",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"from api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "initial-newline",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"\\nfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "repeat",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"from api import X\\nfrom api import X\\nfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "both-patterns",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"import api\\nfrom api import X\\nimport api\\nfrom api import Y\"\n"
+        }
+      ]
+    },
+    {
+      "id": "consuming-newlines",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"import api\\nimport api\\nimport api\"\n"
+        }
+      ]
+    },
+    {
+      "id": "tabs",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"\\tfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "carriage-return",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"\\rfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-space",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"import api\\u001c\"\n"
+        }
+      ]
+    },
+    {
+      "id": "bytes",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = b\"from api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = r\"prefix\\nfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent-gated",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "# from api import\nx = \"from ap\" \"i import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent-ungated",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"from ap\" \"i import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "formatted",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"from api import X{value}\\nimport api\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-formatted",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"from api import A{('from api import INNER')}\\nfrom api import LAST\"\n"
+        }
+      ]
+    },
+    {
+      "id": "format-spec",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = f\"{value:from api import SPEC}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "dict-order",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = {\"from api import KEY1\": \"from api import VAL1\", \"from api import KEY2\": \"from api import VAL2\"}\n"
+        }
+      ]
+    },
+    {
+      "id": "surrogates",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"\\ud800\\nfrom api import X\\udfff\"\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "from api import X\ndef (:\n"
+        }
+      ]
+    },
+    {
+      "id": "long-source",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "#pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\nfrom api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "long-value",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.py",
+          "source": "x = \"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\\nfrom api import X\"\n"
+        }
+      ]
+    },
+    {
+      "id": "test-dir",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/tests/a.py",
+          "source": "from api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "test-basename",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/test_a.py",
+          "source": "from api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "tmp-dir",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "tmp/a.py",
+          "source": "from api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "not-python",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l1000_example/a.txt",
+          "source": "from api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "missing",
+      "check": "no_api_root_imports",
+      "files": []
+    },
+    {
+      "id": "excluded-api-root",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "from api import X\n"
+        }
+      ]
+    },
+    {
+      "id": "new-layer-root",
+      "check": "no_api_root_imports",
+      "files": [
+        {
+          "path": "l٩٩٩٩_new/a.py",
+          "source": "from api import X\n"
+        }
+      ]
+    }
+  ]
+}
