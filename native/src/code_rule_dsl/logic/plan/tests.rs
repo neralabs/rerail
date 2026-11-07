@@ -400,6 +400,12 @@ fn t_programs_run_natively_over_atoms_like_t() {
 #[test]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
+    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // string is str. No T output reads it.
+    Connection::open(&facts).unwrap().execute_batch(
+        "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
+         INSERT INTO stat_col VALUES ('strprefix', 'n', 0, 0, 0, 0), ('strprefix', 's', 0, 0, 0, 0)",
+    ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();

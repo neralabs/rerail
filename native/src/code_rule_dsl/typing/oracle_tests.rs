@@ -425,8 +425,7 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
 
 /// `calls.rr`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
 /// and the receivers not exact as listed.
-const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] =
-    &[("pkg/typed.py:28 `data`", TypeAnswer::Wider, "`b\"ab\"`: a prefixed string is str or bytes (T gives no text of its delimiter)")];
+const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
 #[test]
 fn python_type_relations_agree_with_the_runtime() {

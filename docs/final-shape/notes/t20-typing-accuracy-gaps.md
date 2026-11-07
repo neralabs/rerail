@@ -191,14 +191,15 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   | | Receivers | Exact | Wider | Unknown | Wrong |
   |---|---|---|---|---|---|
-  | `calls.rr` types | 44 | 43 | 1 (`b"ab"`: str or bytes) | 0 | 0 |
+  | `calls.rr` types | 44 | 44 | 0 | 0 | 0 |
 
   | Calls on the grown oracle | Agree | Depart | Wrong |
   |---|---|---|---|
   | `calls.rr` | 113 | 9 | 0 |
   | native resolver | 97 | 25 | 0 |
 
-  The receiver fixture is small and written for this, so 43 of 44 says the relations are sound where they
+  A bytes literal is told from a str by `strprefix`, which T's shape of the syntax facts already makes.
+  The receiver fixture is small and written for this, so 44 of 44 says the relations are sound where they
   answer, not how often they answer on a real corpus. What they leave out is O84.
 
   **For More-ergonomic-rule-syntax (information).** The relations above, with their columns, are what

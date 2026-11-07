@@ -1495,8 +1495,6 @@ and the run is recorded in t20.
 - **Generics:** names only, no arguments: `list`, not `list[int]`. Terms are interned per node by the corpus
   runner (`x.node_type`) as unions of names.
 - **Exceptions and other builtin hierarchies:** only `bool <: int` and `<: object`.
-- **String prefixes:** T's facts give no text of a string's delimiter, so a prefixed string is `str` or `bytes`
-  (wider, not exact).
 - **Possible:** past what is listed, `possible_open`.
 
 **Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and

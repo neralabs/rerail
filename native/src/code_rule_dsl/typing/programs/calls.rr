@@ -525,18 +525,15 @@ lit_type("true", "bool"). lit_type("false", "bool"). lit_type("none", "None").
 lit_type("list", "list"). lit_type("list_comprehension", "list"). lit_type("dictionary", "dict").
 lit_type("dictionary_comprehension", "dict"). lit_type("set", "set"). lit_type("set_comprehension", "set").
 lit_type("tuple", "tuple"). lit_type("not_operator", "bool").
-// A string with a prefix (`b"..."`, `r"..."`, `rb"..."`) may be bytes: its opening delimiter is longer than its
-// closing one. T's facts give no text of the delimiter, so the prefix's letters are not read: a prefixed string
-// without interpolations is str or bytes. A string without a prefix, or with an interpolation (an f-string), is str.
-.decl prefixed(n: node)
-prefixed(n) :- vpos(n), kind(n, "string"), delims(n, k, l), k > l, !interp(n).
-prefixed(n) :- vpos(n), kind(n, "concatenated_string"), child(n, c, 0), delims(c, k, l), k > l, !interp(c).
-// A string's opening and closing delimiters' lengths.
-.decl delims(n: node, k: number, l: number)
-delims(n, k, l) :- kind(n, "string"), child(n, a, _), node(_, a, "string_start", s, e), child(n, z, _), node(_, z, "string_end", t, u),
-    k = @sub(e, s), l = @sub(u, t).
-.decl interp(n: node)
-interp(n) :- kind(n, "string"), child(n, i, _), kind(i, "interpolation").
+// A bytes literal: its prefix (`strprefix`, lowercased) has a `b` (`b"..."`, `rb"..."`); a concatenation's
+// parts share their kind.
+.decl strprefix(n: node, p: symbol)
+.input strprefix
+.decl bprefix(p: symbol)
+bprefix("b"). bprefix("rb"). bprefix("br").
+.decl bytes_lit(n: node)
+bytes_lit(n) :- vpos(n), kind(n, "string"), strprefix(n, p), bprefix(p).
+bytes_lit(n) :- vpos(n), kind(n, "concatenated_string"), child(n, c, 0), strprefix(c, p), bprefix(p).
 // A builtin class whose call makes a value of that class.
 .decl bclass(x: symbol)
 bclass("int"). bclass("float"). bclass("complex"). bclass("str"). bclass("bytes"). bclass("bytearray"). bclass("bool").
@@ -544,8 +541,8 @@ bclass("list"). bclass("dict"). bclass("set"). bclass("frozenset"). bclass("tupl
 .decl bcall(c: node, x: symbol)
 bcall(c, x) :- callee(c, e), builtin_ref(e, x), bclass(x).
 .decl btype(v: node, t: symbol)
-btype(v, t) :- pv(_, "builtin", v), kind(v, k), lit_type(k, t).
-btype(v, "bytes") :- pv(_, "builtin", v), prefixed(v).
+btype(v, t) :- pv(_, "builtin", v), kind(v, k), lit_type(k, t), !bytes_lit(v).
+btype(v, "bytes") :- pv(_, "builtin", v), bytes_lit(v).
 btype(v, x) :- pv(_, "builtin", v), bcall(v, x).
 // Declared returns (`typing::declare`, `typing::deps`: the corpus runner adds a `declared_ret(q, t)` per member
 // of a closed declared return) type a call of a name the workspace does not define.
