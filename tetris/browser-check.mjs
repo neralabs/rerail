@@ -225,6 +225,91 @@ try {
   await page.waitForFunction(() => document.getElementById('evaluation-panel').hidden);
   await key('KeyN');
   assert.equal((await page.request.get(baseURL + '/facts').then(response => response.json())).trace.evaluation, null);
+
+  // Normal play must not retain the inspection outline on vacated cells.
+  await page.locator('#inspect').click();
+  await key('KeyR');
+  await key('ArrowLeft');
+  assert.equal(await page.locator('#board .fact-changed, .fact-value-changed').count(), 0);
+  await page.evaluate(() => {
+    window.cellMutations = 0;
+    window.cellObserver = new MutationObserver(records => { window.cellMutations += records.length; });
+    window.cellObserver.observe(document.getElementById('board'), { subtree: true, attributes: true, childList: true });
+  });
+  await key('KeyQ');
+  assert.equal(await page.evaluate(() => window.cellMutations), 0, 'unchanged screen facts must not rewrite board cells');
+  await page.evaluate(() => window.cellObserver.disconnect());
+
+  // A slow response must not turn held-key repeats into delayed movements.
+  let repeatedRequests = 0;
+  await page.route('**/facts', async route => {
+    if (route.request().method() === 'POST' && JSON.parse(route.request().postData()).value === 'ArrowDown') {
+      repeatedRequests++;
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    await route.continue();
+  });
+  const repeatResponse = page.waitForResponse(response => response.url().endsWith('/facts') && response.request().postDataJSON()?.value === 'ArrowDown');
+  await page.evaluate(() => {
+    for (let i = 0; i < 40; i++) document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowDown', repeat: i > 0, bubbles: true }));
+  });
+  await repeatResponse;
+  await key('ArrowLeft');
+  assert.equal(repeatedRequests, 1, 'OS repeats must respect transport backpressure');
+  await page.unroute('**/facts');
+
+  await page.setViewportSize({ width: 1560, height: 1150 });
+  await page.locator('#realtime-mode').click();
+  await page.waitForFunction(() => document.body.dataset.timeMode === 'realtime');
+  await key('KeyR');
+  await key('ArrowLeft');
+  assert.equal(await page.locator('#board .fact-changed, .fact-value-changed').count(), 0);
+  await page.locator('#watch-engine').click();
+  await page.waitForFunction(() => document.getElementById('evaluation-panel').dataset.playback === 'live');
+  assert.equal(await page.evaluate(() => document.body.dataset.timeMode), 'realtime', 'opening the graph must preserve real-time mode');
+  await page.evaluate(() => { window.liveCard = document.querySelector('.fact-node[data-relation="screen_cell"]'); });
+  const liveRounds = [];
+  for (let i = 0; i < 8; i++) {
+    const response = await page.waitForResponse(response => response.url().endsWith('/facts') && response.request().postDataJSON()?.relation === 'timestep');
+    const round = await response.json();
+    await page.waitForFunction(sequence => Number(document.getElementById('evaluation-panel').dataset.round) >= sequence, round.sequence);
+    assert.ok(await page.evaluate(() => window.liveCard === document.querySelector('.fact-node[data-relation="screen_cell"]')), 'live updates should reuse the graph');
+    assert.ok(await page.locator('#wave-position').evaluate(input => input.value === input.max), 'live view must show the completed round, not old replay steps');
+    liveRounds.push(round.trace.ms);
+  }
+  await page.locator('#wave-play').click();
+  const heldRound = await page.locator('#evaluation-panel').getAttribute('data-round');
+  const nextLive = await page.waitForResponse(response => response.url().endsWith('/facts') && response.request().postDataJSON()?.relation === 'timestep').then(response => response.json());
+  assert.ok(nextLive.sequence > Number(heldRound));
+  assert.equal(await page.locator('#evaluation-panel').getAttribute('data-round'), heldRound, 'Hold must preserve the selected round while the game continues');
+  await page.locator('#follow-latest').click();
+  await page.waitForFunction(sequence => Number(document.getElementById('evaluation-panel').dataset.round) >= sequence && document.getElementById('evaluation-panel').dataset.playback === 'live', nextLive.sequence);
+  await page.locator('#wave-position').evaluate(input => { input.value = 0; input.dispatchEvent(new Event('input', { bubbles: true })); });
+  assert.equal(await page.locator('#evaluation-panel').getAttribute('data-following'), 'false');
+  assert.equal(await page.locator('.fact-node[data-relation="screen_cell"] .svg-screen-cell').count(), 216);
+  await page.locator('#follow-latest').click();
+  await page.locator('#close-evaluation').click();
+  await page.waitForFunction(() => document.getElementById('evaluation-panel').hidden);
+  const closed = await page.waitForResponse(response => response.url().endsWith('/facts') && response.request().postDataJSON()?.relation === 'timestep').then(response => response.json());
+  assert.equal(closed.trace.evaluation, null, 'closing the graph must disable trace collection');
+  await key('ArrowLeft');
+  assert.equal(await page.locator('#board .fact-changed').count(), 0);
+  const inputLatency = await page.evaluate(async () => {
+    const samples = [];
+    for (const code of ['ArrowRight', 'ArrowLeft', 'ArrowRight', 'ArrowLeft']) {
+      const started = performance.now();
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { observer.disconnect(); reject(new Error('Movement did not render')); }, 1500);
+        const observer = new MutationObserver(() => { clearTimeout(timeout); observer.disconnect(); resolve(); });
+        observer.observe(document.getElementById('board'), { subtree: true, attributes: true });
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+      });
+      samples.push(Math.round(performance.now() - started));
+    }
+    return samples;
+  });
+  console.log(`Key fact to board update: ${inputLatency.join(', ')} ms.`);
+  console.log(`Live rounds: ${liveRounds.join(', ')} ms; closed panel: ${closed.trace.ms} ms. No stale replay, stable graph, working hold/resume, bounded key repeats.`);
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log('Browser checks passed: gameplay, manual time, fact colors, receiver effects, source browsing, wave markers, frontier persistence and rewind, playback, history, desktop/mobile, offline assets.');

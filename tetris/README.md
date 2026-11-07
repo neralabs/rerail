@@ -31,11 +31,18 @@ Restart preserves the selected time mode.
 Open **View the facts** to inspect the latest round.
 Green lines show added facts. Red lines show removed facts. Gray lines show unchanged facts.
 Select **Changes only** to hide unchanged facts.
-Changed board cells have a light outline, and changed counters have an underline.
+During manual inspection, changed cells have a light outline and changed counters have an underline.
+These marks disappear when you close the inspection panels or select real-time play.
 
 Open **Watch the engine** for the optional evaluation panel.
-The panel selects manual time so that the game stays still during inspection.
-The panel also has buttons to advance game time.
+The panel preserves your selected time mode.
+In real-time mode, it shows the latest completed round and briefly animates its accepted changes.
+New rounds replace these animations immediately, so playback cannot fall behind the game.
+The graph keeps its layout and updates facts in place.
+Use **Hold**, the timeline, or the round selector to inspect a recorded round while the game continues.
+Use **Follow latest** to return to live updates.
+In manual mode, the panel replays each round at the selected speed.
+It also has buttons to advance game time.
 
 - Use **Play**, **Pause**, and **Step** to inspect recorded rule executions.
 - Use the timeline to move through a round without changing the game.
@@ -60,7 +67,7 @@ Cache hits do not reset the age of unchanged facts.
 At a wave boundary, the next wave starts and completed updates become earlier-wave updates.
 Seeking clears transient glows. Returning to the start restores the initial, neutral fact snapshot.
 
-Green packets show accepted additions and removals. Amber packets show unchanged results or cache hits.
+In replay, green packets show accepted additions and removals. Amber packets show unchanged results or cache hits.
 Rejected packets retreat a few pixels and briefly thicken the receiver's border.
 Accepted updates give the receiving node a bright green glow.
 Gray packets show rules with no matching candidates.
@@ -72,7 +79,9 @@ Nodes list up to four facts directly. Larger sets show a sample.
 Screen cells appear as miniature board and preview grids.
 Select the screen relation for larger grids and access to the raw tuples.
 Edges come from the native parser's rule dependencies, including negative and aggregate reads.
-The animation replays recorded execution events at a readable speed. It does not run the game rules in JavaScript.
+Manual playback replays recorded execution events at a readable speed.
+Live playback shows completed facts with brief change notifications.
+Neither view runs game rules in JavaScript.
 
 Each round starts with the previous computed facts visible, including the complete board and preview.
 The native cache records each rule's previous result, even when tracing is off.
@@ -113,6 +122,9 @@ Reported round times include this extra work when tracing is enabled.
 The cache and observer are local additions to the standalone adapter.
 They do not change the Final shape source worktree.
 Closing the panel disables trace collection.
+The browser updates screen elements only when their rendered values change.
+While a key request is pending, it drops additional operating-system repeats.
+Distinct presses remain ordered facts. This prevents delayed movement after a key is released.
 
 The game includes seven shapes, rotation kicks, a landing ghost, a next-piece preview, line clearing, scoring, and levels.
 Rotation uses a small kick table. Piece selection uses a seeded generator, without a seven-piece bag.

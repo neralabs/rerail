@@ -12,12 +12,18 @@ let selectedRound;
 const evaluation = new EvaluationView(result => { selectedRound = result; if (!byId('inspector').hidden) showTrace(); });
 const sourceBrowser = new SourceBrowser();
 const texts = result => Object.fromEntries(result.screen.screen_text);
+const textElements = new Map();
+for (const element of document.querySelectorAll('[data-text]')) {
+  const name = element.dataset.text;
+  if (!textElements.has(name)) textElements.set(name, []);
+  textElements.get(name).push(element);
+}
+const modeButtons = [...document.querySelectorAll('[data-time-mode]')];
+const manualButtons = [...document.querySelectorAll('.manual-step'), byId('time-step'), byId('gravity-step')];
 
-function render(result) {
-  if (result.sequence <= lastSequence) return;
-  lastSequence = result.sequence;
-  latest = result;
-  const changed = new Set(result.trace.changes.added.map(({ relation, row }) => fact(relation, row)));
+function renderScreen(result) {
+  const inspecting = texts(result).time_mode === 'manual' && (!byId('inspector').hidden || !byId('evaluation-panel').hidden);
+  const changed = new Set(inspecting ? result.trace.changes.added.map(({ relation, row }) => fact(relation, row)) : []);
   for (const [area, x, y, color, style] of result.screen.screen_cell) {
     const key = `${area}:${x}:${y}`;
     let cell = cells.get(key);
@@ -25,19 +31,26 @@ function render(result) {
       cell = document.createElement('div'); cell.style.gridColumn = x + 1; cell.style.gridRow = y + 1;
       grids.get(area).append(cell); cells.set(key, cell);
     }
-    cell.className = `cell ${color} ${style}${result.sequence > 1 && changed.has(fact('screen_cell', [area, x, y, color, style])) ? ' fact-changed' : ''}`;
+    const className = `cell ${color} ${style}${inspecting && result.sequence > 1 && changed.has(fact('screen_cell', [area, x, y, color, style])) ? ' fact-changed' : ''}`;
+    if (cell.className !== className) cell.className = className;
   }
   for (const [id, value] of result.screen.screen_text) {
-    for (const element of document.querySelectorAll(`[data-text="${id}"]`)) {
-      element.textContent = value;
-      element.classList.toggle('fact-value-changed', result.sequence > 1 && changed.has(fact('screen_text', [id, value])));
+    for (const element of textElements.get(id) ?? []) {
+      if (element.textContent !== String(value)) element.textContent = value;
+      const highlight = inspecting && result.sequence > 1 && changed.has(fact('screen_text', [id, value]));
+      if (element.classList.contains('fact-value-changed') !== highlight) element.classList.toggle('fact-value-changed', highlight);
     }
   }
+}
+function render(result) {
+  if (result.sequence <= lastSequence) return;
+  lastSequence = result.sequence;
+  latest = result;
+  renderScreen(result);
   const text = texts(result);
   byId('overlay').hidden = !text.overlay;
-  for (const button of document.querySelectorAll('[data-time-mode]')) button.setAttribute('aria-pressed', String(button.dataset.timeMode === text.time_mode));
-  byId('time-step').disabled = byId('gravity-step').disabled = text.time_mode !== 'manual';
-  for (const button of document.querySelectorAll('.manual-step')) button.disabled = text.time_mode !== 'manual';
+  for (const button of modeButtons) button.setAttribute('aria-pressed', String(button.dataset.timeMode === text.time_mode));
+  for (const button of manualButtons) button.disabled = text.time_mode !== 'manual';
   byId('time-hint').textContent = text[text.time_mode === 'manual' ? 'manual_hint' : 'realtime_hint'];
   document.body.dataset.timeMode = text.time_mode;
   const controls = byId('controls');
@@ -95,6 +108,14 @@ function send(relation, value) {
     return result;
   });
 }
+let pendingKeys = 0;
+function sendKey(code, repeat = false) {
+  // Backpressure on OS repeats prevents stale movement facts accumulating.
+  // Distinct presses still arrive in order, and the engine interprets every key.
+  if (repeat && pendingKeys) return;
+  pendingKeys++;
+  send('keypress', code).catch(() => {}).finally(() => { pendingKeys--; });
+}
 async function setGraph(open) {
   byId('watch-engine').disabled = true;
   try {
@@ -108,9 +129,10 @@ async function setGraph(open) {
     evaluation.setOpen(open);
     if (open) {
       (matchMedia('(min-width: 1151px)').matches ? document.querySelector('.workspace') : byId('evaluation-panel')).scrollIntoView({ block: 'start' });
-      if (texts(latest).time_mode !== 'manual') await send('keypress', 'KeyM');
-      else await send('timestep', 0);
+      await send('timestep', 0);
     } else { document.body.classList.remove('graph-expanded'); selectedRound = null; if (!byId('inspector').hidden) showTrace(); }
+    renderScreen(latest);
+    byId('watch-engine').blur();
   } catch (error) { report(error); }
   finally { byId('watch-engine').disabled = false; }
 }
@@ -124,7 +146,7 @@ document.addEventListener('keydown', event => {
   if (event.target.closest('#evaluation-panel, #watch-engine, #inspect') && ['Space', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.code)) return;
   if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.code)) event.preventDefault();
   if (event.repeat && ['KeyP', 'KeyR', 'Space', 'KeyM', 'KeyN', 'KeyG'].includes(event.code)) return;
-  send('keypress', event.code).catch(() => {});
+  sendKey(event.code, event.repeat);
 });
 for (const button of document.querySelectorAll('[data-key]')) {
   button.addEventListener('click', () => { send('keypress', button.dataset.key).catch(() => {}); button.blur(); });
@@ -141,6 +163,8 @@ for (const button of document.querySelectorAll('[data-time-mode]')) {
 byId('inspect').addEventListener('click', event => {
   const panel = byId('inspector'); panel.hidden = !panel.hidden;
   event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  event.currentTarget.blur();
+  renderScreen(latest);
   if (!panel.hidden) showTrace();
 });
 byId('changes-only').addEventListener('change', showTrace);

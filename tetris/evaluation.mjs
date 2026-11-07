@@ -59,12 +59,21 @@ export class EvaluationView {
     this.frame = null;
     this.acceptedTimers = new Map();
     byId('follow-rule-source').addEventListener('click', () => { this.pinnedRule = null; this.updateSourceSelection(true); });
-    byId('wave-play').addEventListener('click', () => this.playing ? this.pause() : this.play());
-    byId('wave-next').addEventListener('click', () => { this.pause(); this.advanceOne(); });
-    byId('wave-restart').addEventListener('click', () => { this.pause(); this.seek(0); this.play(); });
-    byId('wave-position').addEventListener('input', event => { this.pause(); this.seek(Number(event.target.value)); });
+    byId('follow-latest').addEventListener('click', event => {
+      this.follow = true;
+      const latest = this.history.at(-1);
+      if (latest) this.load(latest, true, this.isRealtime(latest));
+      event.currentTarget.blur();
+    });
+    byId('wave-play').addEventListener('click', () => {
+      if (this.live || this.playing) this.hold();
+      else this.play();
+    });
+    byId('wave-next').addEventListener('click', () => { const live = this.live; this.hold(); if (live) this.seek(0); this.advanceOne(); });
+    byId('wave-restart').addEventListener('click', () => { this.hold(); this.seek(0); this.play(); });
+    byId('wave-position').addEventListener('input', event => { this.hold(); this.seek(Number(event.target.value)); });
     byId('wave-speed').addEventListener('change', event => { this.speed = Number(event.target.value); });
-    byId('show-constants').addEventListener('change', () => { this.pause(); this.drawGraph(); this.drawState(); });
+    byId('show-constants').addEventListener('change', () => { this.hold(); this.drawGraph(); this.drawState(); });
     byId('graph-fit').addEventListener('click', () => this.fit());
     byId('graph-zoom-in').addEventListener('click', () => this.zoom(1.25));
     byId('graph-zoom-out').addEventListener('click', () => this.zoom(1 / 1.25));
@@ -74,57 +83,122 @@ export class EvaluationView {
     });
     byId('round-history').addEventListener('change', event => {
       const result = this.history.find(result => result.sequence === Number(event.target.value));
-      this.follow = result === this.history.at(-1);
+      this.follow = false;
       if (result) this.load(result, false);
     });
     this.attachNavigation();
   }
   setOpen(open) {
     this.open = open;
-    if (!open) { this.pause(); this.hideRuleTooltip(); }
-    else if (this.result) requestAnimationFrame(() => this.fit());
+    if (!open) { this.pause(); this.clearAccepted(); this.hideRuleTooltip(); }
+    else this.follow = true;
+    if (open && this.result) requestAnimationFrame(() => this.fit());
+  }
+  isRealtime(result = this.result) {
+    return result?.screen.screen_text.some(([name, value]) => name === 'time_mode' && value === 'realtime');
   }
   accept(result) {
     if (!result.trace.evaluation) return;
     if (!this.history.some(round => round.sequence === result.sequence)) this.history.push(result);
     if (this.history.length > 32) this.history.shift();
-    this.updateHistory();
-    if (this.open && this.follow && !this.playing) this.load(result, true);
+    if (this.open && this.follow && (this.isRealtime(result) || !this.playing || this.live)) this.load(result, true, this.isRealtime(result));
+    else this.updateHistory();
   }
   updateHistory() {
     const select = byId('round-history');
-    select.replaceChildren(...this.history.toReversed().map(result => {
+    const rounds = this.result && !this.history.includes(this.result) ? [this.result, ...this.history] : this.history;
+    select.replaceChildren(...rounds.toReversed().map(result => {
       const option = document.createElement('option');
       option.value = result.sequence;
       option.textContent = `#${result.sequence} · ${result.trace.input}`;
       option.selected = result.sequence === this.result?.sequence;
       return option;
     }));
+    byId('follow-latest').setAttribute('aria-pressed', String(this.follow));
+    byId('follow-latest').textContent = this.follow ? '● Following latest' : 'Follow latest →';
+    byId('evaluation-panel').dataset.round = this.result?.sequence ?? '';
+    byId('evaluation-panel').dataset.following = String(this.follow);
   }
-  load(result, autoplay) {
+  load(result, autoplay, live = false) {
     this.pause();
-    this.clearAccepted();
+    const catalog = JSON.stringify([result.trace.evaluation.rules, result.trace.evaluation.source]);
+    const sameCatalog = this.catalog === catalog;
+    if (!live || !sameCatalog) this.clearAccepted();
+    this.catalog = catalog;
+    this.live = live;
     this.result = result;
     this.evaluation = result.trace.evaluation;
     this.events = this.evaluation.events;
     this.rules = new Map(this.evaluation.rules.map(rule => [rule.id, rule]));
     this.waves = this.evaluation.waves ?? partitionWaves(this.evaluation.rules, this.events);
-    this.selected = null;
-    this.pinnedRule = null;
-    this.firingRule = null;
-    this.sourceSpans = new Map([...this.rules.values()].map(rule => [rule.id, sourceSpan(this.evaluation.source?.text ?? '', rule.source_line)]));
+    if (!live || !sameCatalog) {
+      this.selected = null;
+      this.pinnedRule = null;
+      this.firingRule = null;
+    }
+    if (!sameCatalog) this.sourceSpans = new Map([...this.rules.values()].map(rule => [rule.id, sourceSpan(this.evaluation.source?.text ?? '', rule.source_line)]));
     this.renderSource();
     this.position = 0;
     this.updateHistory();
-    byId('round-input').textContent = `${result.trace.ms} ms native + transport`;
+    byId('round-input').textContent = `${live ? 'Live · latest completed round · ' : ''}${result.trace.ms} ms evaluation`;
+    byId('wave-play').textContent = live ? 'Ⅱ Hold' : '▶ Play';
+    byId('evaluation-panel').dataset.playback = live ? 'live' : 'replay';
     byId('graph-empty').hidden = true;
     byId('wave-position').max = this.events.length;
     this.drawWaveMarkers();
     this.onSelect(result);
     this.resetState();
-    this.drawGraph();
+    const graphKey = JSON.stringify([catalog, this.visibleRelations()]);
+    if (!live || this.graphKey !== graphKey) { this.clearAccepted(); this.drawGraph(); }
+    this.graphKey = graphKey;
+    if (live) {
+      for (const event of this.events) this.apply(event);
+      this.position = this.events.length;
+    }
     this.drawState();
-    if (autoplay && !matchMedia('(prefers-reduced-motion: reduce)').matches) this.play();
+    if (live) {
+      const changed = this.events.filter(hasChanges);
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) this.animateLive(changed);
+    } else if (autoplay && !matchMedia('(prefers-reduced-motion: reduce)').matches) this.play();
+  }
+  hold() {
+    if (this.isRealtime()) this.follow = false;
+    this.live = false;
+    this.pause();
+    this.updateHistory();
+    byId('evaluation-panel').dataset.playback = 'replay';
+  }
+  animateLive(events) {
+    // Notify about this completed round's changes concurrently. New rounds cancel
+    // this short animation; full native checks remain available in replay.
+    const packets = events.flatMap(event => this.edges.filter(edge => edge.rule === event.rule).map(edge => {
+      const element = node('circle', { r: 3, fill: colors.changed, class: 'wave-packet' });
+      this.packetLayer.append(element);
+      return { event, edge, element, length: edge.element.getTotalLength() };
+    }));
+    const started = performance.now();
+    const animate = now => {
+      if (!this.live || !this.open) return;
+      const progress = Math.min(1, (now - started) / 100);
+      for (const packet of packets) {
+        const point = packet.edge.element.getPointAtLength(packet.length * progress);
+        packet.element.setAttribute('cx', point.x); packet.element.setAttribute('cy', point.y);
+      }
+      if (progress < 1) this.frame = requestAnimationFrame(animate);
+      else { this.clearActivity(); this.frame = null; }
+    };
+    const receivers = [...new Set(events.map(event => event.head))].filter(name => this.cards.has(name));
+    for (const name of receivers) {
+      clearTimeout(this.acceptedTimers.get(name));
+      this.cards.get(name).classList.remove('node-accepted');
+    }
+    if (receivers.length) void this.svg.getBoundingClientRect();
+    for (const name of receivers) {
+      const card = this.cards.get(name);
+      card.classList.add('node-accepted');
+      this.acceptedTimers.set(name, setTimeout(() => { card.classList.remove('node-accepted'); this.acceptedTimers.delete(name); }, 1500));
+    }
+    if (packets.length) this.frame = requestAnimationFrame(animate);
   }
   resetState() {
     this.state = new Map(Object.entries(this.evaluation.initial ?? this.evaluation.seeds).map(([name, rows]) => [name, new Map(rows.map(row => [key(row), row]))]));
@@ -260,6 +334,13 @@ export class EvaluationView {
     for (const edge of this.edges) edge.element.classList.remove('edge-active');
     this.packetLayer.replaceChildren();
   }
+  visibleRelations() {
+    const heads = new Set(this.evaluation.rules.map(rule => rule.head));
+    const external = new Set(this.evaluation.external);
+    const reads = this.evaluation.rules.flatMap(rule => rule.reads.map(read => read.relation));
+    const names = new Set([...Object.keys(this.evaluation.seeds), ...heads, ...reads]);
+    return [...names].filter(name => byId('show-constants').checked || heads.has(name) || external.has(name) || !(name in this.evaluation.seeds)).sort();
+  }
   drawGraph() {
     if (!this.evaluation) return;
     this.svg.replaceChildren();
@@ -269,11 +350,8 @@ export class EvaluationView {
     this.scene = node('g'); this.svg.append(this.scene);
     const edgeLayer = node('g'); this.packetLayer = node('g'); const cardLayer = node('g');
     this.scene.append(edgeLayer, cardLayer, this.packetLayer);
-    const heads = new Set(this.evaluation.rules.map(rule => rule.head));
     const external = new Set(this.evaluation.external);
-    const names = new Set([...Object.keys(this.evaluation.seeds), ...heads, ...this.evaluation.rules.flatMap(rule => rule.reads.map(read => read.relation))]);
-    const showConstants = byId('show-constants').checked;
-    const visible = [...names].filter(name => showConstants || heads.has(name) || external.has(name));
+    const visible = this.visibleRelations();
     const parents = new Map(visible.map(name => [name, this.evaluation.rules.filter(rule => rule.head === name).flatMap(rule => rule.reads.map(read => read.relation)).filter(name => visible.includes(name))]));
     const levels = new Map();
     const level = (name, visiting = new Set()) => {
@@ -286,16 +364,9 @@ export class EvaluationView {
     for (const name of visible) level(name);
     const columns = Array.from({ length: 5 }, () => []);
     visible.toSorted((a, b) => levels.get(a) - levels.get(b) || a.localeCompare(b)).forEach((name, index) => columns[Math.min(4, Math.floor(index / Math.ceil(visible.length / 5)))].push(name));
-    // Reserve enough room for the largest fact set seen during this recorded round.
-    const allRows = new Map(Object.entries(this.evaluation.initial ?? this.evaluation.seeds).map(([name, rows]) => [name, new Map(rows.map(row => [key(row), row]))]));
-    for (const event of this.events) {
-      if (!allRows.has(event.head)) allRows.set(event.head, new Map());
-      for (const row of updates(event).added) allRows.get(event.head).set(key(row), row);
-    }
-    this.cardHeights = new Map(visible.map(name => {
-      const count = allRows.get(name)?.size ?? 0;
-      return [name, name === 'screen_cell' ? 158 : name === 'screen_text' ? 89 : name === 'screen_control' ? 82 : 30 + Math.max(1, Math.min(4, count)) * 12];
-    }));
+    // Reserve all four tuple rows so a live update never needs to relayout cards.
+    this.cardHeights = new Map(visible.map(name => [name,
+      name === 'screen_cell' ? 158 : name === 'screen_text' ? 89 : name === 'screen_control' ? 82 : 78]));
     const columnHeights = columns.map(column => column.reduce((sum, name) => sum + this.cardHeights.get(name) + 15, 0));
     const height = Math.max(480, ...columnHeights.map(height => height + 35));
     this.world = { width: 1115, height };
@@ -327,6 +398,7 @@ export class EvaluationView {
       edgeLayer.append(element, hit); this.edges.push(edge);
     }
     this.cards = new Map();
+    this.cardSignatures = new Map();
     for (const [name, point] of this.points) {
       const card = node('g', { transform: `translate(${point.x},${point.y})`, class: `fact-node${external.has(name) ? ' input-node' : ''}`, tabindex: 0, role: 'button', 'aria-label': `Inspect ${name}`, 'data-relation': name });
       card.append(node('rect', { width: cardWidth, height: this.cardHeights.get(name), rx: 5, class: 'node-background' }));
@@ -387,7 +459,11 @@ export class EvaluationView {
       const count = rows.length;
       card.querySelector('.sigil-count').textContent = count ? `◆${count}` : '∅';
       card.querySelector('.node-sigil title').textContent = `${count} fact${count === 1 ? '' : 's'}`;
-      this.drawNodeFacts(card, name, rows);
+      const signature = JSON.stringify(rows.map(row => [row, this.factAge(name, row)]));
+      if (this.cardSignatures.get(name) !== signature) {
+        this.drawNodeFacts(card, name, rows);
+        this.cardSignatures.set(name, signature);
+      }
       card.classList.toggle('has-facts', count > 0); card.classList.toggle('selected', this.selected === name);
       const age = frontierState(this.relationWaves.get(name), this.currentWave?.id);
       card.dataset.waveState = age;
@@ -397,8 +473,8 @@ export class EvaluationView {
     byId('wave-position').value = this.position;
     const hidden = byId('show-empty').checked ? '' : ` · ${this.events.filter(isEmpty).length} empty checks not animated`;
     byId('wave-counter').textContent = `${this.position} / ${this.events.length} evaluations${hidden}`;
-    const event = this.events[this.position - 1];
-    if (event) this.showEvent(event);
+    const event = this.live ? this.events.findLast(hasChanges) ?? this.events.at(-1) : this.events[this.position - 1];
+    if (event) this.showEvent(event, false);
     else {
       byId('wave-status').textContent = `Current facts loaded in ${this.state.size} relations. No updates applied yet.`;
       if (!this.selected) {
@@ -415,7 +491,7 @@ export class EvaluationView {
     }
     this.showDetails(this.selected ?? event?.head, this.selected ? [...this.events.slice(0, this.position)].reverse().find(event => event.head === this.selected) : event);
   }
-  showEvent(event) {
+  showEvent(event, details = true) {
     const rule = this.rules.get(event.rule);
     this.firingRule = rule.id;
     const source = this.sourceSpans.get(rule.id);
@@ -429,7 +505,7 @@ export class EvaluationView {
       `${event.candidates.length} existing facts unchanged`;
     byId('wave-status').textContent = `Rule ${event.rule} → ${event.head}: ${event.cache_hit ? `unchanged inputs → rule query skipped · ${event.candidates.length} facts retained` : message}.`;
     byId('wave-status').dataset.outcome = outcome(event);
-    if (!this.selected) this.showDetails(event.head, event);
+    if (details && !this.selected) this.showDetails(event.head, event);
     for (const edge of this.edges) edge.element.classList.toggle('edge-selected', edge.rule === rule.id);
   }
   showDetails(relation, event) {
@@ -486,7 +562,7 @@ export class EvaluationView {
       const summary = wave.updated.length ? `${wave.updated.length} fact set${wave.updated.length === 1 ? '' : 's'} changed · +${wave.added} / −${wave.removed}` : 'No fact changes';
       button.title = `${summary} · ${wave.checked.length} fact sets checked · ${wave.cached} cache hits · evaluations ${wave.start + 1}–${wave.end}. Click to inspect just before the last evaluation.`;
       button.setAttribute('aria-label', `Inspect wave ${wave.id} before its last evaluation`);
-      button.addEventListener('click', () => { this.pause(); this.seek(wave.end - 1); });
+      button.addEventListener('click', () => { this.hold(); this.seek(wave.end - 1); });
       markers.append(button); this.waveButtons.set(wave.id, button);
     }
   }
@@ -625,7 +701,7 @@ export class EvaluationView {
     }
   }
   openRuleSource(rule) {
-    this.pause(); this.hideRuleTooltip(); this.pinnedRule = rule.id;
+    this.hold(); this.hideRuleTooltip(); this.pinnedRule = rule.id;
     this.selected = rule.head;
     this.drawState(); this.updateSourceSelection(true);
     byId('rule-source-view').scrollIntoView({ block: 'nearest' });
