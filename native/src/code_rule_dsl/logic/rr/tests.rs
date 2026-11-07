@@ -6,6 +6,21 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn canonical_calls_and_callees_ignore_source_layout_and_comments() {
+    let rows = finding_contract("factory ( VersionedScope, # lifecycle\n    name=\"_plan_owner\" )\n", r#"
+.language python
+.decl call_text(c: node, s: symbol)
+.input call_text
+.decl call_function_text(c: node, s: symbol)
+.input call_function_text
+.violation Printed(at: node, full: symbol, callee: symbol) code "CALL" "{full} / {callee}"
+Printed(c, full, fn) :- call_text(c, full), call_function_text(c, fn).
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["message"], "factory(VersionedScope, name='_plan_owner') / factory");
+}
+
+#[test]
 fn workspace_root_is_run_metadata_without_filesystem_resolution() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("root-metadata");
     std::fs::create_dir_all(&dir).unwrap();
