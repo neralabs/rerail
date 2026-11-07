@@ -1,0 +1,5 @@
+{
+  "title": "logging.error in an except clause",
+  "rule": "ruff-try400-error-instead-of-exception",
+  "note": "TRY400 flags log.error inside an except clause: log.exception records the traceback too."
+}

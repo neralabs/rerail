@@ -123,11 +123,14 @@ export function nest(flat) {
 export async function explore(shim, module, { id, rr, parts, sources, lib: libFiles }) {
   const lib = nest(libFiles);
   const rule = { [`${id}.rr`]: rr, ...parts };
+  // A few rules include their part files as the repository lays them out ("../packs/python/<id>.<part>.rr",
+  // from the rule's folder), so the parts are also mounted there.
+  const packs = { python: { ...parts } };
   const env = { RERAIL_RR_LIB: "/lib", RERAIL_PROFILE: "/w/prof" };
   const run = await command(shim, module, ["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out"], env,
-    { "/w": { rule, src: sources, out: {}, prof: {} }, "/lib": lib });
+    { "/w": { rule, packs, src: sources, out: {}, prof: {} }, "/lib": lib });
   const flat = await command(shim, module, ["flatten", `/w/rule/${id}.rr`], { RERAIL_RR_LIB: "/lib" },
-    { "/w": { rule }, "/lib": lib });
+    { "/w": { rule, packs }, "/lib": lib });
   const w = run.mounts["/w"];
   const text = (bytes) => (bytes instanceof Uint8Array ? new TextDecoder().decode(bytes) : "");
   const out = {};

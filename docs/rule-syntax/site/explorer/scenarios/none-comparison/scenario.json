@@ -1,0 +1,5 @@
+{
+  "title": "Comparing with None by ==",
+  "rule": "ruff-e711-none-comparison",
+  "note": "E711 flags == None and != None: None is a singleton, so is None says what is meant, and == can be overridden by the object."
+}
