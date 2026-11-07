@@ -793,6 +793,7 @@ pub(crate) fn run_with_options(
     let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<String>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
+        let _gather = crate::code_rule_dsl::logic::profile::span(|| "gather outputs".into());
         for (rel, lines) in got.outputs {
             if keep(&rel) {
                 outputs.entry(rel.clone()).or_default().extend(lines);
@@ -1043,13 +1044,18 @@ pub(crate) fn run_with_options(
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label));
+                // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
+                // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
+                let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
                 for _ in 0..guests::DEPTH {
-                    // The slice's planner statistics: what it reads, measured in this round's batch.
                     let mut round = stats.clone();
                     for (rel, source) in &sources {
                         if slice_reads.contains(rel) {
-                            let measured = syntax::statistics(source.as_ref());
-                            round.measured(rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                            let m = measured.entry(rel.clone()).or_insert_with(|| {
+                                let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
+                                syntax::statistics(source.as_ref())
+                            });
+                            round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                         }
                         modules.bind(&db, rel, Arc::clone(source))?;
                     }
@@ -1063,6 +1069,7 @@ pub(crate) fn run_with_options(
                         super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
                     }
                     docs.extend(new);
+                    let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 host_of = std::mem::take(&mut made.host_of);
@@ -1131,6 +1138,7 @@ pub(crate) fn run_with_options(
             }
         }
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
+        let _export = crate::code_rule_dsl::logic::profile::span(|| "export to cross".into());
         let mut attribute = |rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| {
             if !attributable {
                 return;
@@ -1293,6 +1301,7 @@ pub(crate) fn run_with_options(
             }
             // The cone's final rows the rest reads, as `<rel>__done` inputs held in memory and measured.
             let mut rest = cone.rest;
+            let done_span = crate::code_rule_dsl::logic::profile::span(|| "done inputs".into());
             let mut st = cross_stats.clone();
             let mut done = Totals::default();
             for rel in &cone.reads {
@@ -1306,6 +1315,7 @@ pub(crate) fn run_with_options(
                 modules.bind(&db, &name, source)?;
             }
             done.apply(&mut st);
+            drop(done_span);
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
             // A pending round's marks hold for the rest as for the cone.
             if rounds.pending && let Some(f) = rest.facts.get_mut(cross_rounds::UNCONVERGED) {
@@ -1430,11 +1440,23 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 
 #[allow(clippy::too_many_arguments)]
 fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
+    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
+    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
+    let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
+    crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
+    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round);
+    crate::code_rule_dsl::logic::native::keep_inputs(db, None);
+    crate::code_rule_dsl::logic::native::forget_inputs(db);
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
-    // The previous round's rows of each hop relation (none before round 1), bound as `<rel>__prev` from memory.
     let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
-    // Round 0's previous rows: none, measured as such.
     let mut prev_totals = Totals::default();
     for rel in hops {
         let (t, width) = (types(rel), types(rel).len());
@@ -1442,25 +1464,26 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
         prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), 0, &empty, &t.iter().map(String::as_str).collect::<Vec<_>>());
     }
     let mut last = None;
-    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
-    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
-    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    let mut measured_lens: BTreeMap<String, usize> = BTreeMap::new();
     for r in 0..=k + 1 {
         let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
+        let bind = crate::code_rule_dsl::logic::profile::span(|| "bind previous rows".into());
         for (rel, rows) in &prev_rows {
             let width = types(rel).len();
             let columns = (0..width).map(|i| format!("c{i}")).collect();
             let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
             modules.bind(db, &format!("{rel}{}", cross_rounds::PREV), component::columns_source(columns, values))?;
         }
+        drop(bind);
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
         let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
-        let got = super::run_atoms_native_over(&round, db, "main", st, held, modes)?;
+        let got = super::run_atoms_native_over(round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
+        let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
         let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-        prev_totals = Totals::default();
+        let mut sources: Vec<(&String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::with_capacity(hops.len());
         for rel in hops {
             let width = types(rel).len();
             let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
@@ -1468,16 +1491,61 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             } else {
                 Arc::new(Rows::read(db, rel)?)
             };
-            let t = types(rel);
-            let t: Vec<&str> = t.iter().map(String::as_str).collect();
-            prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), source.len(), source.as_ref(), &t);
-            // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
-            prev_totals.alias(&format!("{rel}{}", cross_rounds::PREV), rel);
-            rows.insert(rel.clone(), (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
+            // Sorted and distinct once: the digest and the next round's `__prev` read them so.
+            let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
+            held.sort_unstable();
+            held.dedup();
+            rows.insert(rel.clone(), held);
+            sources.push((rel, source));
         }
-        let digest = cross_rounds::digest(&rows);
+        // The next round's statistics of `<rel>__prev`: a relation is measured again only when its rows moved by more
+        // than a tenth since it was last measured (a later round adds a few percent; each measurement sorts columns).
+        {
+            let _m = crate::code_rule_dsl::logic::profile::span(|| "measure".into());
+            for (rel, source) in &sources {
+                if measured_lens.get(*rel).is_some_and(|&m| source.len().abs_diff(m) * 10 <= m) {
+                    continue;
+                }
+                let prev = format!("{rel}{}", cross_rounds::PREV);
+                prev_totals.forget(&prev);
+                prev_totals.forget(rel);
+                let t = types(rel);
+                let t: Vec<&str> = t.iter().map(String::as_str).collect();
+                prev_totals.add_rows(&prev, source.len(), source.as_ref(), &t);
+                // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
+                prev_totals.alias(&prev, rel);
+                measured_lens.insert((*rel).clone(), source.len());
+            }
+        }
+        drop(sources);
+        drop(measure);
+        let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
+        let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
+        crate::code_rule_dsl::logic::profile::decision(&format!("round {r} hop rows"), || {
+            // Documents whose rows of some hop relation changed since the round before (by the head's first
+            // node column; a relation without one is not counted).
+            let mut changed: BTreeSet<i64> = BTreeSet::new();
+            for (rel, v) in &rows {
+                if types(rel).first().map(String::as_str) != Some("node") {
+                    continue;
+                }
+                let (now, before) = (v, &prev_rows[rel]);
+                if now == before { continue; }
+                let docs = |rs: &[Vec<i64>]| -> BTreeMap<i64, Vec<Vec<i64>>> {
+                    let mut m: BTreeMap<i64, Vec<Vec<i64>>> = BTreeMap::new();
+                    for r in rs { m.entry(r[0] >> 32).or_default().push(r.clone()); }
+                    m
+                };
+                let (a, b) = (docs(now), docs(before));
+                for d in a.keys().chain(b.keys()) {
+                    if a.get(d) != b.get(d) { changed.insert(*d); }
+                }
+            }
+            let docs: BTreeSet<i64> = rows.values().flatten().map(|r| r[0] >> 32).collect();
+            format!("{}; documents changed {} of {}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
+        });
         if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
             report.pending = r == k + 1 && !report.converged;
@@ -1487,11 +1555,7 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
         last = Some(digest);
-        for (rel, mut rows) in rows {
-            rows.sort_unstable();
-            rows.dedup();
-            prev_rows.insert(rel, rows);
-        }
+        prev_rows = rows;
         crate::code_rule_dsl::logic::native::forget_inputs(db);
     }
     unreachable!("round K returns")
@@ -1598,6 +1662,11 @@ struct Totals {
     vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
 }
 impl Totals {
+    /// Drops `rel`'s measurements (to measure it again).
+    fn forget(&mut self, rel: &str) {
+        self.rels.remove(rel);
+        self.vals.retain(|(r, _), _| r != rel);
+    }
     /// `from`'s measurements also under the name `to` (the same rows, measured once).
     fn alias(&mut self, from: &str, to: &str) {
         if let Some(r) = self.rels.get(from).cloned() {
@@ -1633,18 +1702,14 @@ impl Totals {
                 }
                 continue;
             }
-            // Per (document, value) counts of this chunk, then per value: n, documents, and the sum of squares.
-            let mut per: HashMap<(i64, i64), i64> = HashMap::new();
-            for r in 0..n {
-                *per.entry((doc(r), rows.value(r, c))).or_default() += 1;
-            }
+            // Per value of this chunk: n, documents, and the sum of squares of its count per document.
             let vals = self.vals.entry((rel.to_owned(), name.clone())).or_default();
-            for ((_, v), k) in per {
+            value_runs(rows, c, &doc, |v, count, docs| {
                 let e = vals.entry(v).or_default();
-                e[0] += k;
-                e[1] += 1;
-                e[2] += k * k;
-            }
+                e[0] += count;
+                e[1] += docs.len() as i64;
+                e[2] += docs.iter().map(|k| k * k).sum::<i64>();
+            });
         }
     }
     /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`.
@@ -1662,13 +1727,35 @@ impl Totals {
 
 /// A node column's (ndv, sq, sqd) in one chunk: its values never cross documents.
 fn column_moments(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64) -> (i64, i64, i64) {
-    let mut per: HashMap<i64, i64> = HashMap::new();
-    let mut per_doc: HashMap<(i64, i64), i64> = HashMap::new();
-    for r in 0..rows.len() {
-        *per.entry(rows.value(r, c)).or_default() += 1;
-        *per_doc.entry((doc(r), rows.value(r, c))).or_default() += 1;
+    let (mut ndv, mut sq, mut sqd) = (0, 0, 0);
+    value_runs(rows, c, doc, |_, n, docs| {
+        ndv += 1;
+        sq += n * n;
+        sqd += docs.iter().map(|k| k * k).sum::<i64>();
+    });
+    (ndv, sq, sqd)
+}
+
+/// Column `c`'s values in runs, by one sort of (value, document): `f(v, n, per_doc)` for each distinct value v, with
+/// its row count and its row count in each document it occurs in. No hash map per cell.
+fn value_runs(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64, mut f: impl FnMut(i64, i64, &[i64])) {
+    let mut pairs: Vec<(i64, i64)> = (0..rows.len()).map(|r| (rows.value(r, c), doc(r))).collect();
+    pairs.sort_unstable();
+    let mut per_doc = Vec::new();
+    let mut at = 0;
+    while at < pairs.len() {
+        let v = pairs[at].0;
+        let end = at + pairs[at..].partition_point(|p| p.0 == v);
+        per_doc.clear();
+        let mut d = at;
+        while d < end {
+            let de = d + pairs[d..end].partition_point(|p| p.1 == pairs[d].1);
+            per_doc.push((de - d) as i64);
+            d = de;
+        }
+        f(v, (end - at) as i64, &per_doc);
+        at = end;
     }
-    (per.len() as i64, per.values().map(|k| k * k).sum(), per_doc.values().map(|k| k * k).sum())
 }
 
 /// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.

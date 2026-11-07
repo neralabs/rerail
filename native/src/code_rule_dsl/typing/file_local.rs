@@ -228,7 +228,7 @@ pub(crate) fn document_column(relation: &str) -> Option<usize> {
         "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
         "source" | "src_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_root" | "tape_of" | "guest" => Some(0),
+        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
         "docof" => Some(1),
         _ => None,
     }

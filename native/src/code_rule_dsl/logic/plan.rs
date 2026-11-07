@@ -3456,7 +3456,9 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
+    let flush = super::profile::span(|| "flush symbols".into());
     super::native::flush_symbols(db)?;
+    drop(flush);
     out
 }
 
