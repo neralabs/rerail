@@ -1536,3 +1536,32 @@ one run. There were five causes:
 
 **Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
 executor's, and the admission spike), 104 s at load 40-73.
+
+## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+
+**Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
+hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
+version of that module is `matcher::p_anchors`, identical to P's but for this branch's edits, and
+W's `matcher::anchors` stays. The other 24 are one choice, O18's and O20's: P's relational clause
+and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
+`ClauseKind::Relational` under `cfg(test)`, `TapeDoc`'s P accessors `#[cfg(test)]`, W's
+`select`/store-restore path in `workspace/evaluate.rs`, W's profile fields kept). None was lost.
+
+**TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
+`calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
+pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
+`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+after P's last native commit):
+- Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
+  P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
+- `test/conformance/data-layer/ports.test.ts` fails the same way on both addons (batch 01: 1 false
+  positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
+  It is P's open parity, and is left out the same way.
+- `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
+  `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
+  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  (imports relative to `gate/`).
+
+To close: when O18 is decided, either the relational clause becomes production and these run by
+default, or the tests move with P's stage.
