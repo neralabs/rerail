@@ -287,7 +287,7 @@ fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val:
     };
     let mut rows = 0usize;
     {
-        let mut ins = conn.prepare(&format!("INSERT INTO {out_table} VALUES (?1, ?2)"))?;
+        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES (?1, ?2)", crate::code_rule_dsl::logic::sql::table(&out_table)))?;
         for (&k, &v) in keys.iter().zip(&val) {
             if v != BOT { ins.execute((k, v))?; rows += 1; }
         }

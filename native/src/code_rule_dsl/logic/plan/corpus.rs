@@ -563,7 +563,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
-fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
+pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
     let path = match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => return Ok(None),
         Ok(v) => std::path::PathBuf::from(v),
@@ -1006,7 +1006,7 @@ pub(crate) fn run_with_options(
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
         let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        tables.push_str(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID;", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
+        tables.push_str(&format!("CREATE TABLE x.{}({}, PRIMARY KEY ({})) WITHOUT ROWID;", crate::code_rule_dsl::logic::sql::ident(rel), cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
     }
     tables.push_str("COMMIT;");
     db.execute_batch(&tables)?;
@@ -1240,7 +1240,7 @@ pub(crate) fn run_with_options(
                     }
                     let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
                     let marks = vec!["?"; width].join(", ");
-                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{rel} VALUES ({marks})"))?;
+                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
                     let mut inserted = 0;
                     for row in values.chunks(width) {
                         inserted += insert.execute(rusqlite::params_from_iter(row.iter()))?;
@@ -1422,13 +1422,13 @@ pub(crate) fn run_with_options(
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 attribute(rel, rows.as_ref());
             } else {
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
-                let rows = Rows::read(&db, &format!("temp.{rel}"))?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
+                let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 totals.add_rows(rel, inserted, &rows, &types);
                 attribute(rel, &rows);
             }
@@ -1814,7 +1814,7 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
     let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
         component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
     } else {
-        Arc::new(Rows::read(db, rel)?)
+        Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
     };
     Ok((0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect())
 }
@@ -1870,7 +1870,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
             let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
                 component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
             } else {
-                Arc::new(Rows::read(db, rel)?)
+                Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
             };
             // Sorted and distinct once: the digest and the next round's `__prev` read them so.
             let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
@@ -2197,13 +2197,16 @@ impl CorpusFiles {
     }
 }
 
-/// The language a corpus run reads: `rr` when the program names it (`.language rr`), else Rust or Python as before
-/// (`Typing::rust`, or whichever has more files).
+/// The language a corpus run reads: the one its program names (`.language python`, `rust` or `rr`), else Rust or
+/// Python by `Typing::rust`, or by whichever has more files.
 fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
-    if language == Some("rr") {
-        return "rr";
+    match language {
+        Some("python") => "python",
+        Some("rust") => "rust",
+        Some("rr") => "rr",
+        _ if typing.rust.unwrap_or(found.rust.len() > found.python.len()) => "rust",
+        _ => "python",
     }
-    if typing.rust.unwrap_or(found.rust.len() > found.python.len()) { "rust" } else { "python" }
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files

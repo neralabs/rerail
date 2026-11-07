@@ -2027,6 +2027,13 @@ the repository's `.rr` files (`packs/rr/rr-input-outside-repository.rr`), and ev
 A run with a Python policy and an `rr` policy reports both from one store, and
 `a_rule_about_rules_runs_over_rule_files` holds with a Python file's finding beside the `.rr` ones.
 
+**Closed (2026-11-07).** A program's `.language` now chooses the files it reads (`python`, `rust` or `rr`), and
+`tools::run_policies` (`rerail-engine run-policies <root> <out> <policy.rr>...`) runs several policies over one
+repository, each over its own language's files with one content store, and merges their diagnostics.
+`python_and_rr_policies_run_over_one_repository` runs a Python policy and RR101 over one tree and reports both. One
+run still reads one language. A program naming two would be a run with documents of mixed dialects, which nothing
+needs yet.
+
 ## O106. A relation named like a SQL keyword breaks the SQL backend
 
 A program with `.decl values(…)` fails its run with `near "values": syntax error` on `DROP VIEW IF EXISTS
@@ -2035,3 +2042,20 @@ names its relation `vals` instead.
 
 **Closure:** every relation name the SQL backend writes is quoted, and a program with relations named `values`,
 `select` and `order` runs.
+
+**Closed (2026-11-07).** `logic::sql::ident` quotes a relation's name when it is a SQLite keyword or not a plain
+identifier, and `sql::table` does the same for each part of a qualified name (`x.values`). Every statement that
+names a relation goes through one of them: the plan's views, tables and indexes, the corpus's exports, and setfix's
+reads and writes. `relations_named_like_sql_keywords_run` runs `values`, `order`, `select` and `group`, and
+`rule_files_have_text_facts` names its relation `values` again.
+
+## O107. The rr parser still builds statements beside its tree
+
+Since decision 0062, lowering reads a rule file's statements off its tape (`rr::from_tape`). The parser still builds
+its own statements as it builds the tree, because its control flow reads them. Whether a term becomes an atom
+depends on it being a `call`, and a negated comparison is refused. Nothing outside the parity test
+`statements_from_the_tape_are_the_parsers` uses them, and they cost a second copy of every term during a parse.
+
+**Closure:** the parser builds only the tree, and decides from node kinds what it decided from statements. The
+parity test becomes a comparison of the tape-read statements with a recorded set, and the replay (3988 303 298 0)
+and the rr tests are unchanged.
