@@ -657,6 +657,26 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_generic_binds() {
+    // t21 §5.1, first version: `x: M[str, Box]` binds M's `_V` to Box, so `x.get("a")` is a Box and `.m()` targets
+    // Box.m; `class D(M[str, Box])` binds it for every D; `pick`'s own `_T` is the argument its parameter is given.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("generic");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_K = TypeVar(\"_K\")\n_V = TypeVar(\"_V\")\n_T = TypeVar(\"_T\")\nclass Box:\n    def m(self) -> int: ...\nclass M(Generic[_K, _V]):\n    def get(self, k: _K) -> _V: ...\n    def pick(self, k: _K, d: _T) -> _V | _T: ...\nclass D(M[str, Box]): ...\ndef f(x: M[str, Box], y: D) -> None:\n    x.get(\"a\").m()\n    y.get(\"a\").m()\n    x.pick(\"a\", Box()).m()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    // get, get, pick, and the three `.m()` calls.
+    assert_eq!(targets.lines().count(), 6, "{targets}");
+    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

@@ -401,6 +401,74 @@ rret(f, "inst", k) :- rann(f, t), !isasync(f), aleaf(t, m), aself(m), method(f, 
 .decl cret(c: node, w: symbol, k: node)
 cret(c, w, k) :- callee(c, e), pv(e, "fn", f), rret(f, w, k).
 pv(c, w, s) :- cret(c, w, k), sub(k, s).
+
+// ---- generics (t21 §5.1, first version) --------------------------------------------------------------------------
+// A class's type parameters, by position: `Generic[K, V]` (or `Protocol[T]`) among its bases, else the type variables
+// its first generic base is given (`class list(MutableSequence[_T])`). A type variable: a module's `x = TypeVar(...)`.
+.decl tvarq(m: node, x: symbol)
+tvarq(m, x) :- rasg(m, x, r, _), kind(m, "module"), kind(r, "call"), field(r, "function", e), text(e, "TypeVar").
+tvarq(m, x) :- rasg(m, x, r, _), kind(m, "module"), kind(r, "call"), field(r, "function", e), field(e, "attribute", a), text(a, "TypeVar").
+// sarg(e, j, a): a is the j-th argument of the generic e (`dict[str, int]` as a subscript or an annotation's type).
+// pred(i, j): j = i - 1, for the positions a generic's arguments and a method's parameters take.
+.decl pred(i: number, j: number)
+pred(1, 0). pred(2, 1). pred(3, 2). pred(4, 3). pred(5, 4). pred(6, 5). pred(7, 6). pred(8, 7).
+.decl sarg(e: node, j: number, a: node)
+sarg(e, j, a) :- kind(e, "subscript"), child(e, a, i), pred(i, j).
+sarg(e, j, a) :- kind(e, "generic_type"), child(e, p, 1), kind(p, "type_parameter"), child(p, u, j), child(u, a, 0).
+// Read from the bases as written, not their values (which read these): `Generic[...]` and `Protocol[...]` by name.
+.decl pform(e: node)
+pform(e) :- kind(e, "subscript"), field(e, "value", h), kind(h, "identifier"), text(h, x), pform_name(x).
+pform(e) :- kind(e, "subscript"), field(e, "value", h), field(h, "attribute", a), text(a, x), pform_name(x).
+.decl pform_name(x: symbol)
+pform_name("Generic"). pform_name("Protocol").
+.decl explicit_params(c: node)
+explicit_params(c) :- basex(c, e), pform(e).
+.decl gbase_at(c: node, e: node, j: number)
+gbase_at(c, e, j) :- field(c, "superclasses", al), child(al, e, j), kind(e, "subscript"), !pform(e).
+.decl gbase_later(c: node, j: number)
+gbase_later(c, j) :- gbase_at(c, _, j), gbase_at(c, _, i), i < j.
+.decl cparam(c: node, i: number, y: symbol)
+cparam(c, i, y) :- basex(c, e), pform(e), sarg(e, i, a), kind(a, "identifier"), text(a, y).
+cparam(c, i, y) :- gbase_at(c, e, j), !gbase_later(c, j), !explicit_params(c), sarg(e, i, a), kind(a, "identifier"), text(a, y),
+    nearest(c, m, scope), tvarq(m, y).
+// tmap(k, i, a, y): ancestor a's parameter y is k's parameter i; tfix(k, a, y, x): it is the annotation x, fixed by
+// k's bases (`class D(M[str, int])`).
+.decl tmap(k: node, i: number, a: node, y: symbol)
+tmap(k, i, k, y) :- cparam(k, i, y).
+tmap(k, i, a, y) :- basex(k, b), gbase(b, bc), sarg(b, j, x), kind(x, "identifier"), text(x, z), cparam(k, i, z), tmap(bc, j, a, y).
+.decl tparg(k: node, x: node)
+tparg(k, x) :- basex(k, b), sarg(b, _, x), kind(x, "identifier"), text(x, z), cparam(k, _, z).
+.decl tfix(k: node, a: node, y: symbol, x: node)
+tfix(k, a, y, x) :- basex(k, b), gbase(b, bc), sarg(b, j, x), !tparg(k, x), tmap(bc, j, a, y).
+tfix(k, a, y, x) :- base(k, bc), tfix(bc, a, y, x).
+// A generic annotation's value: the annotation itself (`dict[str, int]`), beside its class's instances, so a method
+// declared to return the class's parameter returns what the annotation gives it.
+.decl gleaf(t: node, m: node)
+gleaf(t, m) :- uann(t), aleaf(t, m), ahead(m, h), m != h, pv(h, "cls", k), cparam(k, _, _).
+bv(f, x, "gen", m) :- pann(f, x, t), pread(f, x), gleaf(t, m).
+bv(c, x, "gen", m) :- cann(c, x, t), cread(c, x), gleaf(t, m).
+bv(m0, x, "gen", m) :- mann(m0, x, t), gleaf(t, m).
+// rtvar(f, a, y): method f of class a is declared to return a's parameter y; rpvar(f, i, y): function f returns its
+// own type variable y, which its parameter i is declared to be (`def get(self, key, default: _T) -> _VT | _T`).
+.decl rtvar(f: node, a: node, y: symbol)
+rtvar(f, a, y) :- rann(f, t), !isasync(f), aleaf(t, r), kind(r, "identifier"), text(r, y), method(f, a), cparam(a, _, y).
+.decl rpvar(f: node, i: number, y: symbol)
+rpvar(f, i, y) :- rann(f, t), !isasync(f), aleaf(t, r), kind(r, "identifier"), text(r, y), pann(f, x, pt), aleaf(pt, pr),
+    kind(pr, "identifier"), text(pr, y), param(f, x, i), !rtvar(f, _, y).
+// gbind(c, x): call c's value is what annotation x declares.
+.decl gbind(c: node, x: node)
+gbind(c, x) :- callee(c, n), attr_of(n, o, _), pv(n, "fn", f), rtvar(f, a, y), pv(o, "gen", m), ahead(m, h), pv(h, "cls", k),
+    tmap(k, i, a, y), sarg(m, i, x).
+gbind(c, x) :- callee(c, n), attr_of(n, o, _), pv(n, "fn", f), rtvar(f, a, y), pv(o, "inst", k), tfix(k, a, y, x).
+.decl ghead(x: node, h: node)
+ghead(x, h) :- gbind(_, x), kind(x, "subscript"), field(x, "value", h).
+ghead(x, h) :- gbind(_, x), kind(x, "generic_type"), child(x, h, 0).
+ghead(x, x) :- gbind(_, x), !kind(x, "subscript"), !kind(x, "generic_type").
+pv(c, "inst", s) :- gbind(c, x), ghead(x, h), pv(h, "cls", k), sub(k, s).
+pv(c, "gen", x) :- gbind(c, x), ghead(x, h), x != h, pv(h, "cls", k), cparam(k, _, _).
+// A function's own type variable, from the argument its parameter is given (a method's arguments follow `self`).
+pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method(f, _), rpvar(f, i, _), posarg(c, i, a), pv(a, k, v).
+pv(c, k, v) :- callee(c, e), attr_of(e, _, _), pv(e, "fn", f), method(f, _), rpvar(f, i, _), pred(i, j), posarg(c, j, a), pv(a, k, v).
 tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), dtype(m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
@@ -876,7 +944,7 @@ meta_open(c) :- anc(c, b), base_open(b).
 type_open(n) :- vpos(n), vopen(n), !ext_mod(n).
 type_open(n) :- vpos(n), !vopen(n), !pv(n, _, _), !tv(n, _, _), !ext_mod(n).
 // Functions and `super()` objects are values the relations do not name a class for.
-type_open(n) :- vpos(n), pv(n, k, _), k != "inst", k != "cls", k != "mod".
+type_open(n) :- vpos(n), pv(n, k, _), k != "inst", k != "cls", k != "mod", k != "gen".
 type_open(n) :- vpos(n), tv(n, "ext", _), !ext_mod(n).
 type_open(n) :- vpos(n), pv(n, "cls", c), meta_open(c).
 type_open(n) :- vpos(n), pv(n, "inst", c), !cls_q(c, _).
