@@ -47,6 +47,7 @@ pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
 mod python_parts;
+mod python_print;
 use core_rr::Family;
 mod guests;
 use guests::GuestRows;
@@ -920,6 +921,11 @@ impl Batch {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
                 if wants_digests && !withheld {
                     c.digests(&p, dialect, &mut string);
+                }
+                if !withheld && dialect.family == Family::Python
+                    && projection.reads.as_ref().is_some_and(|r| r.contains("annotation_text"))
+                {
+                    c.annotations(&p, dialect, &mut string).map_err(StoreError::Invalid)?;
                 }
             }
             docs.push(p);

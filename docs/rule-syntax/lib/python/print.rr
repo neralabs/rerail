@@ -1,5 +1,5 @@
 // Native canonical Python annotation text. One row for each annotation node, including type wrappers.
 // Formatting follows Python 3.13 ast.unparse; no Python process runs in the engine.
 // This relation describes annotations, not arbitrary source statements or signature hashes.
-.decl annotation_text(n: node, text: symbol)
+.decl annotation_text(n: node, s: symbol)
 .input annotation_text

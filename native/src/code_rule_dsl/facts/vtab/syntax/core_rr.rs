@@ -495,10 +495,29 @@ pub(super) struct CoreRows {
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
+    annotation_text: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
+    /// One native pass per demanded Python file. Type wrappers retain their own lookup keys.
+    pub(super) fn annotations(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) -> Result<(), String> {
+        let rows = super::python_print::annotations(&p.facts.source)?;
+        for (local, &original) in p.core.iter().enumerate() {
+            let mut id = original;
+            while matches!(dialect.name(&p.facts, id), "type" | "parenthesized_expression") {
+                let mut children = p.facts.children(id).iter().copied().filter(|&c| p.facts.named(c) && dialect.name(&p.facts, c) != "comment");
+                let Some(child) = children.next() else { break };
+                if children.next().is_some() { break; }
+                id = child;
+            }
+            let span = (p.facts.start[id as usize], p.facts.end[id as usize]);
+            if let Some(text) = rows.get(&span) {
+                self.annotation_text.push([p.global(local as u32), string(text) as i64]);
+            }
+        }
+        Ok(())
+    }
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
     pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = &*p.facts;
@@ -820,6 +839,7 @@ impl CoreRows {
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
+            ("annotation_text", node_sym(&self.annotation_text)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }

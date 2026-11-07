@@ -403,7 +403,7 @@ pub(super) fn decode_body(body: &str, prefix: &Prefix) -> Option<Piece> {
 /// Python's escape sequences, as code points (bytes for a `bytes` literal). `None` for a malformed
 /// or out-of-range escape, or an unknown Unicode name. Surrogates remain code points;
 /// scalar callers still reject them when they construct a Rust String.
-fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
+pub(crate) fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
     let mut out = Vec::with_capacity(body.len());
     let mut chars = body.chars().peekable();
     while let Some(c) = chars.next() {

@@ -1353,11 +1353,23 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "sha256": "a821791cace05a3d18f10e8cd5fb1456402b924568738f14da86f247005e4c6b",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_conn_or_txn_union.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/print.rr",
+      "sha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
+      "origin": "authored"
     }
   ],
   "rules": [
@@ -1501,8 +1513,9 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-conn-or-txn-union.json",
       "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "ruleSha256": "a821791cace05a3d18f10e8cd5fb1456402b924568738f14da86f247005e4c6b"
     },
     {
       "check": "async_executor",

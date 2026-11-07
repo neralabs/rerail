@@ -1,0 +1,925 @@
+{
+  "format": "rerail.rr-plugin-reporter-cases/v1",
+  "cases": [
+    {
+      "id": "connection-Connection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-SyncDatabaseConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: SyncDatabaseConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-SyncSqliteConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: SyncSqliteConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-SyncPostgresConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: SyncPostgresConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-MariaDbConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: MariaDbConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-MongoDbConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: MongoDbConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-SyncNeo4jConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: SyncNeo4jConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-DoltDbConnection",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: DoltDbConnection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-Transaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-ReadTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-WriteTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | WriteTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-SchemaTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | SchemaTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-LazyVersionedReadTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | LazyVersionedReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-LazyVersionedWriteTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | LazyVersionedWriteTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-AsyncReadTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | AsyncReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-AsyncWriteTransaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x: Connection | AsyncWriteTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "qualified",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: db.Connection | api.ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "generic",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Optional[Union[Connection, ReadTransaction]]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "generic-head",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection[ReadTransaction]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "tuple-slice",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Box[Connection, ReadTransaction]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "quoted-members",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union['Connection', 'ReadTransaction']):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "quoted-union",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: 'Connection | ReadTransaction'):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "triple-quoted",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union['''Connection''', \"ReadTransaction\"]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-strings",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union['Con' 'nection', 'Read' 'Transaction']):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-string",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union[r'Connection', u'ReadTransaction']):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "comment-spacing",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: (Connection # comment\n        | ReadTransaction)):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "parens",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: (((Connection | (ReadTransaction))))):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-names",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection | Connection | ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-tuple",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: (Connection, ReadTransaction)):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-list",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: [Connection, ReadTransaction]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-plus",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection + ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-bool",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection or ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-call",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union(Connection, ReadTransaction)):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "attribute-stops",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: ReadTransaction.Connection):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "generic-list-slice",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Callable[[Connection], ReadTransaction]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "generic-tuple-slice",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Callable[(Connection, ReadTransaction)]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "complex-siblings",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Box[Connection, ReadTransaction, factory(1, x='a'), {2:3}, lambda x: x]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-sibling",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Box[Connection, ReadTransaction, f\"{value=}\"]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "numeric-siblings",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Box[Connection, ReadTransaction, 0xff, 1.0j, 1e999, b'\\xff', '\\ud800']):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "comprehension-sibling",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Box[Connection, ReadTransaction, [x for x in other]]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nfkc-name",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: \ud835\ude72onnection | ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nfkc-transaction-no-trigger",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection | \ud835\ude81eadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nfkc-transaction-with-trigger",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "# ReadTransaction\ndef f(value: Connection | \ud835\ude81eadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "unknown-transaction",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection | OtherTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-only",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Connection):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-only",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "empty-string",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: Union['', ReadTransaction]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "literal-false",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(value: False):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "separate",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(conn: Connection, txn: ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "separate-required",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(conn: Connection, txn: ReadTransaction, other):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "separate-optionals",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(conn: Connection | None = None, txn: ReadTransaction | None = None):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "multiple-separate",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(z:Connection, a:Connection, txn:Transaction, txn2:ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "union-wins",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(conn:Connection,txn:Transaction,later:Connection|ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "first-union",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(a:Connection|Transaction,b:Connection|ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "args-before-posonly",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(first:Connection|Transaction,/,later:Connection|ReadTransaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "separate-argument-order",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(posonly:Connection,/,pos:Connection,*,kw:Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "kwonly-union",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(*,both:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "varargs-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(*both:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "kwargs-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(**both:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "self-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(self:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "cls-not-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(cls:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "return-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f()->Connection|Transaction:\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "default-ignored",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def f(x=Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "async",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "async def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-function",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def outer():\n    def inner(x:Connection|Transaction):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "method",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class Owner:\n    def f(self,x:Connection|Transaction):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "inner-class-name",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class Outer:\n    class Inner:\n        def f(self,x:Connection|Transaction):\n            pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-function-class-context",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class Owner:\n    def outer(self):\n        def inner(x:Connection|Transaction):\n            pass\n"
+        }
+      ]
+    },
+    {
+      "id": "allowlist-bare",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def execute_vector_query(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "allowlist-qualified",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class SqlQuery:\n    def __init__(self,x:Connection|Transaction):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "allowlist-not-other-class",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class Other:\n    def __init__(self,x:Connection|Transaction):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "all-allowlisted",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "class SqlQuery:\n    def __init__(self,x:Connection|Transaction):\n        def later(y:Connection|Transaction):\n            pass\n"
+        }
+      ]
+    },
+    {
+      "id": "event-order",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "@dec\ndef first(x:Connection|Transaction):\n    def inner(x:Connection|ReadTransaction):\n        pass\nasync def last(conn:Connection,txn:Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid-source",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def broken(:\n# Connection Transaction\n"
+        }
+      ]
+    },
+    {
+      "id": "clean-source",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "x = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "path-input.txt",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/input.txt",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "path-test_input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/test_input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "path-tests/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/tests/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "path-test/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/test/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "path-tmp/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/tmp/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "path-conform/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/conform/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-data_layer/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "data_layer/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-_internal/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "_internal/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l1234_types/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "l1234_types/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l\uff11\uff12\uff13\uff14_types/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "l\uff11\uff12\uff13\uff14_types/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l123_types/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "l123_types/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-other/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "other/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-.git/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": ".git/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/.venv/input.py",
+      "check": "conn_or_txn_union",
+      "files": [
+        {
+          "path": "impl/.venv/input.py",
+          "source": "def f(x:Connection|Transaction):\n    pass\n"
+        }
+      ]
+    }
+  ]
+}
