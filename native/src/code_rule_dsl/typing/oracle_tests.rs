@@ -635,6 +635,28 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+#[test]
+fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute() {
+    // PEP 544: `Concrete` derives from the protocol `Sized` without listing `Protocol`, so it is an ordinary class: a
+    // parameter declared `Concrete` holds a Concrete (or a subclass), and its method call has a target and is not
+    // open. `self.names: list[Concrete] = []` in a method declares `names` on the class, as `names: ...` in its body.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("proto");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Protocol\n\nclass Sized(Protocol):\n    def size(self) -> int: ...\n\nclass Concrete(Sized):\n    def size(self) -> int:\n        return 1\n\nclass Holder:\n    def __init__(self) -> None:\n        self.names: list[Concrete] = []\n    def first(self) -> Concrete: ...\n\ndef use(c: Concrete, h: Holder) -> None:\n    c.size()\n    h.first().size()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    // c.size() and h.first().size() reach Concrete.size; h.first() reaches Holder.first.
+    assert_eq!(targets.lines().count(), 3, "{targets}");
+    assert_eq!(open, "", "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

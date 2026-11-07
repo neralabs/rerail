@@ -344,9 +344,11 @@ dtype(m, x) :- aleaf(_, m), ahead(m, h), builtin_ref(h, x), bclass(x), x != "obj
 .decl proto_q(q: symbol)
 proto_q("typing.Protocol"). proto_q("typing_extensions.Protocol").
 .decl aproto(c: node)
-aproto(c) :- anc(c, b), basex(b, e), qn(e, q), proto_q(q).
-aproto(c) :- anc(c, b), basex(b, e), kind(e, "generic_type"), child(e, h, 0), qn(h, q), proto_q(q).
-aproto(c) :- anc(c, b), basex(b, e), kind(e, "subscript"), field(e, "value", h), qn(h, q), proto_q(q).
+// A protocol lists `Protocol` among its own bases (PEP 544): a class deriving from a protocol is an ordinary class
+// (`pathlib.Path` from `os.PathLike[str]`).
+aproto(c) :- basex(c, e), qn(e, q), proto_q(q).
+aproto(c) :- basex(c, e), kind(e, "generic_type"), child(e, h, 0), qn(h, q), proto_q(q).
+aproto(c) :- basex(c, e), kind(e, "subscript"), field(e, "value", h), qn(h, q), proto_q(q).
 .decl aknown(t: node, m: node)
 aknown(t, m) :- aleaf(t, m), dtype(m, _).
 aknown(t, m) :- aleaf(t, m), aself(m).
@@ -404,6 +406,11 @@ tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf
 .decl cann(c: node, x: symbol, t: node)
 cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, scope),
     kind(c, "class_definition"), !py_dead_at(a).
+// `self.x: T` or `self.x: T = v` in a method declares the attribute on its class, as `x: T` in the body does (`self`:
+// the method's first parameter; not `selfparam`, whose static test reads the decorators' values, which read this).
+cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "attribute"), field(l, "object", o), kind(o, "identifier"),
+    text(o, sn), field(l, "attribute", at), text(at, x), field(a, "type", t), nearest(a, f, fdef), method(f, c), param(f, sn, 0),
+    !py_dead_at(a).
 bound_in(c, x) :- cann(c, x, _).
 // A class attribute's, only where it is read: through `found` (a name a lookup reads), or by name in the class
 // body (`look`).
