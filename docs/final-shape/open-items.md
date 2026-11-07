@@ -1469,19 +1469,15 @@ device tests. It was not checked whether this predates O81's change; nothing in 
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
 
-## O83. The Jedi corpus check of `calls.rr` cannot run here
+## O83. `calls.rr` against Jedi over a real corpus
 
-Decision 0047 moves `calls:` to the programs once the oracles show no regression, with the Jedi corpus comparison
-(`calls::python_tests::benchmark_python_calls_corpus`) run once as the phase check. Two things block it on this
-machine (2026-11-06):
-- No recording exists. `fixtures/python/calls/generate_corpus.py` writes it, under Jedi 0.19.2, from corpus
-  checkouts. Jedi is not installed, and the spike's 574-file corpus is not checked out.
-- The benchmark scores the native resolver. Nothing scores `calls.rr` against a Jedi recording yet. The
-  spike did (99.18% of 33,309 calls, t9 §7.4), but its scorer was not copied.
+Decision 0047's condition for moving `calls:` is the runtime oracle, which `calls.rr` meets. A Jedi comparison over
+a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check beside it, not a gate.
+`calls::python_tests::benchmark_python_calls_corpus` scores only the native resolver. The spike scored `calls.rdl`
+(99.18% of 33,309 calls, t9 §7.4), but its scorer was not copied.
 
-**Closure:** a recording is made (Jedi installed in a scratch environment, the corpus checked out), a scorer runs
-`calls.rr` over the same corpus through `corpus::run` (as `typing::oracle_tests` does over the runtime fixture),
-and the run is recorded in t20.
+**Closure:** a Jedi 0.19.2 recording over django (`fixtures/python/calls/generate_corpus.py`), a scorer of
+`calls.rr` over the same files through `corpus::run`, and the run recorded in t20.
 
 ## O84. The type relations' first draft: what they leave out
 

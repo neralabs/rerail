@@ -149,9 +149,8 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   | native resolver | 84 | 19 | 0 |
 
   Every departure of the program is one the native resolver also has. The program departs nowhere the native
-  resolver agrees. What is left before `calls:` can switch is the Jedi corpus comparison
-  (`benchmark_python_calls_corpus`), run once as the phase check. It cannot run here: there is no
-  recording, and no scorer of `calls.rr` against one (O83).
+  resolver agrees. That is decision 0047's condition for the switch. The Jedi corpus comparison is a broader
+  accuracy check beside it, not a gate (O83).
 
 - **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
   `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
@@ -207,3 +206,22 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   `native/src/code_rule_dsl/typing/programs/calls.rr`, section "types". Type names are dotted qualified names
   for workspace classes and bare names for builtins, as `declared_ret` and `workload.rr`'s `type_of` write them.
 
+- **The switch, Python** (decision 0047, point 2). One implementation of Python call resolution remains for
+  `.rr` rules: the typing program.
+  - **The bridge** (`logic::plan::corpus::bridge`). A rule reads a typing program's output by declaring an input
+    `typing_<program>__<output>`, with each node column as four: path, kind, start, end. When a rule reaching an
+    output reads one, the corpus runner first runs `typing/programs/<program>.rr` over the same root, in its own
+    bounded rounds and with the same typing inputs. The rows become the rule's facts, and `Report::typing_runs`
+    has the program's report. The rule joins spans back to its own nodes, so T's numbering and `core.rr`'s
+    need not agree.
+  - **`lib/python/calls.rr` is retired** as a resolver. It now joins the program's `call_target`,
+    `call_open` and type relations to the rule's nodes. It keeps the chain relations (`calls`, `calls_open`,
+    `reach`, `owner`) and the syntax helpers the data-layer rules use (`call`, `callee`, `call_arg`, `posarg`,
+    `awaited`). Its points-to copy is gone. No rule read it: the data-layer rules use only the syntax helpers.
+  - **Check:** `typing::oracle_tests::rules_read_the_python_program_through_lib_calls`. A rule including the
+    library, run on `core.rr`'s facts, gets exactly the program's rows on the oracle project: 93 call edges,
+    358 proven types and 9 unknown calls.
+  - **Left:** the JSON rule term `calls:` is not lowered to `.rr` by the converter (`logic::convert`
+    refuses it, for every language, as before this work), so it still reaches only the native resolvers.
+    No pack rule uses it (the Python pack exempts the capability). Lowering it onto the library's `reach` is
+    what removes the native Python resolver.

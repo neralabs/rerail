@@ -24,6 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
+mod bridge;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -166,6 +167,8 @@ pub(crate) struct Report {
     pub(crate) typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
     pub(crate) text: (usize, usize, f64),
+    /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
+    pub(crate) typing_runs: bridge::Runs,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -265,9 +268,15 @@ pub(crate) fn run_with_options(
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(program)?;
+    // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
+    let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
+    let program = &if bridged.is_empty() { program.to_owned() } else { format!("{program}\n{bridged}") };
+    if !bridged.is_empty() {
+        prog = crate::code_rule_dsl::logic::rr::parse(program)?;
+    }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(program)?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
@@ -278,7 +287,7 @@ pub(crate) fn run_with_options(
         }
         None => {
             let (python, rs) = corpus_files(root)?;
-            let rust = rs.len() > python.len();
+            let rust = typing.rust.unwrap_or(rs.len() > python.len());
             let files = if rust { rs } else { python };
             (files.into_iter().enumerate().map(|(i, path)| (i as i64 + 1, path)).collect(), HashMap::new(), rust)
         }
@@ -663,7 +672,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines; rules are numbered as in the `rule #k` notes at the end.\n", program.lines().filter(|l| !l.trim().is_empty()).count()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs })
 }
 
 

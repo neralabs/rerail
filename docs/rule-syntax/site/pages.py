@@ -459,7 +459,8 @@ sect("Native or Datalog", [
     "The binary provides the parse tape, tree arithmetic, value builtins, file readers and the edit applier. Name resolution, imports, call targets, JSX structure, typing and most edits are Datalog libraries over those. A library update ships without a new binary.",
     '''<ul class="tight">
         <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, functors, config readers, the four edits.</li>
-        <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: adapted from an earlier Datalog prototype of Python call resolution.</li>
+        <li><code>python/names</code>, <code>python/imports</code>: adapted from an earlier Datalog prototype of Python call resolution.</li>
+        <li><code>python/calls</code>: the engine's Python typing program's answers (call targets, call chains, types), which the engine computes once per run in bounded cross-file rounds.</li>
         <li><code>tsx/names</code>, <code>tsx/jsx</code>: drafted for this page.</li>
       </ul>''',
     perf("A library relation is computed once per run and shared by every policy that reads it, so a second policy over <code>python/names</code> adds only its own rules. Name resolution and imports span the workspace, so they cost the most: reach them through a selective atom (<code>sym_of(t, q)</code> after <code>kind(t, \"identifier\")</code> and a name test), not as a whole relation."),
@@ -467,7 +468,7 @@ sect("Native or Datalog", [
  ("rr", '''
 #include "python/names.rr"     // scope_node, binding, ref_site, sym_of, annotation, catches, …
 #include "python/imports.rr"   // import_alias, loads, reaches, exports, hoist, …
-#include "python/calls.rr"     // call_target, call_open, reach, call_arg, awaited, …
+#include "python/calls.rr"     // call_target, call_open, reach, proven_type, call_arg, …
 
 // core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path,
 //                replace, delete, insert_before, insert_after

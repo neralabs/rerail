@@ -440,3 +440,41 @@ fn python_type_relations_agree_with_the_runtime() {
     assert!(!departures.values().any(|a| *a == TypeAnswer::Wrong), "{departures:#?}");
     assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
 }
+
+/// A rule reads the Python program's answers through `lib/python/calls.rr` (decision 0047, point 2): the engine runs
+/// `typing/programs/calls.rr` for it (`corpus::bridge`), and the rule's call edges and proven types, joined back to its
+/// own nodes on `core.rr`'s facts, are exactly the program's on T's.
+#[test]
+fn rules_read_the_python_program_through_lib_calls() {
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let keyed = "
+.decl edge(cp: symbol, cs: number, fp: symbol, fs: number)
+edge(cp, cs, fp, fs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _), node(g, f, _, fs, _), doc(g, fp, _).
+.decl proven(np: symbol, ns: number, ne: number, t: symbol)
+proven(np, ns, ne, t) :- proven_type(n, t), node(d, n, _, ns, ne), doc(d, np, _).
+.decl unknown(cp: symbol, cs: number)
+unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
+.output edge, proven, unknown
+";
+    let rows = |out: &Path, rel: &str| -> BTreeSet<String> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect()
+    };
+    let direct = crate::code_rule_dsl::prefilter::tests::temp().with_extension("direct");
+    corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rule");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    let rule = rule_dir.join("rule.rr");
+    std::fs::write(&rule, format!("#include \"python/calls.rr\"\n{keyed}")).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let through = rule_dir.join("out");
+    let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"], "the program ran once");
+    for rel in ["edge", "proven", "unknown"] {
+        let (a, b) = (rows(&direct, rel), rows(&through, rel));
+        println!("{rel}: {} rows", a.len());
+        assert!(!a.is_empty(), "{rel}: the program gives no rows");
+        assert_eq!(a, b, "{rel}: the rule's rows are the program's");
+    }
+    let _ = std::fs::remove_dir_all(&direct);
+    let _ = std::fs::remove_dir_all(&rule_dir);
+}
