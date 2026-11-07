@@ -41,6 +41,8 @@ pub(super) mod label_passes;
 mod tape_tests;
 #[path = "metal_set_steps.rs"]
 pub(in crate::code_rule_dsl) mod set_steps;
+#[path = "metal_block_program.rs"]
+pub(in crate::code_rule_dsl) mod block_program;
 #[path = "metal_work_queue.rs"]
 pub(in crate::code_rule_dsl) mod work_queue;
 #[path = "metal_lattice.rs"]

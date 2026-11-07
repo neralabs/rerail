@@ -1,0 +1,18 @@
+# The Bitlex reference evaluator (docs/parser-generators/03-bitlex.md). Detached from the main
+# workspace, so the engine build does not see it.
+[workspace]
+
+[package]
+name = "bitlex"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Only the differential binary uses tree-sitter; the evaluator itself has no dependencies.
+tree-sitter = "=0.25.10"
+tree-sitter-python = "=0.25.0"
+tree-sitter-json = "=0.24.8"
+
+[profile.release]
+debug = false

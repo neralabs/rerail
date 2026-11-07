@@ -1,0 +1,30 @@
+; simdjson's stage 1 as a transducer block program: the structural starts, the control
+; characters inside strings (simdjson's unescaped-characters error), and the inside-string mask
+; (its last bit set means an unclosed string). Names follow simdjson's json_structural_indexer,
+; json_scanner and json_string_scanner.
+program -
+  mode set=0 query=0
+  ; simdjson's classify table: 0x01 , 0x02 : 0x04 [ ] { } 0x08 space 0x10 \t \n \r 0x20 \
+  ; 0x40 " 0x80 every byte below 0x20.
+  block 0 table 0 lo=8880c0808080808080909284a1948080 hi=90804902002400040000000000000000
+  block 0 %0 = class t0 0x07      ; op
+  block 0 %1 = class t0 0x18      ; whitespace
+  block 0 %2 = class t0 0x20      ; backslash
+  block 0 %3 = class t0 0x40      ; raw quote
+  block 0 %4 = class t0 0x80      ; unescaped (control characters)
+  block 0 %5 = after_odd_run %2   ; escaped
+  block 0 %6 = andnot %3, %5      ; quote
+  block 0 %7 = toggle %6          ; in_string: prefix_xor(quote)
+  block 0 %8 = xor %7, %6         ; string_tail
+  block 0 %9 = or %0, %1
+  block 0 %10 = not %9            ; scalar
+  block 0 %11 = andnot %10, %6    ; nonquote_scalar
+  block 0 %12 = prev %11, 1       ; follows_nonquote_scalar
+  block 0 %13 = andnot %10, %12   ; potential_scalar_start
+  block 0 %14 = or %0, %13        ; potential_structural_start
+  block 0 %15 = andnot %14, %8    ; structural_start
+  block 0 %16 = and %4, %7        ; non_quote_inside_string(unescaped)
+  block 0 output %15
+  block 0 output %16
+  block 0 output %7
+  0000 STOP 0
