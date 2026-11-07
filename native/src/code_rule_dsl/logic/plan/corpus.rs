@@ -284,6 +284,33 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+    use sha2::Digest as _;
+    use std::sync::{Mutex, OnceLock};
+    // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
+    // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
+    static COMBINED: OnceLock<Mutex<HashMap<[u8; 32], front::Program>>> = OnceLock::new();
+    const KEPT: usize = 32;
+    let mut hash = sha2::Sha256::new();
+    for text in programs.iter().copied().chain([extra]) {
+        hash.update((text.len() as u64).to_le_bytes());
+        hash.update(text.as_bytes());
+    }
+    let key: [u8; 32] = hash.finalize().into();
+    let cache = COMBINED.get_or_init(Default::default);
+    if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
+        crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
+        return Ok(program.clone());
+    }
+    let program = combine_texts(programs, extra)?;
+    let mut kept = cache.lock().expect("the combined programs");
+    if kept.len() >= KEPT {
+        kept.clear();
+    }
+    kept.insert(key, program.clone());
+    Ok(program)
+}
+
+fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
     let parse = |text: &str| crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") });
     let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
@@ -454,18 +481,22 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let fresh = store
+    store
         .record_corpus_run(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), now)
         .map_err(|e| Error::Plan(e.to_string()))?;
     // The manifest now protects the sources. Release before collection, including warm runs
     // that must resume a pass deferred by another active reader.
     drop(reading);
-    if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") || (!fresh && !store.corpus_collection_due().map_err(|e| Error::Plan(e.to_string()))?) {
+    if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
         return Ok(None);
     }
     let mut policy = crate::content_store::CorpusPolicy::default();
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
         (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
+    }
+    // No thread, no second connection, unless a pass has work (a run of fresh roots decides rarely).
+    if !store.corpus_pass_wanted(&policy, now).map_err(|e| Error::Plan(e.to_string()))? {
+        return Ok(None);
     }
     let path = store.database_path().to_path_buf();
     Ok(Some(std::thread::spawn(move || {

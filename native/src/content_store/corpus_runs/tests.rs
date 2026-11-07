@@ -27,7 +27,7 @@ fn the_last_runs_are_protected_and_history_is_kept_to_the_low_water_mark() {
     let ms: Vec<Manifest> = (0..5).map(|k| manifest(10 - k, 1, 100, &[2 * (5 - k) - 1, 2 * (5 - k)])).collect();
     let s = sizes(10, 10);
     // Each manifest holds 40 bytes alone. Two protected; history of three is 120 bytes.
-    let policy = CorpusPolicy { protected_runs: 2, high_water: 1000, low_water: 50, backstop_secs: 1000 };
+    let policy = CorpusPolicy { protected_runs: 2, high_water: 1000, low_water: 50, backstop_secs: 1000, ..CorpusPolicy::default() };
     let all = decide(&ms, &s, &policy, 100);
     assert_eq!(all.kept, vec![10, 9, 8, 7, 6], "under the high-water mark nothing is evicted");
     assert_eq!((all.protected, all.history), (80, 120));
@@ -41,7 +41,7 @@ fn the_last_runs_are_protected_and_history_is_kept_to_the_low_water_mark() {
 fn a_manifest_holding_nothing_of_its_own_goes_and_an_idle_root_keeps_nothing() {
     let ms = vec![manifest(3, 1, 100, &[1, 2]), manifest(2, 1, 100, &[1, 2, 3]), manifest(1, 1, 100, &[1, 2])];
     let s = sizes(3, 10);
-    let policy = CorpusPolicy { protected_runs: 1, high_water: 1000, low_water: 500, backstop_secs: 50 };
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 1000, low_water: 500, backstop_secs: 50, ..CorpusPolicy::default() };
     assert_eq!(decide(&ms, &s, &policy, 100).kept, vec![3, 2], "manifest 1's sources are all in newer kept ones");
     // Root 2 last ran at time 10: past the backstop at 100, its protected run goes too.
     let ms = vec![manifest(2, 1, 100, &[1]), manifest(1, 2, 10, &[2])];
@@ -64,7 +64,7 @@ fn noise(seed: u64, n: usize) -> Vec<u8> {
 #[test]
 fn churning_every_file_keeps_the_history_under_the_high_water_mark() {
     let (_path, store) = store("corpus-churn");
-    let policy = CorpusPolicy { protected_runs: 2, high_water: 64 << 10, low_water: 48 << 10, backstop_secs: 86_400 };
+    let policy = CorpusPolicy { protected_runs: 2, high_water: 64 << 10, low_water: 48 << 10, backstop_secs: 86_400, ..CorpusPolicy::default() };
     let (files, size) = (8, 2048);
     let mut runs: Vec<Vec<SourceId>> = Vec::new();
     for version in 0..20u64 {
@@ -217,7 +217,7 @@ fn parallel_writers_and_a_collector_share_one_store() {
 #[test]
 fn a_held_plan_stays_live_until_its_run_releases_it() {
     let (_path, store) = store("corpus-held-plan");
-    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400 };
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
     let live = |plan: [u8; 32]| -> Option<i64> {
         store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
     };

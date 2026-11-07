@@ -335,6 +335,16 @@ CREATE TABLE IF NOT EXISTS corpus_state (
     due INTEGER NOT NULL
 ) STRICT;
 INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
+-- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
+-- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
+-- Additive: an older binary ignores it.
+CREATE TABLE IF NOT EXISTS corpus_decided (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL,
+    time INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
 -- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
 -- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
 -- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.
