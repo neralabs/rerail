@@ -12,9 +12,25 @@ from dto import canonical
 spec = importlib.util.spec_from_file_location('rr_contract_receipt', directory / 'receipt.py')
 receipt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receipt)
+import mutation
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_positive_controls_keep_only_known_auxiliary_outputs(self):
+        self.assertTrue(mutation.auxiliary_output('backend_coupling', dict(code='BC_CONFIG')))
+        self.assertTrue(mutation.auxiliary_output('backend_coupling', dict(code='BC_CHECK')))
+        self.assertFalse(mutation.auxiliary_output('backend_coupling', dict(code='direct_backend_import')))
+        self.assertFalse(mutation.auxiliary_output('backend_coupling', dict(code='sql_in_nonsql')))
+        self.assertFalse(mutation.auxiliary_output('unknown', dict(code='BC_CONFIG')))
+
+    def test_backend_mutation_disables_detection_and_preserves_configuration(self):
+        source = 'bc_config("BACKEND_PREFIXES", 0, "impl.sqlite").\nCoupling(st, code, message, i, depth) :- bc_issue(st, code, message), visit_index(st, i), ast_depth(st, depth).\n'
+        disabled = mutation.disable_policy('backend_coupling', source)
+        self.assertIn('bc_config("BACKEND_PREFIXES", 0, "impl.sqlite").', disabled)
+        self.assertIn(':- 1 = 0, bc_issue', disabled)
+        with self.assertRaises(ValueError):
+            mutation.disable_policy('backend_coupling', '')
+
     def test_binary_exception_arguments_keep_every_byte(self):
         self.assertEqual({'kind': 'bytes', 'hex': '00fffe'}, canonical(bytes([0, 255, 254])))
 
