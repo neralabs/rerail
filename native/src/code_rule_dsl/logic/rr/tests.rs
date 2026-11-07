@@ -32,6 +32,21 @@ Annotation(t, s) :- sig_param(_, _, _, _, _, t, _), !unset(t), annotation_text(t
 }
 
 #[test]
+fn python_call_receivers_use_the_canonical_printer() {
+    let rows = finding_contract("async def f(txn):\n    txn . query( Model ).filter( name = \"x\" ).execute()\n", r#"
+.language python
+#include "python/ast.rr"
+#include "python/print.rr"
+.decl call_receiver_text(c: node, s: symbol)
+.input call_receiver_text
+.violation Receiver(at: node, printed: symbol) code "RECEIVER" "{printed}"
+Receiver(c, s) :- call_receiver_text(c, s), field(c, "function", a), field(a, "attribute", nm), text(nm, "execute").
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["message"], "txn.query(Model).filter(name='x')");
+}
+
+#[test]
 fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
     for pattern in ["[", "(?<![A-Za-z_é])str"] {
         let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
