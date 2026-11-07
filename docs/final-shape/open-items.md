@@ -1402,7 +1402,9 @@ parsed as code) are read as empty, each named in the profile. Inputs read from a
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
 since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
 `package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
-made (decision 0055); `string_annotation` is still empty.
+made (decision 0055); `string_annotation` is still empty. 2026-11-07, after the data-layer engine merge
+(ca930d974): repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and
+`input_error` rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
 
 ## O77. Lowering shortcuts in `.rr`
 
@@ -1721,14 +1723,49 @@ typing's file-local part. A join that scans an axis makes every node's rows on t
 **Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
 where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
 
-## O93. The hand-written data-layer rules do not run on a corpus
+## O93. The data-layer pack's rules do not run on the full corpus
 
-These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured with `RERAIL_MEASURE_HAND=only`.
+These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
+merged at ca930d974. Of the 68 run one at a time on s50:
 
-- **s200:** the run fails after 61 s of CPU with `content store database error: no such table: atom_segment`, raised
-  through a SQL user function. RSS is 7.6 GB, over the 1 GB budget.
-- **Full corpus:** the run takes more than 280 s.
-- **Directory inputs:** a `dir="…"` input (one row per line of each file) is not made at all. The runner stops with
-  `no columns for <rel>`, and the measure leaves the rule out (O76).
+- 50 run;
+- 7 take over 40 s: conditional-architecture, connection-service-architecture, data-layer-facade-purity,
+  hnsw-architecture, lazy-adapter-ownership, matching-architecture, versioned-lifecycle-legacy-surfaces;
+- eager-resolve takes over 45 s once its directory inputs are read;
+- the rest fail (below).
 
-**Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.
+The 49 that run together:
+
+| corpus | CPU | instructions | peak RSS | violations |
+|---|---|---|---|---|
+| s50 | 17.2 s | 205e9 | 1.57 GB | 606 |
+| s200 | 100.5 s | 1,064e9 | 5.19 GB | 2,878 |
+
+Converted rules on s200 take about 2 s. On s200, the costs are:
+
+- **`gis_before`, 40.7 s of 100.** It is `gis_before(i, n) :- kind(n, "call"), earlier(i, n)`, every node before every
+  call of its file, which is quadratic in a file's size. Its readers bind both arguments. A filter (each rule
+  functional lookups and tests of its head) should be inlined, not built. A draft inliner (`/tmp/ai-trash/
+  simplify-inline-filters.rs`) was correct, but it moved base lookups into rules where the runner had not
+  measured their statistics or held their columns (`no statistics for docof.n`, `syntax_error has no column l`).
+  The runner must measure what the simplified program reads.
+- **`cc_line`, 14.9 s.** It runs in the cross-file part, in SQLite, because `@prefix(…) = 0` has no native step. It
+  crosses the 15 selected documents with every trimmed line (504k) before looking up `split_line` by document.
+  `split_line`'s statistics are not measured, so the lookup is estimated at 2M rows.
+- **Memory.** It grows with which rules are combined, not with their number: 12 rules take 417 MB, 22 take 1.27 GB.
+  A single rule's run is 220–290 MB; the test process adds about 650 MB.
+
+Failures, by kind:
+
+- **A span stored as a symbol** (bounded-composed-graph-paths, schema-architecture, bootstrap-engine-invariants):
+  `match` over a span gives span captures (`core.rr`). A column declared `symbol` then holds a span, and
+  `cat()` stops with `no symbol <id>`. The reader should refuse the program and name the column.
+- **`no such table: rr_ctx<k>`** (cached-pure-lazy-allowlist).
+- **`rule for x(…) reads nothing`**, a constant-head rule left with no body (connection-structural-boundaries,
+  post-op-side-effects, pure-lazy-runtime-purity).
+- **An aggregate in recursion** (lazy-architecture).
+- **Revision and stamped-artifact readers**, not written (plan-composition-architecture, test-budget).
+- **The `$O[:-$K]` slice pattern**, not lowered (versioned-table-names).
+
+**Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
