@@ -105,7 +105,8 @@ def main():
                 for item in call['programInputs']:
                     if sha((ROOT / item['path']).read_bytes()) != item['sha256']:
                         raise ValueError('Stale policy or library: ' + item['path'])
-    result = dict(format='rerail.rr-direct-source-contracts/v2', scope='Eleven direct original modules; snapshot execution only',
+    module_count = len({name for name in reports[0]['sourceFiles'] if name.startswith('scripts/tests/')})
+    result = dict(format='rerail.rr-direct-source-contracts/v2', scope=f'{module_count} direct original modules; snapshot execution only',
         fullMigrationAcceptance=False, sourcePin=PIN, **engine, **counts,
         receiptToolSha256=sha(Path(__file__).read_bytes()),
         originalInventory=dict(path=inventory_path.relative_to(ROOT).as_posix(), sha256=sha(inventory_path.read_bytes())),

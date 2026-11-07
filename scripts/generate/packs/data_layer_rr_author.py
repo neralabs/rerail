@@ -113,7 +113,8 @@ def main():
     by_check = {entry['check']: entry for entry in manifest['rules']}
     from data_layer_rr_text import no_source_inspection, serverplan_name_inference, hasattr_async, no_blanket_grammar_bypass, admin_async_purity, async_executor, rust_sql_grammar_boundary
     from data_layer_rr_dynamic import dynamic_module_loading
-    from data_layer_rr_ast import classvar_check
+    from data_layer_rr_ast import classvar_check, forwardref
+    from data_layer_rr_types import type_safety_patterns
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
                   ('no_source_inspection', lambda s, t: no_source_inspection(s, t, header)),
@@ -124,6 +125,8 @@ def main():
                   ('rust_sql_grammar_boundary', lambda s, t: rust_sql_grammar_boundary(s, t, header)),
                   ('dynamic_module_loading', lambda s, t: dynamic_module_loading(s, t, header)),
                   ('classvar_check', lambda s, t: classvar_check(s, t, header)),
+                  ('type_safety_patterns', lambda s, t: type_safety_patterns(s, t, header)),
+                  ('forwardref', lambda s, t: forwardref(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]

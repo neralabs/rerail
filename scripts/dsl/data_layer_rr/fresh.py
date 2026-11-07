@@ -31,10 +31,14 @@ def invoke(call, root):
         if isinstance(error, OSError):
             return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
                 args=canonical(error.args, root), filename=canonical(error.filename, root), errno=error.errno))
+        if isinstance(error, UnicodeError):
+            return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
+                                   args=canonical(error.args, root)))
         raise
 
 
 def run(args):
+    args.out = args.out.resolve()
     source, corpus = args.source.resolve(), read_json(args.cases)
     if git(source, 'rev-parse', 'HEAD') != PIN:
         raise ValueError('Wrong source pin')
@@ -65,6 +69,7 @@ def run(args):
     harness_paths = [Path(__file__), *[Path(__file__).with_name(p) for p in ['suite.py', 'replay.py', 'dto.py', 'migration.py']],
         ROOT / 'scripts/dsl/data_layer_audit/native_guard.py']
     report['harnessFiles'] = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in harness_paths}
+    harness_before = {p.resolve(): sha(p.read_bytes()) for p in (ROOT / 'scripts/dsl').rglob('*.py')}
     if native:
         engine = args.engine.resolve()
         report['engineSha256'] = sha(engine.read_bytes())
@@ -90,7 +95,10 @@ def run(args):
                     if not path.is_relative_to(root) or '..' in Path(file['path']).parts:
                         raise ValueError('Invalid fixture path')
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(file['source'])
+                    if 'bytesHex' in file:
+                        path.write_bytes(bytes.fromhex(file['bytesHex']))
+                    else:
+                        path.write_text(file['source'])
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
                 if native:
@@ -103,7 +111,13 @@ def run(args):
                     original = recorded['results'][index]
                     if original['id'] != case['id']:
                         raise ValueError('Fresh case identity changed')
-                    compare(original['value'], actual)
+                    try:
+                        compare(original['value'], actual)
+                    except AssertionError as error:
+                        report['results'].append(dict(id=case['id'], value=actual, expected=original['value'], status='failed'))
+                        report.update(calls=backend.calls, programInputs=backend.inputs)
+                        write_json(args.out, report)
+                        raise AssertionError(case['id'] + ': ' + str(error)) from error
                 report['results'].append(dict(id=case['id'], value=actual, status='passed'))
     finally:
         os.chdir(previous_directory)
@@ -118,6 +132,12 @@ def run(args):
             raise ValueError('Engine changed during fresh contracts')
         report['calls'] = backend.calls
         report['programInputs'] = backend.inputs
+    for imported in tuple(sys.modules.values()):
+        filename = getattr(imported, '__file__', None)
+        if filename and Path(filename).suffix == '.py':
+            path = Path(filename).resolve()
+            if path in harness_before:
+                report['harnessFiles'][path.relative_to(ROOT).as_posix()] = harness_before[path]
     if any(sha((ROOT / name).read_bytes()) != digest for name, digest in report['harnessFiles'].items()):
         raise ValueError('Harness changed during fresh contracts')
     from data_layer_probe_record import verify_sources

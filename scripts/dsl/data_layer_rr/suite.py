@@ -14,6 +14,7 @@ import threading
 import textwrap
 from functools import wraps
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,21 @@ ENTRIES = {
     'async_executor': ['check_file', 'check_source', 'should_check_file', 'is_allowed'],
     'dynamic_module_loading': ['_scan_file', '_scan_file_content', 'find_violations', '_is_in_type_checking_block'],
     'classvar_check': ['lint_file', 'lint_file_content', 'lint_directory'],
+    'type_safety_patterns': ['check_file_for_patterns', 'check_file_content_for_patterns', 'check_function_signatures',
+        'check_function_signature_content', 'normalize_path', 'is_allowlisted', 'find_python_files', '_issues_for_files', '_dedupe_issues'],
+    'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
 }
+
+
+@dataclass(frozen=True)
+class NativeRegexMatch:
+    """Native counterpart for the match type and explicitly supplied capture assertions."""
+    groups: dict
+
+    def group(self, index):
+        if index not in self.groups:
+            raise AssertionError('No native DTO contract for this capture group')
+        return self.groups[index]
 
 
 class Suite:
@@ -131,7 +146,7 @@ class Suite:
             from replay import result as diagnostic_result
             actual = diagnostic_result(dict(check=check), self.calls[-1]['diagnostics'])
         else:
-            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check'}
+            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref'}
                       else normalize(check, entry, result, root, files))
         observation.update(expected=original['findings'], actual=actual, status='passed')
         compare(original['findings'], actual)
@@ -149,6 +164,45 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'forwardref':
+            path = Path(arguments.get('filepath', arguments.get('dirpath')))
+            paths = list(path.rglob('*.py')) if entry == 'lint_directory' else [path]
+            files, originals = [], {}
+            for item in paths:
+                root = Path(arguments.get('root') or Path.cwd())
+                name = item.relative_to(root).as_posix() if item.is_relative_to(root) else item.as_posix().lstrip('/')
+                originals[name] = item
+                try:
+                    content = item.read_text()
+                except (OSError, UnicodeError):
+                    if entry == 'lint_file_content':
+                        if not item.is_file():
+                            return []
+                        gate = self.native(check, 'source_gate', [], dict(callSource=arguments['source']))
+                        if len(gate) > 1 or any(r['code'] != 'FWDREF_GATE' for r in gate):
+                            raise AssertionError('Invalid native ForwardRef source gate')
+                        if not gate:
+                            return []
+                        scope = self.native(check, 'file_gate', [dict(path=name, source='')])
+                        if len(scope) > 1 or any(r['code'] != 'FWDREF_FILE_GATE' for r in scope):
+                            raise AssertionError('Invalid native ForwardRef scope gate')
+                        if not scope:
+                            return []
+                    raise
+                files.append(dict(path=name, source=content))
+            options = dict(callSource=arguments['source']) if entry == 'lint_file_content' else {}
+            if entry == 'lint_directory':
+                options.update(excludePatterns=arguments.get('exclude_patterns') or [], logicalPaths=list(originals),
+                               originalPaths=[str(item) for item in originals.values()])
+            rows = self.native(check, entry, files, options)
+            if any(row['code'] not in {'FWDREF001', 'FWDREF002', 'FWDREF003'} for row in rows):
+                raise AssertionError('Unexpected native ForwardRef diagnostic')
+            order = {f['path']: i for i, f in enumerate(files)}
+            return [module.LintIssue(originals[r['path']], r['line'], r['parameters']['column'], r['message'], r['code'])
+                    for r in sorted(rows, key=lambda r: (order[r['path']], r['parameters']['ordinal']))]
+        if check == 'type_safety_patterns':
+            from types_port import scan
+            return scan(self, entry, module, arguments)
         path = Path(arguments.get('path', arguments.get('file_path', arguments.get('filepath', 'input.py'))))
         if check == 'classvar_check':
             if entry == 'lint_directory':
@@ -383,7 +437,8 @@ class Suite:
             check, name, passive = originals[frame.f_code]
             host = {'no_source_inspection': {'cli_main'}, 'hasattr_async': {'cli_main', '_default_directories'},
                     'no_blanket_grammar_bypass': {'cli_main'}, 'admin_async_purity': {'cli_main'},
-                    'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'}}
+                    'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
+                    'type_safety_patterns': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
@@ -391,7 +446,12 @@ class Suite:
         threading.setprofile(guard)
 
     def pattern_search(self, pattern, source):
-        if self.item.path.name == 'test_lint_dynamic_module_loading.py':
+        if self.item.path.name == 'test_lint_type_safety_patterns.py':
+            module = self.modules['type_safety_patterns']
+            names = ['STR_EXPR_PATTERN', 'STR_FIELD_PATTERN', 'EXPR_ANY_ANY_PATTERN', 'DEPRECATED_OP_PATTERN', 'DEPRECATED_FILTER_METHOD_PATTERN']
+            indices = [i for i, name in enumerate(names) if getattr(module, name) is pattern]
+            check, code = 'type_safety_patterns', 'TSP_PATTERN'
+        elif self.item.path.name == 'test_lint_dynamic_module_loading.py':
             module = self.modules['dynamic_module_loading']
             indices = [i for i, (p, _) in enumerate([*module._PATTERNS, *module._IMPORT_MODULE_PATTERNS]) if p is pattern]
             check, code = 'dynamic_module_loading', 'DML_PATTERN'
@@ -425,13 +485,8 @@ class Suite:
             return None
         if check == 'hasattr_async':
             method = rows[0]['parameters']['method']
-            class Match:
-                def group(self, index):
-                    if index != 1:
-                        raise AssertionError('No native DTO contract for this capture group')
-                    return method
-            return Match()
-        return object()
+            return NativeRegexMatch({1: method})
+        return NativeRegexMatch({})
 
     def allowed_pattern_witness(self, pattern):
         # These two source parameters skip their assertion because the test cannot
@@ -446,7 +501,7 @@ class Suite:
         self.collected = [item.nodeid for item in items]
         items[:] = items[self.part::self.parts]
         for item in items:
-            if item.path.name not in {'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py'}:
+            if item.path.name not in {'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py', 'test_lint_type_safety_patterns.py'}:
                 continue
             source_lines, source_start = inspect.getsourcelines(item.obj)
             original = textwrap.dedent(''.join(source_lines))
@@ -454,14 +509,24 @@ class Suite:
             function = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
             function.decorator_list = []
             changed = []
+            operations = []
 
             class Searches(ast.NodeTransformer):
+                def visit_Attribute(self, node):
+                    if (item.path.name == 'test_lint_type_safety_patterns.py' and node.attr == 'Match'
+                            and isinstance(node.value, ast.Name) and node.value.id == '_re'):
+                        changed.append(node.lineno)
+                        operations.append(dict(line=node.lineno, kind='regex-match-type'))
+                        return ast.copy_location(ast.Name(id='_rr_RegexMatch', ctx=ast.Load()), node)
+                    return self.generic_visit(node)
+
                 def visit_Call(self, node):
                     self.generic_visit(node)
                     if isinstance(node.func, ast.Attribute) and node.func.attr == 'search':
                         if len(node.args) != 1 or node.keywords:
                             raise AssertionError('Unsupported original regex assertion')
                         changed.append(node.lineno)
+                        operations.append(dict(line=node.lineno, kind='regex-search'))
                         return ast.copy_location(ast.Call(func=ast.Name(id='_rr_pattern_search', ctx=ast.Load()),
                             args=[node.func.value, *node.args], keywords=[]), node)
                     return node
@@ -471,6 +536,7 @@ class Suite:
                             and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == 'pytest'
                             and node.value.func.attr == 'skip' and item.path.name == 'test_lint_hasattr_async.py'):
                         changed.append(node.lineno)
+                        operations.append(dict(line=node.lineno, kind='reviewed-source-skip'))
                         if function.name == 'test_hasattr_regex_does_not_match_non_async':
                             # The original regex rejects _async_helper; the skip's explanation
                             # is wrong. Execute the original negative assertion through native.
@@ -488,13 +554,14 @@ class Suite:
             ast.fix_missing_locations(tree)
             ast.increment_lineno(tree, source_start - 1)
             namespace = {**item.obj.__globals__, '_rr_pattern_search': self.pattern_search,
-                         '_rr_allowed_pattern_witness': self.allowed_pattern_witness}
+                         '_rr_allowed_pattern_witness': self.allowed_pattern_witness, '_rr_RegexMatch': NativeRegexMatch}
             exec(compile(tree, str(item.path), 'exec'), namespace)
             item.obj = namespace[function.name]
             self.translations.append(dict(test=item.nodeid, sourceSha256=sha(original.encode()),
                                           translatedSha256=sha(ast.unparse(tree).encode()),
                                           sites=[source_start + line - 1 for line in changed],
-                                          operation='regex search via the native .rr pattern contract; assertions unchanged'))
+                                          operations=[dict(site=source_start + op['line'] - 1, kind=op['kind']) for op in operations],
+                                          operation='Native regex searches and match-type counterparts; original assertion predicates retained'))
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtest_setup(self, item):

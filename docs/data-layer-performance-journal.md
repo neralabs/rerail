@@ -7609,3 +7609,73 @@ Those later sibling changes are not yet part of this frozen engine.
 No whole-repository cold run occurred. Runtime commands remain bounded at 115 seconds.
 The existing exception permits native builds to finish. Build time remains separate from execution time.
 No new Linear tickets were created.
+
+## 2026-11-07: Native AST order and two further `.rr` drafts
+
+This checkpoint advances the migration to 59 drafts and 41 absent translations. Full migration acceptance remains zero.
+The primary production addon remains unchanged. No rule invokes Python.
+
+The engine is `93cee2a43e10020ca7639cf2ade1cb974c789c18`, pushed on the isolated engine branch.
+The frozen executable SHA-256 is `c60f5696278accdeb3a885db6bc64d92213d7e38a16190354675c651f8f657fd`.
+Its CLI build took 18.07 seconds. Build time is separate from rule execution.
+
+The direct acceptance run covers thirteen complete original modules and all 969 test bodies.
+It makes 922 native calls and compares 486 complete source API returns.
+All 24 shards pass without native skips, missing recorded calls, or source detector fallbacks.
+Thirteen disabled-policy controls reject original positive cases through the full API comparison.
+The source recording has 966 passes and three reviewed skips. Native execution transfers those three assertions.
+The receipt retains 273 cases without native calls. They ran as assertions and do not count as native detector coverage.
+Forty-eight legacy normalized DTOs remain unavailable; their complete API returns are compared.
+
+`rr-thirteen-direct-contracts.json.gz` retains this evidence with `fullMigrationAcceptance: false`.
+The supplementary bundle retains 47 ForwardRef, 37 type-safety, 17 ClassVar, and 31 Rust contracts, separate from original pytest coverage.
+They also pass through the same native adapters, with no detector fallbacks.
+
+The ForwardRef port exposed incorrect traversal order. The engine compared preorder node ids, which represent source order.
+CPython visits a function's body before its decorators and return annotation.
+It also visits dictionary keys before values and positional call arguments before keyword arguments.
+These differences caused missed positives in the fresh source-derived corpus.
+
+A native projection now computes one dense rank column per demanded document. All rules share it.
+The iterative pass preserves source ids and geometry. It stores four bytes per projected node when demanded.
+Temporary overrides cover only reordered fields. No rank column is built when no consumer reads it.
+`earlier` now joins this column rather than comparing source ids.
+The regression covers parameter annotations, keyword defaults, positional defaults, bodies, decorators, returns, dictionaries, and call arguments.
+The focused reader suite passes 23 tests. The tape-view suite passes nine tests.
+
+The type-safety port preserves textual signature windows, early terminators, and matches in invalid Python.
+The original suite contains 193 cases. Its regex, discovery, deduplication, scanner, and CLI assertions run through native decisions.
+Enum and dataclass definition assertions still run in Python; the receipt identifies cases without native calls.
+One original assertion checks `re.Match`. Its operation now targets the native match DTO, with the predicate retained.
+The generator preserves CPython Unicode word classes. Boolean branch boundaries use regular expressions without lookbehind.
+
+The regex experiment first exposed an incorrect named-capture diagnostic for lookbehind.
+An execution test then showed that the text dialect refuses lookbehind and can silently treat an uncompiled scalar matcher as false.
+The final regression requires literal invalid or unsupported regexes to fail compilation.
+The port uses supported regular expressions. It does not add an optional regex backend.
+
+Two fixture mistakes were corrected before accepting their regressions.
+The first traversal test used the SQL keyword `Order` as a relation name and failed before testing traversal.
+After renaming the relation, the corrected test failed on the missing body-before-decorator result, then passed after the repair.
+An earlier regex test expected execution of unsupported lookbehind. The final test checks explicit refusal instead.
+
+Fresh contracts also exposed a host-adapter mismatch: the content API ignores a missing file, whereas the file-reading API raises.
+The bridge now preserves that distinction. Binary source cases retain every exception argument byte.
+The fresh runner records failed case identities and resolves report paths before changing directories.
+Its reports now bind imported adapter code as well as the primary harness.
+
+The migration guards pass 34 tests. The two format tests and TypeScript checking pass.
+Boundary and Windows path checks pass. Structure checking retains the same three flat-directory violations.
+A duplicate fixture-root resolver was replaced with the existing shared resolver.
+No whole-repository cold benchmark was run. All runtime commands remain bounded at 115 seconds.
+Phase reports are thread CPU observations, not a new process-total or repository performance baseline.
+
+Configured reporting remains unfinished. The type-safety draft formats a category name where its source reporter uses a label.
+That difference requires a reporting regression and correction before acceptance.
+Associated suites, portable helper counterparts, persistent workspaces, and the other translations remain outstanding.
+
+The sibling survey now includes `266c56c64`, `f412b667a`, `8cbc858b6`, and `c6fc887f4`.
+Their document lookup, ordered DFS, capture, and error-reporting changes are not part of this frozen result.
+The capture implementation contains per-match inserts that must become bulk operations before adoption here.
+Withholding all source facts on parse failure would also break the proven raw-text scanner contract.
+No new Linear tickets were created.

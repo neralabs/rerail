@@ -11,7 +11,7 @@ import tempfile
 import subprocess
 
 from dto import canonical
-from migration import ROOT, PIN, git, sha, read_json, write_json, compare
+from migration import ROOT, PIN, git, sha, read_json, write_json, compare, fixtures_path
 from replay import execute_native
 
 CHECK = 'rust_sql_grammar_boundary'
@@ -19,7 +19,7 @@ RULE = ROOT / 'packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr'
 
 
 def cases():
-    previous = read_json(ROOT / 'fixtures/host/data-layer-port/batch-04-probes.json')
+    previous = read_json(fixtures_path('host', 'data-layer-port', 'batch-04-probes.json'))
     result = [c for c in previous['cases'] if c['check'] == CHECK]
     # Raw source scanning includes comments, malformed Rust, Unicode boundaries and every occurrence's line.
     for name, source in [

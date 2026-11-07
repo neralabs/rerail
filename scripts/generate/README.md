@@ -114,3 +114,5 @@ The importer adds the repository header and resolves adjacent table includes. It
 | `packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/dynamic-module-loading.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/classvar-check.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/type-safety-patterns.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/forwardref.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |

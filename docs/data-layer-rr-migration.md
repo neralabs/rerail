@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **57 target drafts and 43 absent translations**. None has full acceptance yet.
+The current inventory contains **59 target drafts and 41 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -248,3 +248,45 @@ This engine does not yet include those later sibling changes.
 
 These results cover direct assertions and snapshot execution. No policy receives full migration acceptance from this checkpoint.
 Associated suites, portable helper counterparts, configured reporting, persistent workspaces, and the remaining translations still require work.
+
+## Native traversal checkpoint, 2026-11-07
+
+The current inventory contains 59 drafts and 41 absent translations. No policy has full migration acceptance.
+The new drafts are `forwardref` and `type_safety_patterns`.
+
+The frozen engine is `93cee2a43e10020ca7639cf2ade1cb974c789c18`.
+Its executable SHA-256 is `c60f5696278accdeb3a885db6bc64d92213d7e38a16190354675c651f8f657fd`.
+The engine branch is pushed. The primary production addon is unchanged.
+
+All 969 original test bodies across thirteen direct modules pass on this engine.
+They make 922 native calls and compare 486 complete source API returns.
+All thirteen disabled-policy controls reject an original positive case.
+The native run has no skips, missing recorded calls, or source detector fallbacks.
+The offline source run has 966 passes and three reviewed skips. The native run transfers those three assertions.
+
+[The receipt](../fixtures/host/data-layer-port/rr-thirteen-direct-contracts.json.gz) retains the recording, 24 native shards, and thirteen mutation controls.
+It lists 273 cases without native calls. Those assertions ran, but do not count as native detector coverage.
+Forty-eight observations lack the legacy normalized DTO. Their complete source API returns still receive comparisons.
+The receipt explicitly sets `fullMigrationAcceptance` to false.
+
+[Additional contracts](../fixtures/host/data-layer-port/rr-native-traversal-contracts.json.gz) retain 47 ForwardRef cases and 37 type-safety cases.
+The same engine also passes the seventeen ClassVar and thirty-one Rust API contracts in that bundle.
+These are source-derived cases, with zero original pytest cases claimed.
+They cover traversal order, state restoration, Unicode, invalid input, explicit file scope, and source-argument gates.
+
+The traversal repair preserves node ids and source geometry. One demanded native pass creates a shared rank column per document.
+`earlier` compares these ranks. Function bodies precede decorators and return annotations.
+Parameter defaults follow their AST field order. Dictionary keys precede values, and positional call arguments precede keywords.
+The implementation uses an iterative walk. It does not add per-node SQL callbacks or another parser.
+
+The type-safety bridge transfers regex searches and the Python match-type check to a native match DTO.
+It records each transferred operation and retains the original assertion predicates.
+Its discovery and deduplication decisions run in SQL. The host supplies file metadata and typed input columns.
+Binary exception arguments and enum identity remain lossless in oracle records.
+
+Configured reporting still requires acceptance work. The type-safety draft currently formats the category name; upstream formats its label.
+The next reporting test must detect and correct that difference. Persistent workspaces and associated helper suites also remain required.
+
+The latest sibling commits add document-filtered indexes, ordered DFS, repeated regex captures, and syntax/input reporting.
+Those changes are not in this frozen engine. Review their batching and input-domain behavior before integration.
+In particular, per-match inserts need batching, and raw-text checks must retain access to invalid Python source.
