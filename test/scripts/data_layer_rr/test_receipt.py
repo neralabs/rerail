@@ -31,6 +31,15 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mutation.disable_policy('backend_coupling', '')
 
+    def test_cache_mutation_cannot_hide_real_findings_as_helpers(self):
+        self.assertTrue(mutation.auxiliary_output('connection_caches', dict(code='CC_CONFIG')))
+        self.assertTrue(mutation.auxiliary_output('connection_caches', dict(code='CC_PATTERN')))
+        self.assertFalse(mutation.auxiliary_output('connection_caches', dict(code='CC001')))
+        source = 'cc_pattern(0, "regex", "description").\nCache(at, i, snippet, description) :- cc_hit(at, i, snippet, description).\n'
+        disabled = mutation.disable_policy('connection_caches', source)
+        self.assertIn('cc_pattern(0, "regex", "description").', disabled)
+        self.assertIn(':- 1 = 0, cc_hit', disabled)
+
     def test_binary_exception_arguments_keep_every_byte(self):
         self.assertEqual({'kind': 'bytes', 'hex': '00fffe'}, canonical(bytes([0, 255, 254])))
 
