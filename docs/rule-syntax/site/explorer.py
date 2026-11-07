@@ -67,11 +67,15 @@ def main():
     bundle = {"rules": rules, "lib": lib}
     with open(os.path.join(out, "explorer", "python.json"), "w", encoding="utf-8") as f:
         json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"))
-    shutil.copyfile(os.path.join(HERE, "explorer", "explorer.html"), os.path.join(out, "explorer.html"))
-    for name in ("worker.js", "engine.js"):
-        shutil.copyfile(os.path.join(HERE, "explorer", name), os.path.join(out, "explorer", name))
     if not os.path.exists(WASM):
         sys.exit(f"{WASM}: build the browser engine first (see this file's docstring)")
+    # The page shows download progress against the engine's size where the response does not give its length.
+    page = re.sub(r"const ENGINE_BYTES = \d+;", f"const ENGINE_BYTES = {os.path.getsize(WASM)};",
+                  read(os.path.join(HERE, "explorer", "explorer.html")), count=1)
+    with open(os.path.join(out, "explorer.html"), "w", encoding="utf-8") as f:
+        f.write(page)
+    for name in ("worker.js", "engine.js"):
+        shutil.copyfile(os.path.join(HERE, "explorer", name), os.path.join(out, "explorer", name))
     shutil.copyfile(WASM, os.path.join(out, "explorer", "rerail-engine.wasm"))
     size = os.path.getsize(os.path.join(out, "explorer", "python.json"))
     print(f"{len(rules)} rules, {len(lib)} library files, python.json {size / 1e6:.1f} MB, "

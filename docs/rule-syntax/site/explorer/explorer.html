@@ -131,6 +131,13 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1
 .state.found { color: var(--hit-mark); }
 .state.fail { color: var(--bad); }
 .status .sum { color: var(--muted); font-variant-numeric: tabular-nums; }
+.prog { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--line) 70%, transparent); overflow: hidden; position: relative; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent-2); border-radius: 3px; transition: width .2s; }
+/* A step with no measure of its own (starting, compiling): a band that sweeps across. */
+.prog.busy i { width: 100%; background: linear-gradient(90deg, transparent, var(--accent-2), transparent); background-size: 40% 100%;
+  background-repeat: no-repeat; animation: sweep 1.2s linear infinite; }
+@keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { .prog.busy i { animation: none; background: var(--accent-2); opacity: .5; } }
 .out { flex: 1; min-height: 0; overflow: auto; }
 .view { display: none; }
 .view.on { display: block; }
@@ -228,10 +235,11 @@ kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-
     <div class="phead">
       <div class="status">
         <span class="state idle" id="state">Loading</span>
-        <span class="sum" id="sum">Loading the engine (9.5 MB of WebAssembly)…</span>
+        <span class="sum" id="sum">Starting the background worker…</span>
         <span style="flex:1"></span>
         <button class="btn primary" id="run" type="button" disabled>Run</button>
       </div>
+      <div class="prog busy" id="prog" role="progressbar" aria-label="Loading the engine" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="prog-i"></i></div>
       <div class="tabs" id="out-tabs" role="tablist" aria-label="Run output">
         <button class="tab" role="tab" data-v="findings" aria-selected="true">Findings<span class="n" id="n-findings"></span></button>
         <button class="tab" role="tab" data-v="relations">Relations<span class="n" id="n-relations"></span></button>
@@ -436,30 +444,103 @@ $("src-add").addEventListener("click", () => {
 srcEd.onEdit = (t) => { sources[activeSrc] = t; store.set("sources", sources); schedule(); };
 
 // ---------------------------------------------------------------- engine
-const worker = new Worker("explorer/worker.js", { type: "module" });
+// The engine runs in a background worker; where the browser refuses one, or it says nothing within a few seconds,
+// on the page's own thread (each run then blocks the page for its duration). Every loading stage is shown.
+const SHIM = "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.2/dist/index.js";
+const ENGINE_BYTES = 9489146; // explorer.py writes the build's size here, for a download that does not say its length
+const abs = (path) => new URL(path, location.href).href;
+const LOAD = { type: "load", shim: SHIM, engine: abs("explorer/engine.js"), wasm: abs("explorer/rerail-engine.wasm"), bytes: ENGINE_BYTES };
+let backend = null, where = "";
 let ready = false, running = false, pending = false, seq = 0, timer = 0;
-worker.onmessage = ({ data }) => {
-  if (data.type === "loaded") { ready = true; $("run").disabled = false; runNow(); }
-  else if (data.type === "result") { running = false; if (data.seq === seq) show(data.result); if (pending) runNow(); }
-  else if (data.type === "failed") {
-    running = false;
-    setState("fail", "Stopped", data.message);
-    if (!ready) $("v-findings").innerHTML = `<div class="callout"><b>The engine did not start.</b><pre>${esc(data.message)}</pre></div>`;
-  }
+const mb = (n) => (n / 1e6).toFixed(1);
+const STAGES = {
+  worker: () => "Starting the background worker…",
+  shim: () => "Loading the WASI layer (from jsDelivr)…",
+  download: (r, t) => `Downloading the engine: ${mb(r)} of ${mb(t)} MB`,
+  compile: (r) => `Compiling the engine (${mb(r)} MB of WebAssembly)…`,
 };
-worker.onerror = (e) => { setState("fail", "Stopped", `The engine's worker failed to start: ${e.message || "a script did not load"}.`); };
-worker.postMessage({ type: "load", wasm: new URL("explorer/rerail-engine.wasm", location.href).href });
+let stage = { name: "worker", since: performance.now(), text: STAGES.worker() };
+function onStage(name, received = 0, total = 0) {
+  if (name !== stage.name) stage.since = performance.now();
+  stage.name = name;
+  stage.text = STAGES[name](received, total);
+  const frac = name === "download" && total ? received / total : name === "compile" ? 1 : 0;
+  $("prog").hidden = false;
+  $("prog").classList.toggle("busy", name !== "download");
+  $("prog-i").style.width = (name === "download" ? 100 * Math.min(1, frac) : 100).toFixed(1) + "%";
+  $("prog").setAttribute("aria-valuenow", Math.round(100 * frac));
+  tick();
+}
+function tick() {
+  if (ready) return;
+  const secs = Math.round((performance.now() - stage.since) / 1000);
+  setState("busy", "Loading", stage.text + (secs >= 8 ? ` (${secs} s at this step)` : ""));
+}
+const ticker = setInterval(() => (ready ? clearInterval(ticker) : tick()), 1000);
+function engineReady(how) {
+  ready = true; where = how;
+  $("prog").hidden = true;
+  $("run").disabled = false;
+  runNow();
+}
+function loadFailed(message) {
+  clearInterval(ticker);
+  $("prog").hidden = true;
+  setState("fail", "Stopped", "The engine did not start.");
+  $("v-findings").innerHTML = `<div class="callout"><b>The engine did not start</b> while ${esc(stage.text.replace(/…$/, "").toLowerCase())}.<pre>${esc(message)}</pre></div>`;
+}
+
+async function startHere(why) {
+  try {
+    onStage("shim");
+    const shim = await import(SHIM);
+    const runner = await import(LOAD.engine);
+    const module = await runner.loadEngine(LOAD.wasm, ENGINE_BYTES, onStage);
+    backend = { run: (request) => runner.explore(shim, module, request) };
+    engineReady(`on the page's thread (${why})`);
+  } catch (error) {
+    loadFailed(String(error && error.message ? error.message : error));
+  }
+}
+function startWorker() {
+  let worker;
+  try { worker = new Worker("explorer/worker.js", { type: "module" }); }
+  catch (error) { startHere("the browser refused a background worker"); return; }
+  let heard = false, wseq = 0;
+  const waiting = new Map();
+  const giveUp = (why) => { if (heard) return; heard = true; clearTimeout(watchdog); worker.terminate(); startHere(why); };
+  const watchdog = setTimeout(() => giveUp("the background worker did not start"), 5000);
+  worker.onmessage = ({ data }) => {
+    heard = true; clearTimeout(watchdog);
+    if (data.type === "stage") { if (!ready) onStage(data.stage, data.received, data.total); }
+    else if (data.type === "loaded") {
+      backend = { run: (request) => new Promise((resolve, reject) => { waiting.set(++wseq, { resolve, reject }); worker.postMessage({ type: "run", seq: wseq, request }); }) };
+      engineReady("in a background worker");
+    } else if (data.type === "result" && waiting.has(data.seq)) { waiting.get(data.seq).resolve(data.result); waiting.delete(data.seq); }
+    else if (data.type === "failed") {
+      if (waiting.has(data.seq)) { waiting.get(data.seq).reject(new Error(data.message)); waiting.delete(data.seq); }
+      else loadFailed(data.message);
+    }
+  };
+  worker.onerror = (e) => { e.preventDefault?.(); if (!heard) giveUp("the background worker's script did not load"); else if (!ready) loadFailed(e.message || "the background worker stopped"); };
+  worker.postMessage(LOAD);
+}
+onStage("worker");
+startWorker();
 
 function schedule() { clearTimeout(timer); timer = setTimeout(runNow, 450); }
 function runNow() {
   clearTimeout(timer);
   if (!ready || !rule) return;
   if (running) { pending = true; return; }
-  pending = false; running = true; seq++;
+  pending = false; running = true;
+  const mine = ++seq;
   setState("busy", "Running", "Running the rule over " + Object.keys(sources).length + " files…");
   const id = rule.id;
   const parts = Object.fromEntries(Object.entries(rule.files).filter(([n]) => n !== `${id}.rr`));
-  worker.postMessage({ type: "run", seq, request: { id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib } });
+  backend.run({ id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib }).then(
+    (result) => { running = false; if (mine === seq) show(result); if (pending) runNow(); },
+    (error) => { running = false; setState("fail", "Stopped", String(error.message || error)); if (pending) runNow(); });
 }
 $("run").addEventListener("click", runNow);
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runNow(); } });
@@ -514,7 +595,7 @@ function show(result) {
   const secs = (result.ms / 1000).toFixed(2);
   if (result.code !== 0) setState("fail", "Stopped", "The engine stopped; see Findings for why.");
   else setState(f.rows.length ? "found" : "ok", f.rows.length ? `${f.rows.length} found` : "Clean",
-    `${files || "?"} files, ${nodes || "?"} nodes · ran in ${secs} s`);
+    `${files || "?"} files, ${nodes || "?"} nodes · ran in ${secs} s${where.startsWith("on the page") ? " · " + where : ""}`);
 
   // Findings
   let h = "";

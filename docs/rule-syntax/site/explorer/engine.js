@@ -75,6 +75,37 @@ export async function command(shim, module, args, env, mounts) {
   return { code, stdout: lines(outBytes), stderr: lines(errBytes), ms, mounts: after };
 }
 
+// Downloads and compiles the engine, telling `progress` how far it got: ("download", bytes so far, bytes in all),
+// then ("compile"). `expected` is the size the build wrote, for a response that does not say its length.
+export async function loadEngine(url, expected, progress) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`the engine did not download (HTTP ${response.status})`);
+  const total = Number(response.headers.get("content-length")) || expected;
+  const chunks = [];
+  let received = 0, told = 0;
+  progress("download", 0, total);
+  if (response.body && response.body.getReader) {
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (received - told > 256 * 1024) { told = received; progress("download", received, total); }
+    }
+  } else {
+    const all = new Uint8Array(await response.arrayBuffer());
+    chunks.push(all);
+    received = all.length;
+  }
+  progress("download", received, Math.max(total, received));
+  const bytes = new Uint8Array(received);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.length; }
+  progress("compile", received, received);
+  return WebAssembly.compile(bytes);
+}
+
 // Files named by path ("python/ast.rr") as the nested directories a mount takes.
 export function nest(flat) {
   const root = {};
