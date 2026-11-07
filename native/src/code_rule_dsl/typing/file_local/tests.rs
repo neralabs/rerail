@@ -239,3 +239,31 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     let (_, locations) = split_located(&prog);
     assert_eq!(locations[&made[0]], [0], "{locations:?}");
 }
+
+/// Position comparisons must retain the semantic candidate filters. Document equality alone
+/// does not make their Cartesian product a bounded per-file producer.
+#[test]
+fn cross_file_filters_keep_independent_node_positions_out_of_local_products() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl visit_index(n: node, i: number)
+.input node, field, text, docof, visit_index
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl chosen(n: node)
+chosen(n) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !defined(s).
+.decl triangle(a: node, b: node, c: node)
+triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
+    docof(a, d), docof(b, d), docof(c, d), visit_index(a, ai), visit_index(b, bi), visit_index(c, ci), ai < bi, bi < ci.
+.output triangle
+"#;
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    assert!(!split(&program).contains("chosen"));
+    let original = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap().clone();
+    push_local_joins(&mut program);
+    let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
+    assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
+}
