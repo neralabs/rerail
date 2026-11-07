@@ -670,6 +670,10 @@ pub(crate) fn run_with_options(
     // the memo hits read since the last chunk.
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>);
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
+    // What each side of the channel is doing, for the other's waits (`profile::wait`).
+    let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
+    worker_doing.set("parse");
+    main_doing.set("setup");
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0051).
     let recording = tapes.is_some() && t.is_none();
@@ -700,6 +704,7 @@ pub(crate) fn run_with_options(
         // A file's memo entry when the run is memoised and the memo has it, else its document, built.
         let mut stats_read = Vec::new();
         let mut build = |d: &i64, path: &String| -> Result<(Option<crate::content_store::SourceId>, std::result::Result<memo::Entry, syntax::Document>)> {
+            worker_doing.set("parse");
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
             // source, and on a memo hit is neither read nor hashed.
@@ -778,7 +783,9 @@ pub(crate) fn run_with_options(
                     // Reading, hashing and looking files up is the worker's parse time.
                     add(&mut parse, t);
                     t = thread_usage();
-                    if send.send(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits)))).is_err() {
+                    let hand = Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits)));
+                    worker_doing.set("hand on (memo hits)");
+                    if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand)).is_err() {
                         break;
                     }
                 }
@@ -789,25 +796,35 @@ pub(crate) fn run_with_options(
             }
             add(&mut parse, t);
             t = thread_usage();
+            worker_doing.set("batch");
             let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
             let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             let (docs_of, hits_of) = (std::mem::take(&mut pending_docs), std::mem::take(&mut hits));
-            if send.send(built.map(|sources| (n, sources, docs_of, hits_of))).is_err() {
+            let hand = built.map(|sources| (n, sources, docs_of, hits_of));
+            worker_doing.set("hand on (a chunk)");
+            if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand)).is_err() {
                 break;
             }
             t = thread_usage();
         }
         drop(send);
+        worker_doing.set("done");
         (parse, batch, read_sources, stats_read)
     });
-    for built in chunks_in {
+    loop {
+        main_doing.set("wait");
+        let Ok(built) = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || chunks_in.recv()) else { break };
         let (chunk_nodes_built, sources, chunk_docs, hits) = built?;
+        main_doing.set("local run");
         // The previous chunk's freed pages go back to the system: without this the footprint settles about 170 MB
         // over the live heap on the full corpus (550 MB against 300 to 350 MB), and the peak is 80 MB higher.
-        crate::code_rule_dsl::prof::release();
+        {
+            let _release = crate::code_rule_dsl::logic::profile::span(|| "release freed pages".into());
+            crate::code_rule_dsl::prof::release();
+        }
         // `RERAIL_PROF_CHUNKS=1`: the memory held as each chunk arrives (footprint, live heap, cross-file rows).
         if std::env::var_os("RERAIL_PROF_CHUNKS").is_some() {
             let _ = tikv_jemalloc_ctl::epoch::advance();
@@ -989,7 +1006,8 @@ pub(crate) fn run_with_options(
         phase("local", statements.count());
         statements.enter("wait");
     }
-    worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
+    main_doing.set("done");
+    crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || worker.join()).map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0051).
@@ -1126,7 +1144,9 @@ pub(crate) fn run_with_options(
         crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk)", docs.len()));
     }
     if let Some(collecting) = collecting {
-        let (passes, outcome) = collecting.join().map_err(|_| Error::Plan("store collection panicked".to_owned()))?;
+        let collection = crate::code_rule_dsl::logic::profile::Activity::default();
+        collection.set("collecting the store (decision 0051)");
+        let (passes, outcome) = crate::code_rule_dsl::logic::profile::wait("the store's collection", &collection, || collecting.join()).map_err(|_| Error::Plan("store collection panicked".to_owned()))?;
         crate::code_rule_dsl::logic::profile::decision("store collection (decision 0051)", || match outcome {
             Ok(summary) => format!("{passes} passes in the background: {summary}"),
             Err(e) => format!("{passes} passes, then stopped: {e}"),

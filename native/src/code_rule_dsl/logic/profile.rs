@@ -103,6 +103,50 @@ struct State {
     devices: BTreeMap<(String, String), DeviceTotal>,
     /// Work charged by (span path, unit) (`work`).
     work: BTreeMap<(String, Unit), u64>,
+    /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
+    waits: BTreeMap<(String, String, String), WaitTotal>,
+}
+
+#[derive(Default)]
+struct WaitTotal {
+    count: u64,
+    /// Wall time blocked, and the waiter's CPU meanwhile (spinning, waking).
+    wall: f64,
+    cpu: f64,
+}
+
+/// What a thread is doing, for the threads that wait on it (`wait`): one shared marker, set as it moves between
+/// phases. Cheap to set: a store of a static name.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct Activity(parking_lot::Mutex<&'static str>);
+
+impl Activity {
+    pub(in crate::code_rule_dsl) fn set(&self, doing: &'static str) {
+        *self.0.lock() = doing;
+    }
+    pub(in crate::code_rule_dsl) fn get(&self) -> &'static str {
+        *self.0.lock()
+    }
+}
+
+/// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
+/// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
+/// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
+    if !on() {
+        return blocking();
+    }
+    let at = doing.get();
+    let (wall0, cpu0) = (std::time::Instant::now(), cpu());
+    let out = blocking();
+    let (wall, spent) = (wall0.elapsed().as_secs_f64(), cpu() - cpu0);
+    let path = current();
+    let mut state = STATE.lock().unwrap();
+    let w = state.waits.entry((path, awaited.to_owned(), if at.is_empty() { "-".to_owned() } else { at.to_owned() })).or_default();
+    w.count += 1;
+    w.wall += wall;
+    w.cpu += spent;
+    out
 }
 
 struct Stratum {
@@ -608,6 +652,18 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
             j.1 += made;
         }
         roofline::report(&mut r, &own, &charged, &joins);
+    }
+
+    let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
+    if state.waits.is_empty() {
+        r.push_str("(no waits)\n");
+    } else {
+        let _ = writeln!(r, "{:>9} {:>9} {:>7}  waiter: waited on (which was doing)", "wall s", "cpu s", "waits");
+        let mut waits: Vec<_> = state.waits.iter().collect();
+        waits.sort_by(|a, b| b.1.wall.total_cmp(&a.1.wall));
+        for ((path, on, doing), w) in waits {
+            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>7}  {path}: {on} ({doing})", w.wall, w.cpu, w.count);
+        }
     }
 
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
