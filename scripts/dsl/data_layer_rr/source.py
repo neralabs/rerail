@@ -10,7 +10,21 @@ from dto import canonical
 def main():
     from migration import ROOT  # Also locates the existing source recorder.
     import data_layer_record as recording
-    recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),)
+    recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),
+                           ('data_layer_facade_purity', 'lint_targets', 'facade_targets'))
+    original_snapshot = recording.snapshot
+    def input_snapshot(module, kind, args, kwargs):
+        if kind == 'facade_targets':
+            from facade_purity_port import snapshot
+            return snapshot(module, 'lint_targets', args, kwargs)
+        return original_snapshot(module, kind, args, kwargs)
+    recording.snapshot = input_snapshot
+    original_normalize = recording.normalize
+    def result_snapshot(check, entry, result, root, files):
+        if check == 'data_layer_facade_purity' and entry == 'lint_targets':
+            return recording.batch_five.normalize(check, result.violations, root, files)
+        return original_normalize(check, entry, result, root, files)
+    recording.normalize = result_snapshot
     original_recorder = recording.Recorder
 
     class Recorder(original_recorder):
@@ -19,6 +33,7 @@ def main():
             adapters = {(check, entry): kind for check, entry, kind in
                         (*recording.ADAPTERS, *recording.batch_two.ADAPTERS)}
             adapters[('sync_async_signatures', 'analyze_file')] = 'file'
+            adapters[('data_layer_facade_purity', 'lint_file')] = 'file'
             adapters.update({('data_layer_compat_aliases', entry): 'facade_aliases'
                 for entry in ['lint_file', 'lint_file_content']})
             for module, entry, _ in self.originals:

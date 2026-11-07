@@ -39,6 +39,7 @@ ENTRIES = {
     'type_safety_patterns': ['check_file_for_patterns', 'check_file_content_for_patterns', 'check_function_signatures',
         'check_function_signature_content', 'normalize_path', 'is_allowlisted', 'find_python_files', '_issues_for_files', '_dedupe_issues'],
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
+    'data_layer_facade_purity': ['lint_file', 'lint_targets'],
     'sync_async_signatures': ['analyze_file'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
@@ -128,6 +129,9 @@ class Suite:
         elif check == 'data_layer_compat_aliases':
             from aliases_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs, self.item, self.source)
+        elif check == 'data_layer_facade_purity':
+            from facade_purity_port import snapshot
+            files, scope, root = snapshot(module, entry, args, kwargs)
         elif check == 'sync_async_signatures':
             files, scope, root = snapshot(module, 'file', args, kwargs)
         elif check == 'admin_async_purity':
@@ -150,7 +154,10 @@ class Suite:
             return
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'data_layer_compat_aliases':
+        if check == 'data_layer_facade_purity':
+            from data_layer_batch_five import normalize as normalize_five
+            actual = normalize_five(check, result.violations if entry == 'lint_targets' else result, root, files)
+        elif check == 'data_layer_compat_aliases':
             from data_layer_batch_five import normalize as normalize_five
             actual = normalize_five(check, result, root, files)
         elif check == 'sync_async_signatures':
@@ -181,6 +188,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'data_layer_facade_purity':
+            from facade_purity_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'sync_async_signatures':
             from signatures_port import scan
             return scan(self, entry, module, arguments)
@@ -445,7 +455,10 @@ class Suite:
         bind_aliases(self.modules)
         originals = codes(self.modules)
         for check, module in self.modules.items():
-            if check == 'data_layer_compat_aliases':
+            if check == 'data_layer_facade_purity':
+                from facade_purity_port import DefaultTargets
+                self.replace(module, 'DEFAULT_TARGETS', DefaultTargets(self, module))
+            if check in {'data_layer_compat_aliases', 'data_layer_facade_purity'}:
                 # Passive list storage retains the original DTO assertion without source methods.
                 self.replace(module.LintResults, 'add', lambda result, violation: result.violations.append(violation))
             for entry in ENTRIES[check]:
@@ -470,7 +483,8 @@ class Suite:
                     'no_blanket_grammar_bypass': {'cli_main'}, 'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
-                    'data_layer_compat_aliases': {'cli_main', '_print_results'}}
+                    'data_layer_compat_aliases': {'cli_main', '_print_results'},
+                    'data_layer_facade_purity': {'cli_main', '_print_results'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
