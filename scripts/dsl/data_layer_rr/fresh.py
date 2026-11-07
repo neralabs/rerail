@@ -160,7 +160,11 @@ def run(args):
                     if original['id'] != case['id']:
                         raise ValueError('Fresh case identity changed')
                     try:
-                        compare(original['value'], actual)
+                        if case['check'] == 'async_sync_boundary' and case['entry'] == 'scan_tree':
+                            from boundary_port import comparison_value
+                            compare(comparison_value(original['value']), comparison_value(actual))
+                        else:
+                            compare(original['value'], actual)
                     except AssertionError:
                         report['results'].append(dict(id=case['id'], value=actual, expected=original['value'], status='failed'))
                         report.update(calls=backend.calls, programInputs=backend.inputs)

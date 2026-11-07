@@ -3,6 +3,32 @@ from pathlib import Path
 from ast_transport import columns
 
 
+def comparison_value(value):
+    """Preserve complete values while comparing the source's nondeterministic file-completion groups.
+
+    fact_engine.py yields as_completed futures. scan_tree appends each complete file bundle.
+    Repeated unchanged source runs demonstrate both cross-file orders. In-file order stays exact.
+    The source and native reports retain their original values; this copy is only for comparison.
+    """
+    import copy
+    result = copy.deepcopy(value)
+    if 'result' not in result:
+        return result
+    owner = result['result']
+    if owner.get('type') != 'scripts.lint_async_sync_boundary.LintResult':
+        raise ValueError('Invalid boundary result type')
+    groups = {}
+    previous = None
+    for row in owner['fields']['violations']:
+        path = row['fields']['file']
+        if path != previous and path in groups:
+            raise ValueError('Boundary file groups are interleaved')
+        groups.setdefault(path, []).append(row)
+        previous = path
+    owner['fields']['violations'] = [row for path in sorted(groups) for row in groups[path]]
+    return result
+
+
 def select(suite, result, category):
     rows = suite.native('async_sync_boundary', 'category', [],
         dict(categories=[v.category for v in result.violations], category=category))
