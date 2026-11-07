@@ -1,0 +1,734 @@
+{
+  "cases": [
+    {
+      "id": "read-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "read-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "read_version-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_read-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned_write-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "write-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "write-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-keyword",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-positional",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-precedence",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t), fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-first-pos",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-spread",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(*args, lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "write_version-keywords-first",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t), **kwargs)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-nonlocal-both",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-global-both",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-mutator-both",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-subscript-both",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "defined-after",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(fn=worker)\n    def worker(t):\n        items.append(t)\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-last",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n    def worker(t):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "repeat-calls",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "module-import",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "import items\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-dotted-import",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "import items.child\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-alias",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "import package as items\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-from",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "from .package import items\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-from-alias",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "from package import thing as items\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-class",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "class items: pass\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-function",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def items(): pass\nconn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "module-later",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "conn.write(fn=lambda t: items.append(t))\nitems = []\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-binding",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    def nested():\n        items = []\n    conn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "named-ignores-module",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "items = []\ndef caller(conn):\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-ignores-tuple",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items, other = values\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "enclosing-argument",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "kwonly-not-local",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn, *, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-scope",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "@conn.write(fn=lambda t: items.append(t))\ndef caller(conn):\n    items = []\n"
+        }
+      ]
+    },
+    {
+      "id": "default-scope",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn=conn.write(fn=lambda t: items.append(t))):\n    items = []\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-shadow",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda items: items.append(1))\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-nested",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: (lambda: items.append(t)))\n"
+        }
+      ]
+    },
+    {
+      "id": "parenthesized",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    ((conn.write))(fn=((lambda t: (items.append(t)))))\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-column",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    caf\u00e9 = []; conn.write(fn=lambda t: caf\u00e9.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-space",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n"
+        }
+      ]
+    },
+    {
+      "id": "clean",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def caller(conn):\n    conn.write(fn=lambda t: t.append(1))\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/tests/test_a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/tests/test_a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/test/test_a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/test/test_a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/test_a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "conform/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-docs/a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "docs/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l7000_example/a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "l7000_example/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/tmp/a.py",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-0",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/bad.py",
+          "source": "# .write(\ndef f(:\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-1",
+      "check": "transaction_closures",
+      "files": [
+        {
+          "path": "impl/bad.py",
+          "source": "# .read(\n\u0000\n"
+        }
+      ]
+    }
+  ]
+}

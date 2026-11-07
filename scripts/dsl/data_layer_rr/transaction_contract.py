@@ -1,5 +1,5 @@
 """Run unchanged transaction-closure assertions with recorded inputs and complete state."""
-import argparse,ast,importlib,inspect,json,os,sys,tempfile,threading
+import argparse,ast,importlib,inspect,json,os,subprocess,sys,threading
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -18,7 +18,7 @@ def syntax(tree):
     while pending:
         node=pending.pop();nodes.append(node);pending.extend(reversed(list(ast.iter_child_nodes(node))))
     for key,attr in [('astColumns','col_offset'),('astArgNames','arg'),('astKeywords','arg'),('astAsNames','asname')]:
-        data[key]=[str(getattr(n,attr,'') or '') for n in nodes]
+        data[key]=[str(getattr(n,attr,0)) if key=='astColumns' else str(getattr(n,attr,'') or '') for n in nodes]
     data.update(astListNodes=[],astListNames=[],astListOrdinals=[])
     for index,node in enumerate(nodes):
         for ordinal,name in enumerate(getattr(node,'names',[])):
@@ -37,6 +37,8 @@ class Contract:
             from suite import Suite
             self.backend=Suite(self.source,args.engine.absolute(),['transaction_closures'],0,1,args.baseline,
                                args.rule_root.absolute() if args.rule_root else None)
+        self.harness={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in [Path(__file__),
+            *[Path(__file__).with_name(n) for n in ['transaction_port.py','transaction_probe.py','ast_transport.py','replay.py','suite.py','dto.py']]]}
 
     def root(self):
         return self.item.funcargs.get('tmp_path') if self.item else None
@@ -48,6 +50,7 @@ class Contract:
         if isinstance(v,tuple):return dict(kind='tuple',items=[self.value(x) for x in v])
         if isinstance(v,dict):return dict(kind='dict',items=[[self.value(k),self.value(x)] for k,x in v.items()])
         if isinstance(v,str) and self.root() is not None:
+            if v==str(self.root()):return '<fixture>'
             return v.replace(str(self.root())+'/', '<fixture>/')
         if hasattr(v,'__dataclass_fields__'):
             return dict(kind='dataclass',type=type(v).__module__+'.'+type(v).__qualname__,
@@ -128,7 +131,10 @@ class Contract:
             testsSha256=sha((self.source/'scripts/tests/test_lint_transaction_closures.py').read_bytes()),
             harnessSha256=sha(Path(__file__).read_bytes()))
         if self.backend:result.update(nativeCalls=self.backend.calls,engineSha256=sha(self.args.engine.read_bytes()))
+        for name,digest in self.harness.items():assert sha((ROOT/name).read_bytes())==digest,'Harness changed during acceptance: '+name
+        result['harnessFiles']=self.harness
         write_json(self.args.out,result)
+        if missing and not code:raise AssertionError('Missing original API returns: '+repr(missing))
 
 
 def main():
@@ -140,6 +146,8 @@ def main():
     if args.engine:args.engine=args.engine.absolute()
     if args.rule_root:args.rule_root=args.rule_root.absolute()
     assert git(args.source,'rev-parse','HEAD')==PIN
+    for name in ['scripts/lint_transaction_closures.py','scripts/tests/test_lint_transaction_closures.py']:
+        assert (args.source/name).read_bytes()==subprocess.check_output(['git','-C',str(args.source),'show',PIN+':'+name])
     assert 0<=args.part<args.parts and (args.command=='native' or (args.part,args.parts)==(0,1))
     sys.path[:0]=[str(args.source),str(args.source/'scripts'),str(ROOT/'scripts/dsl/data_layer_audit')]
     os.chdir(args.source);contract=Contract(args)

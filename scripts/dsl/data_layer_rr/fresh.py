@@ -131,7 +131,11 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='plan_scope_ownership' and case['entry']=='collector':
+                if case['check']=='transaction_closures' and case['entry']=='probe':
+                    from transaction_probe import probe
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    call=lambda:probe(module,values,backend if native else None)
+                elif case['check']=='plan_scope_ownership' and case['entry']=='collector':
                     from plan_ownership_port import collector_result
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:collector_result(module,values['root'],values['path'],values['source'],values['tree'],backend if native else None)

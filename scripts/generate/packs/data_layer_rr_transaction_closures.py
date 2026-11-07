@@ -97,6 +97,7 @@ tx_import(n, name) :- tx_gkind(n, "ImportFrom"), tx_gedge(n, "names", a), option
 // Containment is lazy on the production tape; supplied arguments use their flat parent columns.
 .decl tx_contains(n: node, f: node)
 tx_contains(n, f) :- !tx_graph(), tx_function(f, _), within(n, f).
+tx_contains(n, f) :- !tx_graph(), tx_function(f, _), decorator(f, e), (n = e ; within(n, e)).
 tx_contains(n, f) :- tx_graph(), tx_parent(n, f), tx_function(f, _).
 tx_contains(n, f) :- tx_graph(), tx_parent(n, p), tx_contains(p, f).
 .decl tx_owner(n: node, f: node)
@@ -110,7 +111,7 @@ def semantics():
 .decl tx_triggered(d: number)
 tx_triggered(d) :- source(d, sp), text(sp, t), tx_trigger(trigger), contains(trigger, t).
 .decl tx_selected(d: number)
-tx_selected(d) :- tx_doc(d, _), option("entryPoint", _), !syntax_error(d, _, _).
+tx_selected(d) :- !tx_graph(), tx_doc(d, _), option("entryPoint", _), !syntax_error(d, _, _).
 tx_selected(0) :- tx_graph(), !option("entryPoint", "source").
 tx_selected(0) :- tx_graph(), option("entryPoint", "source"), option("providedSource", s), tx_trigger(t), contains(t, s).
 tx_selected(d) :- tx_doc(d, p), !option("entryPoint", _), tx_triggered(d), !syntax_error(d, _, _),
@@ -179,14 +180,14 @@ tx_issue(p, l, col, ci, ni, rank, code, cat(prefix, message)) :- tx_hit(c, n, ra
  tx_n(n, d, l, col, ni), tx_doc(d, p), tx_n(c, _, _, _, ci).
 '''+''.join(f'''
 .severity Tx{i} error
-.violation Tx{i}(at: span, column: number, call: number, ordinal: number, rank: number) code "TXN00{i}" "{{message}}"
-Tx{i}(@place(p, l), col, call, ordinal, rank) :- tx_issue(p, l, col, call, ordinal, rank, "TXN00{i}", message).
-''' .replace('rank: number) code','rank: number, message: symbol) code').replace('ordinal, rank) :-','ordinal, rank, message) :-') for i in range(1,5))+r'''
+.violation Tx{i}(at: span, column: number, call: number, ordinal: number, rank: number, message: symbol) code "TXN00{i}" "{{message}}"
+Tx{i}(@place(p, l), col, call, ordinal, rank, message) :- tx_issue(p, l, col, call, ordinal, rank, "TXN00{i}", message).
+''' for i in range(1,5))+r'''
 .violation Local(at: span, name: symbol) code "TX_LOCAL" "{name}"
 Local(@place("input.py", 1), name) :- option("entryPoint", "detector"), tx_local_event(0, name, _).
-.violation Scope(at: span, name: symbol) code "TX_SCOPE" "{name}"
-Scope(@place("input.py", 1), name) :- option("entryPoint", "visitor"), tx_module_bind(_, name).
-Scope(@place("input.py", 1), name) :- option("entryPoint", "scope"), option_item("scopeNames", _, name).
+.violation TxScope(at: span, name: symbol) code "TX_SCOPE" "{name}"
+TxScope(@place("input.py", 1), name) :- option("entryPoint", "visitor"), tx_module_bind(_, name).
+TxScope(@place("input.py", 1), name) :- option("entryPoint", "scope"), option_item("scopeNames", _, name).
 .severity SyntaxFailure error
 .violation SyntaxFailure(at: span, column: number, call: number, ordinal: number, rank: number, message: symbol) code "TXN000" "{message}"
 SyntaxFailure(@place(p, 1), 0, -1, -1, 0, cat("Syntax error: ", message, " (", base, ", line ", to_string(l), ")")) :- tx_doc(d, p), syntax_error(d, l, message), file_name(d, base), !tx_graph(), option("entryPoint", e), (e = "lint_file" ; e = "lint_paths"), !option("readError", "true"), !contains("null bytes", message).

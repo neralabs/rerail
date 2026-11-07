@@ -244,6 +244,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='transaction_closures':
+            from transaction_port import scan
+            return scan(self,module,entry,arguments)
         if check=='plan_scope_ownership':
             from plan_ownership_port import scan
             return scan(self,entry,module,arguments)

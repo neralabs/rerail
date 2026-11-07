@@ -1,0 +1,3604 @@
+{
+  "cases": [
+    {
+      "id": "detector-add-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.add(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.add(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-add-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.add(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.add(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-add-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.add(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.add(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-add-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.add(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.add(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-add-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.add(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.add(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-append-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-append-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-append-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.append(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.append(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-append-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-append-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-clear-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.clear(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.clear(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-clear-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.clear(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.clear(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-clear-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.clear(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.clear(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-clear-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.clear(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.clear(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-clear-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.clear(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.clear(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-discard-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.discard(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.discard(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-discard-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.discard(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.discard(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-discard-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.discard(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.discard(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-discard-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.discard(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.discard(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-discard-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.discard(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.discard(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-extend-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.extend(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.extend(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-extend-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.extend(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.extend(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-extend-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.extend(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.extend(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-extend-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.extend(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.extend(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-extend-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.extend(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.extend(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-insert-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.insert(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.insert(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-insert-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.insert(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.insert(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-insert-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.insert(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.insert(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-insert-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.insert(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.insert(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-insert-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.insert(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.insert(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-pop-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.pop(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.pop(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-pop-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.pop(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.pop(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-pop-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.pop(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.pop(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-pop-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.pop(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.pop(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-pop-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.pop(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.pop(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-popitem-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.popitem(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.popitem(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-popitem-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.popitem(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.popitem(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-popitem-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.popitem(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.popitem(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-popitem-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.popitem(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.popitem(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-popitem-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.popitem(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.popitem(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-remove-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.remove(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.remove(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-remove-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.remove(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.remove(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-remove-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.remove(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.remove(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-remove-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.remove(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.remove(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-remove-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.remove(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.remove(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-setdefault-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.setdefault(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.setdefault(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-setdefault-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.setdefault(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.setdefault(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-setdefault-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.setdefault(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.setdefault(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-setdefault-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.setdefault(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.setdefault(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-setdefault-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.setdefault(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.setdefault(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-update-outer",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.update(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.update(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-update-shadow-before",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []; items.update(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []; items.update(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-update-shadow-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.update(1); items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.update(1); items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-update-unknown",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "other.update(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "other.update(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-update-chain",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.child.update(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.child.update(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-names",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "nonlocal x, y\nglobal a, b\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "nonlocal x, y\nglobal a, b\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-duplicates",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "global x, x\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "global x, x\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-nested-functions",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "def a():\n    items.append(1)\n    def b(items):\n        items.append(2)\nitems.append(3)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def a():\n    items.append(1)\n    def b(items):\n        items.append(2)\nitems.append(3)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-lambda-stop",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "f = lambda: items.append(1)\nitems.append(2)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "f = lambda: items.append(1)\nitems.append(2)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-headers-skip",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "@items.append(1)\ndef f(p: items.append(2) = items.append(3)) -> items.append(4):\n    items.append(5)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "@items.append(1)\ndef f(p: items.append(2) = items.append(3)) -> items.append(4):\n    items.append(5)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-parameter-kinds",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "def f(items, /, *, other=0, **kwargs):\n    items.append(1)\n    other.append(2)\n    kwargs.update(x=1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def f(items, /, *, other=0, **kwargs):\n    items.append(1)\n    other.append(2)\n    kwargs.update(x=1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-assign-order",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = items.append(1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-walrus-order",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "(items := items.append(1))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "(items := items.append(1))\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-annotated-order",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items: list[items.append(1)] = items.append(2)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items: list[items.append(1)] = items.append(2)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-tuple-assign",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items, other = value\nitems.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items, other = value\nitems.append(1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-for-binding",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "for items in seq:\n    items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "for items in seq:\n    items.append(1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-subscript",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items[0] = 1\nitems[1] += 1\ndel items[2]\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items[0] = 1\nitems[1] += 1\ndel items[2]\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-tuple-target",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items[0], other = seq\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items[0], other = seq\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-subscript-before-rhs",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items[(items := [])] = items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items[(items := [])] = items.append(1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-unicode",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "nonlocal caf\u00e9, \u03c0\ncaf\u00e9.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "nonlocal caf\u00e9, \u03c0\ncaf\u00e9.append(1)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "detector-class-body",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "class C(items.append(1)):\n    items.append(2)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "class C(items.append(1)):\n    items.append(2)\n",
+        "outer": [
+          "items",
+          "other",
+          "caf\u00e9"
+        ],
+        "initial": []
+      }
+    },
+    {
+      "id": "read-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "read-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "read_version-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read_version-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read_version-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "read_version-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read_version-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "read_version-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.read_version(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "versioned_read-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_read-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_read-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "versioned_read-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_read-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_read-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_read(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "versioned_write-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_write-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_write-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "versioned_write-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_write-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "versioned_write-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.versioned_write(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "write-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "write-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "write_version-keyword",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write_version-positional",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write_version-precedence",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t), fn=lambda t: t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(0, lambda t: items.append(t), fn=lambda t: t)\n"
+      }
+    },
+    {
+      "id": "write_version-first-pos",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write_version-spread",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(*args, lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(*args, lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "write_version-keywords-first",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t), **kwargs)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write_version(fn=lambda t: items.append(t), **kwargs)\n"
+      }
+    },
+    {
+      "id": "named-nonlocal-inline",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "inline",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-nonlocal-named",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "named",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-nonlocal-both",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-nonlocal-source",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-global-inline",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "inline",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-global-named",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "named",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-global-both",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-global-source",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        global items\n        items = []\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-mutator-inline",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "inline",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-mutator-named",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "named",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-mutator-both",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-mutator-source",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(1)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-subscript-inline",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "inline",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-subscript-named",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "named",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-subscript-both",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-subscript-source",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items[0] = 1\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "defined-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=worker)\n    def worker(t):\n        items.append(t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=worker)\n    def worker(t):\n        items.append(t)\n"
+      }
+    },
+    {
+      "id": "source-defined-after",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=worker)\n    def worker(t):\n        items.append(t)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=worker)\n    def worker(t):\n        items.append(t)\n"
+      }
+    },
+    {
+      "id": "duplicate-last",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n    def worker(t):\n        pass\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n    def worker(t):\n        pass\n"
+      }
+    },
+    {
+      "id": "source-duplicate-last",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n    def worker(t):\n        pass\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n    def worker(t):\n        pass\n"
+      }
+    },
+    {
+      "id": "repeat-calls",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+      }
+    },
+    {
+      "id": "source-repeat-calls",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+      }
+    },
+    {
+      "id": "module-import",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "import items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-import",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "import items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-dotted-import",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "import items.child\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import items.child\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-dotted-import",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "import items.child\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import items.child\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-alias",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "import package as items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import package as items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-alias",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "import package as items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "import package as items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-from",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "from .package import items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "from .package import items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-from",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "from .package import items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "from .package import items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-from-alias",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "from package import thing as items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "from package import thing as items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-from-alias",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "from package import thing as items\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "from package import thing as items\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-class",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "class items: pass\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "class items: pass\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-class",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "class items: pass\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "class items: pass\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-function",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def items(): pass\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def items(): pass\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-module-function",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def items(): pass\nconn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def items(): pass\nconn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "module-later",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "conn.write(fn=lambda t: items.append(t))\nitems = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "conn.write(fn=lambda t: items.append(t))\nitems = []\n"
+      }
+    },
+    {
+      "id": "source-module-later",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "conn.write(fn=lambda t: items.append(t))\nitems = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "conn.write(fn=lambda t: items.append(t))\nitems = []\n"
+      }
+    },
+    {
+      "id": "nested-binding",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    def nested():\n        items = []\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    def nested():\n        items = []\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-nested-binding",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    def nested():\n        items = []\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    def nested():\n        items = []\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "named-ignores-module",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "items = []\ndef caller(conn):\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []\ndef caller(conn):\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "source-named-ignores-module",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "items = []\ndef caller(conn):\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []\ndef caller(conn):\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "named-ignores-tuple",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items, other = values\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items, other = values\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "source-named-ignores-tuple",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items, other = values\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items, other = values\n    def worker(t):\n        items.append(t)\n    conn.write(fn=worker)\n"
+      }
+    },
+    {
+      "id": "enclosing-argument",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn, items):\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-enclosing-argument",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn, items):\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "kwonly-not-local",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn, *, items):\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn, *, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-kwonly-not-local",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn, *, items):\n    conn.write(fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn, *, items):\n    conn.write(fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "decorator-scope",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "@conn.write(fn=lambda t: items.append(t))\ndef caller(conn):\n    items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "@conn.write(fn=lambda t: items.append(t))\ndef caller(conn):\n    items = []\n"
+      }
+    },
+    {
+      "id": "source-decorator-scope",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "@conn.write(fn=lambda t: items.append(t))\ndef caller(conn):\n    items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "@conn.write(fn=lambda t: items.append(t))\ndef caller(conn):\n    items = []\n"
+      }
+    },
+    {
+      "id": "default-scope",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn=conn.write(fn=lambda t: items.append(t))):\n    items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn=conn.write(fn=lambda t: items.append(t))):\n    items = []\n"
+      }
+    },
+    {
+      "id": "source-default-scope",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn=conn.write(fn=lambda t: items.append(t))):\n    items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn=conn.write(fn=lambda t: items.append(t))):\n    items = []\n"
+      }
+    },
+    {
+      "id": "lambda-shadow",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda items: items.append(1))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda items: items.append(1))\n"
+      }
+    },
+    {
+      "id": "source-lambda-shadow",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda items: items.append(1))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda items: items.append(1))\n"
+      }
+    },
+    {
+      "id": "lambda-nested",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: (lambda: items.append(t)))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: (lambda: items.append(t)))\n"
+      }
+    },
+    {
+      "id": "source-lambda-nested",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: (lambda: items.append(t)))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write(fn=lambda t: (lambda: items.append(t)))\n"
+      }
+    },
+    {
+      "id": "parenthesized",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    ((conn.write))(fn=((lambda t: (items.append(t)))))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    ((conn.write))(fn=((lambda t: (items.append(t)))))\n"
+      }
+    },
+    {
+      "id": "source-parenthesized",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    ((conn.write))(fn=((lambda t: (items.append(t)))))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    ((conn.write))(fn=((lambda t: (items.append(t)))))\n"
+      }
+    },
+    {
+      "id": "unicode-column",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    caf\u00e9 = []; conn.write(fn=lambda t: caf\u00e9.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    caf\u00e9 = []; conn.write(fn=lambda t: caf\u00e9.append(t))\n"
+      }
+    },
+    {
+      "id": "source-unicode-column",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    caf\u00e9 = []; conn.write(fn=lambda t: caf\u00e9.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    caf\u00e9 = []; conn.write(fn=lambda t: caf\u00e9.append(t))\n"
+      }
+    },
+    {
+      "id": "trigger-space",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "source-trigger-space",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n"
+      }
+    },
+    {
+      "id": "clean",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    conn.write(fn=lambda t: t.append(1))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    conn.write(fn=lambda t: t.append(1))\n"
+      }
+    },
+    {
+      "id": "source-clean",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    conn.write(fn=lambda t: t.append(1))\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    conn.write(fn=lambda t: t.append(1))\n"
+      }
+    },
+    {
+      "id": "supplied-tree-positive",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "# .write(\npass\n"
+      }
+    },
+    {
+      "id": "supplied-tree-trigger-absent",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "pass\n"
+      }
+    },
+    {
+      "id": "source-missing-tree-clean",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": null,
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "pass\n"
+      }
+    },
+    {
+      "id": "source-missing-tree-trigger",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "source",
+        "tree": null,
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "# .write(\npass\n"
+      }
+    },
+    {
+      "id": "file-positive",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-spaced",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "def caller(conn):\n    items = []\n    conn.write (fn=lambda t: items.append(t))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-clean",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-syntax",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "def f(:\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-null",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "\u0000\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-multiline",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "source": "s = \"\"\"a\nb\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-decode",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "example.py",
+          "bytesHex": "fffe00"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "example.py"
+        }
+      }
+    },
+    {
+      "id": "file-missing",
+      "check": "transaction_closures",
+      "entry": "lint_file",
+      "files": [],
+      "cwd": "fixture",
+      "arguments": {
+        "file_path": {
+          "path": "absent.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "paths-regular-False",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": false
+      }
+    },
+    {
+      "id": "paths-regular-True",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": true
+      }
+    },
+    {
+      "id": "paths-test-False",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "tests/test_a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": false
+      }
+    },
+    {
+      "id": "paths-test-True",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "tests/test_a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": true
+      }
+    },
+    {
+      "id": "paths-tmp-False",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "tmp/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": false
+      }
+    },
+    {
+      "id": "paths-tmp-True",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": "tmp/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": true
+      }
+    },
+    {
+      "id": "paths-venv-False",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": ".venv/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": false
+      }
+    },
+    {
+      "id": "paths-venv-True",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": ".venv/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": true
+      }
+    },
+    {
+      "id": "paths-dotgit-False",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": ".git/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": false
+      }
+    },
+    {
+      "id": "paths-dotgit-True",
+      "check": "transaction_closures",
+      "entry": "lint_paths",
+      "files": [
+        {
+          "path": ".git/a.py",
+          "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ],
+        "exclude_tests": true
+      }
+    }
+  ]
+}
