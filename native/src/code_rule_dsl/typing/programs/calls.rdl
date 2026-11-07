@@ -214,10 +214,15 @@ sub($c, $s) :- sub($c, $m), base($s, $m).
 need_attr($c, $a) :- alook(_, $c, $a).
 need_attr($c, "__init__") :- callee($k, $e), pv($e, "cls", $c).
 need_attr($c, "__call__") :- callee($k, $e), pv($e, "inst", $c).
-// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance). Computed only
-// where it is read: the demand is the magic-set relation (`.demand found`), not written by hand.
+// need_name(a): an attribute name some lookup reads. Every reader of `found` asks with a name of need_attr's or
+// alook's, or with __init__, __call__ or __new__.
+.decl need_name(a: sym)
+need_name($a) :- need_attr(_, $a).
+need_name("__init__"). need_name("__call__"). need_name("__new__").
+// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), for the names
+// lookups read only: a stub's class binds many names no code reads.
 .decl found(c: node, a: sym, at: node)
-found($c, $a, $c) :- bound_in($c, $a).
+found($c, $a, $c) :- bound_in($c, $a), need_name($a).
 found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found($b, $a, $x).
 .demand found
 .decl anc(c: node, b: node)
@@ -303,9 +308,13 @@ pdefault($f, $x, $v) :- field($f, "parameters", $ps), child($ps, $p, _), kind($p
     field($p, "value", $v).
 .decl pclosed(f: node, x: sym)
 pclosed($f, $x) :- pann($f, $x, $t), !aopen($t).
-bv($f, $x, "inst", $s) :- pann($f, $x, $t), ainst($t, $c), sub($c, $s).
-bv($f, $x, "cls", $s) :- pann($f, $x, $t), acls($t, $c), sub($c, $s).
-bv($f, $x, "inst", $s) :- pann($f, $x, $t), aleaf($t, $m), aself($m), method($f, $c), sub($c, $s).
+// A parameter's declared classes, with their subclasses, only where the parameter is read: a function scope's
+// values are read through `look` alone, and a stub's parameters are never read.
+.decl pread(f: node, x: sym)
+pread($f, $x) :- pann($f, $x, _), look(_, $x, $f).
+bv($f, $x, "inst", $s) :- pann($f, $x, $t), pread($f, $x), ainst($t, $c), sub($c, $s).
+bv($f, $x, "cls", $s) :- pann($f, $x, $t), pread($f, $x), acls($t, $c), sub($c, $s).
+bv($f, $x, "inst", $s) :- pann($f, $x, $t), pread($f, $x), aleaf($t, $m), aself($m), method($f, $c), sub($c, $s).
 bv($f, $x, $k, $v) :- pdefault($f, $x, $d), pv($d, $k, $v).
 tbv($f, $x, "decl", $m) :- pann($f, $x, $t), aleaf($t, $m), dtype($m, _).
 tbv($f, $x, $k, $v) :- pdefault($f, $x, $d), tv($d, $k, $v).
@@ -331,8 +340,13 @@ tv($c, "decl", $m) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), rann($f, $
 cann($c, $x, $t) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "type", $t), nearest($a, $c, scope),
     kind($c, "class_definition").
 bound_in($c, $x) :- cann($c, $x, _).
-bv($c, $x, "inst", $s) :- cann($c, $x, $t), ainst($t, $k), sub($k, $s).
-bv($c, $x, "cls", $s) :- cann($c, $x, $t), acls($t, $k), sub($k, $s).
+// A class attribute's, only where it is read: through `found` (a name a lookup reads), or by name in the class
+// body (`look`).
+.decl cread(c: node, x: sym)
+cread($c, $x) :- cann($c, $x, _), need_name($x).
+cread($c, $x) :- cann($c, $x, _), look(_, $x, $c).
+bv($c, $x, "inst", $s) :- cann($c, $x, $t), cread($c, $x), ainst($t, $k), sub($k, $s).
+bv($c, $x, "cls", $s) :- cann($c, $x, $t), cread($c, $x), acls($t, $k), sub($k, $s).
 tbv($c, $x, "decl", $m) :- cann($c, $x, $t), aleaf($t, $m), dtype($m, _).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
 .decl adeclared(c: node, a: sym)
