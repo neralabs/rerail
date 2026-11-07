@@ -32,6 +32,7 @@ DROP_DIRECTIVES = {"policy", "description", "mode", "scope", "severity", "gate",
                    "requires", "pragma", "possible", "plan", "limit", "lattice", "once", "tests"}
 SOUFFLE_QUALIFIERS = {"inline", "no_inline", "magic", "no_magic", "brie", "btree", "btree_delete", "eqrel", "override"}
 # Inputs rrlab fills (extractor, repository files, options); any other .input a rule uses is empty, with a warning.
+TYPING = re.compile(r"typing_([a-z0-9_]+?)__([a-z0-9_]+)")
 FILLED = {"directive_global", "str_part", "doc", "pkg", "path_part", "file_name", "node", "kind", "field", "child", "text", "op", "op_at", "docof",
           "line", "end_line", "col", "unset", "value", "str", "strprefix", "name", "comment", "value_type", "source",
           "src_line", "line_count", "syntax_error", "first_token", "last_token", "token_before", "token_after",
@@ -341,7 +342,8 @@ class Parser:
             if self.peek(1) == ("op", "("):
                 self.take(); self.take("("); return ("call", v, self.args(")"))
             self.take()
-            return ("wild",) if v == "_" else ("var", v)
+            # a variable named as a Soufflé keyword (`as`, `ord`) is renamed, as declared columns are
+            return ("wild",) if v == "_" else ("var", col_name(v))
         raise LowerError(f"unexpected {v!r} in {self.context()}")
 
     def aggregate(self):
@@ -768,6 +770,8 @@ class Program:
         L.append(".decl rrlab_parent(c: number, p: number)\n.decl rrlab_lang(d: number, l: symbol)")
         # relations a library declares for native rows (no .input of its own): rrlab fills them
         native = [n for n in ("directive_global",) if n in self.decls]
+        # a typing program's answers (`typing_<program>__<output>`): rrlab runs the program first and fills them
+        native += [n for n in self.decls if TYPING.fullmatch(n)]
         ins = [i for i in dict.fromkeys(self.inputs + native + ["rrlab_parent", "rrlab_lang"])
                if i in self.decls or i.startswith("rrlab_")]
         ins += [i for i in self.io_inputs if i in self.decls]
@@ -1163,6 +1167,8 @@ class Ctx:
         if t == "neg":
             return ("neg", self.expr(e[1], pre, in_agg))
         if t == "agg":
+            if e[1] in ("min", "max") and e[2] is not None and e[2][0] == "var" and self.etype(e[2]) == "symbol":
+                return self.symbol_extreme(e, pre)
             body = self.conj(e[3], in_agg=True)
             tgt = self.expr(e[2], body, True) if e[2] is not None else None
             return ("agg", e[1], tgt, body)
@@ -1217,6 +1223,36 @@ class Ctx:
         out = ("var", p.fresh("s"))
         fv = [("var", v) for v in free]
         pre.append(("or", [[("atom", res, fv + [out])], [("not", ("atom", anyr, fv)), ("cmp", "=", out, ("str", '""'))]]))
+        return out
+
+    def symbol_extreme(self, e, pre):
+        """`t = min x : { … }` over symbols, which the engine orders by their bytes and Soufflé's min refuses: the
+        rows' x values, then the one no other row's x is below (min) or above (max). No rows: no value, as min."""
+        _, kind, x, body = e
+        p = self.p
+        inner = []
+        for l in body:
+            lvars(l, inner)
+        evars(x, inner)
+        local = {}
+        for v in inner:
+            local[v] = local.get(v, 0) + 1
+        free = [v for v in dict.fromkeys(inner) if self.occ.get(v, 0) > local[v]]
+        n = p.fresh("ext")
+        lb = self.conj(body, in_agg=True)
+        xv = self.expr(x, lb, True)
+        ftypes = [self.soufflé_var_type(v) for v in free]
+        row, beat = f"{n}_row", f"{n}_beaten"
+        p.extra.append(f".decl {row}({', '.join(f'c{i}: {t}' for i, t in enumerate(ftypes + ['symbol']))})")
+        p.extra.append(f".decl {beat}({', '.join(f'c{i}: {t}' for i, t in enumerate(ftypes + ['symbol']))})")
+        Fc = ", ".join(free) + (", " if free else "")
+        p.extra.append(f"{row}({Fc}{pe(xv)}) :- {pc(lb) if lb else 'true'}.")
+        op = "<" if kind == "min" else ">"
+        p.extra.append(f"{beat}({Fc}rrx_a) :- {row}({Fc}rrx_a), {row}({Fc}rrx_b), rrx_b {op} rrx_a.")
+        out = ("var", p.fresh("m"))
+        fv = [("var", v) for v in free]
+        pre.append(("atom", row, fv + [out]))
+        pre.append(("not", ("atom", beat, fv + [out])))
         return out
 
     def pattern(self, l, pre, negated=False):

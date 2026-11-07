@@ -23,7 +23,7 @@ LIBS = [
     ("core", "native", "What the binary provides: tape relations, tree arithmetic, value builtins, repository readers."),
     ("python/names", "datalog", "Scopes, bindings, references and qualified names. Python's scope lookup and rebinding, adapted from an earlier Datalog prototype."),
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
-    ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown. On the engine these come from the typing program; in the lab harness, from this Datalog resolver."),
+    ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown, joined from the typing program's answers; and the call syntax helpers."),
     ("python/types", "datalog", "What class each expression may hold: type_of, proven_type, possible_type and their open sides, joined from the typing program's answers."),
     ("typing/python", "program", "The Python typing program: points-to, call targets, method lookup through bases, and types, in .rr. The engine runs it before the rules, file by file and then in bounded cross-file rounds.", "typing/programs/calls.rr"),
     ("python/ast", "datalog", "Python as CPython's ast sees it: Name and context, frames with decorators inside the def, parameters by kind, assignments, constants, qualified names, and visit order."),

@@ -337,6 +337,8 @@ class Run:
             extra[name] = rows
         for name, rows in extra.items():
             open(os.path.join(self.inp, f"{name}.facts"), "w").write(tsv(rows))
+        for name, rows in self.serve_typing().items():
+            open(os.path.join(self.inp, f"{name}.facts"), "w").write(tsv(rows))
         used = set(re.findall(r"\b([a-z_]\w*)\(", "\n".join(p.lowered)))
         for name in p.input_names + [o + "__prev" for o in p.ordered]:
             f = os.path.join(self.inp, f"{name}.facts")
@@ -345,6 +347,85 @@ class Run:
                 if name in used and name not in L.FILLED and not name.endswith("__prev") and not name.startswith("rr_mres") and \
                         not any(w.startswith(name + " ") for w in p.warnings):
                     p.warn(f"input {name} has no rows in rrlab")
+
+    def serve_typing(self):
+        """core.rr's typing programs. A rule that declares `typing_<program>__<output>` reads that output of
+        typing/programs/<program>.rr, run first over this run's facts, as the engine does. A node column of the
+        output becomes four columns (path, kind, start byte, end byte), which the libraries join back to nodes.
+        The engine runs a program file by file and then in bounded cross-file rounds; rrlab runs it once over every
+        file of the run, which is the fixpoint those rounds converge to."""
+        want = collections.defaultdict(list)
+        typed = [n for n in self.prog.input_names if L.TYPING.fullmatch(n)]
+        if not typed:
+            return {}
+        # as the engine: a program runs only when a relation the rule's findings or outputs depend on reads it
+        deps = collections.defaultdict(set)
+        for c in self.prog.lowered:
+            c = "\n".join(l for l in c.splitlines() if not l.lstrip().startswith("//"))
+            m = re.match(r"\s*([A-Za-z_]\w*)\(", c)
+            if m and ":-" in c:
+                deps[m.group(1)] |= set(re.findall(r"\b([A-Za-z_]\w*)\(", c.split(":-", 1)[1]))
+        seen, todo = set(), list(self.prog.violations) + list(self.prog.outputs)
+        while todo:
+            r = todo.pop()
+            if r not in seen:
+                seen.add(r)
+                todo += deps.get(r, ())
+        for name in typed:
+            if name in seen:
+                m = L.TYPING.fullmatch(name)
+                want[m.group(1)].append((name, m.group(2)))
+        if not want:
+            return {}
+        node = {}
+        with open(os.path.join(self.inp, "node.facts")) as fh:
+            for l in fh:
+                d, n, k, st, en = l.rstrip("\n").split("\t")
+                node[n] = (d, k, st, en)
+        path = {r[0]: r[1] for r in self.table("doc")}
+        out = {}
+        self.typing_cpu = 0.0
+        for prog, names in want.items():
+            src = os.path.join(RR, "typing", "programs", prog + ".rr")
+            if not os.path.exists(src):
+                raise SystemExit(f"rrlab: {names[0][0]} names typing program {prog}, but {src} does not exist")
+            tp = L.Program(src, P.Compiler(FACTS_BIN))
+            if tp.matches or tp.dfs or tp.ordered or tp.parse_requests:
+                raise SystemExit(f"rrlab: typing program {prog} needs rounds (match, dfs_first, ordered by, parsed), "
+                                 "which rrlab does not run for programs")
+            work = os.path.join(self.work, f"typing-{prog}")
+            pout = os.path.join(work, "out")
+            os.makedirs(pout, exist_ok=True)
+            open(os.path.join(work, "program.dl"), "w").write(tp.text())
+            for i in tp.input_names:   # inputs only the program reads, which this run did not write
+                f = os.path.join(self.inp, f"{i}.facts")
+                if not os.path.exists(f):
+                    open(f, "w").close()
+            c0 = cpu_children()
+            r = subprocess.run([SOUFFLE, "-w", "-F", self.inp, "-D", pout, "-L", FN_DIR, "-l", "rrlabfn",
+                                os.path.join(work, "program.dl")], capture_output=True, text=True)
+            self.typing_cpu += cpu_children() - c0
+            if r.returncode:
+                raise SystemExit(f"souffle failed on typing program {prog} ({work}/program.dl):\n{r.stderr[:3000]}")
+            for name, o in names:
+                if o not in tp.decls:
+                    raise SystemExit(f"rrlab: typing program {prog} has no relation {o} (read as {name})")
+                cols = tp.decls[o]
+                rows = []
+                f = os.path.join(pout, f"{o}.csv")
+                if os.path.exists(f):
+                    with open(f, newline="") as fh:
+                        for r_ in csv.reader(fh, delimiter="\t", quotechar='"'):
+                            row = []
+                            for v, (_, t) in zip(r_, cols):
+                                if tp.types.get(t, t) in L.NODEISH or t in L.NODEISH:
+                                    d, k, st, en = node[v]
+                                    row += [path[d], k, st, en]
+                                else:
+                                    row.append(v.replace('\\"', '"'))
+                            rows.append(row)
+                out[name] = rows
+        return out
 
     def in_scope(self, path):
         """The rule's .scope: some include glob matches (when it names any), no exclude glob does, and no `test` or
@@ -1386,13 +1467,16 @@ def main():
     dl.add_argument("--jobs", type=int, default=4); dl.add_argument("--keep", action="store_true")
     dl.add_argument("--codeless", help="the code for records that carry none")
     dl.add_argument("--max-files", type=int, default=500, help="skip events with more files than this")
+    to = sp.add_parser("typing-oracle", help="score the Python typing program against the CPython runtime oracle")
+    to.add_argument("--fixture", help="the typing branch's fixtures/python/calls"); to.add_argument("--show", type=int, default=25)
     lw = sp.add_parser("lower", help="print the Soufflé program"); lw.add_argument("rule")
     pt = sp.add_parser("pattern", help="compile a backtick pattern")
     pt.add_argument("lang"); pt.add_argument("pattern"); pt.add_argument("kind", nargs="?")
     args = ap.parse_args()
     try:
         {"run": cmd_run, "score": score, "lower": cmd_lower, "pattern": cmd_pattern,
-         "dl": lambda a: __import__("dl").score(a, Run, HERE)}[args.cmd](args)
+         "dl": lambda a: __import__("dl").score(a, Run, HERE),
+         "typing-oracle": lambda a: __import__("typing_oracle").score(a, Run, HERE)}[args.cmd](args)
     except L.LowerError as e:
         raise SystemExit(f"rrlab: {e}")
     finally:
