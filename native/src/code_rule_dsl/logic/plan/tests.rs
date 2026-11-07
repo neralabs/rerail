@@ -3,7 +3,6 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
-use crate::code_rule_dsl::typing::cross_rounds;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")

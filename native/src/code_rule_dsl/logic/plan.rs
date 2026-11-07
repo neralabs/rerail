@@ -106,7 +106,12 @@ fn native_modes(modes: &str) -> BTreeSet<String> {
 
 /// Lowercase hex of a string's bytes (Python's `s.encode().hex()`).
 fn hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{b:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = Vec::with_capacity(2 * s.len());
+    for b in s.bytes() {
+        out.extend_from_slice(&[DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 15)]]);
+    }
+    String::from_utf8(out).expect("hex digits")
 }
 
 /// A string from its hex (Python's `bytes.fromhex(v).decode()`).
@@ -2364,6 +2369,87 @@ fn atom_of(rel: String, args: Vec<Term>) -> Atom {
 }
 
 /// A native spec's token for a constant.
+/// A term, atom or literal written into a derived value's inputs (`logic::derived`), field by field: the same
+/// pieces in the same order as its text, without making the text.
+fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
+    match t {
+        Term::Var(v) => {
+            d.u64(0);
+            d.str(v);
+        }
+        Term::Wild => d.u64(1),
+        Term::Int(i) => {
+            d.u64(2);
+            d.u64(*i as u64);
+        }
+        Term::Str(s) => {
+            d.u64(3);
+            d.str(s);
+        }
+        Term::Top => d.u64(4),
+        Term::Call(f, args) => {
+            d.u64(5);
+            d.str(f);
+            d.u64(args.len() as u64);
+            args.iter().for_each(|a| digest_term(d, a));
+        }
+    }
+}
+
+fn digest_atom(d: &mut super::derived::Inputs, a: &Atom) {
+    d.str(&a.rel);
+    d.u64(u64::from(a.neg) | u64::from(a.gated) << 1);
+    d.u64(a.args.len() as u64);
+    a.args.iter().for_each(|t| digest_term(d, t));
+}
+
+fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
+    match l {
+        Literal::Atom(a) => {
+            d.u64(0);
+            digest_atom(d, a);
+        }
+        Literal::Cmp { l, op, r } => {
+            d.u64(1);
+            d.str(op);
+            digest_term(d, l);
+            digest_term(d, r);
+        }
+        Literal::Agg { var, op, over, atom } => {
+            d.u64(2);
+            d.str(var);
+            match op {
+                AggOp::Join { by, sep } => {
+                    d.u64(4);
+                    d.u64(by.len() as u64);
+                    by.iter().for_each(|b| d.str(b));
+                    d.str(sep);
+                }
+                other => d.u64(match other { AggOp::Count => 0, AggOp::Min => 1, AggOp::Max => 2, _ => 3 }),
+            }
+            d.str(over.as_deref().unwrap_or("\u{0}"));
+            digest_atom(d, atom);
+        }
+        Literal::Nearest { n, a, kindset } => {
+            d.u64(3);
+            d.str(n);
+            d.str(a);
+            d.str(kindset);
+        }
+        Literal::Ast { document, node, matcher, captures } => {
+            d.u64(4);
+            d.str(document);
+            d.str(node);
+            d.str(matcher);
+            d.u64(captures.len() as u64);
+            for (k, v) in captures {
+                d.str(k);
+                d.str(v);
+            }
+        }
+    }
+}
+
 fn const_tok(t: &Term) -> Option<String> {
     match t {
         Term::Int(i) => Some(format!("i:{i}")),
@@ -2422,7 +2508,77 @@ impl Run<'_> {
         self.join_spec(h, order, at, ri, scc, native_rels)
     }
 
+    /// A rule's native join spec (`join_spec_made`), kept for the run by a digest of every input it reads
+    /// (`logic::derived`): each chunk's program is new, and most of its strata plan the same orders over the same
+    /// sources.
     fn join_spec(
+        &self,
+        h: &Atom,
+        order: &[Step],
+        at: Option<usize>,
+        ri: &BTreeMap<String, usize>,
+        scc: &BTreeSet<String>,
+        native_rels: &BTreeSet<String>,
+    ) -> Option<String> {
+        let prog = self.prog;
+        let inputs = |d: &mut super::derived::Inputs| {
+            digest_atom(d, h);
+            d.u64(at.map_or(u64::MAX, |a| a as u64));
+            match self.model.inputs.atoms {
+                Some(ops) => ops.iter().for_each(|&o| d.u64(o as u64)),
+                None => d.u64(u64::MAX),
+            }
+            let read = |rel: &str, d: &mut super::derived::Inputs| {
+                d.str(rel);
+                if let Some(i) = ri.get(rel).filter(|_| scc.contains(rel)) {
+                    d.u64(0);
+                    d.u64(*i as u64);
+                } else if native_rels.contains(rel) {
+                    d.u64(1);
+                } else {
+                    d.u64(2);
+                    d.str(&self.model.relation(prog, rel, false).render());
+                    d.u64(u64::from(prog.inputs.iter().any(|i| i == rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains(rel)) << 2);
+                    match self.model.view_src.get(rel) {
+                        Some((base, cols)) => {
+                            d.str(base);
+                            d.u64(cols.len() as u64);
+                            for c in cols {
+                                d.str(c.as_deref().unwrap_or("\u{0}"));
+                            }
+                        }
+                        None => d.u64(u64::MAX),
+                    }
+                }
+                let decl = prog.decls.get(rel).map_or(&[][..], Vec::as_slice);
+                d.u64(decl.len() as u64);
+                for (_, t) in decl {
+                    d.str(t);
+                }
+            };
+            for s in order {
+                digest_literal(d, &s.lit);
+                d.u64(match s.mode {
+                    None => 0,
+                    Some(Mode::Range) => 1,
+                    Some(Mode::Climb) => 2,
+                    Some(Mode::Descend) => 3,
+                });
+                match &s.lit {
+                    Literal::Atom(l) | Literal::Agg { atom: l, .. } => read(&l.rel, d),
+                    Literal::Nearest { kindset, .. } => {
+                        let kinds = prog.kindsets.get(kindset).map_or(&[][..], Vec::as_slice);
+                        d.u64(kinds.len() as u64);
+                        kinds.iter().for_each(|k| d.str(k));
+                    }
+                    _ => {}
+                }
+            }
+        };
+        super::derived::value("join spec", inputs, || self.join_spec_made(h, order, at, ri, scc, native_rels))
+    }
+
+    fn join_spec_made(
         &self,
         h: &Atom,
         order: &[Step],

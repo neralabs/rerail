@@ -435,6 +435,8 @@ pub(crate) fn run_with_options(
     }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
+    // And the values derived from them (`logic::derived`): each chunk's join specs.
+    let _derived = crate::code_rule_dsl::logic::derived::Keep::start();
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
