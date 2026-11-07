@@ -589,7 +589,7 @@ impl CoreRows {
     }
 
     /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_syntax_error: bool) {
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_syntax_error: bool, wants_source_text: bool, wants_line_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -621,7 +621,9 @@ impl CoreRows {
         }
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
-                if i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
+                let requested_container = (wants_source_text && i == x.tokens as usize)
+                    || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
+                if requested_container || i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }

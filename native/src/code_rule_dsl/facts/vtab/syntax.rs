@@ -66,11 +66,14 @@ pub(crate) struct Projection {
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
+    /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
+    text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
 }
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -84,8 +87,68 @@ impl Projection {
             std::fs::read_to_string(path).ok().and_then(|src| crate::code_rule_dsl::logic::rr::parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
         });
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)) }
     }
+
+    fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
+        use crate::code_rule_dsl::logic::front::SpanIn;
+        self.wants("text") && self.text_spans.as_ref().map_or_else(
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line" }),
+            |spans| spans.contains(&within),
+        )
+    }
+}
+
+/// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
+/// carries its origin. Regex captures have their own bounded ranges and do not demand the container text.
+fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::SpanIn> {
+    use crate::code_rule_dsl::logic::front::{Literal, SpanIn, Term};
+    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)].into();
+    let mut requested = 0;
+    loop {
+        let mut changed = false;
+        for rule in &program.rules {
+            let mut vars: HashMap<String, u8> = HashMap::new();
+            for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
+                for (column, term) in atom.args.iter().enumerate() {
+                    if let Term::Var(value) = term {
+                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.clone(), column)).copied().unwrap_or(0);
+                    }
+                }
+            }
+            loop {
+                let mut aliases_changed = false;
+                for literal in &rule.body {
+                    if let Literal::Cmp { l: Term::Var(left), op: "=", r: Term::Var(right) } = literal {
+                        let mask = vars.get(left).copied().unwrap_or(0) | vars.get(right).copied().unwrap_or(0);
+                        for value in [left, right] {
+                            let entry = vars.entry(value.clone()).or_default();
+                            aliases_changed |= *entry != (*entry | mask);
+                            *entry |= mask;
+                        }
+                    }
+                }
+                if !aliases_changed { break; }
+            }
+            for (column, term) in rule.head.args.iter().enumerate() {
+                if let Term::Var(value) = term {
+                    let mask = vars.get(value).copied().unwrap_or(0);
+                    if mask != 0 {
+                        let entry = columns.entry((rule.head.rel.clone(), column)).or_default();
+                        changed |= *entry != (*entry | mask);
+                        *entry |= mask;
+                    }
+                }
+            }
+            for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| atom.rel == "text") {
+                if let Some(Term::Var(value)) = atom.args.first() {
+                    requested |= vars.get(value).copied().unwrap_or(0);
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    [(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect()
 }
 
 /// One document of a batch.
@@ -473,6 +536,8 @@ impl Batch {
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         let wants_text = core && projection.wants("text");
+        let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
+        let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
         let wants_split_lines = core && projection.wants("split_line");
         let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
@@ -592,7 +657,7 @@ impl Batch {
                 }
             }
             if core {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines, wants_lf_lines, projection.wants("syntax_error"));
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines, wants_lf_lines, projection.wants("syntax_error"), wants_source_text, wants_line_text);
                 if wants_digests { c.digests(&p, dialect, &mut string); }
             }
             docs.push(p);
