@@ -441,6 +441,20 @@ qv($q, "mod", $m) :- modname($m, $q).
 qv(@cat($q, $x), $k, $v) :- modname($m, $q), bv($m, $x, $k, $v).
 .decl isqmod(q: sym)
 isqmod($q) :- modname(_, $q).
+// `from n import *` at a module's top level: the module binds each public name of n it does not bind itself
+// (`collections.abc` is `_collections_abc`'s names). Only the names asked of it (`wantx`), so no name is made.
+.decl star_from(m: node, n: sym)
+star_from($m, $n) :- kind($i, "import_from_statement"), child($i, $w, _), kind($w, "wildcard_import"), nearest($i, $m, scope),
+    modname($m, _), py_import($i, $n).
+.decl starmod(q: sym, m: node)
+starmod($q, $m) :- star_from($m, _), modname($m, $q).
+.decl wantx(m: node, x: sym)
+wantx($m, $y) :- starmod($q, $m), rifrom(_, _, $q, $y), !rbound($m, $y).
+wantx($m, $a) :- starmod($q, $m), qn($o, $q), attr_of(_, $o, $a), !rbound($m, $a).
+wantx($m2, $x) :- wantx($m, $x), star_from($m, $n), modname($m2, $n), star_from($m2, _), !rbound($m2, $x).
+.decl starx(m: node, x: sym, m2: node)
+starx($m, $x, $m2) :- wantx($m, $x), !@prefix($x, "_"), star_from($m, $n), modname($m2, $n).
+bv($m, $x, $k, $v) :- starx($m, $x, $m2), bv($m2, $x, $k, $v).
 
 // Binding values: what name x of scope s may hold.
 .decl bv(s: node, x: sym, k: sym, v: node)
