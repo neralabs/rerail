@@ -168,8 +168,16 @@ asgstmt($a, $st) :- kind($st, "expression_statement"), child($st, $a, 0), kind($
 .decl sbinds(s: node, x: sym, st: node)
 sbinds($s, $x, $st) :- defn($s, $x, $f), defstmt($f, $st), stmt($st, $s).
 sbinds($s, $x, $st) :- asg($s, $x, _, $a), asgstmt($a, $st), stmt($st, $s).
+// An `@overload` def does not replace an earlier one: a stub's overloads are all the name's (their union is its
+// type), and a later def that is not an overload (the implementation) replaces them all. Read from the decorator's
+// own name, not its import: what a name is depends on what is live, which depends on this.
+.decl ovlstmt(st: node)
+ovlstmt($st) :- kind($st, "decorated_definition"), child($st, $dc, _), kind($dc, "decorator"), child($dc, $e, 0), text($e, "overload").
+ovlstmt($st) :- kind($st, "decorated_definition"), child($st, $dc, _), kind($dc, "decorator"), child($dc, $e, 0), kind($e, "attribute"),
+    field($e, "attribute", $a), text($a, "overload").
 .decl shadowed(st: node)
-shadowed($st) :- sbinds($s, $x, $st), sbinds($s, $x, $st2), $st2 > $st.
+shadowed($st) :- sbinds($s, $x, $st), sbinds($s, $x, $st2), $st2 > $st, !ovlstmt($st2).
+shadowed($st) :- sbinds($s, $x, $st), sbinds($s, $x, $st2), $st2 > $st, !ovlstmt($st).
 .decl live_def(s: node, x: sym, f: node)
 live_def($s, $x, $f) :- defn($s, $x, $f), defstmt($f, $st), !shadowed($st).
 .decl live_asg(s: node, x: sym, r: node)
@@ -183,9 +191,16 @@ dexpr($f, $e) :- kind($dd, "decorated_definition"), field($dd, "definition", $f)
 transparent_q("abc.abstractmethod"). transparent_q("typing.final"). transparent_q("typing.override").
 transparent_q("typing.no_type_check"). transparent_q("typing_extensions.final"). transparent_q("typing_extensions.override").
 transparent_q("functools.wraps"). transparent_q("functools.total_ordering"). transparent_q("dataclasses.dataclass").
+// The decorators stubs use (t21 §2.4): each gives back what it decorates, as a type checker reads it.
+transparent_q("typing.overload"). transparent_q("typing_extensions.overload"). transparent_q("typing.type_check_only").
+transparent_q("typing_extensions.deprecated"). transparent_q("warnings.deprecated"). transparent_q("typing.runtime_checkable").
+transparent_q("typing_extensions.runtime_checkable"). transparent_q("typing_extensions.type_check_only").
 .decl transparent(e: node)
 transparent($e) :- qn($e, $q), transparent_q($q).
 transparent($e) :- kind($e, "call"), field($e, "function", $g), qn($g, $q), transparent_q($q).
+// One defined in the module that uses it (typing.pyi's own `@overload`), by its qualified name: syntactic, as what
+// a name is depends on the decorators.
+transparent($e) :- kind($e, "identifier"), text($e, $x), docof($e, $d), doc($d, _, $m), $q = @cat($m, $x), transparent_q($q).
 transparent($e) :- builtin_ref($e, "staticmethod").
 transparent($e) :- builtin_ref($e, "classmethod").
 .decl opaque_dec(f: node, e: node)
@@ -371,6 +386,15 @@ cread($c, $x) :- cann($c, $x, _), look(_, $x, $c).
 bv($c, $x, "inst", $s) :- cann($c, $x, $t), cread($c, $x), ainst($t, $k), sub($k, $s).
 bv($c, $x, "cls", $s) :- cann($c, $x, $t), cread($c, $x), acls($t, $k), sub($k, $s).
 tbv($c, $x, "decl", $m) :- cann($c, $x, $t), aleaf($t, $m), dtype($m, _).
+// A stub's module-level declaration, `x: T` with no value (`patch: _patcher`), binds x to a T (t21 §2.4). In a `.py`
+// file it binds nothing.
+.decl stubdoc(d: int)
+stubdoc($d) :- doc($d, $p, _), @suffix($p, ".pyi").
+.decl mann(m: node, x: sym, t: node)
+mann($m, $x, $t) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "type", $t),
+    !field($a, "right", _), nearest($a, $m, scope), kind($m, "module"), docof($a, $d), stubdoc($d).
+bv($m, $x, "inst", $s) :- mann($m, $x, $t), ainst($t, $k), sub($k, $s).
+bv($m, $x, "cls", $s) :- mann($m, $x, $t), acls($t, $k), sub($k, $s).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
 .decl adeclared(c: node, a: sym)
 adeclared($c, $a) :- need_attr($c, $a), found($c, $a, $at), cann($at, $a, $t), !aopen($t).
@@ -488,9 +512,23 @@ iattr($c, $a) :- field(_, "left", $t), kind($t, "attribute"), attr_of($t, $o, $a
 .decl extb(e: node)
 extb($e) :- basex(_, $e), qn($e, $q), !qknown($q).
 extb($e) :- basex(_, $e), builtin_ref($e, _).
+// A typing special form as a base (`Generic[T]`, `Protocol`, `TypedDict`): no class to read, and none needed, as the
+// members are the class's own. In typeshed these are values (`Generic: type[_Generic]`), so they are named here.
+.decl special_base_q(q: sym)
+special_base_q("typing.Generic"). special_base_q("typing.Protocol"). special_base_q("typing.TypedDict").
+special_base_q("typing_extensions.Generic"). special_base_q("typing_extensions.Protocol").
+special_base_q("typing_extensions.TypedDict").
+// A generic class as a base, `K[T]` (`os.PathLike[str]`, `Mapping[K, V]`): the class K.
+.decl gbase(e: node, k: node)
+gbase($e, $k) :- basex(_, $e), kind($e, "subscript"), field($e, "value", $g), pv($g, "cls", $k).
+base($c, $b) :- basex($c, $e), gbase($e, $b).
+.decl special_base(e: node)
+special_base($e) :- basex(_, $e), qn($e, $q), special_base_q($q).
+special_base($e) :- basex(_, $e), kind($e, "subscript"), field($e, "value", $g), qn($g, $q), special_base_q($q).
+extb($e) :- special_base($e).
 .decl base_open(c: node)
-base_open($c) :- basex($c, $e), vopen($e).
-base_open($c) :- basex($c, $e), !pv($e, "cls", _), !extb($e).
+base_open($c) :- basex($c, $e), vopen($e), !special_base($e), !gbase($e, _).
+base_open($c) :- basex($c, $e), !pv($e, "cls", _), !extb($e), !gbase($e, _).
 .decl attr_open(c: node, a: sym)
 attr_open($c, $a) :- need_attr($c, $a), found($c, $a, $at), bopen($at, $a).
 attr_open($c, $a) :- need_attr($c, $a), anc($c, $b), base_open($b).

@@ -654,7 +654,14 @@ fn benchmark_python_calls_program_corpus() {
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
-    let report = corpus::run(&format!("{}\n{JEDI_SPANS}", program("calls")), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let mut text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
+    if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
+        text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
+    }
+    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     let rows = |rel: &str| -> Vec<Vec<String>> {
@@ -668,16 +675,23 @@ fn benchmark_python_calls_program_corpus() {
         line(src, s.min(src.len()))
     };
     let key = |n: &str| (file(n), at[n].0, at[n].1);
+    // A target in a loaded document (a stub, named by its absolute path) is outside the workspace: Jedi's
+    // `external`. Its rows are not written, so it has no span here.
+    let library = |f: &str| f.starts_with('/');
+    let mut target = |n: &str| -> (String, u64) {
+        let f = file(n);
+        if library(&f) { ("<library>".to_owned(), 0) } else { let s = at[n].0; let l = line_of(&f, s); (f, l) }
+    };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
-        let (f, s) = (file(&r[1]), at[&r[1]].0);
-        named.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+        let t = target(&r[1]);
+        named.entry(key(&r[0])).or_default().insert(t);
     }
     let mut classes: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("rr_jedi_cls") {
-        let (f, s) = (file(&r[1]), at[&r[1]].0);
-        classes.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+        let t = target(&r[1]);
+        classes.entry(key(&r[0])).or_default().insert(t);
     }
     let _ = std::fs::remove_dir_all(&out);
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
@@ -698,8 +712,15 @@ fn benchmark_python_calls_program_corpus() {
                     continue;
                 }
                 *tally.entry("both decided").or_default() += 1;
-                let defs = named.get(&k).cloned().unwrap_or_default();
-                let cls = classes.get(&k).cloned().unwrap_or_default();
+                let lib = ("<library>".to_owned(), 0);
+                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib));
+                let mut defs = named.get(&k).cloned().unwrap_or_default();
+                let mut cls = classes.get(&k).cloned().unwrap_or_default();
+                defs.remove(&lib);
+                cls.remove(&lib);
+                if reaches_library {
+                    *tally.entry("(program reaches a stub)").or_default() += 1;
+                }
                 let at_of = |t: &Json| (t[1].as_str().unwrap().to_owned(), t[2].as_u64().unwrap());
                 let ok = decided.iter().any(|t| match t[0].as_str().unwrap() {
                     "def" => defs.contains(&at_of(t)),
