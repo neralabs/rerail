@@ -5,6 +5,8 @@ from pathlib import Path
 
 
 def canonical(value, root=None):
+    if isinstance(value, bytes):
+        return dict(kind='bytes', hex=value.hex())
     if isinstance(value, Enum):
         return dict(kind='enum', type=type(value).__module__ + '.' + type(value).__qualname__,
                     name=value.name, value=canonical(value.value, root))
