@@ -2,6 +2,15 @@
 use super::core_rr::py_unescape;
 
 pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+    with_decoder(parts, &|body, raw| if raw { body.to_owned() } else { py_unescape(body) })
+}
+
+/// Word-query projection. Nonword code points delimit runs; this is never a decoded string value.
+pub(super) fn words<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+    with_decoder(parts, &crate::code_rule_dsl::value::python::words::delimit)
+}
+
+fn with_decoder<N: Copy>(parts: &[(N, &str)], decode: &dyn Fn(&str, bool) -> String) -> Vec<(String, N, u8, usize)> {
     let mut pieces: Vec<(String, N, u8, usize)> = Vec::new();
     let mut cur: Option<(String, N, usize)> = None;
     let mut any_f = false;
@@ -16,7 +25,7 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
         };
         let body = &rest[q.len()..rest.len() - q.len()];
         let raw = pre.contains('r');
-        let dec = |x: &str| if raw { x.to_owned() } else { py_unescape(x) };
+        let dec = |x: &str| decode(x, raw);
         let push = |cur: &mut Option<(String, N, usize)>, v: &str, offset: usize| match cur {
             Some((s, _, _)) => s.push_str(v),
             None => *cur = Some((v.to_owned(), sid, offset)),

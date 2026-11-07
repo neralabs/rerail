@@ -509,12 +509,19 @@ fn unread_python_literal_columns_are_not_materialized() {
     let doc = document(0, "a.py", "python", "x = 'plain'\ny = f'left{x}right'\n");
     let names = Projection { reads: Some(["name".into()].into()), ..Projection::core() };
     let rows = shaped(&store, vec![doc.clone()], &names).unwrap();
-    for rel in ["str_part", "str_part_start"] {
+    for rel in ["str_part", "str_part_start", "str_part_word"] {
         assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
     }
     let literals = Projection { reads: Some(["str_part".into(), "str_part_start".into()].into()), ..Projection::core() };
-    let rows = shaped(&store, vec![doc], &literals).unwrap();
+    let rows = shaped(&store, vec![doc.clone()], &literals).unwrap();
     for rel in ["str_part", "str_part_start"] {
         assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 3, "{rel}");
+    }
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 0);
+    let words = Projection { reads: Some(["str_part_word".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc], &words).unwrap();
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 3);
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
     }
 }

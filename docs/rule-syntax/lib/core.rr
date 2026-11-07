@@ -398,10 +398,13 @@
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
 // Exact start of each Constant: physical line from 1, UTF-8 byte column from 0.
 // Keep `at` above for owner traversal; it is not the fragment's exact coordinate.
+// Maximal decoded Python Unicode 15.1 word runs (isalnum or underscore), per Constant.
+// Surrogates delimit runs. This projection does not replace full decoded string values.
+.decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_start
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_word, str_part_start
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no
