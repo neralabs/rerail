@@ -52,6 +52,22 @@ Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
         "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
 }
 
+/// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
+#[test]
+fn native_python_syntax_verdict_keeps_raw_source_available() {
+    for source in ["marker = 1\nprint \"legacy\"\n", "marker = 1\n\"\\x\"\n", "marker = t\"future\"\n"] {
+        let rows = finding_contract(source, r#"
+.language python
+.violation ParseFailure(at: span) code "PARSE" "invalid Python"
+ParseFailure(@place(p, l)) :- doc(d, p, _), syntax_error(d, l, _).
+.violation RawText(at: span) code "RAW" "raw input survives"
+RawText(@place(p, 1)) :- doc(d, p, _), source(d, sp), text(sp, t), contains("marker", t).
+"#);
+        assert_eq!(rows.iter().filter(|r| r["code"] == "RAW").count(), 1, "{source}");
+        assert_eq!(rows.iter().filter(|r| r["code"] == "PARSE").count(), 1, "{source}");
+    }
+}
+
 #[test]
 fn public_rr_report_preserves_compiled_policy_metadata() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-metadata");
