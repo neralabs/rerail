@@ -15,15 +15,18 @@ DISABLED = '.policy "disabled-control" revision 1\n.language python\n.violation 
 
 def auxiliary_output(check, row):
     """Only these transport outputs can remain in a disabled backend detector."""
-    return check == 'backend_coupling' and row['code'] in {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'}
+    allowed = {'backend_coupling': {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'},
+               'connection_caches': {'CC_CONFIG', 'CC_PATTERN', 'CC_ALLOWED', 'CC_SKIP'}}
+    return row['code'] in allowed.get(check, set())
 
 
 def disable_policy(check, source):
-    if check != 'backend_coupling':
+    clause = {'backend_coupling': 'Coupling', 'connection_caches': 'Cache'}.get(check)
+    if clause is None:
         return DISABLED
-    disabled, count = re.subn(r'(?m)^(Coupling\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
+    disabled, count = re.subn(r'(?m)^(' + clause + r'\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
     if count != 1:
-        raise ValueError('The backend mutation requires exactly one detector output clause')
+        raise ValueError('The helper-preserving mutation requires exactly one detector output clause')
     return disabled
 
 

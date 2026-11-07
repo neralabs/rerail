@@ -120,3 +120,4 @@ The importer adds the repository header and resolves adjacent table includes. It
 | `packs/data-layer/candidates/rr/sync-async-signatures.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/data-layer-facade-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
 | `packs/data-layer/candidates/rr/backend-coupling.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/connection-caches.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |

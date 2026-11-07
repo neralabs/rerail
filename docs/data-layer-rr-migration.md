@@ -487,7 +487,7 @@ The original default-target test is no longer merely a Python constant assertion
 - [Missing native statistics regression](../fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz).
 - [Final-shape merge and regressions](../fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz).
 
-The inventory is 63 drafts and 37 absent translations. No rule has full migration acceptance yet.
+The inventory is 64 drafts and 36 absent translations. No rule has full migration acceptance yet.
 Associated suites, native printing and canonical serialization, and production workspace acceptance remain outstanding.
 
 
@@ -546,3 +546,49 @@ The inventory remains 63 drafts and 37 absent translations. This focused merge c
 
 - [Post-merge original assertions](../fixtures/host/data-layer-port/rr-coupling-followup-native-direct-contracts.json.gz).
 - [Post-merge API and reporter contracts](../fixtures/host/data-layer-port/rr-final-shape-followup-native-contracts.json.gz).
+
+
+## Connection caches and variable regexes, 7 November
+
+The connection-cache draft preserves one Boolean finding per pattern per stripped logical line.
+It preserves all four patterns, overlapping pattern findings, reviewed filename suffixes, and the original path exclusions.
+Detection and configuration assertions read the same native pattern, allowlist, skip, and root tables.
+Configured scope includes production files whose basename starts with test_, as the source framework does.
+
+All 151 original tests pass in four bounded shards, with 134 native calls and 55 complete scanner-return comparisons.
+Forty-seven original assertion functions execute their regex probes natively. Their assertion predicates remain unchanged.
+Two match calls use the source-anchored module regex; the adapter checks that identity before using the native Boolean probe.
+Thirty-three original configuration assertions consume native setup values. Five assertions check host module identity or CLI help.
+The receipt identifies all 38 cases without an additional native call in their body. No original case is skipped or deselected.
+All 34 supplemental API cases and 34 reporter cases pass, including long-source positives and every splitlines separator.
+The original API positive and configured reporter positive both reject disabled detection.
+
+The port exposed an internal serialization defect for variable regex patterns.
+The printer emitted an undeclared rx relation, and lowering did not anchor variable patterns to the whole string.
+The fix preserves internal search functors and anchors the public match operation.
+The previous CLI demonstrably fails the same native policy; the rebuilt regression passes with one test executed.
+The first test build missed the appended test. Its rejected zero-test result is retained, not counted as a test pass.
+All 42 focused reader tests pass, with one existing ignored test. The two broad or fixture-writing checks remain excluded.
+The unit and CLI builds took 35.99 and 23.48 seconds. Compile times are separate from rule execution.
+All 43 tooling tests and both format tests pass. Structure retains the same three pre-existing directory-size findings.
+The integration checkpoint is 85749d23ede770a6eeb55bf0ad2512fcd01788ae.
+
+- [All original cache assertions](../fixtures/host/data-layer-port/rr-connection-caches-native-direct-contracts.json.gz).
+- [Supplemental cases and configuration provenance](../fixtures/host/data-layer-port/rr-connection-caches-native-supplemental-contracts.json.gz).
+- [Dynamic-pattern failure](../fixtures/host/data-layer-port/rr-connection-caches-dynamic-pattern-red.json.gz).
+- [Helper type and source-gate failures](../fixtures/host/data-layer-port/rr-connection-caches-helper-source-gate-red.json.gz).
+- [Native regex regression](../fixtures/host/data-layer-port/rr-dynamic-regex-native-tdd.json.gz).
+
+The inventory is 64 drafts and 36 absent translations. Full migration acceptance remains false.
+
+## Long-source text audit
+
+A native control proves that source and physical-line text rows disappear for a 5,013-character line.
+The document remains present, so this can suppress a finding without a parse failure.
+The connection-cache gate now uses the complete logical-line view and passes the long-source positive.
+Twenty-four other drafts contain whole-source text consumers. Their individual long-source behavior still requires validation.
+The inventory records each path, hash, and source line. It does not claim all 24 rules were executed or failed.
+The next shared fix must preserve exact requested source and line text without restoring copies of every large AST subtree.
+Earlier short-case receipts remain historical evidence; they do not certify this boundary.
+
+- [Failing native control and consumer inventory](../fixtures/host/data-layer-port/rr-long-source-text-red-and-audit.json.gz).

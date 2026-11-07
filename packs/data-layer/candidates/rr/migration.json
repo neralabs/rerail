@@ -1130,6 +1130,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "packs/data-layer/candidates/rr/connection-caches.rr",
+      "sha256": "b45e23c0dac62cb1429db5bb3fcd3c1839921c46fc41465e0c7d916cc5bf11fb",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_connection_caches.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1390,8 +1397,9 @@
       "batch": 3,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-connection-caches.json",
       "legacySha256": "d3e65fbd29b0cc1de9e23085ef4cb2ce7b5e3a6b92d19e3bc60f4c0d9ad96225",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/connection-caches.rr",
+      "ruleSha256": "b45e23c0dac62cb1429db5bb3fcd3c1839921c46fc41465e0c7d916cc5bf11fb"
     },
     {
       "check": "render_fstrings",

@@ -99,7 +99,7 @@ def run(args):
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
         if native and case['check'] != 'removed_compat_surfaces':
-            last = {'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
+            last = {'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:

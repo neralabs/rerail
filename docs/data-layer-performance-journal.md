@@ -7915,3 +7915,26 @@ All 115 backend-coupling assertions pass again, with 153 native calls and 62 com
 All 45 API cases and 33 reporter cases pass again. Both positive controls still reject disabled detection.
 The receipts retain the exact rebuilt executable hash and source commit.
 The inventory remains 63 drafts and 37 absent translations. This focused merge check does not certify the entire integrated test suite.
+
+
+## 2026-11-07: the 64th draft and a shared text-view defect
+
+The connection-cache port passes all 151 original cases, with 134 native calls and 55 complete returned-value comparisons.
+Its 47 regex assertion functions now use native Boolean probes. Thirty-three configuration assertions read native setup snapshots.
+Five host identity or CLI-help assertions remain individually identified. No original test is skipped or deselected.
+The 34 supplemental API cases and 34 reporter cases pass, including positives. Both detector mutation controls reject disabled detection.
+Earlier failures exposed symbol-valued option IDs and a configured long-source false negative; both are retained.
+Configuration and detection now read shared tables, rather than duplicate constants.
+
+A native regression also exposed variable regexes becoming an undeclared rx relation during internal serialization.
+The fix preserves search functors and whole-string public matching. All 42 focused reader tests pass, with one existing ignored test.
+The first test build read the file before the appended test; its zero-test result was rejected and is retained explicitly.
+The actual old-CLI failing execution and rebuilt single-test pass are separate evidence.
+The unit and CLI builds took 35.99 and 23.48 seconds. These are compile times.
+All 43 tooling tests and both format tests pass. Structure retains the three pre-existing flat-directory findings.
+
+A separate native control proves missing source and physical-line text rows for a 5,013-character line.
+The audit identifies 24 other draft consumers for follow-up; it does not claim they were all executed.
+The next shared repair must keep requested source text exact while avoiding whole-tree text copies.
+The inventory is 64 drafts and 36 absent translations. Full migration acceptance remains false.
+No repository cold run was performed, and no Linear tickets were created.
