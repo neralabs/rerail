@@ -1,0 +1,201 @@
+// python/pathlib: the vocabulary of Ruff's flake8-use-pathlib (PTH) rules. Each rule names a call of an `os`,
+// `os.path`, `glob` or builtin function that pathlib replaces. It reads the call through Ruff's Arguments API and
+// uses a little of Ruff's type inference, to leave file descriptors alone and to find `Path` objects.
+//
+// Interface
+//   1. Calls:      pth_call(c, q, f)        call c's callee resolves to q (Ruff's resolve_qualified_name);
+//                                           f is the callee without parentheses, where Ruff reports
+//                  call_len(c, n)           Ruff's `arguments.len()`: positional (`*xs` too) plus keywords
+//                                           (`**kw` too)
+//   2. Arguments:  arg_value(c, x, i, a)    `find_argument_value(x, i)`: keyword x, else the i-th positional
+//                                           before any `*xs`; a without parentheses. (x, i) is a pth_slot row.
+//                  single_arg(c, q, x, f, a)  `check_os_pathlib_single_arg_calls`: c calls q, and its one
+//                                           argument is a, the parameter x (by keyword or first)
+//                  kw_set(c, k)             keyword k is passed, and not as None
+//                                           (`is_keyword_only_argument_non_default`)
+//                  pth_none(e), pth_true(e)  e is `None`, `True`
+//                  fd_arg(c, x)             the argument for x (or the first) is a file descriptor
+//   3. Types:      resolved_int(e)          Ruff's ResolvedPythonType of e is int: `1`, `-1`, `1 + True`,
+//                                           `1 or 2`; resolved_bool(e) bool
+//                  file_descriptor(e)       `is_file_descriptor`: an int literal, or a name (or a call of one)
+//                                           whose only binding is an int; or `C.x` where class C binds x as an int
+//                  only_site(n, b)          name n resolves to binding site b, and b is its scope's only binding
+//                                           of the name so far (Ruff's only_binding)
+//                  site_init(b, v), site_ann(b, t)  the value or the annotation Ruff's type checkers read at b
+//                  path_class(q)            the six pathlib classes; path_init(e) a call of one
+//                  path_obj(e)              `is_pathlib_path`: a name whose only binding is a Path, or a call
+//                                           of a Path class
+//
+// Python and Ruff background
+//   - pathlib's `Path` accepts str and `os.PathLike`, but not bytes and not file descriptors. `os.stat(3)` and
+//     `open(fd)` take a file descriptor, so Ruff leaves those calls alone. So does `dir_fd=`: pathlib has
+//     nothing like it.
+//   - Ruff checks only some of the calls it reports. Most single-path functions (`os.path.exists`, …) are
+//     reported only when called with exactly that one argument. The others are reported always, unless an
+//     argument rules them out.
+//   - Ruff's type inference is per binding. A name has a type only if it has one binding in its scope:
+//     `x = 1; x = "a"; open(x)` is reported. The binding's value (`x = 1`, `(x := 1)`, `with 1 as x`),
+//     its annotation (`x: int = …`, a parameter `x: int`) or a def's return annotation give the type.
+//
+//   import os
+//   os.path.exists(p)                single_arg(<call>, "os.path.exists", "path", <os.path.exists>, <p>)
+//   os.path.exists(p, q)             no single_arg row: two arguments
+//   os.stat(p, dir_fd=3)             kw_set(<call>, "dir_fd")
+//   x = 3; os.stat(x)                file_descriptor(<x>)
+//   fd = os.open("f", 0); os.stat(fd)    no row: os.open's result is not inferred
+//   p = Path("a"); p.with_suffix("py")    path_obj(<p>)
+#include "python/ruff.rr"
+
+// ---- 1. calls ----------------------------------------------------------------------------------------------------
+// pth_call(c, q, f): `import os.path as osp; (osp.join)(a, b)` gives q "os.path.join" and f `osp.join`.
+// `open(p)` gives "builtins.open" while no binding in the file shadows `open`.
+.decl pth_call(c: node, q: symbol, f: node)
+pth_call(c, q, f) :- kind(c, "call"), field(c, "function", g), unparen(g, f), ruff_qual(f, q).
+.decl call_len(c: node, n: number)
+call_len(c, a + k) :- call_nargs(c, a), call_nkwargs(c, k).
+
+// ---- 2. arguments ------------------------------------------------------------------------------------------------
+// pth_slot(x, i): the parameters the PTH rules look up, with their positions. `open(file, mode, buffering, encoding,
+// errors, newline, closefd, opener)` puts closefd at 6 and opener at 7.
+.decl pth_slot(x: symbol, i: number)
+pth_slot("path", 0). pth_slot("s", 0). pth_slot("p", 0). pth_slot("filename", 0). pth_slot("file", 0). pth_slot("suffix", 0).
+pth_slot("sep", 0). pth_slot("closefd", 6). pth_slot("opener", 7).
+// arg_value(c, x, i, a): `os.stat(path=p)` and `os.stat(p)` both give a = p for ("path", 0); `os.stat(*ps)`
+// gives none: Ruff does not look past a `*`.
+.decl arg_value(c: node, x: symbol, i: number, a: node)
+arg_value(c, x, i, a) :- pth_slot(x, i), call_kwarg(c, x, v), unparen(v, a).
+arg_value(c, x, i, a) :- pth_slot(x, i), ruff_arg(c, i, v), !call_kwarg(c, x, _), unparen(v, a).
+.decl single_arg(c: node, q: symbol, x: symbol, f: node, a: node)
+single_arg(c, q, x, f, a) :- pth_call(c, q, f), call_len(c, 1), arg_value(c, x, 0, a).
+.decl pth_none(e: node)
+pth_none(e) :- unparen(e, m), kind(m, "none").
+.decl pth_true(e: node)
+pth_true(e) :- unparen(e, m), kind(m, "true").
+// kw_set(c, k): `os.mkdir(p, dir_fd=3)`; not `dir_fd=None`, and not `**kw`, which Ruff cannot see into.
+.decl kw_set(c: node, k: symbol)
+kw_set(c, k) :- call_kwarg(c, k, v), !pth_none(v).
+.decl fd_arg(c: node, x: symbol)
+fd_arg(c, x) :- arg_value(c, x, 0, a), file_descriptor(a).
+
+// ---- 3. types ----------------------------------------------------------------------------------------------------
+// resolved_int(e) and resolved_bool(e): what Ruff's ResolvedPythonType gives. A bool mixed with an int is an int
+// (`True + 1`, `True and 2`); `1 / 2` is a float; two bools give a bool.
+.decl resolved_int(e: node)
+resolved_int(e) :- ruff_int(e, _).
+resolved_int(e) :- unparen(e, m), kind(m, "named_expression"), field(m, "value", v), resolved_int(v).
+resolved_int(e) :- unparen(e, m), kind(m, "unary_operator"), field(m, "argument", a), pth_num_type(a).
+resolved_int(e) :- unparen(e, m), kind(m, "binary_operator"), !op(m, "/"), !op(m, "@"),
+    field(m, "left", l), pth_num_type(l), field(m, "right", r), pth_num_type(r).
+resolved_int(e) :- unparen(e, m), pth_either(m, l, r), pth_num_type(l), pth_num_type(r), (resolved_int(l) ; resolved_int(r)).
+.decl resolved_bool(e: node)
+resolved_bool(e) :- unparen(e, m), (kind(m, "true") ; kind(m, "false") ; kind(m, "not_operator")).
+resolved_bool(e) :- unparen(e, m), kind(m, "named_expression"), field(m, "value", v), resolved_bool(v).
+resolved_bool(e) :- unparen(e, m), pth_either(m, l, r), resolved_bool(l), resolved_bool(r).
+.decl pth_num_type(e: node)
+pth_num_type(e) :- resolved_int(e).
+pth_num_type(e) :- resolved_bool(e).
+// pth_either(m, l, r): m is `l and r`, `l or r` or `l if c else r`: its type is the union of l's and r's.
+.decl pth_either(m: node, l: node, r: node)
+pth_either(m, l, r) :- kind(m, "boolean_operator"), field(m, "left", l), field(m, "right", r).
+pth_either(m, l, r) :- kind(m, "conditional_expression"), child(m, l, 0), child(m, r, 2).
+
+// Bindings. only_site(n, b): n reads binding b, and no other binding of the name in that scope comes before
+// it. A use inside a def or lambda nested in that scope runs later, so there every binding of the scope
+// counts. A class body or a comprehension runs at once, so there only the earlier ones do.
+//   x = 1; open(x)          only_site(<x>, <x = 1>)
+//   x = 1; x = 2; open(x)   no row
+.decl pth_seen(n: node, s: node, b: node)
+pth_seen(n, s, b) :- look(n, x, s), binding(s, x, b, _), !pth_deferred(n, s), earlier(b, n).
+pth_seen(n, s, b) :- look(n, x, s), binding(s, x, b, _), pth_deferred(n, s).
+// pth_deferred(n, s): a def or lambda inside scope s holds n.
+.decl pth_deferred(n: node, s: node)
+pth_deferred(n, s) :- look(n, _, s), nearest(n, f, pth_fn_kind), within(f, s).
+.decl pth_fn_kind(k: symbol)
+pth_fn_kind("function_definition"). pth_fn_kind("lambda").
+.decl only_site(n: node, b: node)
+only_site(n, b) :- pth_seen(n, s, b), count : { pth_seen(n, s, b2) } = 1.
+// site_init(b, v): `x = v` (no annotation), `(x := v)`, `with v as x`, and the element a name gets from
+// unpacking: `fd, name = 3, "x"` gives fd 3. `g = h = 3` gives both g and h 3.
+.decl site_init(b: node, v: node)
+site_init(a, v) :- binding(_, _, a, "assign"), kind(a, "assignment"), field(a, "left", l), pth_unpack(l, v).
+site_init(t, v) :- binding(_, _, t, "assign"), kind(t, "identifier"), pth_unpack(t, v).
+site_init(t, v) :- binding(_, _, t, "with"), pth_unpack(t, v).
+site_init(t, v) :- binding(_, _, t, "walrus"), field(ne, "name", t), field(ne, "value", v).
+// pth_unpack(t, v): target t receives value v (Ruff's match_value). From an assignment without annotation,
+// through chains, and from a `with` item; then element by element where both sides are a tuple or list
+// display of the same length with no `*`.
+.decl pth_unpack(t: node, v: node)
+pth_unpack(l, v) :- kind(a, "assignment"), !field(a, "type", _), field(a, "left", l), pth_rhs(a, v).
+pth_unpack(e, v) :- kind(ap, "as_pattern"), field(ap, "alias", pt), kind(pt, "as_pattern_target"), child(pt, e, 0),
+    child(ap, v, 0), within(ap, w), kind(w, "with_item").
+pth_unpack(te, ve) :- pth_unpack(t, v), unparen(t, tm), pth_seq(tm), unparen(v, vm), pth_seq(vm),
+    pth_seq_len(tm, k), pth_seq_len(vm, k), child(tm, te, i), child(vm, ve, i).
+// pth_rhs(a, v): the value of assignment a, past chained assignments: in `g = h = 3`, 3 for both.
+.decl pth_rhs(a: node, v: node)
+pth_rhs(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
+pth_rhs(a, v) :- kind(a, "assignment"), field(a, "right", r), kind(r, "assignment"), pth_rhs(r, v).
+.decl pth_seq(e: node)
+pth_seq(e) :- kind(e, k), (k = "tuple" ; k = "list" ; k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern" ;
+    k = "expression_list" ; k = "set"), !pth_starred(e).
+.decl pth_starred(e: node)
+pth_starred(e) :- child(e, c, _), (kind(c, "list_splat") ; kind(c, "list_splat_pattern")).
+.decl pth_seq_len(e: node, k: number)
+pth_seq_len(e, k) :- pth_seq(e), k = count : { child(e, _, _) }.
+// site_ann(b, h): the annotation's expression with any subscript taken off (Ruff's map_subscript):
+// `x: int = 3`, a parameter `x: int` (not `*x: int`), `def x() -> int`, `x: list[int] = …` gives `list`.
+.decl site_ann(b: node, h: node)
+site_ann(a, h) :- kind(a, "assignment"), field(a, "type", t), pth_ann_expr(t, h).
+site_ann(p, h) :- binding(_, _, p, "param"), field(p, "type", t), child(p, nm, 0), kind(nm, "identifier"),
+    pth_ann_expr(t, h).
+site_ann(f, h) :- binding(_, _, f, "def"), field(f, "return_type", t), pth_ann_expr(t, h).
+.decl pth_ann_expr(t: node, h: node)
+pth_ann_expr(t, h) :- ann_root(t), child(t, e, 0), unparen(e, m), pth_map_sub(m, h).
+.decl pth_map_sub(e: node, h: node)
+pth_map_sub(e, h) :- kind(e, "subscript"), field(e, "value", v), unparen(v, h).
+pth_map_sub(e, h) :- kind(e, "generic_type"), child(e, h, 0).
+pth_map_sub(e, e) :- kind(e, k), k != "subscript", k != "generic_type".
+
+// Ints, and file descriptors.
+.decl pth_int_init(e: node)
+pth_int_init(e) :- resolved_int(e).
+pth_int_init(e) :- unparen(e, m), kind(m, "call"), call_q(m, "builtins.int").
+.decl pth_int_site(b: node)
+pth_int_site(b) :- site_init(b, v), pth_int_init(v).
+pth_int_site(b) :- site_ann(b, h), ruff_qual(h, "builtins.int").
+// file_descriptor(e): `os.stat(3)`, `os.stat(fd)` after `fd = 3`, `os.stat(get())` after `def get() -> int`, and
+// `os.stat(C.fd)` or `os.stat(C.D.fd)` where the class binds fd last as an int. `-1` alone is not an int
+// literal to Ruff (it is a unary operation), so `os.stat(-1)` is reported.
+.decl file_descriptor(e: node)
+file_descriptor(e) :- ruff_int(e, _).
+file_descriptor(e) :- unparen(e, m), pth_name_root(m, n), only_site(n, b), pth_int_site(b).
+file_descriptor(e) :- unparen(e, m), attr_of(m, o, x), pth_class_of(o, k), b = max b2 : { pth_member(k, x, b2) },
+    pth_int_site(b).
+// pth_name_root(e, n): Ruff's get_name_expr: e is the name n, or a call of it (`n()`, `n()()`).
+.decl pth_name_root(e: node, n: node)
+pth_name_root(e, e) :- kind(e, "identifier").
+pth_name_root(e, n) :- kind(e, "call"), field(e, "function", f), unparen(f, g), pth_name_root(g, n).
+// pth_member(k, x, b): class k binds x at b. A bare `x: int` in a class body counts here: Ruff's class-scope
+// lookup sees it, though a name lookup does not.
+.decl pth_member(k: node, x: symbol, b: node)
+pth_member(k, x, b) :- binding(k, x, b, _), kind(k, "class_definition").
+pth_member(k, x, a) :- kind(a, "assignment"), field(a, "type", _), !field(a, "right", _), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), scope_node(a, k), kind(k, "class_definition").
+// pth_class_of(o, k): o names class k: `C`, or `C.D` for a class D in C's body.
+.decl pth_class_of(o: node, k: node)
+pth_class_of(o, k) :- unparen(o, m), look(m, x, s), defn(s, x, k), kind(k, "class_definition").
+pth_class_of(o, k) :- unparen(o, m), attr_of(m, p, x), pth_class_of(p, c), defn(c, x, k), kind(k, "class_definition").
+
+// Paths.
+.decl path_class(q: symbol)
+path_class("pathlib.Path"). path_class("pathlib.PurePath"). path_class("pathlib.PosixPath").
+path_class("pathlib.PurePosixPath"). path_class("pathlib.WindowsPath"). path_class("pathlib.PureWindowsPath").
+.decl path_init(e: node)
+path_init(e) :- unparen(e, m), kind(m, "call"), call_q(m, q), path_class(q).
+.decl pth_path_site(b: node)
+pth_path_site(b) :- site_init(b, v), path_init(v).
+pth_path_site(b) :- site_ann(b, h), ruff_qual(h, q), path_class(q).
+// path_obj(e): `p` after `p = Path("a")` or `def f(p: PurePath)`, or `Path("a")` itself. A def returning a
+// Path counts as its own name, not as a call of it: Ruff reports `f.with_suffix("py")`, not `f().with_suffix(…)`.
+.decl path_obj(e: node)
+path_obj(e) :- unparen(e, n), kind(n, "identifier"), only_site(n, b), pth_path_site(b).
+path_obj(e) :- path_init(e).

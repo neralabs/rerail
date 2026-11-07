@@ -1,0 +1,186 @@
+# Data-layer rules in `.rr`
+
+New data-layer rules use the `.rr` format from `More-ergonomic-rule-syntax`.
+Use the engine-owned relations in `docs/rule-syntax/lib/core.rr` and shared Datalog libraries.
+Keep rule logic in Datalog. Do not add SQL stages or rule-specific native detectors.
+
+The migration covers the **100 existing ports**, including their complete public contracts.
+The remaining 42 checks will use `.rr` when ported.
+The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
+
+## Engine survey
+
+The sibling branches contain complementary work. Neither branch alone is the complete target.
+
+| Source | Commit inspected | Relevant work |
+| --- | --- | --- |
+| `final-rerail-shape` in `wolfeel` | `5332989f8` | `.rr` reader, core relations, includes, typed places, closed engine-owned names |
+| `final-shape-serverplan-quality` | `8f399baeae405bdad5fee4d65e123c25076f5ccf` | Batched corpus execution, containment views, local join pushdown, memoized file results, bounded history collection |
+| `More-ergonomic-rule-syntax` | See the migration manifest | Shared libraries and handwritten rule drafts, including uncommitted work |
+| `final-rerail-shape-rr-align` | `38d105533abf9be6482230ca36af63776943c2f9` | Reader and base-relation alignment, already in the final-shape branch |
+| `Typing-support-final-shape` | `667b48539` | Shared inference and typed program shapes |
+| `Parser-generators-final-shape` | `956269619` | Broad CPU and Metal parser kernels; a separate integration, not a format requirement |
+
+The target runs rules as one combined program. It renames private relations and shares equivalent producers.
+It plans from stored statistics, pushes local joins into document batches, and reuses unchanged file results.
+Core facts come from typed tape views. The backend can execute broad batches on CPU or Metal.
+This migration must retain that shape. It must not restore per-node callbacks or per-rule fact reconstruction.
+
+The integration checkout is `.rerail/rr-migration-20261106/engine`.
+It combines the final reader with the quality runtime. The merge required explicit repairs in five files.
+The first test build also found two mistakes in the merged containment tests. Those mistakes were corrected.
+The primary production addon remains the previous executable baseline until the new path passes the contracts below.
+The integration checkout is migration work, not a second production backend.
+
+## Imported drafts and provenance
+
+[migration.json](../packs/data-layer/candidates/rr/migration.json) lists each of the 100 checks and its original policy hash.
+It records the syntax branch commit and hashes the imported bytes, including uncommitted sibling work.
+It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
+
+The initial snapshot contained 43 target drafts and 57 absent translations.
+The current inventory contains **53 target drafts and 47 absent translations**. None has full acceptance yet.
+Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
+Reader success is a syntax milestone. It is not rule completion.
+
+The initial reader check found five includes tied to the original directory layout.
+Those policies now include their generated tables beside the policy file.
+A stricter findings check also found an undeclared `f` message parameter in `SAP004`; the finding binds only `at`.
+
+## Preserve the existing assertion contract
+
+The sibling lab and converter scores compare finding sets and omit some observations.
+They cannot certify these ports. This branch must retain the stronger existing contract:
+
+- Run the original detector assertions, including every positive and clean case.
+- Preserve complete DTO fields, messages, order where specified, and multiplicity.
+- Test helper assertions, configured reporting, repository inputs, signatures, options, and lifecycle changes.
+- Keep Python host contracts separate from native detector evidence.
+- Reject skipped assertions, omitted events, engine failures, and semantic fallbacks.
+- Never filter actual findings through codes learned from expected findings.
+- Bind reports to rule, corpus, engine, and source hashes.
+- Require positive mutation controls to reject disabled detectors.
+
+The 279 original batch-ten cases, 175 registry cases, seven workflow cases, and their native counterparts remain required.
+The broader recorded and fresh corpora also remain required. The prior receipts describe the JSON engine baseline.
+They do not certify `.rr` execution.
+
+The public `.violation` lowering discarded messages and tags in the surveyed engine.
+The integration now also derives a lossless diagnostic relation through the same relational planner.
+Its JSON transport retains quoted text, tabs, newlines, numeric parameters, tags, and witness identity.
+The original five-column finding index remains available for existing consumers.
+
+## Proven gaps and migration order
+
+The reader rejects the lazy analyzer's `dfs_first_memo` and the allowlist's `ordered` recursion.
+Several signature functors and repository readers also lack execution support.
+These are engine requirements, not permission to approximate a linter.
+
+`cached_pure_lazy_allowlist` stores hashes of CPython `ast.dump` text.
+Replacing that digest and re-signing the repository changes the input contract.
+This migration must support the existing input. It must not re-sign data or access signing keys.
+
+Complete the migration in this order:
+
+1. Prove lossless findings, direct-call options, scope, and input failures through the native engine.
+2. Replay the existing HNSW and generated-index drafts against complete DTOs. Repair generic producer defects with regression tests.
+3. Translate the missing policies. Use mechanical conversion only when every clause is represented; refuse partial candidates.
+4. Implement required ordered analysis, repository readers, signatures, and exact Python-compatible values as generic capabilities.
+5. Run every existing source assertion against the new runtime, then run configured and persistent-workspace contracts.
+6. Replace the primary production path and retire the JSON generators after full acceptance.
+
+No new Linear tickets are authorized by this work. Requirements stay in this journal until reviewed.
+Cold repository runs remain limited to changed kernels. Do not benchmark the whole batch.
+
+## Commands and current evidence
+
+```sh
+python3 scripts/dsl/data_layer_rr/migration.py inventory
+python3 test/scripts/data_layer_rr/test_migration.py
+# Record the unchanged source assertions, including lossless API values:
+PYTHONHASHSEED=0 python3.13 scripts/dsl/data_layer_rr/source.py \
+  --source /path/to/pinned/data-layer --repo /path/to/pinned/data-layer \
+  --output /path/to/seeded-recording.json scripts/tests/test_lint_no_source_inspection.py
+# Run the original assertions in bounded shards, with the pinned Python environment:
+PYTHONHASHSEED=0 python3.13 scripts/dsl/data_layer_rr/suite.py --source /path/to/pinned/data-layer \
+  --engine /path/to/frozen/rerail-engine --baseline /path/to/seeded-recording.json \
+  --checks no_source_inspection \
+  --parts 4 --part 0 --out /path/to/report.json
+python3 scripts/dsl/data_layer_rr/migration.py check
+```
+
+The final command must fail while any of the 100 checks lacks complete assertion evidence.
+The strict replay tool takes an explicit case range so each invocation can stay below two minutes.
+Ranges must later cover the complete corpus without omissions or overlap.
+
+The integrated reader and execution suite passed 17 tests; two existing report-generation tests were ignored.
+Sixteen migration guard tests passed. The lossless findings regression passed with four distinct findings.
+The logical-line regression preserves all Python line boundaries, empty lines, CRLF, and a 400-character line.
+The empty-corpus regression executes a global absence finding. It does not replace empty input with a dummy document.
+
+The native original-assertion adapter now supports eight rules. It runs entire original test modules in bounded shards.
+It replaces regex-search operations with native contracts while retaining their original assertions and inputs.
+Reports identify each translated site and each case that executes only host behavior.
+Cases without a native call never count as native detector coverage.
+
+The eight direct original modules pass all 531 test bodies without skips or original-detector fallbacks.
+They make 477 native calls. Of the cases, 171 make no native call.
+Native helper truth-value probes are separate from detector-positive cases.
+Those cases are listed individually and do not count as native detector coverage.
+The reports compare recorded DTOs only after checking that the current source inputs and scope match.
+Both executions use `PYTHONHASHSEED=0`: one test constructs source from a Python set.
+The original source recording has three skipped async cases. The native run executes their reviewed assertion transfers.
+
+[The compressed receipt](../fixtures/host/data-layer-port/rr-direct-source-assertions.json.gz) retains the source recording and all eight shard reports.
+It binds source files, rule includes, the frozen engine, and harness files.
+The lossless source recording also preserves complete dataclass fields, tuple shape, snippets, order, and duplicates.
+All 317 recorded detector API returns receive that comparison, including returns the legacy normalizer could not represent.
+These results cover direct modules and snapshot execution. They do not establish complete helper coverage, configured execution, or persistent-workspace parity.
+
+The first HNSW replay found incorrect definition messages and a finding on invalid Python.
+It also requires the pinned CPython word character set and standalone forbidden-file context.
+The generated-index replay exposed a document-location defect: a source span was treated as an AST node.
+The generic locator repair passes its unit regression and all 24 recorded generated-index observations.
+The four initial rules matched 92 complete recorded observations, including 69 positives, on the earlier frozen build.
+That is historical recorded-detector evidence. Updated engine and library hashes require fresh reports.
+
+Parallel original assertions reproduce a separate atom-store defect.
+A scratch database borrows the persistent store's arena but can attempt to flush atom segments into scratch.
+Two deterministic regressions retain the failures. The ownership repair passes all nine active atom tests.
+A separate shared-cache concurrency run still fails with a foreign-key constraint error.
+The direct assertion shards use separate persistent caches; this isolation does not fix that engine defect.
+
+The full integrated native suite has not passed. Its broad run timed out and reported additional failures.
+The user authorized deferring tests that require the unavailable Ruff and SQLFluff fixture archives.
+That exception does not cover data-layer tests or other native failures.
+Raw logs and reports are under `.rerail/rr-migration-20261106/`.
+
+Sibling builds can replace executables in the shared Cargo output directory.
+Copy each tested binary into this worktree and record its hash before replaying cases.
+Do not treat a report from a changing executable as an acceptance receipt.
+
+
+## Latest integration checkpoint
+
+The integrated engine is `8104bdd7fc9a7e0899ae4f0677d04ad11a50a579` on `jeremy/data-layer-rr-engine-20261106`.
+It includes final-shape `5332989f8` and syntax snapshot `fa50cd94c`.
+The native tests found a missing vocabulary path for logical lines and their shared aliases.
+The regression failed with zero batched tests. The repair batches both predicates and passes all 11 string-engine tests.
+Aliases qualify only when every producer copies an existing vocabulary symbol.
+A computed arm, a fact arm, or an unknown external input prevents this rewrite.
+
+The eighth authored rule is admin async purity. Its full original module passes all 125 cases.
+Its `.rr` clauses preserve quote-count parity, comment handling, path exclusions, allowlist membership, and pattern order.
+The original regex and helper assertions execute through native contracts.
+The original CLI still performs host-side argument handling and signature verification.
+This does not certify native configured reporting or native signature verification.
+
+[The kernel profile](../fixtures/host/data-layer-port/rr-line-vocabulary-profile.json) records one cold sample per build over 2,000 logical lines.
+Process CPU fell from 1.49 seconds to 0.99 seconds; maximum RSS rose from 94,879,744 to 104,251,392 bytes.
+The complete native diagnostics match. Other assertion processes were active, so wall times are descriptive only.
+These results do not establish a repository-wide improvement.
+
+The current reader refuses seven policies: five need `match_all`, one needs `dfs_first_memo`, and one needs an executable slice pattern.
+The integrated reader's broad source-check test also reaches the 115-second limit.
+The bounded atom tests pass nine active cases; file-local tests pass five active cases.
+Full integrated native validation remains incomplete.

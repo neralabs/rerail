@@ -1,0 +1,23 @@
+// complexity/python: lizard's decision points in Python, on tree-sitter-python, for complexity/cyclomatic.rr.
+//
+// A function is a `def`, async, decorated or a method. A `lambda` is not one: its conditions count toward the
+// enclosing def, as lizard counts them. Decisions:
+//   if  elif  for (and async for)  while  except  finally          a statement or clause each
+//   a and b  a or b                                               each operator (`a and b and c` is two)
+//   x if c else y                                                  the conditional expression
+//   [x for x in xs if c]                                           each for and each if clause of a comprehension
+//   match x: case …                                                once, however many cases; a case guard is an if
+// Not counted: else, with, assert, try, return.
+//
+//   def f(xs):                    CCN 4
+//       return [x for x in xs if x and ok]      for, if, and
+#include "complexity/cyclomatic.rr"
+
+cc_boundary("function_definition").
+cc_decision(n, 0) :- kind(n, k), cc_py_decision(k).
+cc_name(f, x) :- kind(f, "function_definition"), field(f, "name", n), text(n, x).
+.decl cc_py_decision(k: symbol)
+cc_py_decision("if_statement"). cc_py_decision("elif_clause"). cc_py_decision("for_statement").
+cc_py_decision("while_statement"). cc_py_decision("except_clause"). cc_py_decision("finally_clause").
+cc_py_decision("boolean_operator"). cc_py_decision("conditional_expression"). cc_py_decision("for_in_clause").
+cc_py_decision("if_clause"). cc_py_decision("match_statement").

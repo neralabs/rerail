@@ -1,0 +1,119 @@
+// python/bugbear-loops: loop variables as Ruff's flake8-bugbear rules see them (B007, B020, B023). Ruff reads
+// names here with small AST visitors, not with its semantic model: a name is an `ast.Name` found by walking a
+// piece of the tree, compared by its text. This file is those walks.
+//
+// Interface
+//   py_loop(l)                 l is a loop Ruff checks for B023: a for or while statement, or a comprehension
+//   expr_name(e, n, x)         n is an `ast.Name` x inside expression e, or e itself (any context)
+//   for_stored(f, n, x)        n is a Name x that for statement f's target stores (`for a, (b, *c) in …`)
+//   loop_body_name(f, x)       a Name x appears anywhere in for statement f's body (not its else)
+//   iter_name(f, n, x)         n is a Name x in f's iterable, as B020 reads it: a comprehension only by its
+//                              iterables, a lambda by its body's children, its parameters taken out
+//   assign_name(r, x)          r, an assignment target, binds the plain name x: a Name, or one in a tuple, list
+//                              or `*x` pattern (not an attribute or subscript)
+//   loop_assigns(l, x)         loop l rebinds x: an assignment, augmented or annotated assignment, for target or
+//                              comprehension target in l, outside any def and lambda in it (B023)
+//   closure_reads(l, g, n, x)  g is a def or lambda in loop l that B023 examines, and n a Name x it reads that
+//                              is neither its parameter nor stored anywhere in its body
+//
+// Python background
+//   A closure reads a free variable when it is called, not when it is made: every `lambda: x` made in a loop
+//   sees the last x. A lambda called on the spot (`(lambda: x)()`), passed to `map`/`filter`/`reduce`, given as
+//   `key=`, or returned is consumed before x changes, so B023 trusts it ("safe") and looks inside it instead.
+//
+//   for i in range(3):
+//       fns.append(lambda: i)       py_loop(<for>), loop_assigns(<for>, "i"), closure_reads(<for>, <lambda>, <i>, "i")
+//   for vars in [i for i in vars]:  iter_name(<for>, <vars>, "vars"); the comprehension's i is not read
+#include "python/ast.rr"   // ast_name, expr_ctx, param_named, assign_target
+
+.decl py_loop(l: node)
+py_loop(l) :- kind(l, k), (k = "for_statement" ; k = "while_statement").
+py_loop(l) :- kind(l, k), comp_scope(k).
+
+// ---- names in a piece of the tree --------------------------------------------------------------------------------
+.decl expr_name(e: node, n: node, x: symbol)
+expr_name(e, n, x) :- ast_name(n, x), within(n, e).
+expr_name(n, n, x) :- ast_name(n, x).
+.decl for_stored(f: node, n: node, x: symbol)
+for_stored(f, n, x) :- kind(f, "for_statement"), field(f, "left", t), expr_name(t, n, x), expr_ctx(n, "store").
+.decl loop_body_name(f: node, x: symbol)
+loop_body_name(f, x) :- kind(f, "for_statement"), field(f, "body", b), ast_name(n, x), within(n, b).
+.decl iter_name(f: node, n: node, x: symbol)
+iter_name(f, n, x) :- kind(f, "for_statement"), field(f, "right", r), expr_name(r, n, x), !iter_hidden(r, n).
+// iter_hidden(r, n): Ruff's NameFinder does not collect n. It visits a comprehension only by its iterables, and
+// a lambda by walking its body's children: a bare-name body is never visited, a comprehension body is walked
+// whole, and the parameters (defaults included) are skipped. Leaving the lambda removes its non-variadic
+// parameter names from what was collected so far: names before the lambda or in it, not names after it.
+//   for x in f(lambda: x)              hidden: the body is a bare name
+//   for x in f(x, lambda x: 1)         hidden: removed on leaving the lambda
+//   for x in f(lambda x: 1, x)         collected: inserted after it
+.decl iter_root(r: node, e: node)  // e is iterable r or a node in it
+iter_root(r, r) :- kind(f, "for_statement"), field(f, "right", r).
+iter_root(r, e) :- kind(f, "for_statement"), field(f, "right", r), within(e, r).
+.decl iter_hidden(r: node, n: node)
+iter_hidden(r, n) :- iter_root(r, c), kind(c, k), comp_scope(k), within(n, c), expr_name(r, n, _),
+    !in_iterable(c, n), !lambda_body(c).
+iter_hidden(r, n) :- iter_root(r, n), lambda_body(n), ast_name(n, _).
+iter_hidden(r, n) :- iter_root(r, l), kind(l, "lambda"), field(l, "parameters", ps), within(n, ps),
+    expr_name(r, n, _).
+iter_hidden(r, n) :- iter_root(r, l), lambda_param_name(l, x), expr_name(r, n, x), (earlier(n, l) ; within(n, l)).
+.decl lambda_body(e: node)  // e is a lambda's body, parentheses off
+lambda_body(e) :- kind(l, "lambda"), field(l, "body", b), unparen(b, e).
+.decl in_iterable(c: node, n: node)
+in_iterable(c, n) :- child(c, fc, _), kind(fc, "for_in_clause"), field(fc, "right", it), (n = it ; within(n, it)),
+    ast_name(n, _).
+.decl lambda_param_name(l: node, x: symbol)  // non-variadic parameters, as Ruff's iter_non_variadic_params
+lambda_param_name(l, x) :- kind(l, "lambda"), param_named(l, x, k), k != "vararg", k != "kwarg".
+
+// ---- B023: rebinding in a loop, and closures made in it ------------------------------------------------------------
+.decl assign_name(r: node, x: symbol)
+assign_name(r, x) :- kind(r, "identifier"), text(r, x).
+assign_name(r, x) :- kind(r, k), (k = "list_splat_pattern" ; k = "list_splat" ; k = "parenthesized_expression" ;
+    k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern" ; k = "tuple" ; k = "list" ;
+    k = "expression_list"), child(r, c, _), assign_name(c, x).
+// assign_root(s, r): r is the target of a binding statement or clause s that AssignedNamesVisitor reads.
+.decl assign_root(s: node, r: node)
+assign_root(s, t) :- assign_target(s, t).
+assign_root(s, t) :- kind(s, "augmented_assignment"), field(s, "left", t).
+assign_root(s, t) :- (kind(s, "for_statement") ; kind(s, "for_in_clause")), field(s, "left", t).
+.decl loop_assigns(l: node, x: symbol)
+loop_assigns(l, x) :- py_loop(l), assign_root(l, r), assign_name(r, x).
+loop_assigns(l, x) :- py_loop(l), assign_root(s, r), within(s, l), !closure_between(s, l), assign_name(r, x).
+.decl closure_between(s: node, l: node)  // a def or lambda strictly between s and loop l
+closure_between(s, l) :- py_loop(l), assign_root(s, _), within(s, l), closure(g), closure_holds(g, s), within(g, l).
+.decl closure(g: node)
+closure(g) :- kind(g, "function_definition").
+closure(g) :- kind(g, "lambda").
+// safe_lambda(g): a lambda consumed where it is made.
+.decl safe_lambda(g: node)
+safe_lambda(g) :- kind(g, "lambda"), kind(c, "call"), field(c, "function", f), unparen(f, g).
+safe_lambda(g) :- kind(g, "lambda"), kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x),
+    (x = "filter" ; x = "reduce" ; x = "map"), lambda_arg(c, g).
+safe_lambda(g) :- kind(g, "lambda"), kind(c, "call"), field(c, "function", f), attr_of(f, o, "reduce"),
+    kind(o, "identifier"), text(o, "functools"), lambda_arg(c, g).
+safe_lambda(g) :- kind(g, "lambda"), kind(k, "keyword_argument"), field(k, "name", nm), text(nm, "key"),
+    field(k, "value", v), unparen(v, g).
+safe_lambda(g) :- kind(g, "lambda"), kind(r, "return_statement"), child(r, v, 0), unparen(v, g).
+.decl lambda_arg(c: node, g: node)  // g is a positional argument of c
+lambda_arg(c, g) :- kind(c, "call"), field(c, "arguments", al), child(al, a, _), unparen(a, g), kind(g, "lambda").
+// examined(l, g): the walk from loop l reaches closure g: g is not a safe lambda, and every closure between them
+// is one (the walk stops at a def and at an unsafe lambda).
+.decl opaque(g: node)
+opaque(g) :- closure(g), !safe_lambda(g).
+.decl examined(l: node, g: node)
+examined(l, g) :- py_loop(l), opaque(g), within(g, l), !hidden_closure(l, g).
+.decl hidden_closure(l: node, g: node)
+hidden_closure(l, g) :- py_loop(l), opaque(g), within(g, l), opaque(h), closure_holds(h, g), within(h, l).
+// closure_holds(h, n): n is inside closure h, or in a decorator of def h: Ruff's walks stop at a def statement
+// without visiting its decorators, as python/ast's py_frame puts a decorator in the def.
+.decl closure_holds(h: node, n: node)
+closure_holds(h, n) :- closure(h), within(n, h).
+closure_holds(h, n) :- kind(h, "function_definition"), kind(dd, "decorated_definition"), field(dd, "definition", h),
+    child(dd, dc, _), kind(dc, "decorator"), within(n, dc).
+.decl closure_body(g: node, b: node)
+closure_body(g, b) :- closure(g), field(g, "body", b).
+.decl closure_reads(l: node, g: node, n: node, x: symbol)
+closure_reads(l, g, n, x) :- examined(l, g), closure_body(g, b), expr_name(b, n, x), expr_ctx(n, "load"),
+    !param_named(g, x, _), !closure_stores(g, x).
+.decl closure_stores(g: node, x: symbol)
+closure_stores(g, x) :- closure_body(g, b), expr_name(b, n, x), expr_ctx(n, "store").

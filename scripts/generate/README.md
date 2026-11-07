@@ -85,3 +85,28 @@ Use the pinned data-layer checkout as `<upstream>`. Set `PYTHONHASHSEED=0` for r
 | `packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
 | `packs/data-layer/rules/data-layer-bootstrap-cache-health.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
 | `packs/data-layer/rules/data-layer-plan-composition-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+
+## Imported `.rr` tables
+
+These files are snapshots from the syntax branch. The migration manifest records their original bytes and source commit.
+The importer adds the repository header and resolves adjacent table includes. It does not recompute the upstream tables.
+
+| Generated file | Importer | Command |
+|---|---|---|
+| `packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/eager-resolve.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/lazy-architecture.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `docs/rule-syntax/lib/python/security-blacklist.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `docs/rule-syntax/lib/vue/elements.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `packs/data-layer/candidates/rr/removed-compat-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/no-source-inspection.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/serverplan-name-inference.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/permission-error.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/hasattr-async.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `packs/data-layer/candidates/rr/admin-async-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |

@@ -1,0 +1,41 @@
+// rust/syntax-attrs: lint-level attributes, #[allow(…)] and its kin, as Clippy's attribute lints see them.
+//
+// rustc expands `#[cfg_attr(pred, a, b)]` into `#[a] #[b]` when pred holds, before Clippy reads attributes.
+// Without a build configuration, this library takes every predicate as true except the three a lint run never
+// satisfies: `test` (Clippy runs without --test), `any()` (false by definition) and `not(clippy)`. Nested
+// cfg_attr is expanded the same way.
+//
+// What a rule gets from this library:
+//   lint_attr(at, name, args, a)   a lint attribute `name(…)` in attribute item a: at is the name's identifier,
+//                                  args its parenthesised token tree. Direct (#[allow(x)], #![expect(x)]) or
+//                                  from a live cfg_attr (#[cfg_attr(all(), allow(x))]).
+//   from_cfg_attr(at)              lint_attr `at` came out of a cfg_attr
+//   has_reason(args)               the list ends with `reason = "…"`: allow(x, reason = "why")
+//
+// Builds on rust/syntax.rr (attr_name; msrv_older reads an attribute under its item's msrv) and core's
+// tokens.
+#include "rust/syntax.rr"
+
+.decl lint_attr(at: node, name: symbol, args: node, a: node)
+lint_attr(p, x, g, a) :- (kind(a, "attribute_item") ; kind(a, "inner_attribute_item")), child(a, t, 0),
+    kind(t, "attribute"), child(t, p, 0), kind(p, "identifier"), text(p, x), field(t, "arguments", g).
+// In the arguments of a live cfg_attr: `, name(…)`, the name right after a comma, its list right after it.
+lint_attr(p, x, g, a) :- cfg_args(c, a), child(c, p, _), kind(p, "identifier"), text(p, x),
+    token_before(p, k), text(k, ","), next_sibling(p, g), kind(g, "token_tree"), token_after(p, o),
+    first_token(g, o).
+.decl from_cfg_attr(at: node)
+from_cfg_attr(p) :- lint_attr(p, _, _, _), child(c, p, _), cfg_args(c, _).
+
+// cfg_args(g, a): token tree g is the argument list of a cfg_attr in attribute item a whose predicate may hold.
+.decl cfg_args(g: node, a: node)
+cfg_args(g, a) :- lint_attr(_, "cfg_attr", g, a), !dead_pred(g).
+.decl dead_pred(g: node)   // (test, …)   (any(), …)   (not(clippy), …)
+dead_pred(g) :- child(g, p, 0), text(p, "test"), token_after(p, k), text(k, ",").
+dead_pred(g) :- child(g, p, 0), text(p, "any"), next_sibling(p, q), text(q, s), match("\\(\\s*\\)", s).
+dead_pred(g) :- child(g, p, 0), text(p, "not"), next_sibling(p, q), text(q, s), match("\\(\\s*clippy\\s*\\)", s).
+
+// has_reason(g): the last item is `reason = "…"` (rustc takes the reason only there): `(x, reason = "why",)`.
+.decl has_reason(g: node)
+has_reason(g) :- lint_attr(_, _, g, _), child(g, s, i), !child(g, _, i + 1),
+    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), token_before(s, e), text(e, "="),
+    token_before(e, r), text(r, "reason"), token_before(r, k), (text(k, ",") ; text(k, "(")).

@@ -1,0 +1,84 @@
+// python/ruff-sorting: the string sequences Ruff sorts (`__all__`, `__slots__`; RUF022, RUF023) and its sort
+// keys.
+//
+// Interface
+//   all_seq(v)                v is a list or tuple given to the module's `__all__` (RUF022, RUF068)
+//   slots_seq(v, k)           v is a display given to `__slots__` in class k's body (RUF023)
+//   sort_ask(v, style)        the rule asks whether sequence v is sorted, by style "natural" or "isort"
+//   seq_item(v, i, e, s)      element i of sequence v is e, a str literal with value s (parentheses aside)
+//   seq_strings(v)            every element of v is a str literal (adjacent literals count), and there are two or more
+//   unsorted(v, style)        v has two adjacent elements out of order in that style
+//   sort_key(s, style, k)     comparing keys k by code point orders strings as the style does
+//
+// Sequences: a list, a tuple (with or without parentheses), a set, or a dict display's keys. Each is the value of
+// one assignment with a single target: `__all__ = x = […]` and `y = __all__ = […]` are not checked.
+// Natural order is Ruff's natord: whitespace is skipped; two digit runs compare by number ("a2" before "a10")
+// unless either starts with 0, when they compare digit by digit ("a010" before "a9"); the rest compares character
+// by character. The isort style puts SCREAMING_CASE constants (two or more bytes of UTF-8, an uppercase letter and
+// no lowercase one) first, then classes (an uppercase first letter), then the rest, each group in natural order.
+//   __all__ = ["a10", "a9"]        unsorted, natural: "a9" < "a10"
+//   __all__ = ["Day", "APRIL"]     unsorted, isort: constants before classes
+//   __all__ = ["É", "A"]           sorted, isort: "É" is two bytes, so a constant; "A" is a class
+#include "python/ruff.rr"
+
+// all_seq(v): `__all__ = v`, `__all__: T = v`, `__all__ += v` or `__all__.extend(v)` at module level (in an `if`
+// too), v a list or tuple.
+.decl all_seq(v: node)
+all_seq(v) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__"), field(a, "right", v), one_target(a),
+    nearest(a, m, scope), kind(m, "module"), ordered(v).
+all_seq(v) :- kind(a, "augmented_assignment"), op(a, "+="), field(a, "left", l), text(l, "__all__"), field(a, "right", v),
+    nearest(a, m, scope), kind(m, "module"), ordered(v).
+all_seq(v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "extend"), text(o, "__all__"),
+    call_only(c, v), nearest(c, m, scope), kind(m, "module"), ordered(v).
+.decl ordered(v: node)
+ordered(v) :- unparen(v, m), (kind(m, "list") ; kind(m, "tuple") ; kind(m, "expression_list")).
+// slots_seq(v, k): `__slots__ = v` or `__slots__: T = v` in class k's body (in an `if` too), v a display.
+.decl slots_seq(v: node, k: node)
+slots_seq(v, k) :- kind(a, "assignment"), field(a, "left", l), text(l, "__slots__"), field(a, "right", v), one_target(a),
+    nearest(a, k, scope), kind(k, "class_definition"), unparen(v, m), kind(m, x),
+    (x = "list" ; x = "tuple" ; x = "expression_list" ; x = "set" ; x = "dictionary").
+// one_target(a): a is not part of a chain `x = a = …` (tree-sitter nests the chain: `x = (a = …)`).
+.decl one_target(a: node)
+one_target(a) :- kind(a, "assignment"), !chained(a).
+.decl chained(a: node)
+chained(a) :- kind(p, "assignment"), field(p, "right", a), kind(a, "assignment").
+
+.decl sort_ask(v: node, style: symbol)
+.decl seq_item(v: node, i: number, e: node, s: symbol)
+seq_item(v, i, e, s) :- sort_ask(v0, _), unparen(v0, v), seq_child(v, e, j), unparen(e, m), plain_str(m, s),
+    i = count : { seq_child(v, e0, j0), j0 < j }.
+// seq_child(v, e, j): element e of v at child index j; a dict's elements are its keys.
+.decl seq_child(v: node, e: node, j: number)
+seq_child(v, e, j) :- sort_ask(v0, _), unparen(v0, v), kind(v, k), (k = "list" ; k = "tuple" ; k = "set" ;
+    k = "expression_list"), child(v, e, j), !kind(e, "comment").
+seq_child(v, e, j) :- sort_ask(v0, _), unparen(v0, v), kind(v, "dictionary"), child(v, p, j), !kind(p, "comment"),
+    (kind(p, "pair"), field(p, "key", e) ; !kind(p, "pair"), e = p).
+.decl seq_strings(v: node)
+seq_strings(v) :- sort_ask(v0, _), unparen(v0, v), n = count : { seq_child(v, _, _) }, n >= 2,
+    n = count : { seq_item(v, _, _, _) }.
+.decl unsorted(v: node, style: symbol)
+unsorted(v0, st) :- sort_ask(v0, st), unparen(v0, v), seq_strings(v), seq_item(v, i, _, a), seq_item(v, i + 1, _, b),
+    sort_key(a, st, ka), sort_key(b, st, kb), ka > kb.
+
+.decl sort_key(s: symbol, style: symbol, k: symbol)
+sort_key(s, "natural", k) :- seq_item(_, _, _, s), nat_key(s, k).
+sort_key(s, "isort", cat(g, k)) :- seq_item(_, _, _, s), nat_key(s, k), member_group(s, g).
+// member_group(s, g): "0" a constant, "1" a class, "2" anything else. Uppercase is Unicode's: a character that
+// @lower changes. Lowercase is ASCII `a`–`z` only (core has no @upper to test the rest; see NOTES-py-ruf L5).
+.decl member_group(s: symbol, g: symbol)
+member_group(s, "0") :- seq_item(_, _, _, s), constant(s).
+member_group(s, "1") :- seq_item(_, _, _, s), !constant(s), f = @slice(s, 0, 1), @lower(f) != f.
+member_group(s, "2") :- seq_item(_, _, _, s), !constant(s), f = @slice(s, 0, 1), @lower(f) = f.
+.decl constant(s: symbol)
+constant(s) :- seq_item(_, _, _, s), strlen(s) > 1, @lower(s) != s, !match("[\\s\\S]*[a-z][\\s\\S]*", s).
+// nat_key(s, k): whitespace dropped; each run of digits that starts with 0 becomes "0", the digits and "/" (below
+// every digit, so a run that stops sorts before one that goes on); each other run its length (as one character,
+// "1" to "9", ":" beyond) and the digits, so a longer number sorts after a shorter one and equal lengths compare
+// digit by digit. A run starting with 0 sorts before any other: natord compares those digit by digit.
+.decl nat_key(s: symbol, k: symbol)
+nat_key(s, @replace_all(k, "\\s", "")) :- seq_item(_, _, _, s),
+    w = @replace_all(@replace_all(s, "([0-9]+)", "<${1}>"), "<(0[0-9]*)>", "0${1}/"),
+    k = @replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(
+        @replace_all(@replace_all(w, "<([0-9])>", "1${1}"), "<([0-9]{2})>", "2${1}"), "<([0-9]{3})>", "3${1}"),
+        "<([0-9]{4})>", "4${1}"), "<([0-9]{5})>", "5${1}"), "<([0-9]{6})>", "6${1}"), "<([0-9]{7})>", "7${1}"),
+        "<([0-9]{8})>", "8${1}"), "<([0-9]{9})>", "9${1}"), "<([0-9]+)>", ":${1}").

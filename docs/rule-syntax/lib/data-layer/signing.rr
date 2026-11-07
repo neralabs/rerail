@@ -1,0 +1,79 @@
+// lib/data-layer/signing.rr: the data-layer repository's signed allowlists and ratchet baselines, verified in
+// Datalog. Readers only read files (core.rr, "Policy files"); this library rebuilds the exact bytes the
+// repository signs and checks the signature with @ed25519_ok. Another repository with another layout writes its
+// own version of this file; the engine needs nothing new.
+//
+// Both layouts were checked against the repository's real signatures at the pinned revision:
+// .ratchet-baselines/lint_noqa_sec_ratchet.json and the 52 entries of .file-length-allowlist.json.
+//
+// How to use it
+//   1. The check provides the signed content: allow_entry + allow_sig for an allowlist, or ratchet_count +
+//      ratchet_sig for a baseline, usually straight from .input relations.
+//   2. It reads allow_status / ratchet_status: "valid", "invalid" or "unsigned".
+//   3. It decides what each status means. The scripts differ (an empty allowlist is not checked; a missing
+//      baseline passes), so the library reports and the check decides.
+
+// nera_key: the public key the data layer's signing scripts verify with (scripts/lint_lib/signing.py
+// PUBLIC_KEY_HEX). A repository that rotates its key adds a row; a signature valid under any row is valid.
+.decl nera_key(hex: symbol)
+nera_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6").
+
+// The placeholders the scripts write instead of a signature. They mean "unsigned", never "invalid".
+.decl unsigned_sig(s: symbol)
+unsigned_sig("UNSIGNED"). unsigned_sig("NEEDS_SIGNING"). unsigned_sig("").
+
+// ---- allowlists: {"allowlist":[…sorted entries…],"linter":"…","version":1} ---------------------------------------
+// signing.py compute_allowlist_message: json.dumps(…, sort_keys=True, separators=(",", ":")). Entries are
+// sorted by codepoint, which is how `join … by e` orders symbols; @json_str escapes as json.dumps does
+// (ensure_ascii: non-ASCII as \uXXXX).
+// allow_entry("file_length", "impl/a.py:2400"): one entry of list "file_length", exactly as signed.
+.decl allow_entry(list: symbol, e: symbol)
+// allow_sig("file_length", "lint_file_length", "6U8R…"): the list's linter name and its base64 signature.
+.decl allow_sig(list: symbol, linter: symbol, sig: symbol)
+
+.decl allow_message(list: symbol, msg: symbol)
+allow_message(l, msg) :- allow_sig(l, linter, _),
+    body = join q by e sep "," : { allow_entry(l, e), q = @json_str(e) },
+    msg = cat("{\"allowlist\":[", body, "],\"linter\":", @json_str(linter), ",\"version\":1}").
+
+.decl allow_status(list: symbol, status: symbol)
+allow_status(l, "unsigned") :- allow_sig(l, _, s), unsigned_sig(s).
+allow_status(l, v) :- allow_sig(l, _, s), !unsigned_sig(s), allow_message(l, m),
+    ok = count : { nera_key(k), @ed25519_ok(k, m, s) = 1 },
+    ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).
+
+// Several named lists under one signature (compute_multi_allowlist_message):
+// {"allowlists":{"name":[…],…},"linter":"…","version":1}, names sorted, each list sorted.
+// A named list with no entries is absent from the message, as it is from the scripts' dict.
+.decl multi_entry(list: symbol, part: symbol, e: symbol)
+.decl multi_sig(list: symbol, linter: symbol, sig: symbol)
+
+.decl multi_part(list: symbol, part: symbol, json: symbol)
+multi_part(l, p, j) :- multi_entry(l, p, _),
+    body = join q by e sep "," : { multi_entry(l, p, e), q = @json_str(e) },
+    j = cat(@json_str(p), ":[", body, "]").
+
+.decl multi_status(list: symbol, status: symbol)
+multi_status(l, "unsigned") :- multi_sig(l, _, s), unsigned_sig(s).
+multi_status(l, v) :- multi_sig(l, linter, s), !unsigned_sig(s),
+    body = join j by p sep "," : { multi_part(l, p, j) },
+    m = cat("{\"allowlists\":{", body, "},\"linter\":", @json_str(linter), ",\"version\":1}"),
+    ok = count : { nera_key(k), @ed25519_ok(k, m, s) = 1 },
+    ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).
+
+// ---- ratchet baselines: {"counts":{"key":n,…},"linter":"…"} ----------------------------------------------------
+// ratchet.py _compute_signature_message. The file is .ratchet-baselines/<name>.json:
+// {"counts": {…}, "_metadata": {"signature": "…", …}}; only counts and the name are signed.
+// ratchet_count("lint_noqa_sec_ratchet", "noqa_sec_annotations", 0): one baseline count.
+.decl ratchet_count(name: symbol, k: symbol, n: number)
+// ratchet_sig(name, sig): the baseline's _metadata.signature. A baseline without one has sig "UNSIGNED" (the
+// script's default), so the check gives that row itself when the key is absent.
+.decl ratchet_sig(name: symbol, sig: symbol)
+
+.decl ratchet_status(name: symbol, status: symbol)
+ratchet_status(r, "unsigned") :- ratchet_sig(r, s), unsigned_sig(s).
+ratchet_status(r, v) :- ratchet_sig(r, s), !unsigned_sig(s),
+    body = join q by k sep "," : { ratchet_count(r, k, n), q = cat(@json_str(k), ":", to_string(n)) },
+    m = cat("{\"counts\":{", body, "},\"linter\":", @json_str(r), "}"),
+    ok = count : { nera_key(key), @ed25519_ok(key, m, s) = 1 },
+    ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).

@@ -1,0 +1,138 @@
+// python/misc2-typecheck: `if TYPE_CHECKING:` blocks and runtime type definitions, as Ruff's
+// flake8-type-checking rules (TC005, TC006, TC010) read them.
+//
+// Interface
+//   tc_block(i, b)          if statement i tests TYPE_CHECKING, b is its body. Ruff's is_type_checking_block: the
+//                           test is a name `TYPE_CHECKING` (whatever it is bound to), a name bound to
+//                           typing.TYPE_CHECKING (`from typing import TYPE_CHECKING as TC`), or any attribute
+//                           `….TYPE_CHECKING`
+//   tc_in_block(n)          n is inside the body of such a block: it never runs
+//   tc_cast_type(c, t)      t is the type argument of `typing.cast` call c: its first argument when that is
+//                           positional, or `typ=`; parentheses off
+//   tc_ann_owner(r, o)      o is the assignment or def whose annotation r is
+//   tc_runtime_typedef(e)   e is the root of a type expression Python evaluates when the code runs, never in a
+//                           TYPE_CHECKING block: the type arguments of cast, TypeVar, NewType, TypeAliasType (and
+//                           its type_params), TypeForm, NamedTuple and TypedDict calls, a PEP 613 `X: TypeAlias =
+//                           …` value (all of these in a stub too); the items of `Optional[…]`, `list[…]` and the
+//                           other generic subscripts in a running expression; and the annotations below
+//   tc_union(u)             u is a `|` union not held by another `|` union or directly by `Union[…]` (Ruff's
+//                           !in_nested_union)
+//   tc_union_member(u, m)   m is a member of union u, through nested `|` and parentheses
+//
+// Python and Ruff background
+//   - An annotation is evaluated when its statement or def runs, unless the file has `from __future__ import
+//     annotations` (PEP 563), is a stub, or targets Python 3.14 or later (PEP 649 defers them all). A def's
+//     parameter and return annotations run with the def, in any scope; a variable's annotation runs only in a
+//     module or class scope (Python never evaluates a local variable's).
+//   - A string in a type expression is a forward reference: Python keeps it as a string, so `"int" | str` is a
+//     TypeError (`str | "int"` too) wherever the expression runs.
+//
+//   from typing import TYPE_CHECKING, TypeVar, cast
+//   if TYPE_CHECKING:            tc_block(<if>, <body>)
+//       pass                     TC005
+//   cast(int, x)                 tc_cast_type(<call>, <int>): TC006
+//   T = TypeVar("T", int | "str", str)   tc_runtime_typedef(<int | "str">), tc_union_member(…, <"str">): TC010
+#include "python/upgrade-typing.rr"
+//   targets(m), stub_file(d), future_annotations(d), typing_ref(e, x), up_arg(c, i, a), call_kw(c, k, v),
+//   up_typing_sub(s, x), type_arg(s, i, a); ann_root (python/ast)
+#include "python/ruff.rr"
+//   unparen(e, m), ruff_qual(e, q), call_q(c, q)
+
+// ---- TYPE_CHECKING blocks ------------------------------------------------------------------------------------
+.decl tc_block(i: node, b: node)
+tc_block(i, b) :- kind(i, "if_statement"), field(i, "condition", c), unparen(c, t), tc_test(t),
+    field(i, "consequence", b).
+.decl tc_test(t: node)
+tc_test(t) :- kind(t, "identifier"), text(t, "TYPE_CHECKING").
+tc_test(t) :- kind(t, "identifier"), (ruff_qual(t, "typing.TYPE_CHECKING") ; ruff_qual(t, "typing_extensions.TYPE_CHECKING")).
+tc_test(t) :- attr_of(t, _, "TYPE_CHECKING").
+.decl tc_in_block(n: node)
+tc_in_block(n) :- tc_block(_, b), within(n, b).
+
+// ---- casts and other runtime type definitions ---------------------------------------------------------------
+.decl tc_typing_call(c: node, x: symbol)  // c calls typing.x or typing_extensions.x
+tc_typing_call(c, x) :- kind(c, "call"), field(c, "function", f), unparen(f, g), typing_ref(g, x).
+.decl tc_cast_type(c: node, t: node)
+tc_cast_type(c, t) :- tc_typing_call(c, "cast"), field(c, "arguments", al), child(al, a0, 0),
+    !kind(a0, "keyword_argument"), !kind(a0, "dictionary_splat"), unparen(a0, t).
+tc_cast_type(c, t) :- tc_typing_call(c, "cast"), call_kw(c, "typ", t).
+.decl tc_runtime_typedef(e: node)
+tc_runtime_typedef(e) :- tc_typedef_root(e), !tc_in_block(e).
+.decl tc_typedef_root(e: node)
+// Calls whose arguments are types, evaluated as the call runs (in a stub too).
+tc_typedef_root(t) :- tc_cast_type(_, t).
+tc_typedef_root(a) :- tc_typing_call(c, "TypeVar"), up_arg(c, i, a), i > 0.
+tc_typedef_root(v) :- tc_typing_call(c, "TypeVar"), (call_kw(c, "bound", v) ; call_kw(c, "default", v)).
+tc_typedef_root(a) :- tc_typing_call(c, "NewType"), up_arg(c, 1, a).
+tc_typedef_root(v) :- tc_typing_call(c, "NewType"), call_kw(c, "tp", v).
+tc_typedef_root(a) :- tc_typing_call(c, "TypeAliasType"), up_arg(c, 1, a).
+tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), call_kw(c, "value", v).
+tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), call_kw(c, "type_params", t), tc_items(t, v).
+tc_typedef_root(a) :- tc_typing_call(c, "TypeForm"), up_arg(c, 0, a).
+// NamedTuple("N", [("a", T), …]) and TypedDict("D", {"a": T}); their keyword forms (`a=T`) too.
+tc_typedef_root(v) :- tc_typing_call(c, "NamedTuple"), up_arg(c, 1, l), tc_items(l, f), kind(f, "tuple"),
+    child(f, x, 1), unparen(x, v).
+tc_typedef_root(v) :- tc_typing_call(c, "TypedDict"), up_arg(c, 1, m), kind(m, "dictionary"), child(m, p, _),
+    kind(p, "pair"), field(p, "value", x), unparen(x, v).
+tc_typedef_root(v) :- (tc_typing_call(c, "NamedTuple") ; tc_typing_call(c, "TypedDict")), call_kw(c, k, v),
+    k != "total".
+// A PEP 613 `X: TypeAlias = …` value, in any scope.
+tc_typedef_root(v) :- kind(s, "assignment"), field(s, "type", t), child(t, h, 0), typing_ref(h, "TypeAlias"),
+    field(s, "right", v).
+// `Optional[…]`, `list[…]`, `Dict[…]` in an expression that runs (not an annotation, not a `type` statement):
+// the items between the brackets are types (Ruff's match_annotated_subscript).
+tc_typedef_root(a) :- kind(s, "subscript"), tc_generic_sub(s), !annotation(s), !tc_lazy(s), sub_item(s, _, a).
+// Annotations: a def's parameters and return in any scope; a variable's only in a module or class scope.
+// Not in a stub, under `from __future__ import annotations`, or at Python 3.14 and later (PEP 649).
+tc_typedef_root(r) :- ann_root(r), tc_ann_owner(r, o), (kind(o, "function_definition") ;
+    nearest(o, s, scope), !kind(s, "function_definition"), !kind(s, "lambda")),
+    docof(r, d), !stub_file(d), !future_annotations(d), !targets(14).
+.decl tc_items(t: node, v: node)  // the elements of a tuple or list display, or t itself
+tc_items(t, v) :- (kind(t, "tuple") ; kind(t, "list")), child(t, x, _), !kind(x, "comment"), unparen(x, v).
+tc_items(t, t) :- kind(t, k), k != "tuple", k != "list".
+.decl tc_lazy(s: node)  // the value of `type X = …`, evaluated lazily
+tc_lazy(s) :- kind(a, "type_alias_statement"), within(s, a).
+// tc_generic_sub(s): s subscripts a typing member, or one of the standard library's generic classes.
+.decl tc_generic_sub(s: node)
+tc_generic_sub(s) :- up_typing_sub(s, _).
+tc_generic_sub(s) :- sub_of(s, q), tc_generic(q).
+.decl tc_generic(q: symbol)
+tc_generic(@dot("builtins", x)) :- (x = "dict" ; x = "frozendict" ; x = "frozenset" ; x = "list" ; x = "set" ;
+    x = "slice" ; x = "tuple" ; x = "type").
+tc_generic(@dot("collections", x)) :- (x = "ChainMap" ; x = "Counter" ; x = "OrderedDict" ; x = "defaultdict" ;
+    x = "deque").
+tc_generic(@dot("collections.abc", x)) :- (x = "AsyncGenerator" ; x = "AsyncIterable" ; x = "AsyncIterator" ;
+    x = "Awaitable" ; x = "ByteString" ; x = "Callable" ; x = "Collection" ; x = "Container" ; x = "Coroutine" ;
+    x = "Generator" ; x = "ItemsView" ; x = "Iterable" ; x = "Iterator" ; x = "KeysView" ; x = "Mapping" ;
+    x = "MappingView" ; x = "MutableMapping" ; x = "MutableSequence" ; x = "MutableSet" ; x = "Reversible" ;
+    x = "Sequence" ; x = "Set" ; x = "ValuesView").
+tc_generic("contextlib.AbstractAsyncContextManager"). tc_generic("contextlib.AbstractContextManager").
+tc_generic("re.Match"). tc_generic("re.Pattern").
+// tc_ann_owner(r, o): the statement or def whose scope decides annotation r.
+.decl tc_ann_owner(r: node, o: node)
+tc_ann_owner(r, a) :- kind(a, "assignment"), field(a, "type", r).
+tc_ann_owner(r, f) :- kind(f, "function_definition"), field(f, "return_type", r).
+tc_ann_owner(r, f) :- kind(f, "function_definition"), field(f, "parameters", ps), child(ps, p, _),
+    field(p, "type", r).
+
+// ---- unions ---------------------------------------------------------------------------------------------------
+.decl tc_bitor(u: node)
+tc_bitor(u) :- (kind(u, "binary_operator") ; kind(u, "union_type")), op(u, "|").
+.decl tc_union(u: node)
+tc_union(u) :- tc_bitor(u), !tc_nested(u).
+.decl tc_nested(u: node)
+tc_nested(u) :- tc_bitor(u), ast_up(u, p), tc_bitor(p).
+tc_nested(u) :- tc_bitor(u), ast_up(u, p), kind(p, "type"), ast_up(p, q), tc_bitor(q).
+// Ruff's in_nested_union also counts a union directly inside `Union[…]`.
+tc_nested(u) :- tc_bitor(u), tc_up_wrap(u, s), up_typing_sub(s, "Union").
+.decl tc_up_wrap(u: node, s: node)  // s holds u through the `type`, type_parameter and tuple wrappers only
+tc_up_wrap(u, p) :- tc_bitor(u), ast_up(u, p).
+tc_up_wrap(u, q) :- tc_up_wrap(u, p), (kind(p, "type") ; kind(p, "type_parameter") ; kind(p, "tuple")), ast_up(p, q).
+.decl tc_union_member(u: node, m: node)
+tc_union_member(u, m) :- tc_union(u), tc_side(u, m).
+tc_union_member(u, m) :- tc_union_member(u, v), tc_bitor(v), tc_side(v, m).
+.decl tc_side(u: node, m: node)  // an operand of `|`, through parentheses and the `type` wrapper
+tc_side(u, m) :- tc_bitor(u), child(u, c, _), tc_strip(c, m).
+.decl tc_strip(c: node, m: node)
+tc_strip(c, m) :- unparen(c, m), !kind(m, "type").
+tc_strip(c, m) :- unparen(c, t), kind(t, "type"), child(t, i, 0), tc_strip(i, m).

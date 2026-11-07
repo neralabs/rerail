@@ -1,0 +1,203 @@
+// tsx/react-class: class components and React's older APIs as eslint-plugin-react's class rules see them: `this.x`
+// reads and calls, which component a node belongs to (Components.detect's getParentComponent), the members a
+// component declares, the keys of methods and properties, and the kinds of fresh values. Builds on tsx/react
+// (react_doc, pragma, class components in JavaScript and TypeScript, createReactClass specs) and
+// tsx/eslint-a-common (estree_parent, deparen; through it tsx/modules' function_kind).
+//
+// What a rule gets from this library:
+//   components (tsx/react gives class_component, create_class, react_component and comp_member)
+//     comp_owner(n, k)        n belongs to component k: the nearest class around n if it is a component, else the
+//                             createReactClass spec whose member function n is in (getParentComponent)
+//     member_named(k, x, m)   m is a member of component k whose key has the ESTree name x (method_key, or a
+//                             spec's shorthand `{ x }`); a string key has none
+//     method_key(m, x)        m is a Property, MethodDefinition or PropertyDefinition whose key is identifier x
+//                             (ESTree's `key.name`): x: 1, x() {}, #x = …, [x]() {}; not "x": 1
+//     set_state_in(f, x)      f calls this.setState in a member keyed x, nested in at most one function
+//   scopes
+//     same_scope(a, b)        ESLint's getScope gives a and b the same scope
+//   this
+//     this_prop(n, x)         n is `this.x`, `this.#x`, `this?.x` or `this[x]` (ESTree's property.name)
+//     this_call(c, x, f)      c calls `this.x(…)`; f is the callee `this.x`
+//     state_read(n)           n is `this.state`
+//   values
+//     fresh_kind(k)           a node of kind k is a new value each time it runs: an object, array, function,
+//                             class, `new`, regex or JSX element; `<></>` is a jsx_element too, with no name
+//   ancestry
+//     fn_up(n, f)             f is a function around n: declaration, expression, arrow or method
+#include "tsx/react.rr"
+#include "tsx/eslint-a-common.rr"
+
+// ---- components -----------------------------------------------------------------------------------------------
+// comp_owner(n, k). eslint-plugin-react asks the scope chain: for a class, only the nearest class counts
+//   class A extends Component { m() { class B { n() { this.state.x = 1; } } } }   B is not a component: no owner
+// and for createReactClass, any enclosing function that is a property of the spec.
+.decl comp_owner(n: node, k: node)
+comp_owner(n, k) :- nearest(n, k, class_kind), class_component(k).
+comp_owner(n, k) :- es5_owner(n, k), !es6_owned(n).
+.decl es6_owned(n: node)
+es6_owned(n) :- nearest(n, k, class_kind), class_component(k).
+.decl es5_owner(n: node, k: node)
+es5_owner(n, k) :- create_class(k), child(k, m, _), spec_fn(m, f), within(n, f).
+.decl class_kind(k: symbol)
+class_kind("class_declaration"). class_kind("class"). class_kind("abstract_class_declaration").
+.decl spec_fn(m: node, f: node)  // the function of spec member m: render() {} or render: function () {}
+spec_fn(m, m) :- kind(m, "method_definition").
+spec_fn(m, f) :- kind(m, "pair"), field(m, "value", f), kind(f, k), function_kind(k).
+.decl member_named(k: node, x: symbol, m: node)
+member_named(k, x, m) :- class_component(k), field(k, "body", b), child(b, m, _), method_key(m, x).
+member_named(k, x, m) :- create_class(k), child(k, m, _), method_key(m, x).
+member_named(k, x, m) :- create_class(k), child(k, m, _), kind(m, "shorthand_property_identifier"), text(m, x).
+// method_key: ESLint's `ancestor.key.name`, which an identifier key has, and a private one (`#x` has name x), and a
+// computed one holding an identifier (`[x]`); a string key has none.
+//   { componentDidMount() {} }   class A { componentDidMount = () => {} }   pair key `componentDidMount: …`
+.decl method_key(m: node, x: symbol)
+method_key(m, x) :- (kind(m, "method_definition") ; kind(m, "field_definition") ; kind(m, "public_field_definition")),
+    (field(m, "name", n) ; field(m, "property", n)), estree_name(n, x).
+method_key(m, x) :- (kind(m, "pair") ; kind(m, "pair_pattern")), field(m, "key", n), estree_name(n, x).
+// estree_name(n, x): ESTree's `.name` of key or property node n.
+.decl estree_name(n: node, x: symbol)
+estree_name(n, x) :- kind(n, "property_identifier"), text(n, x).
+estree_name(n, x) :- kind(n, "private_property_identifier"), text(n, t), x = substr(t, 1, strlen(t) - 1).
+estree_name(n, x) :- kind(n, "computed_property_name"), child(n, i, 0), kind(i, "identifier"), text(i, x).
+
+// ---- values -----------------------------------------------------------------------------------------------------
+.decl fresh_kind(k: symbol)
+fresh_kind("object"). fresh_kind("array"). fresh_kind("arrow_function"). fresh_kind("function_expression").
+fresh_kind("class"). fresh_kind("new_expression"). fresh_kind("regex"). fresh_kind("jsx_self_closing_element").
+fresh_kind("jsx_element").
+
+// ---- this -----------------------------------------------------------------------------------------------------
+.decl this_prop(n: node, x: symbol)
+this_prop(n, x) :- kind(n, "member_expression"), field(n, "object", t), kind(t, "this"), field(n, "property", p),
+    estree_name(p, x).
+this_prop(n, x) :- kind(n, "subscript_expression"), field(n, "object", t), kind(t, "this"), field(n, "index", i),
+    kind(i, "identifier"), text(i, x).  // this[x]: ESTree's property is the identifier x
+.decl this_call(c: node, x: symbol, f: node)
+this_call(c, x, f) :- kind(c, "call_expression"), field(c, "function", f), this_prop(f, x).
+.decl state_read(n: node)
+state_read(n) :- this_prop(n, "state").
+
+// ---- scopes -----------------------------------------------------------------------------------------------------
+// same_scope(a, b): ESLint's getScope gives a and b the same scope: the innermost of a function (its body block is
+// the function's scope, not a scope of its own), a block, a for or for-in head, a catch clause, a switch, a class
+// body, a class field's initializer, a static block, the program.
+//   onClick() { const next = this.state.n; this.setState({ n: next }); }    one scope: the method's
+.decl same_scope(a: node, b: node)
+same_scope(a, b) :- nearest(a, s, escope_node), nearest(b, s, escope_node).   // eslint-a-common
+
+// ---- ancestry -------------------------------------------------------------------------------------------------
+.decl fn_up(n: node, f: node)
+fn_up(n, f) :- inside(n, f, function_kind).
+// set_state_in(f, x): f is the callee of this.setState(…) inside a member keyed x (method_key), with at most one
+// function between them, the member's own included (makeNoMethodSetStateRule's depth, "allow-in-func"). Every
+// enclosing member with that key is tried, not only the nearest, and the member need not be in a component.
+//   componentDidMount() { this.setState({}); }                         depth 1: the method itself
+//   componentDidMount = () => { this.setState({}); };                  depth 1: the arrow
+//   componentDidMount() { xs.forEach(() => this.setState({})); }       depth 2: not reported
+.decl set_state_in(f: node, x: symbol)
+set_state_in(f, x) :- this_call(c, "setState", f), inside(c, m, keyed_kind), method_key(m, x),
+    k = count : { fn_up(c, g), within(g, m) }, (kind(m, "method_definition"), k = 0 ; !kind(m, "method_definition"),
+    k <= 1).
+// keyed_kind: the ESTree nodes with a key that the setState-in-method rules look for: Property, MethodDefinition,
+// PropertyDefinition.
+.decl keyed_kind(k: symbol)
+keyed_kind("pair"). keyed_kind("pair_pattern"). keyed_kind("method_definition"). keyed_kind("field_definition").
+keyed_kind("public_field_definition").
+
+// ---- function components ----------------------------------------------------------------------------------------
+// Components.detect's getStatelessComponent, in its main cases. A function is a component when it returns JSX
+// (or null, in some positions) and its name, or the name it is bound to, starts with a capital letter:
+//   function Hello() { return <div/>; }          const Hello = () => null;        Hello = function () { … }
+//   export default () => <div/>;                 { Hello: () => <div/> }          React.memo(() => <div/>)
+// A function wrapped in memo or forwardRef (React.memo, or a memo taken from React) is detected as the outermost
+// wrapper call, as the plugin records it. Left out: the factory cases (`X = () => () => <div/>`, a function returned
+// from a capitalised property), the JSDoc @extends form (ESLint 9 has no getJSDocComment), and async generators.
+//
+//   fn_component(f, c)     function f is a component; c is the node the plugin records it at: f, or the wrapper call
+//   detected(c)            c is a component the plugin records: a class, a createReactClass spec, a fn_component's c
+//   parent_component(n, c) getParentComponent: n's class component or spec (comp_owner), else the nearest enclosing
+//                          function that is a component (c as recorded)
+//   ret_jsx(f)             f returns JSX: an element, a fragment or a createElement call, maybe through ?:, &&, ||,
+//                          ??, a sequence's last part, parentheses, or a const holding JSX (isReturningJSX)
+//   ret_jsx_null(f)        the same, or f returns null (isReturningJSXOrNull)
+.decl fn_returns(f: node, x: node)  // x is a value f returns (tsx/jsx's returned), parentheses off
+fn_returns(f, x) :- returned(f, e), deparen(e, x).
+.decl ret_branch(f: node, x: node)  // the parts that may be the value: both arms of ?:, both sides of && || ??
+ret_branch(f, x) :- fn_returns(f, x).
+ret_branch(f, y) :- ret_branch(f, x), kind(x, "ternary_expression"), (field(x, "consequence", e) ;
+    field(x, "alternative", e)), deparen(e, y).
+ret_branch(f, y) :- ret_branch(f, x), kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??")),
+    (field(x, "left", e) ; field(x, "right", e)), deparen(e, y).
+ret_branch(f, y) :- ret_branch(f, x), kind(x, "sequence_expression"), i = max j : { child(x, _, j) }, child(x, e, i),
+    deparen(e, y).
+.decl ret_jsx(f: node)
+ret_jsx(f) :- ret_branch(f, x), jsx_value(x).
+.decl ret_jsx_null(f: node)
+ret_jsx_null(f) :- ret_jsx(f).
+ret_jsx_null(f) :- ret_branch(f, x), kind(x, "null").
+.decl jsx_value(x: node)
+jsx_value(x) :- kind(x, "jsx_element") ; kind(x, "jsx_self_closing_element") ; create_element(x).
+jsx_value(x) :- kind(x, "identifier"), ref_site(x, site), binding_value(site, v), deparen(v, y),
+    (kind(y, "jsx_element") ; kind(y, "jsx_self_closing_element")).
+
+.decl fn_component(f: node, c: node)
+// function Hello() {}, and `export default function () {}` (no name)
+fn_component(f, f) :- kind(f, "function_declaration"), !async_generator(f), ret_jsx_null(f),
+    (!field(f, "name", _) ; field(f, "name", n), text(n, x), cap_name(x)).
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "export_statement"), ret_jsx(f).
+// const Hello = …;  Hello = …
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), comp_bind(p, f, x), cap_name(x), ret_jsx_null(f).
+// { Hello: () => <div/> }, { Hello() { return <div/>; } }
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "pair"), field(p, "key", k), kind(k,
+    "property_identifier"),
+    text(k, x), cap_name(x), ret_jsx(f).
+fn_component(f, f) :- kind(f, "method_definition"), child(o, f, _), kind(o, "object"), field(f, "name", k),
+    kind(k, "property_identifier"), text(k, x), cap_name(x), ret_jsx(f).
+// React.memo(() => <div/>): the outermost wrapper call is the component.
+fn_component(f, c) :- fn_expr(f), wrapped_by(f, c), !wrapper_arg(c), ret_jsx_null(f).
+// Elsewhere where a component may stand: returned, an arrow's body, assigned to a member (`A.B = () => <div/>`
+// needs a capital B unless it is module.exports), named by its own capitalised name if it has one.
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), other_position(p, f), ret_jsx_null(f),
+    (!field(f, "name", _) ; field(f, "name", n), text(n, x), cap_name(x)), ret_jsx(f).
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "assignment_expression"), field(p, "right", f),
+    field(p, "left", l), kind(l, "member_expression"), ret_jsx_null(f), (!field(f, "name", _) ; field(f, "name", n),
+    text(n, x), cap_name(x)), (text(l, "module.exports") ; field(l, "property", q), text(q, y), cap_name(y)).
+// cap_name(x): isFirstLetterCapitalized. Leading underscores are skipped and the next character must not change
+// when upper-cased, so `_Foo`, `$x` and `__` count and `foo` does not (ASCII letters only, here).
+.decl cap_name(x: symbol)
+cap_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x), !match("_*[a-z].*", x).
+.decl fn_expr(f: node)
+fn_expr(f) :- kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "generator_function").
+.decl async_generator(f: node)
+async_generator(f) :- op(f, "async"), op(f, "*").
+.decl comp_bind(p: node, f: node, x: symbol)  // p binds f to the plain name x
+comp_bind(p, f, x) :- kind(p, "variable_declarator"), field(p, "value", v), deparen(v, f), field(p, "name", n),
+    kind(n, "identifier"), text(n, x).
+comp_bind(p, f, x) :- kind(p, "assignment_expression"), field(p, "right", v), deparen(v, f), field(p, "left", n),
+    kind(n, "identifier"), text(n, x).
+.decl other_position(p: node, f: node)
+other_position(p, f) :- kind(p, "return_statement"), child(p, e, 0), deparen(e, f).
+other_position(p, f) :- kind(p, "arrow_function"), field(p, "body", b), deparen(b, f).
+// wrapped_by(f, c): f is the first argument of wrapper call c, through nested wrappers: memo(forwardRef(f)).
+.decl wrapped_by(f: node, c: node)
+wrapped_by(f, c) :- wrapper_call(c), call_arg(c, a, 0), deparen(a, f), fn_expr(f).
+wrapped_by(f, c) :- wrapped_by(f, w), wrapper_arg(w), estree_parent(w, l), kind(l, "arguments"), field(c,
+    "arguments", l),
+    wrapper_call(c).
+.decl wrapper_arg(c: node)  // wrapper call c is itself a wrapper's argument
+wrapper_arg(c) :- wrapper_call(c), estree_parent(c, l), kind(l, "arguments"), field(w, "arguments", l), wrapper_call(w).
+// isPragmaComponentWrapper: React.memo, React.forwardRef, or a memo / forwardRef taken from React.
+.decl wrapper_call(c: node)
+wrapper_call(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), (text(p, "memo") ; text(p, "forwardRef")), field(f, "object", o), docof(c, d),
+    pragma(d, x), text(o, x).
+wrapper_call(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    (text(f, "memo"), sym_of(f, "react#memo") ; text(f, "forwardRef"), sym_of(f, "react#forwardRef")).
+
+.decl detected(c: node)
+detected(c) :- react_component(c) ; fn_component(_, c).
+.decl comp_fn(f: node)  // a function that is a component, as a node set for nearest
+comp_fn(f) :- fn_component(f, _).
+.decl parent_component(n: node, c: node)
+parent_component(n, k) :- comp_owner(n, k).
+parent_component(n, c) :- !comp_owner(n, _), nearest(n, f, comp_fn), fn_component(f, c), node(_, n, _, _, _).

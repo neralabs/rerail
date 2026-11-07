@@ -1,0 +1,416 @@
+// python/ast: the tree as CPython's `ast` module sees it, over tree-sitter's tape.
+//
+// The data-layer checks are Python scripts that walk `ast` trees. Where tree-sitter and `ast` disagree, the
+// check's meaning follows `ast`:
+//   - wrappers: tree-sitter has nodes for parentheses, argument lists, blocks and decorator lines; `ast` does not;
+//   - definitions: a def's decorators, defaults and annotations are part of the FunctionDef;
+//   - names: an identifier is an `ast.Name` only in expression position;
+//   - chains: `a = b = v` is one Assign with two targets; `a or b or c` is one BoolOp;
+//   - strings: adjacent literals are one Constant.
+// Each relation here is one of those views, used by at least two checks (data-layer/DESIGN.md lists them).
+// Everything is Datalog over core and python/names, except what CPython alone defines: decoded string pieces
+// (str_part), visit order (earlier), the printer (@unparse) and the parser's verdict (syntax_error), all in core and all native.
+//
+// How to read this file
+//   1. Structure: ast_parent, unparen, py_frame / def_frame (the function a node belongs to).
+//   2. Names: ast_name and expr_ctx (load, store, del); dotted_expr, leaf_name, call_name and the call chains.
+//   3. Signatures: sig_param, each parameter with its kind, annotation and default; type_param, each PEP 695
+//      type parameter with its kind, bound and default.
+//   4. Statements: assign_target / assign_value, body_stmt, docstring / doc_stmt, py_if, bool_operand, cmp_pair.
+//   5. Strings and constants: plain_str, str_const, fstring, string_form, ast_constant.
+//   6. Names of definitions: class_path, def_chain, owner_path, py_qualname, stub_file, path_module.
+//   7. Annotations: ann_root, ann_name, ann_head, in_string_ann.
+//   8. Order: latest_assign, the last assignment before a use.
+//   9. Calls by spelling: same_file_call, name_reach.
+
+#include "python/names.rr"
+
+// ---- 1. structure ------------------------------------------------------------------------------------------------
+// ts_wrapper(k): tree-sitter kinds with no `ast` node of their own. Their children belong to their parent.
+.decl ts_wrapper(k: symbol)
+ts_wrapper("parenthesized_expression"). ts_wrapper("argument_list"). ts_wrapper("block").
+ts_wrapper("decorated_definition"). ts_wrapper("type").
+.decl wrapper_node(p: node)
+wrapper_node(p) :- kind(p, k), ts_wrapper(k).
+// `x = 1` on its own line: tree-sitter wraps the assignment in an expression_statement; `ast` has only the Assign.
+wrapper_node(p) :- kind(p, "expression_statement"), child(p, a, 0),
+    (kind(a, "assignment") ; kind(a, "augmented_assignment")).
+// ast_parent(n, p): p is n's parent in `ast`. A decorator's expression belongs to the def it decorates.
+// e.g. in `f((x))`, ast_parent(x, call): the parentheses and the argument list are skipped.
+.decl ast_parent(n: node, p: node)
+ast_parent(n, p) :- child(p, n, _), !wrapper_node(p), !kind(p, "decorator"), !kind(n, "comment").
+ast_parent(e, f) :- decorator(f, e).
+ast_parent(n, q) :- child(p, n, _), wrapper_node(p), !kind(n, "decorator"), !kind(n, "comment"), ast_parent(p, q).
+// unparen(e, m): m is e with any parentheses taken off: `((x))` gives x. Every other node gives itself. A comment
+// inside the parentheses is a child of them too, so the expression is the one child that is not a comment:
+//   assert (
+//       # why
+//       a and b
+//   )                    unparen(<( … )>, <a and b>)
+.decl unparen(e: node, m: node)
+.pragma "magic-transform" "unparen"
+unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
+unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
+// py_frame(n, f): f is the innermost def or lambda that holds n, as `ast` nests them: n in a decorator of g, a
+// default of g or an annotation of g is in g. (nearest(n, f, fdef) puts decorators outside g.)
+// def_frame(n, f): the same with lambdas transparent: the innermost def.
+.decl frame_mark(k: symbol)
+frame_mark("function_definition"). frame_mark("lambda"). frame_mark("decorator").
+.decl def_mark(k: symbol)
+def_mark("function_definition"). def_mark("decorator").
+.decl py_frame(n: node, f: node)
+py_frame(n, f) :- nearest(n, f, frame_mark), !kind(f, "decorator").
+py_frame(n, f) :- nearest(n, dc, frame_mark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", f).
+.decl def_frame(n: node, f: node)
+def_frame(n, f) :- nearest(n, f, def_mark), kind(f, "function_definition").
+def_frame(n, f) :- nearest(n, dc, def_mark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", f),
+    kind(f, "function_definition").
+
+// ---- 2. names ----------------------------------------------------------------------------------------------------
+// ast_name(n, x): identifier n is an `ast.Name`: nameref without parameter names, imported names (`__future__`
+// ones too), the names of `global`/`nonlocal`, `except E as x`, `case` captures and PEP 695 type parameters (CPython
+// keeps those as strings, not Names); walrus targets are Names.
+.decl ast_name(n: node, x: symbol)
+ast_name(n, x) :- nameref(n, x), !not_name(n).
+.decl not_name(n: node)
+not_name(nm) :- sig_param(_, _, nm, _, _, _, _).
+not_name(n) :- kind(i, "import_statement"), within(n, i).
+not_name(n) :- kind(i, "import_from_statement"), within(n, i).
+not_name(n) :- kind(i, "future_import_statement"), within(n, i).
+not_name(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _).
+not_name(n) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), field(ap, "alias", t),
+    child(t, n, _).
+// `case` captures are strings in ast (MatchAs, MatchStar, MatchMapping.rest), not Names: `case x`,
+// `case P(a=px)`, `case [*rest] as q`, `{**more}`. A one-part dotted name is a capture unless it is a class
+// pattern's class.
+.decl py_capture(n: node)
+.decl py_pattern_class(d: node)
+py_pattern_class(d) :- kind(c, "class_pattern"), child(c, d, 0).
+py_capture(n) :- kind(d, "dotted_name"), child(d, n, 0), !child(d, _, 1), inside(d, _, "case_pattern"),
+    !py_pattern_class(d).
+py_capture(n) :- (kind(p, "as_pattern") ; kind(p, "splat_pattern")), inside(p, _, "case_pattern"), child(p, n, _),
+    kind(n, "identifier").
+not_name(n) :- py_capture(n).
+// In a dotted value pattern `Color.RED` only the first part is a Name; the rest are attributes.
+not_name(n) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, n, i), i > 0.
+// PEP 695 type parameters hold their name as a string (TypeVar(name='T')).
+not_name(n) :- type_param(_, _, n, _, _, _, _).
+// A walrus target is a Name (ctx Store); nameref skips it as a `name` field.
+ast_name(n, x) :- kind(w, "named_expression"), field(w, "name", n), text(n, x).
+// expr_ctx(n, c): the `ast` context of a Name, Attribute or Subscript: "store", "del" or "load".
+// e.g. in `o.x = y`, expr_ctx(<o.x>, "store"), expr_ctx(<o>, "load"), expr_ctx(<y>, "load").
+.decl ctx_node(n: node)
+ctx_node(n) :- ast_name(n, _).
+ctx_node(n) :- kind(n, "attribute").
+ctx_node(n) :- kind(n, "subscript").
+.decl store_node(n: node)
+store_node(l) :- kind(a, "assignment"), field(a, "left", l).
+store_node(t) :- tgt(t).
+store_node(c) :- store_node(t), kind(t, "as_pattern_target"), child(t, c, _).
+.decl del_node(n: node)
+del_node(n) :- kind(s, "delete_statement"), child(s, n, _), !kind(n, "expression_list").
+del_node(n) :- kind(s, "delete_statement"), child(s, l, _), kind(l, "expression_list"), child(l, n, _).
+.decl expr_ctx(n: node, c: symbol)
+expr_ctx(n, "store") :- ctx_node(n), store_node(n).
+expr_ctx(n, "del") :- ctx_node(n), del_node(n).
+expr_ctx(n, "load") :- ctx_node(n), !store_node(n), !del_node(n).
+// dotted_expr(e, s): the text of a Name/Attribute chain, unresolved: `self.db.run` gives "self.db.run". No row
+// when the chain has anything else in it (a call, a subscript). sym_of is the resolved form.
+.decl dotted_expr(e: node, s: symbol)
+dotted_expr(e, x) :- kind(e, "identifier"), text(e, x).
+dotted_expr(e, @dot(p, a)) :- attr_of(e, o, a), dotted_expr(o, p).
+// leaf_name(e, x): the last name of e: an identifier's text, an attribute's attr, or (through a subscript) the
+// leaf of its value. `pkg.Model[int]` gives "Model".
+.decl leaf_name(e: node, x: symbol)
+leaf_name(e, x) :- kind(e, "identifier"), text(e, x).
+leaf_name(e, a) :- attr_of(e, _, a).
+leaf_name(e, x) :- kind(e, "subscript"), field(e, "value", v), leaf_name(v, x).
+// call_name(c, x) / call_dotted(c, s): call c's callee, by its leaf name and by its dotted text. `foo().bar()`
+// has call_name "bar" and no call_dotted row.
+.decl call_name(c: node, x: symbol)
+call_name(c, x) :- kind(c, "call"), field(c, "function", f), leaf_name(f, x).
+.decl call_dotted(c: node, s: symbol)
+call_dotted(c, s) :- kind(c, "call"), field(c, "function", f), dotted_expr(f, s).
+// chain_step(e, p, how): one step from e to its receiver: an attribute's object, a call's function, a
+// subscript's value, or what parentheses wrap. Checks walk receiver chains with different steps (some stop at
+// calls), so the step says which it is; chain_root follows every kind.
+.decl chain_step(e: node, p: node, how: symbol)
+chain_step(e, o, "attr") :- kind(e, "attribute"), field(e, "object", o).
+chain_step(e, f, "call") :- kind(e, "call"), field(e, "function", f).
+chain_step(e, v, "subscript") :- kind(e, "subscript"), field(e, "value", v).
+chain_step(e, i, "paren") :- kind(e, "parenthesized_expression"), child(e, i, 0).
+.decl chain_below(e: node, p: node)
+chain_below(e, p) :- chain_step(e, p, _).
+chain_below(e, q) :- chain_below(e, p), chain_step(p, q, _).
+// chain_root(e, r): the end of e's chain: in `self.db.query(x).all()`, r is `self`.
+.decl chain_root(e: node, r: node)
+chain_root(e, r) :- chain_below(e, r), !chain_step(r, _, _).
+// base_name(c, s): each positional base of class c by its leaf name, unresolved (class_base resolves).
+.decl base_name(c: node, s: symbol)
+base_name(c, s) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, b, _),
+    !kind(b, "keyword_argument"), leaf_name(b, s).
+// from_module_raw(i, m): the module of `from m import …` as written, relative dots dropped: `from ..x import y`
+// gives "x", `from . import y` gives "". python/imports resolves it; some checks compare the written form.
+.decl from_module_raw(i: node, m: symbol)
+from_module_raw(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"),
+    text(n, m).
+from_module_raw(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"),
+    child(r, n, _), kind(n, "dotted_name"), text(n, m).
+from_module_raw(i, "") :- kind(i, "import_from_statement"), field(i, "module_name", r),
+    kind(r, "relative_import"), count : { child(r, n, _), kind(n, "dotted_name") } = 0.
+
+// ---- 3. signatures -----------------------------------------------------------------------------------------------
+// sig_param(f, p, nm, i, kind, ann, dflt): parameter p of def or lambda f, at position i, named by identifier nm,
+// of kind "posonly", "pos", "vararg", "kwonly" or "kwarg", with its annotation and default, or unset for none.
+// e.g. `def f(a, /, b: int = 0, *c: str, d, **e)`: a posonly; b pos, annotated, with a default; c vararg,
+// annotated `str`; d kwonly; e kwarg. names.rr's param has the names and positions only.
+.decl in_params(ps: node, p: node, i: number)
+in_params(ps, p, i) :- (kind(ps, "parameters") ; kind(ps, "lambda_parameters")), child(ps, p, i).
+// param_parts(p, nm, ann, dflt, form): the pieces of one parameter node; form is "plain", "star" or "dstar".
+.decl param_parts(p: node, nm: node, ann: loc, dflt: loc, form: symbol)
+param_parts(p, p, a, d, "plain") :- in_params(_, p, _), kind(p, "identifier"), unset(a), unset(d).
+param_parts(p, nm, a, d, "plain") :- in_params(_, p, _), kind(p, "typed_parameter"), child(p, nm, 0),
+    kind(nm, "identifier"), field(p, "type", a), unset(d).
+param_parts(p, nm, a, d, "star") :- in_params(_, p, _), kind(p, "typed_parameter"), child(p, s, 0),
+    kind(s, "list_splat_pattern"), child(s, nm, 0), field(p, "type", a), unset(d).
+param_parts(p, nm, a, d, "dstar") :- in_params(_, p, _), kind(p, "typed_parameter"), child(p, s, 0),
+    kind(s, "dictionary_splat_pattern"), child(s, nm, 0), field(p, "type", a), unset(d).
+param_parts(p, nm, a, d, "plain") :- in_params(_, p, _), kind(p, "default_parameter"), field(p, "name", nm),
+    field(p, "value", d), unset(a).
+param_parts(p, nm, a, d, "plain") :- in_params(_, p, _), kind(p, "typed_default_parameter"), field(p, "name", nm),
+    field(p, "type", a), field(p, "value", d).
+param_parts(p, nm, a, d, "star") :- in_params(_, p, _), kind(p, "list_splat_pattern"), child(p, nm, 0),
+    unset(a), unset(d).
+param_parts(p, nm, a, d, "dstar") :- in_params(_, p, _), kind(p, "dictionary_splat_pattern"), child(p, nm, 0),
+    unset(a), unset(d).
+// The kind of a plain parameter comes from the separators around it: before `/` is posonly, after `*` or
+// `*args` is kwonly.
+.decl slash_at(ps: node, j: number)
+slash_at(ps, j) :- in_params(ps, c, j), kind(c, "positional_separator").
+.decl star_at(ps: node, j: number)
+star_at(ps, j) :- in_params(ps, c, j), kind(c, "keyword_separator").
+star_at(ps, j) :- in_params(ps, c, j), param_parts(c, _, _, _, "star").
+.decl param_kind(ps: node, i: number, form: symbol, k: symbol)
+param_kind(ps, i, "star", "vararg") :- in_params(ps, _, i).
+param_kind(ps, i, "dstar", "kwarg") :- in_params(ps, _, i).
+param_kind(ps, i, "plain", "posonly") :- in_params(ps, _, i), slash_at(ps, j), i < j.
+param_kind(ps, i, "plain", "kwonly") :- in_params(ps, _, i), star_at(ps, j), j < i.
+param_kind(ps, i, "plain", "pos") :- in_params(ps, _, i),
+    count : { slash_at(ps, j), i < j } = 0, count : { star_at(ps, j), j < i } = 0.
+.decl sig_param(f: node, p: node, nm: node, i: number, kind: symbol, ann: loc, dflt: loc)
+sig_param(f, p, nm, i, k, a, d) :- field(f, "parameters", ps), in_params(ps, p, i), param_parts(p, nm, a, d, form),
+    param_kind(ps, i, form, k).
+// param_named(f, x, k): f has a parameter named x of kind k. The common question, without the nodes.
+.decl param_named(f: node, x: symbol, k: symbol)
+param_named(f, x, k) :- sig_param(f, _, nm, _, k, _, _), text(nm, x).
+
+// type_param(o, p, nm, i, kind, bound, dflt): type parameter p of def, class or `type` statement o (PEP 695), at
+// position i, named by identifier nm, of kind "typevar", "typevartuple" or "paramspec" (ast.TypeVar, TypeVarTuple,
+// ParamSpec), with its bound and its PEP 696 default, or unset for none.
+// e.g. `class C[T: int = bool, *Ts, **P = [int]]`: T typevar, bound `int`, default `bool`; Ts typevartuple;
+// P paramspec, default `[int]`. A constraint tuple `T: (int, str)` is the bound, as it is in `ast`.
+// The grammar is Rerail's patched tree-sitter-python: a parameter with a default is a `type_default` node
+// (native/grammars/tree-sitter-python/PATCHES.md, patch 1); upstream parses it as an ERROR.
+.decl tparam_list(o: node, l: node)
+tparam_list(o, l) :- (kind(o, "function_definition") ; kind(o, "class_definition")),
+    field(o, "type_parameters", l).
+// `type A[T] = …`: the parameters are inside the left side, a generic_type.
+tparam_list(o, l) :- kind(o, "type_alias_statement"), field(o, "left", t),
+    ( kind(t, "generic_type"), g = t ; kind(t, "type"), child(t, g, 0), kind(g, "generic_type") ),
+    child(g, l, _), kind(l, "type_parameter").
+// tparam_item(l, i, p, dflt): element i of list l; p is the parameter as a `type` node, dflt its default.
+.decl tparam_item(l: node, i: number, p: node, dflt: loc)
+tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, p, i), kind(p, "type"), unset(d).
+tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, e, i), kind(e, "type_default"), field(e, "name", p),
+    field(e, "value", d).
+// tparam_shape(p, nm, kind, bound): `T`, `T: B`, `*Ts`, `**P`.
+.decl tparam_shape(p: node, nm: node, k: symbol, b: loc)
+tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, nm, 0), kind(nm, "identifier"), unset(b).
+tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, c, 0), kind(c, "constrained_type"),
+    child(c, t, 0), child(t, nm, 0), kind(nm, "identifier"), child(c, b, 1).
+tparam_shape(p, nm, "typevartuple", b) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"),
+    op(s, "*"), child(s, nm, 0), unset(b).
+tparam_shape(p, nm, "paramspec", b) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"),
+    op(s, "**"), child(s, nm, 0), unset(b).
+.decl type_param(o: node, p: node, nm: node, i: number, kind: symbol, bound: loc, dflt: loc)
+type_param(o, p, nm, i, k, b, d) :- tparam_list(o, l), tparam_item(l, i, p, d), tparam_shape(p, nm, k, b).
+// tparam_named(o, x, k): o has a type parameter named x of kind k.
+.decl tparam_named(o: node, x: symbol, k: symbol)
+tparam_named(o, x, k) :- type_param(o, _, nm, _, k, _, _), text(nm, x).
+
+// ---- 4. statements -----------------------------------------------------------------------------------------------
+// assign_target(a, t) / assign_value(a, v): statement-level assignment a as one Assign. `a = b = v` is nested in
+// tree-sitter (an assignment on the right); here it has targets a and b and value v. ann: `x: int = 1`.
+.decl assign_chain(a: node, x: node)
+assign_chain(a, a) :- asgstmt(a, _).
+assign_chain(a, b) :- assign_chain(a, x), field(x, "right", b), kind(b, "assignment").
+.decl assign_target(a: node, t: node)
+assign_target(a, t) :- assign_chain(a, x), field(x, "left", t).
+.decl assign_value(a: node, v: node)
+assign_value(a, v) :- assign_chain(a, x), field(x, "right", v), !kind(v, "assignment").
+.decl assign_ann(a: node, t: node)
+assign_ann(a, t) :- asgstmt(a, _), field(a, "type", t).
+// body_stmt(b, s, i): statement s is the i-th of body b (a block or the module), comments not counted.
+// body_len(b, k): how many there are. e.g. a def whose body is a docstring and `...` has body_len 2.
+.decl body_node(b: node)
+body_node(b) :- kind(b, "block").
+body_node(b) :- kind(b, "module").
+.decl body_stmt(b: node, s: node, i: number)
+body_stmt(b, s, i) :- body_node(b), child(b, s, _), !kind(s, "comment"),
+    i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }.
+.decl body_len(b: node, k: number)
+body_len(b, k) :- body_node(b), k = count : { child(b, s, _), !kind(s, "comment") }.
+// docstring(o, s): s is the docstring of module, class or def o: its first statement is a lone str literal
+// (doc_stmt). Ruff's is_docstring_stmt: parentheses off, adjacent literals joined; not bytes or an f-string.
+//   def f():
+//       ("Doc.")          docstring(<f>, <"Doc.">)
+//   def g():
+//       f"Doc."           no docstring
+.decl body_of(o: node, b: node)
+body_of(o, b) :- (kind(o, "function_definition") ; kind(o, "class_definition")), field(o, "body", b).
+body_of(m, m) :- kind(m, "module").
+.decl docstring(o: node, s: node)
+docstring(o, s) :- body_of(o, b), body_stmt(b, st, 0), doc_stmt(st, s).
+// doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt.
+.decl doc_stmt(s: node, e: node)
+doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str(e, _).
+// py_if(i, test, body) and py_orelse(i, o): an `ast.If`. Each `elif` is an If of its own, the orelse of the one
+// before it; o is the next elif clause, or the else clause (whose body is its "body" field).
+.decl py_if(i: node, test: node, body: node)
+py_if(i, t, b) :- kind(i, "if_statement"), field(i, "condition", t), field(i, "consequence", b).
+py_if(e, t, b) :- kind(e, "elif_clause"), field(e, "condition", t), field(e, "consequence", b).
+.decl py_orelse(i: node, o: node)
+py_orelse(i, o) :- kind(i, "if_statement"), field(i, "consequence", b), py_next_code(b, o),
+    (kind(o, "elif_clause") ; kind(o, "else_clause")).
+py_orelse(e, o) :- kind(e, "elif_clause"), py_next_code(e, o), (kind(o, "elif_clause") ; kind(o, "else_clause")).
+// py_next_code(a, b): b is the next named sibling of a that is not a comment (`# why` before `else:` is a sibling).
+.decl py_next_code(a: node, b: node)
+py_next_code(a, b) :- next_sibling(a, b), !kind(b, "comment").
+py_next_code(a, c) :- next_sibling(a, b), kind(b, "comment"), py_next_code(b, c).
+// bool_operand(t, op, v): v is an operand of the BoolOp t (op "and" or "or"): `a or b or c` gives a, b and c
+// for the outermost `or`. A parenthesised inner `(a or b)` stays one operand, as in `ast`.
+.decl same_bool(v: node, o: symbol)
+same_bool(v, o) :- kind(v, "boolean_operator"), op(v, o).
+.decl bool_top(t: node, o: symbol)
+bool_top(t, o) :- same_bool(t, o), count : { child(p, t, _), same_bool(p, o) } = 0.
+.decl bool_part(t: node, x: node)
+bool_part(t, x) :- bool_top(t, _), child(t, x, _), !kind(x, "comment").
+bool_part(t, y) :- bool_part(t, x), bool_top(t, o), same_bool(x, o), child(x, y, _), !kind(y, "comment").
+.decl bool_operand(t: node, o: symbol, v: node)
+bool_operand(t, o, v) :- bool_part(t, v), bool_top(t, o), !same_bool(v, o).
+// cmp_pair(c, i, op, l, r): link i of a comparison: `a < b <= c` gives (0, "<", a, b) and (1, "<=", b, c).
+// Two-word operators (`not in`, `is not`) are one op_at token. cmp (names) has single comparisons only.
+.decl cmp_pair(c: node, i: number, op: symbol, l: node, r: node)
+cmp_pair(c, i, o, l, r) :- kind(c, "comparison_operator"), child(c, l, i), j = i + 1, child(c, r, j), op_at(c, i, o).
+
+// ---- 5. strings and constants ------------------------------------------------------------------------------------
+// fstring(n): n is an `ast.JoinedStr`: an f-string, or adjacent literals one of which is.
+.decl fstring(n: node)
+fstring(n) :- kind(n, "string"), child(n, s0, 0), kind(s0, "string_start"), text(s0, t),
+    match("[rRbBuU]*[fF][rR]?[\"'].*", t).
+fstring(c) :- kind(c, "concatenated_string"), child(c, s, _), fstring(s).
+// string_form(n, f): "str", "fstr", "bytes" or "tstr" (a template string, PEP 750), from the prefix.
+.decl string_form(n: node, f: symbol)
+string_form(n, "fstr") :- fstring(n).
+string_form(n, "bytes") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
+string_form(n, "tstr") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[tT][rR]?[\"'].*", t).
+string_form(n, "str") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rRuU]*[\"'].*", t).
+// plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
+// ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
+.decl plain_str(e: node, v: symbol)
+plain_str(e, v) :- string_form(e, "str"), !fstring(e), value(e, v).
+plain_str(e, v) :- kind(e, "concatenated_string"),
+    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,
+    v = join x by i sep "" : { child(e, s, i), kind(s, "string"), value(s, x) }.
+// str_const(n, v): n is a whole str Constant with value v, decoded: no interpolation, not bytes. Adjacent
+// literals count once, at the concatenated_string (str_part's literal), not at each piece.
+.decl str_const(n: node, v: symbol)
+str_const(n, v) :- str_part(n, 0, v, _, 0), !str_part(n, 1, _, _, _), !fstring(n).
+// ast_constant(n): n is an `ast.Constant`: a str or bytes literal without interpolation, a number, True,
+// False, None or `...`. `-1` is a UnaryOp, as in `ast`.
+.decl const_kind(k: symbol)
+const_kind("integer"). const_kind("float"). const_kind("true"). const_kind("false"). const_kind("none").
+const_kind("ellipsis").
+.decl ast_constant(n: node)
+ast_constant(n) :- kind(n, k), const_kind(k).
+ast_constant(n) :- str_const(n, _).
+ast_constant(n) :- string_form(n, "bytes"), !fstring(n).
+
+// ---- 6. names of definitions -------------------------------------------------------------------------------------
+// The checks key findings and allowlists by several spellings of "where": these are the ones two or more use.
+// class_path(n, s): the classes around n, outermost first: "Outer.Inner". No module, no functions.
+.decl class_chain(c: node, s: symbol)
+class_chain(c, x) :- kind(c, "class_definition"), def_name(c, x), !nearest(c, _, "class_definition").
+class_chain(c, @dot(p, x)) :- kind(c, "class_definition"), def_name(c, x), nearest(c, o, "class_definition"),
+    class_chain(o, p).
+.decl class_path(n: node, s: symbol)
+class_path(n, s) :- nearest(n, c, "class_definition"), class_chain(c, s).
+// def_chain(f, s): def f and the defs around it, outermost first: "outer.inner". Classes left out.
+.decl def_chain(f: node, s: symbol)
+def_chain(f, x) :- kind(f, "function_definition"), def_name(f, x), !nearest(f, _, "function_definition").
+def_chain(f, @dot(p, x)) :- kind(f, "function_definition"), def_name(f, x), nearest(f, g, "function_definition"),
+    def_chain(g, p).
+// owner_path(f, s): the class names, then the def names: "Service.run.helper". Linters' "Class.func".
+.decl owner_path(f: node, s: symbol)
+owner_path(f, @dot(c, p)) :- def_chain(f, p), class_path(f, c).
+owner_path(f, p) :- def_chain(f, p), !nearest(f, _, "class_definition").
+// py_qualname(f, q): Python's __qualname__: `def f(): def g()` gives "f.<locals>.g"; a method "C.m".
+.decl py_qualname(f: node, q: symbol)
+py_qualname(f, x) :- def_name(f, x), nearest(f, s, scope), kind(s, "module").
+py_qualname(f, @dot(p, x)) :- def_name(f, x), nearest(f, s, scope), kind(s, "class_definition"), py_qualname(s, p).
+py_qualname(f, @dot(@dot(p, "<locals>"), x)) :- def_name(f, x), nearest(f, s, scope),
+    kind(s, "function_definition"), py_qualname(s, p).
+// stub_file(d): document d is a stub, a `.pyi` file. Python never runs one.
+.decl stub_file(d: number)
+stub_file(d) :- doc(d, p, _), suffix(".pyi", p).
+// path_module(d, q): the document's path as a dotted name, `__init__` kept: "pkg/__init__.py" gives
+// "pkg.__init__". doc's module column drops it; symbol graphs keyed by path need it.
+.decl path_module(d: number, q: symbol)
+path_module(d, @replace_all(@replace_all(p, "\\.pyi?$", ""), "/", ".")) :- doc(d, p, _), match(".*\\.pyi?", p).
+
+// ---- 7. annotations ----------------------------------------------------------------------------------------------
+// ann_root(t) (python/names): the root of an annotation: a parameter's, a return's, an annotated assignment's.
+// names' parsed_in(e, s) gives the trees parsed from its strings, and `annotation` every node below either.
+// ann_node(a, e): e is in annotation a, or in a tree parsed from one of its strings.
+.decl ann_node(a: node, e: node)
+ann_node(a, e) :- ann_root(a), (e = a ; within(e, a)).
+ann_node(a, e) :- ann_root(a), (s = a ; within(s, a)), parsed_in(e, s).
+// in_string_ann(e): e is in the tree parsed from a string annotation. Ruff skips some expression rules there
+// (its in_string_type_definition), as SIM222 and SIM223 do.
+//   def f(a: "'' and 'b'"): ...      in_string_ann(<'' and 'b'>), in_string_ann(<''>)
+.decl in_string_ann(e: node)
+in_string_ann(e) :- parsed_in(e, _).
+// ann_name(a, s): every dotted name mentioned in annotation a: `Optional[db.Conn] | "Txn"` gives "Optional",
+// "db.Conn" and "Txn". Only whole chains: "db" alone is not listed.
+.decl ann_name(a: node, s: symbol)
+ann_name(a, s) :- ann_node(a, e), dotted_expr(e, s), !field(_, "object", e).
+// ann_head(a, s): the head type: `Optional[Conn]` gives "Optional"; `A | B` gives both A's head and B's.
+.decl ann_head(a: node, s: symbol)
+ann_head(a, s) :- ann_root(a), head_of(a, s).
+.decl head_of(e: node, s: symbol)
+head_of(e, s) :- kind(e, "type"), child(e, x, 0), head_of(x, s).
+head_of(e, s) :- dotted_expr(e, s).
+head_of(e, s) :- kind(e, "subscript"), field(e, "value", v), head_of(v, s).
+head_of(e, s) :- kind(e, "generic_type"), child(e, v, 0), head_of(v, s).
+head_of(e, s) :- (kind(e, "binary_operator") ; kind(e, "union_type")), op(e, "|"), child(e, x, _), head_of(x, s).
+
+// ---- 8. order ----------------------------------------------------------------------------------------------------
+// latest_assign(n, x, a): a is the last plain assignment `x = …` in n's scope that comes before the read n, in
+// CPython's visit order. An assignment that contains n does not count: in `x = x + 1` the right side reads the
+// earlier x. Checks whose name maps are "last write wins" use this instead of all bindings.
+.decl latest_assign(n: node, x: symbol, a: node)
+latest_assign(n, x, a) :- ast_name(n, x), expr_ctx(n, "load"), scope_node(n, s),
+    k = max i : { rasg(s, x, _, a2), earlier(a2, n), !within(n, a2), visit_index(a2, i) },
+    rasg(s, x, _, a), visit_index(a, k).
+
+// ---- 9. calls by spelling ----------------------------------------------------------------------------------------
+// Several checks follow calls the way their scripts do: by name, in the same file, without resolving imports
+// or receivers. python/calls resolves properly; these are the scripts' own approximation, kept where a check's
+// meaning depends on it.
+// same_file_call(c, g): call c's leaf name is the name of def g in the same document.
+.decl same_file_call(c: node, g: node)
+same_file_call(c, g) :- call_name(c, x), def_name(g, x), kind(g, "function_definition"), docof(c, d), docof(g, d).
+// name_reach(f, g): from def f, a chain of such calls reaches def g.
+.decl name_reach(f: node, g: node)
+name_reach(f, g) :- same_file_call(c, g), def_frame(c, f).
+name_reach(f, h) :- name_reach(f, g), name_reach(g, h).

@@ -1,0 +1,197 @@
+// rust/syntax-literals: Rust number and string literals as Clippy's literal lints read them.
+//
+// Clippy reads a number literal's source text through its `NumericLiteral` (clippy_utils/numeric_literal.rs):
+// a radix prefix, the digits of the integer part, an optional fraction and exponent, and a type suffix.
+//   0x1F_u8       radix 16, integer "1F", suffix "u8": the one `_` before a suffix belongs to neither
+//   1_000.5e-3    radix 10, integer "1_000", fraction "5", exponent "3"; the `_` before an `e` is dropped too
+//   1f32          a float: rustc reads an f32/f64 suffix as a float literal (tree-sitter: integer_literal)
+// Digit groups are the runs between underscores: "1_000" has groups 1 and 3.
+//
+// What a rule gets from this library:
+//   num_lit(n, radix, int, suffix)   n is a number literal: radix 2, 8, 10 or 16, the integer part's digits as
+//                                    written ("1_000"), and its suffix ("u8", "f32", "" for none)
+//   num_frac(n, f)                   its fraction's digits, when it has a `.`: "5" in 1.5, "" in 2.
+//   num_exp(n, x)                    its exponent's digits: "3" in 1e-3
+//   num_float(n)                     n is a float (Clippy's LitKind::Float): a float_literal, or an `f` suffix
+//   grouped_lit(n)                   n is a literal LiteralDigitGrouping checks: not a mistyped suffix
+//                                    (`1_32`), not a UUID (`0x12345678_1234_…`), not in a macro_rules! body
+//   grouping_lint(n, w, fractions)   LiteralDigitGrouping's verdict w on n: "unreadable_literal",
+//                                    "inconsistent_digit_grouping", "large_digit_groups" or
+//                                    "unusual_byte_groupings". fractions is its config
+//                                    `unreadable-literal-lint-fractions`, "true" (the default) or "false"
+//   lit_one(e)                       e is an integer literal of value 1: 1, 1u8, 1_i32, 0x1, 0b01
+//   int_lit_value(n, v)              a decimal integer literal's value, for values below 10^18
+//   hex_upper(v, h)                  v in hexadecimal, upper case, without 0x: hex_upper(65280, "FF00"), for
+//                                    the values the including rule puts in hex_wanted(v)
+//   dec_lit_repr(n)                  decimal_literal_representation: n is at least the rule's
+//                                    lit_repr_threshold(t) and its hex digits pass hex_pattern
+//   hex_pattern(h)                   hex digits h are a power of two or a bit mask, give or take the last
+//                                    digit, as Clippy's decimal_literal_representation reads them
+//   raw_str(n, hashes, body)         a raw string r#"…"#, br"…", cr"…": the number of `#`s and its contents
+//   hashes_needed(n, k)              the `#`s raw string n needs, as Clippy counts them: 1 + the longest run of
+//                                    `#` after a `"` in its contents, 0 with no `"` (r#"a"b"# needs 1)
+//   octal_escape(e)                  e is a `\0` escape followed by an octal digit, in a string literal: "\033"
+//
+// Builds on core (kind, text, match, captures, join) and rust/syntax (in_macro_def).
+// Each digit string is split once, by peeling one group at a time with a regex: no per-byte scan.
+
+#include "rust/syntax.rr"
+
+// ---- number literals -----------------------------------------------------------------------------------------
+.decl num_node(n: node)
+num_node(n) :- (kind(n, "integer_literal") ; kind(n, "float_literal")).
+// lit_body(n, radix, b, s): the literal without its prefix, split at its suffix. A suffix is the run of letters
+// after the digits: hex digits include a-f, so a hex suffix starts at `i` or `u`.
+.decl lit_body(n: node, radix: number, b: symbol, s: symbol)
+lit_body(n, 16, B, S) :- num_node(n), match("0x(?<B>[0-9a-fA-F_]*)(?<S>[iu][0-9a-z]*|)", n).
+lit_body(n, 8, B, S)  :- num_node(n), match("0o(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", n).
+lit_body(n, 2, B, S)  :- num_node(n), match("0b(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", n).
+lit_body(n, 10, B, S) :- num_node(n), !match("0[xob].*", n),
+    match("(?<B>[0-9][0-9_]*(\\.[0-9_]*)?([eE][+-]?[0-9_]*)?)(?<S>[a-zA-Z][0-9a-zA-Z]*|)", n).
+// digits(n, radix, d, s): NumericLiteral::new drops one `_` before a suffix: 1_000_i32 has digits 1_000.
+.decl digits(n: node, radix: number, d: symbol, s: symbol)
+digits(n, r, d, s) :- lit_body(n, r, b, s), s != "", suffix("_", b), d = substr(b, 0, strlen(b) - 1).
+digits(n, r, b, s) :- lit_body(n, r, b, s), (s = "" ; !suffix("_", b)).
+
+.decl num_float(n: node)
+num_float(n) :- kind(n, "float_literal").
+num_float(n) :- kind(n, "integer_literal"), lit_body(n, 10, _, s), prefix("f", s).
+// mantissa(n, m, e): a decimal float split at its exponent (e is "" for none); one `_` before `e` is dropped.
+.decl mantissa(n: node, m: symbol, e: symbol)
+mantissa(n, M, E) :- num_float(n), digits(n, 10, d, _), match("(?<M>[^eE]*)(?<E>[eE].*|)", d), E = "".
+mantissa(n, m, E) :- num_float(n), digits(n, 10, d, _), match("(?<M>[^eE]*)(?<E>[eE].*)", d),
+    (suffix("_", M), m = substr(M, 0, strlen(M) - 1) ; !suffix("_", M), m = M).
+
+.decl num_lit(n: node, radix: number, int: symbol, suffix: symbol)
+num_lit(n, r, d, s) :- digits(n, r, d, s), !num_float(n).
+num_lit(n, 10, I, s) :- mantissa(n, m, _), digits(n, 10, _, s), match("(?<I>[^.]*)(\\..*|)", m).
+.decl num_frac(n: node, f: symbol)
+num_frac(n, F) :- mantissa(n, m, _), match("[^.]*\\.(?<F>.*)", m).
+.decl num_exp(n: node, x: symbol)
+num_exp(n, X) :- mantissa(n, _, e), match("[eE][+-]?(?<X>.*)", e).
+
+// ---- digit groups ---------------------------------------------------------------------------------------------
+// digit_group(s, i, len): "1_000" has (0, 1) and (1, 3); "1_000_" has a third, empty group (2, 0).
+.decl group_rest(s: symbol, i: number, r: symbol)   // s without its first i groups
+group_rest(s, 0, s) :- (num_lit(_, _, s, _) ; num_frac(_, s)).
+group_rest(s, i + 1, R) :- group_rest(s, i, t), match("[^_]*_(?<R>.*)", t).
+.decl digit_group(s: symbol, i: number, len: number)
+digit_group(s, i, strlen(G)) :- group_rest(s, i, t), match("(?<G>[^_]*)_.*", t).
+digit_group(s, i, strlen(t)) :- group_rest(s, i, t), !contains("_", t).
+.decl group_count(s: symbol, k: number)
+group_count(s, k) :- group_rest(s, 0, _), k = count : { digit_group(s, _, _) }.
+
+// ---- LiteralDigitGrouping (clippy_lints/src/literal_representation.rs) ------------------------------------------
+// grouped_lit(n): what check_lit lints. A last group of 8/16/32/64 with no suffix is a mistyped suffix
+// (`1_32` for 1_i32: the correctness lint mistyped_literal_suffixes); a UUID-shaped hex literal is left alone.
+.decl grouped_lit(n: node)
+grouped_lit(n) :- num_lit(n, _, _, _), !mistyped(n), !uuid(n), !in_macro_def(n).
+.decl uuid(n: node)
+uuid(n) :- num_lit(n, 16, i, _), match("[0-9a-fA-F]{8}_[0-9a-fA-F]{4}_[0-9a-fA-F]{4}_[0-9a-fA-F]{4}_[0-9a-fA-F]{12}", i).
+.decl mistyped(n: node)
+mistyped(n) :- num_exp(n, x), num_lit(n, _, _, ""), match(".*_(32|64)", x).
+mistyped(n) :- num_lit(n, _, i, ""), !num_frac(n, _), !num_exp(n, _), match(".*_(8|16|32|64)", i).
+
+// lit_group(n, part, j, len): the groups in the order get_group_size takes them: the integer part ("int") left
+// to right, the fraction ("frac") right to left (Clippy's rsplit). In 1_234.5678_9, the fraction's j = 0 is 9.
+.decl lit_group(n: node, part: symbol, j: number, len: number)
+lit_group(n, "int", i, l) :- grouped_lit(n), num_lit(n, _, s, _), digit_group(s, i, l).
+lit_group(n, "frac", k - 1 - i, l) :- grouped_lit(n), num_frac(n, s), group_count(s, k), digit_group(s, i, l).
+// uneven(n, p, b): some group after the second differs from the second, b.
+.decl uneven(n: node, p: symbol)
+uneven(n, p) :- lit_group(n, p, 1, b), lit_group(n, p, j, l), j >= 2, l != b.
+// readable(p, fractions, on): whether a long single group is "unreadable": always in the integer part, and in
+// the fraction unless the config turns it off.
+.decl readable(p: symbol, fractions: symbol, on: symbol)
+readable("int", "true", "true"). readable("int", "false", "true").
+readable("frac", "true", "true"). readable("frac", "false", "false").
+
+// part_size(n, p, f, w, size): get_group_size's answer for part p under fractions f: an error w, or w = "ok"
+// with the group size (0 when the part has one group: Clippy's None).
+.decl part_size(n: node, p: symbol, f: symbol, w: symbol, size: number)
+// Radix 2, 8, 16 with two groups or more: they must be even, and the first no longer than the others
+// (0x1234_56 is unusual). Then, as Clippy's iterator is spent, only "first group longer than 5" remains:
+// 0x123456_123456 is unreadable.
+part_size(n, p, f, "unusual_byte_groupings", 0) :- based(n), readable(p, f, _), lit_group(n, p, 0, a),
+    lit_group(n, p, 1, b), (a > b ; uneven(n, p)).
+part_size(n, p, f, w, 0) :- based(n), readable(p, f, on), lit_group(n, p, 0, a),
+    (lit_group(n, p, 1, b), a <= b, !uneven(n, p) ; !lit_group(n, p, 1, _)),
+    (a > 5, on = "true", w = "unreadable_literal" ; (a <= 5 ; on = "false"), w = "ok").
+// Decimal: even groups, a first no longer than the rest (1_23_456 is inconsistent), and none over 4 digits.
+part_size(n, p, f, "inconsistent_digit_grouping", 0) :- decimal(n), readable(p, f, _), lit_group(n, p, 0, a),
+    lit_group(n, p, 1, b), (a > b ; uneven(n, p)).
+part_size(n, p, f, w, b) :- decimal(n), readable(p, f, _), lit_group(n, p, 0, a), lit_group(n, p, 1, b),
+    a <= b, !uneven(n, p), (b > 4, w = "large_digit_groups" ; b <= 4, w = "ok").
+part_size(n, p, f, w, 0) :- decimal(n), readable(p, f, on), lit_group(n, p, 0, a), !lit_group(n, p, 1, _),
+    (a > 5, on = "true", w = "unreadable_literal" ; (a <= 5 ; on = "false"), w = "ok").
+.decl based(n: node)
+based(n) :- grouped_lit(n), num_lit(n, r, _, _), r != 10.
+.decl decimal(n: node)
+decimal(n) :- grouped_lit(n), num_lit(n, 10, _, _).
+
+// grouping_lint(n, w, f): the integer part's error, else the fraction's, else the two parts' consistency
+// (parts_consistent): grouped on both sides, the group sizes agree; grouped on one, the other part is no longer
+// than its groups. 1_234.5678 is inconsistent; 1_234.56 and 12.345_678 are not.
+.decl grouping_lint(n: node, w: symbol, fractions: symbol)
+grouping_lint(n, w, f) :- part_size(n, "int", f, w, _), w != "ok".
+grouping_lint(n, w, f) :- part_size(n, "int", f, "ok", _), part_size(n, "frac", f, w, _), w != "ok".
+grouping_lint(n, "inconsistent_digit_grouping", f) :- part_size(n, "int", f, "ok", a),
+    part_size(n, "frac", f, "ok", b), num_lit(n, _, i, _), num_frac(n, x),
+    (a > 0, b > 0, a != b ; a > 0, b = 0, strlen(x) > a ; a = 0, b > 0, strlen(i) > b).
+
+// ---- values -----------------------------------------------------------------------------------------------------
+// int_lit_value(n, v): a decimal integer literal's value (suffix and underscores dropped). Numbers are 64-bit, so
+// literals of 19 digits and more get no row.
+.decl int_lit_value(n: node, v: number)
+int_lit_value(n, to_number(d)) :- num_lit(n, 10, i, _), !num_float(n), d = @replace_all(i, "_", ""),
+    strlen(d) <= 18.
+.decl lit_one(e: node)
+lit_one(e) :- num_lit(e, _, i, _), !num_float(e), match("[0_]*1_*", i).
+// hex_upper(v, h): format!("{v:X}"). Digits are peeled off the low end; join puts the high one first.
+.decl hex_wanted(v: number)
+.decl hex_digit(v: number, i: number, c: symbol)
+hex_digit(v, i, c) :- hex_place(v, i, p), hex_char((v / p) % 16, c).
+.decl hex_place(v: number, i: number, p: number)   // p = 16^i, for every digit of v
+hex_place(v, 0, 1) :- hex_wanted(v).
+hex_place(v, i + 1, p * 16) :- hex_place(v, i, p), v / p >= 16.
+.decl hex_upper(v: number, h: symbol)
+hex_upper(v, h) :- hex_wanted(v), h = join c by k sep "" : { hex_digit(v, i, c), k = 0 - i }.
+.decl hex_char(d: number, c: symbol)
+hex_char(0, "0"). hex_char(1, "1"). hex_char(2, "2"). hex_char(3, "3"). hex_char(4, "4"). hex_char(5, "5").
+hex_char(6, "6"). hex_char(7, "7"). hex_char(8, "8"). hex_char(9, "9"). hex_char(10, "A"). hex_char(11, "B").
+hex_char(12, "C"). hex_char(13, "D"). hex_char(14, "E"). hex_char(15, "F").
+
+// hex_pattern(h): DecimalLiteralRepresentation::do_lint on format!("{v:X}"). Up to three digits: a power of two
+// (1, 2, 4 or 8 then zeros) or one less (1, 3, 7 or F then Fs). From four digits the last one is free (a margin
+// of +15/-16), and 7 or F followed only by 0s and Fs is a mask: 8005 FF00 7FFF_FFFF F0F0_F0F0.
+.decl hex_pattern(h: symbol)
+hex_pattern(h) :- hex_upper(_, h), strlen(h) < 4, match("[1248]0*|[137F]F*", h).
+hex_pattern(h) :- hex_upper(_, h), strlen(h) >= 4, match("[1248]0*.|[137F]F*.|[7F][0F]*", h).
+.decl lit_repr_threshold(t: number)   // given by the including rule
+.decl dec_lit_repr(n: node)
+dec_lit_repr(n) :- int_lit_value(n, v), lit_repr_threshold(t), v >= t, hex_upper(v, h), hex_pattern(h).
+hex_wanted(v) :- int_lit_value(_, v), lit_repr_threshold(t), v >= t.
+
+// ---- raw strings ------------------------------------------------------------------------------------------------
+// raw_str(n, k, body): r"…" has k = 0, r##"…"## has k = 2; br and cr are byte and C raw strings.
+.decl raw_str(n: node, hashes: number, body: symbol)
+raw_str(n, strlen(H), B) :- kind(n, "raw_string_literal"), match("[bc]?r(?<H>#*)\"(?<B>[\\s\\S]*)\"#*", n).
+// hashes_needed(n, k): RawStrings::check_raw_string walks the contents; a `"` starts a run, each `#` right after it
+// adds one, and the next other character ends it. That character is used up, so in `""#` the second quote
+// starts no run (Clippy's count, kept as is). quote_run(n, k, rest) peels one run at a time.
+.decl quote_run(n: node, k: number, rest: symbol)
+quote_run(n, 0, b) :- raw_str(n, _, b).
+quote_run(n, strlen(H) + 1, R) :- quote_run(n, _, s), match("[^\"]*\"(?<H>#*)[^#](?<R>[\\s\\S]*)", s).
+quote_run(n, strlen(H) + 1, "") :- quote_run(n, _, s), match("[^\"]*\"(?<H>#*)", s).
+.decl hashes_needed(n: node, k: number)
+hashes_needed(n, k) :- raw_str(n, _, _), k = max j : { quote_run(n, j, _) }.
+
+// ---- escapes ----------------------------------------------------------------------------------------------------
+// tree-sitter-rust reads `\0` as an escape_sequence of its own, so "\033" is `"`, the escape `\0`, then the
+// content "33". C reads that as one octal escape (ESC); Rust as NUL then "33". Clippy's octal_escapes looks
+// for `\0` then one or two octal digits in str and byte-str literals: never C strings (c"…"), raw strings or
+// chars.
+.decl octal_escape(e: node)
+octal_escape(e) :- kind(e, "escape_sequence"), text(e, "\\0"), child(s, e, _), kind(s, "string_literal"),
+    text(s, x), !prefix("c", x), next_sibling(e, c), kind(c, "string_content"), text(c, t),
+    match("[0-7][\\s\\S]*", t).

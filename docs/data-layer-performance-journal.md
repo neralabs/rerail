@@ -7439,3 +7439,85 @@ The 67 helper and 57 host cases retain their separate execution contracts.
 There is no optimizer-v2 linter test file at this source pin; its original-evaluated supplementary observations remain labelled separately.
 Raw reports and exact assertion-phase evidence are under `.rerail/data-layer-batch-ten/suite-completeness-20261106/`.
 No cold batch benchmark or engine build was performed. The historical repository measurements are unchanged.
+
+
+## 2026-11-06: Public `.rr` migration, in progress
+
+The user confirmed all 100 existing ports. The remaining 42 checks will use `.rr` when implemented.
+The production addon and historical JSON acceptance receipts remain unchanged.
+The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
+
+The inventory has 53 drafts and 47 absent translations. None has full migration acceptance.
+The syntax snapshot is `fa50cd94c`; the integrated final-shape snapshot is `5332989f8`.
+Imported bytes retain their commit and local-repair provenance.
+Eight rules were authored here: removed compatibility surfaces, lifecycle surfaces, source inspection,
+ServerPlan name inference, PermissionError, async capability checks, grammar bypass, and admin async purity.
+
+The engine integration branch is `jeremy/data-layer-rr-engine-20261106`, pushed through `8104bdd7fc9a7e0899ae4f0677d04ad11a50a579`.
+The frozen tested CLI has SHA-256 `93383c986bf6b4f9c777772c3a04898c3683ed257d0dd1aae82f48732d91f833`.
+It includes the public reader, quality runtime, parser and typing merges, and the repairs below.
+
+Port-driven TDD ladders:
+
+- Full diagnostic DTOs preserve messages, tags, parameters, and distinct witnesses.
+- A source-span/document-column regression prevents source spans from being joined as AST nodes.
+- `d59446237` -> `5b6ae78ac`: demanded Python logical lines preserve all separators, CRLF, empty lines, and long lines.
+- `55b132e34` -> `71e4d6a66`: empty input retains statistics and executes global absence findings.
+- `f1423713c` -> `008886b11`: borrowed scratch arenas flush through their owner, not scratch `atom_segment` tables.
+- `7b7d262bb` -> `064f6b6cc`: explicit input batches retain hidden paths and nonstandard extensions.
+- `97d050875` -> `8104bdd7f`: logical-line predicates and safe aliases use vocabulary batches.
+  The regression first reports zero batched predicates instead of two. All 11 string-engine tests pass after the repair.
+  Every writer must copy a prepared symbol. Computed and constant-producing arms prevent unsafe rewrites.
+
+Original source assertions:
+
+- Eight unchanged direct modules collect 531 cases. Their original Python run passes 528 and skips three async cases.
+- The native run executes all 531 original bodies without skips or original-detector fallbacks, across eight bounded shards.
+- It makes 477 native calls; 171 cases make no native call and are individually listed.
+- Calls with rows include helper truth-value probes. They are not a detector-positive case count.
+- The source recording has 317 detector observations, including 286 DTO-comparable calls and 209 positive calls.
+- The new companion recorder preserves lossless source results for all 317 observations.
+  All receive field, type, order, and multiplicity comparisons, including the legacy normalizer's retained observations.
+  The old normalized recording does not retain every field, such as source-inspection snippets; it is not sufficient for full DTO parity.
+- The native adapter transfers regex operations and the three reviewed skipped assertions, retaining the original assertions.
+- A full DTO check exposed nondeterministic generated input: a test iterates a Python set.
+  `PYTHONHASHSEED=0` now pins both runs. Two new harness regressions reject different source inputs and scopes.
+- Full capture first exposed process-specific temporary paths stored as strings. A failing regression proves the transport mismatch.
+  Only the caller-root prefix is normalized; strings remain strings, Paths remain Paths, and the full relative path remains.
+- `rr-direct-source-assertions.json.gz` retains the complete lossless source recording and every shard report.
+  It binds source files, harness files, rule includes, the engine, and the fixed seed.
+
+These are direct module and snapshot contracts. Configured reporting, persistent workspaces, complete associated suites,
+remaining portable helper assertions, and mutation controls remain outstanding. No rule receives full acceptance from these counts.
+The initial four-rule, 92-observation receipt is explicitly historical. Its older binary is preserved.
+
+Changed-kernel measurement:
+
+The 2,000-line source-inspection workload compares frozen builds `c2a0b80aaf8b0c63` and `93383c986bf6b4f9`.
+Each run starts with a separate empty persistent cache. `/usr/bin/time -lp` reports total process CPU and maximum RSS.
+CPU is 1.49 seconds before and 0.99 seconds after. Maximum RSS is 94,879,744 and 104,251,392 bytes.
+The complete native diagnostics match. This is one sample per build, not a repository benchmark.
+Other assertion processes were active, so wall times are descriptive only.
+The fixture `rr-line-vocabulary-profile.json` retains source and rule hashes, phase measurements, and external time output.
+
+Remaining failures and limitations:
+
+- Shared-cache parallel execution still reproduces a foreign-key constraint error.
+  One cache per assertion shard isolates rule semantics; it does not fix shared-cache concurrency.
+- The reader refuses five policies using `match_all`, one using `dfs_first_memo`, and one using a slice pattern.
+- Repository readers, exact Python AST values/order, configured frontend execution, and signatures still need implementation or validation.
+- Nine active atom tests and five active file-local tests pass. A focused reader run passes 19 tests, with two existing report entry points ignored.
+  That focused run excludes the separate broad source-check case that exceeds the command limit.
+- The current reader suite's broad source-check case reaches the 115-second limit. It is not a passing full-suite run.
+- Earlier broad native shards also expose the stale admission interpreter hash, widened-walk regression, Vue corpus failure, and timeouts.
+- The user authorized deferring only the missing pinned Ruff and SQLFluff archive tests. No data-layer assertion is exempted.
+- A build encountered disk exhaustion; failed logs remain. Superseded binaries were compressed without deleting their contents.
+- The latest CLI build takes 29.55 seconds. The latest test build takes 54.05 seconds. Build time is separate from execution.
+
+Sixteen Python migration guard tests pass. The authoring guard passes two tests.
+The full migration check must fail until all 100 ports have complete evidence.
+No repository-wide cold batch was run. Raw reports and failed attempts remain under `.rerail/rr-migration-20261106/`.
+
+The structure check passes 24 metrics. Its only failing metric retains the same three pre-existing flat-directory counts.
+The newly introduced duplicate fixture resolver was removed; the harness uses the existing shared resolver.
+Typecheck, boundary checks, and Windows path checks pass.
