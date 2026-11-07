@@ -465,6 +465,34 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
+    // Tier 2, generated: the function alone over laid-out files, then `write` whole (the layout,
+    // the call, the nodes copied out).
+    let now = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec to write.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let tier2 = json_tier2();
+    if let Some(path) = std::env::var_os("RERAIL_DUMP_TIER2") {
+        std::fs::write(&path, format!("{}\n\n{}", tier2.clif, tier2.disassembly)).expect("writes");
+    }
+    let mut laid: Vec<_> = runs.iter().zip(&bytes).map(|(r, b)| tier2.lay_out(&r.outputs, b)).collect();
+    let (mut best, mut nodes) = (f64::MAX, 0);
+    for _ in 0..5 {
+        let start = now();
+        nodes = tier2.call_laid(&mut laid);
+        best = best.min(now() - start);
+    }
+    println!("tier 2, the function: {:.3} ns per block, {nodes} nodes, {:.2} ns per node (CPU time, best of 5)", best / blocks as f64 * 1e9, best / nodes as f64 * 1e9);
+    let mut best = f64::MAX;
+    for _ in 0..3 {
+        let start = now();
+        let n: usize = runs.iter().zip(&bytes).filter_map(|(r, b)| tier2.write(&r.outputs, b)).map(|(n, _)| n.len()).sum();
+        best = best.min(now() - start);
+        assert_eq!(n as u64, nodes);
+    }
+    println!("tier 2, write (layout, call, copy out): {:.3} ns per block (CPU time, best of 3)", best / blocks as f64 * 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};

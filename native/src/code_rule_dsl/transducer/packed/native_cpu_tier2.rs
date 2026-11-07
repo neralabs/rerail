@@ -65,6 +65,8 @@ pub(super) struct CompiledTier2 {
     max_classes: usize,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
+    /// The machine code, disassembled.
+    pub(super) disassembly: String,
 }
 
 /// A validator's entry: the token's text, its length; nonzero when valid.
@@ -127,6 +129,58 @@ impl CompiledTier2 {
             return Ok(None);
         };
         TapeImage::from_written(&nodes, supertypes, grammar, source, &|| false).map(Some)
+    }
+}
+
+/// A file laid out for the function: what `write` builds before its call.
+#[cfg(test)]
+pub(super) struct Laid {
+    masks: Vec<u64>,
+    words: usize,
+    padded: Vec<u8>,
+    len: usize,
+    nodes: Vec<Node>,
+    supers: Vec<u64>,
+    stack: Vec<u64>,
+}
+
+#[cfg(test)]
+impl CompiledTier2 {
+    /// `write`'s layout of a file, without the call.
+    pub(super) fn lay_out(&self, outputs: &[Vec<u64>], source: &[u8]) -> Laid {
+        let len = source.len();
+        let words = len.div_ceil(64);
+        let mut masks = vec![0u64; words * self.outputs];
+        for (k, out) in outputs.iter().enumerate().take(self.outputs) {
+            for w in 0..words {
+                masks[w * self.outputs + k] = out.get(w).copied().unwrap_or(0);
+            }
+            if len % 64 != 0 {
+                masks[(words - 1) * self.outputs + k] &= (1u64 << (len % 64)) - 1;
+            }
+        }
+        let count = |k: usize| (0..words).map(|w| masks[w * self.outputs + k].count_ones() as usize).sum::<usize>();
+        let tokens: usize = self.leaf_outputs.iter().map(|&k| count(k)).sum();
+        let bound = self.first_rows + tokens * self.per_token + self.start_outputs.iter().map(|&(k, n)| count(k) * n).sum::<usize>();
+        let mut padded = source.to_vec();
+        padded.resize(len + 8, 0);
+        Laid { masks, words, padded, len, nodes: vec![Node::default(); bound], supers: vec![0u64; bound * self.max_classes], stack: vec![u64::MAX; bound + 1] }
+    }
+
+    /// The function alone over laid-out files; the nodes written.
+    pub(super) fn call_laid(&self, files: &mut [Laid]) -> u64 {
+        let mut total = 0;
+        for l in files {
+            let mut counts = [0u64; 2];
+            // SAFETY: as `write`'s call: `lay_out` sized every buffer.
+            let failed = unsafe {
+                (self.entry)(l.masks.as_ptr(), l.words as u64, l.padded.as_ptr(), l.len as u64, l.nodes.as_mut_ptr(), l.supers.as_mut_ptr(), l.stack.as_mut_ptr(), counts.as_mut_ptr())
+            };
+            if failed == 0 {
+                total += counts[0];
+            }
+        }
+        total
     }
 }
 
@@ -242,6 +296,7 @@ pub(super) fn compile(p: &BlockProgram, fallbacks: &[u16]) -> Result<CompiledTie
     validator_sig.params.push(AbiParam::new(types::I64));
     validator_sig.returns.push(AbiParam::new(types::I64));
     let mut context: Context = module.make_context();
+    context.set_disasm(true);
     context.func.signature = signature;
     let mut fbc = FunctionBuilderContext::new();
     {
@@ -922,6 +977,7 @@ pub(super) fn compile(p: &BlockProgram, fallbacks: &[u16]) -> Result<CompiledTie
     }
     let clif = context.func.display().to_string();
     super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|e| format!("define: {e:?}\n{clif}"))?;
+    let disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|e| format!("finalize: {e}"))?;
     let code = module.get_finalized_function(id);
@@ -942,7 +998,7 @@ pub(super) fn compile(p: &BlockProgram, fallbacks: &[u16]) -> Result<CompiledTie
     let per_token = rows.iter().filter(|r| matches!(r.start, RowStart::Kind(_))).count();
     let first_rows = rows.iter().filter(|r| r.start == RowStart::FirstToken).count();
     let max_classes = (0..rows.len()).map(|r| p.codes.iter().filter(|c| usize::from(c.node) == r && !c.field).count()).max().unwrap_or(0).max(1);
-    Ok(CompiledTier2 { _module: module, entry, outputs, start_outputs, leaf_outputs, per_token, first_rows, max_classes, clif })
+    Ok(CompiledTier2 { _module: module, entry, outputs, start_outputs, leaf_outputs, per_token, first_rows, max_classes, clif, disassembly })
 }
 
 /// Open a node of row `r` at the event's byte: the depth check, its code's field and
