@@ -421,6 +421,53 @@ D1 and D2 weighted equally.
 - Agent cost is pennies per task on this model; any case for in-flight conflict identification rests on reviewer
   rounds and on the person, not on agent spend.
 
+#### 6.3.7 Coordination units from other pull requests, surfaced
+
+The coordination units (hand-offs, positions, contracts, retirements, artefacts extracted from every pull request open
+at the work's start, now also from their descriptions) were tested as built, although two of the five links had not
+met their bars: delivered at an area's first touch, 3 per area, framed as other work to know about and to tell the
+person about, not as an instruction. Same 26 OSS pairs and completion protocol as §6.3.6, pre-registered, three
+looks, arms nothing, push (§6.3.5) and units; 270 runs used for the primaries (57 excluded by the leak guard, 25 of
+them in the units arm, mostly agents printing temp-folder variables).
+
+| Primary (units against nothing) | Effect (95% CI) | Holm p | Result |
+| --- | --- | --- | --- |
+| Conflict items with the adopted design after the first pass | +0.1 (−0.3, +0.6) | 0.81 | no effect |
+| D2: ended on the adopted design, no more than 0.10 worse | −0.09 (−0.25, +0.05) | 0.81 | harm not ruled out |
+| Agent cost per task, not worse than ×1.10 | ×1.04 (×0.95, ×1.14) | 0.21 | not shown |
+
+| Scenario | Arm | First-pass items | Ended on the adopted design | Told the person |
+| --- | --- | --- | --- | --- |
+| D1 (earlier design won) | nothing / units / push | 2.73 / 2.14 / 1.93 | 50/55 / 44/49 / 51/56 | 0 / 3 / 0 |
+| D2 (later design won) | nothing / units / push | 1.51 / 2.17 / 1.60 | 78/85 / 68/82 / 73/84 | 0 / 29 / 9 |
+
+Where each run lost the thread (units runs, leaks excluded; units judged blind against the labels):
+
+| Step | D1: the adopted design | D2: the rejected design |
+| --- | --- | --- |
+| A unit stating it was in the ledger | 26/49 | 76/82 |
+| It was a candidate where the agent worked | 23/49 | 65/82 |
+| It made the area's top 3 | 16/49 | 65/82 |
+| It arrived before the area's first edit | 16/49 | 63/82 |
+| The first pass followed it | 12/49 | 38/82 |
+| The person was told (all runs) | 3/49 | 29/82 |
+
+- The units help where the earlier design won (first-pass items 2.73 → 2.14) and hurt where it lost (1.51 → 2.17):
+  surfaced, not instructed, the agent still follows another pull request's stated design about half the time it
+  arrives. Averaged over both, nothing.
+- The asymmetry is in extraction, not delivery: a unit stating the rejected design was in the ledger for 76 of 82 D2
+  runs (the later work's rival had usually written its design down in its description), the adopted design for only
+  26 of 49 D1 runs. Units carry what was written, not what was right.
+- Surfacing works where it matters most: in D2 the agent told the person it diverged from another pull request in 29
+  of 82 runs (push 9, nothing 0). That is the channel a decision log and a resolver (deciding which design wins) need.
+- Against push, units cost less (×0.93) and leave more first-pass items (+0.4): on these small, local conflicts the
+  overlapping hunk is the better signal.
+- In-house (5 new Rerail conflicts involving Jeff Snell's and Gabriel Giangi's work, never used in tuning; descriptive):
+  no arm helps. First-pass items 2.67 (nothing), 3.03 (units), 2.87 (push) with every run counted; the rejected-design
+  pattern repeats on the pair where the later design won (#138/#445: 2.67 → 4.17). The leak guard excluded 50 of 90
+  runs here, mostly for relative documentation links it read as `/tmp` paths and agents printing temp-folder
+  variables, so the pre-registered view (leaks excluded) is too thin to read.
+
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
 
