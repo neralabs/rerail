@@ -1994,3 +1994,51 @@ one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
     assert_eq!(hit, ["beta", "wolf"]);
     assert_eq!(one, ["alpha", "beta"]);
 }
+
+/// Decision 0089: in a combined run, an included library's relations are one copy for the run, made over every
+/// document read, and each policy's rules see only its own scope's documents. Policy B's cross-file rule (two
+/// definitions of one name) would join a document only A's scope reads if the library's rows reached it unguarded.
+/// `.global` shares a policy's own relation when the definitions are alike, and refuses it when they differ.
+#[test]
+fn library_relations_are_shared_and_each_policy_reads_its_own_scope() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("fact-spaces");
+    for (p, text) in [("a/x.py", "def f():\n    pass\n"), ("b/y.py", "def f():\n    pass\n"), ("b/z.py", "def g():\n    pass\n")] {
+        std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join("src").join(p), text).unwrap();
+    }
+    std::fs::write(dir.join("fact-spaces-lib.rr"), r#"
+.decl def_at(f: node, s: symbol)
+def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
+"#).unwrap();
+    let policy = |name: &str, scope: &str, body: &str| -> String {
+        let rule = dir.join(format!("{name}.rr"));
+        std::fs::write(&rule, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n#include \"fact-spaces-lib.rr\"\n.scope dirs \"{scope}\"\n{body}\n")).unwrap();
+        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+    };
+    let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
+    let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
+    let run = |programs: &[&str], out: &str| -> Vec<String> {
+        let out = dir.join(out);
+        crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(|l| format!("{}:{}", l.split('\t').nth(1).unwrap(), l.split('\t').nth(3).unwrap())).collect();
+        got.sort();
+        got
+    };
+    let alone: Vec<String> = [run(&[&a], "out-a"), run(&[&b], "out-b")].concat();
+    assert_eq!(alone, ["Fn:a/x.py"]);
+    assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
+    // The library's relation is unguarded in both policies (so the simplifier makes it one); B's rule is guarded.
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.ends_with(crate::code_rule_dsl::logic::front::SCOPE_DOC)));
+    assert!(!reads_scope("p0_def_at") && !reads_scope("p1_def_at"), "the library's rules stay as written");
+    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel == format!("p1_{}", crate::code_rule_dsl::logic::front::SCOPE_DOC))), "B's reads are guarded");
+    // `.global`: alike (up to variable names) is shared; different is refused.
+    let named = |name: &str, scope: &str, rule: &str| policy(name, scope, &format!(".global named\n.decl named(f: node)\n{rule}\n.violation N(at: node) \"n\"\nN(f) :- named(f)."));
+    let c = named("c", "a", "named(f) :- kind(f, \"function_definition\").");
+    let d = named("d", "b", "named(x) :- kind(x, \"function_definition\").");
+    let e = named("e", "b", "named(f) :- kind(f, \"class_definition\").");
+    assert!(crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &d], "").is_ok());
+    let refused = crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &e], "").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(refused.contains(".global named"), "{refused}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

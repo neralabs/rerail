@@ -26,6 +26,7 @@ use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
+mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod prepared;
@@ -313,6 +314,10 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
 fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
+    // Without decision 0089's guards (`scoping`, a measurement's switch) the same texts combine to another program.
+    if programs.len() > 1 && std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|v| v == "off") {
+        hash.update(b"scope guards off");
+    }
     for text in programs.iter().copied().chain([extra]) {
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
@@ -370,7 +375,11 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
+    let mut policies: Vec<scoping::Policy> = Vec::new();
     for (i, mut prog) in parsed.into_iter().enumerate() {
+        let scope = prog.doc_scopes.clone();
+        let (named, library) = front::globals(&prog.settings);
+        prog.settings.retain(|(k, _)| k != front::GLOBAL);
         // The documents read: those some policy's scope selects; every one when a policy has none.
         all.doc_scopes = match (i, all.doc_scopes.take(), prog.doc_scopes.take()) {
             (0, _, mine) => mine,
@@ -408,6 +417,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
             .cloned()
             .collect();
+        policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
         let rename = |rel: &str| -> String {
             if own.contains(rel) {
                 return format!("p{i}_{rel}");
@@ -474,6 +484,19 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
         }
     }
+    // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0089).
+    let report = scoping::guard(&mut all, &policies).map_err(Error::Plan)?;
+    crate::code_rule_dsl::logic::profile::decision("fact spaces", || {
+        let guarded: Vec<String> = report.guarded.iter().map(|(p, n)| format!("{p}: {n}")).collect();
+        format!(
+            "{} global relations one copy for the run ({} policies' copies); {} library relations a policy changed, its own{}; guards on the reads of the policies narrower than the run: {} (decision 0089)",
+            report.canonical.len(),
+            report.canonical.values().sum::<usize>(),
+            report.demoted.len(),
+            if report.demoted.is_empty() { String::new() } else { format!(" ({})", report.demoted.iter().take(6).cloned().collect::<Vec<_>>().join(", ")) },
+            if guarded.is_empty() { "none".to_owned() } else { guarded.join(", ") },
+        )
+    });
     Ok(all)
 }
 

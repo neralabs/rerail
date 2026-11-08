@@ -2817,6 +2817,13 @@ impl Run<'_> {
                     let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
                     lines.push(format!("test {f} {ts} {tp} {want}"));
                 }
+                Literal::Cmp { l: l @ Term::Var(_), op: "=", r: Term::Call(f, xs) }
+                    if f == "doc" && let [x @ Term::Var(n)] = xs.as_slice() && slots.contains_key(n) =>
+                {
+                    // `$g = @doc($n)` (decision 0089's scope guards): the node's document, natively.
+                    let (tg, tn) = (tok(l, &mut slots)?, tok(x, &mut slots)?);
+                    lines.push(format!("docof {tg} {tn}"));
+                }
                 Literal::Cmp { l: l @ Term::Var(_), op: "=", r: r @ Term::Call(f, _) } if f == "concat" => {
                     // `$s = @concat(@concat($m, "."), $r)`: each concatenation a native function, inner ones first.
                     let made = concat(r, idx, &mut slots, &mut lines)?;

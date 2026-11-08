@@ -38,6 +38,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "flat_bin" => (vec![Some(Name), None, None], None),
         "add" | "sub" | "mul" | "div" | "max" | "min" => (vec![Some(Int); arity], Some(Int)),
         "strlen" => (vec![Some(Name)], Some(Int)),
+        "doc" => (vec![None], Some(Int)),
         "to_string" => (vec![Some(Int)], Some(Name)),
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),

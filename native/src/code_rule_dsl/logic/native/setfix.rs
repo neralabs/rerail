@@ -1478,6 +1478,8 @@ enum Step {
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
+    /// `out = @doc(a)`: node `a`'s document, `d` of `d << 32 | index` (decision 0089's scope guards).
+    DocOf { a: Key, out: usize, bind: bool },
     /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
     /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
     Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
@@ -1579,6 +1581,15 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
                 steps.push(Step::Lt { a, b, or_eq: toks[0] == "le" });
+            }
+            "docof" => {
+                // `docof <out> <node>`
+                let Some(a) = tok(toks[2], syms)? else { return Err(err("the document of `_`")) };
+                if !is_bound(&bound, a) { return Err(err("the document of an unbound slot")); }
+                let Some(Key::Slot(o)) = tok(toks[1], syms)? else { return Err(err("a document into a constant")) };
+                let bind = !is_bound(&bound, Key::Slot(o));
+                grow(&mut bound, o); bound[o] = true;
+                steps.push(Step::DocOf { a, out: o, bind });
             }
             "func" => {
                 // `func <name> <out> <args…>`
@@ -1812,6 +1823,11 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     _ => return,
                 };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
+            Step::DocOf { a, out, bind } => {
+                let d = val(slots, *a) >> 32;
+                if *bind { slots[*out] = d } else if slots[*out] != d { return }
                 go(cx, i + 1, slots);
             }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },

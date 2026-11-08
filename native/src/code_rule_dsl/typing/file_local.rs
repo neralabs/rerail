@@ -259,13 +259,15 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
     }
 }
 
-/// The rule's `a = b` between two variables.
+/// The rule's `a = b` between two variables, and its `d = @doc(n)` (decision 0089's scope guards): d is n's
+/// document, so the two place one document, as a document column and a node of one atom do.
 fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(String, String)> {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     rule.body
         .iter()
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.clone(), b.clone())),
             _ => None,
         })
         .collect()

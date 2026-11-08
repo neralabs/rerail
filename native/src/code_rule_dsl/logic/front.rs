@@ -367,6 +367,30 @@ pub(in crate::code_rule_dsl) struct Program {
 /// it holds no path; `resolve_scopes` adds the option's values beside it.
 pub(in crate::code_rule_dsl) const OPTION_GLOB: &str = "rr-option:";
 
+/// `.global r, …`: relations of a policy that a combined run shares, as it shares a library's, when every policy that
+/// has one defines it alike (decision 0089). `.global library r, …` names an included file's relations (`rr::read_file`
+/// writes it): shared where alike, else each policy's own.
+pub(in crate::code_rule_dsl) const GLOBAL: &str = "global";
+/// `.global`'s first word for an included file's relations.
+pub(in crate::code_rule_dsl) const LIBRARY: &str = "library";
+
+/// A program's `.global` relations: (named by the policy, an included file's).
+pub(in crate::code_rule_dsl) fn globals(settings: &[(String, String)]) -> (BTreeSet<String>, BTreeSet<String>) {
+    let (mut named, mut library) = (BTreeSet::new(), BTreeSet::new());
+    for (_, text) in settings.iter().filter(|(k, _)| k == GLOBAL) {
+        let (to, rest) = match text.trim().strip_prefix(LIBRARY).filter(|r| r.starts_with(char::is_whitespace)) {
+            Some(rest) => (&mut library, rest),
+            None => (&mut named, text.as_str()),
+        };
+        to.extend(rest.split(|c: char| c == ',' || c.is_whitespace()).filter(|w| !w.is_empty()).map(str::to_owned));
+    }
+    (named, library)
+}
+
+/// A policy's documents (`.scope`'s `dirs`, `include`, `exclude`), as lowering derives them: `rr_scope_doc(d)`. In a
+/// combined run, the guards on the policy's reads test it (decision 0089).
+pub(in crate::code_rule_dsl) const SCOPE_DOC: &str = "rr_scope_doc";
+
 /// `scopes` with each option entry's values (`OPTION_GLOB`) added beside it, from the run's `options` as
 /// `option`/`option_item` read them: a directory under `dirs`, a glob under `include` or `exclude`. An option the run
 /// does not set adds nothing, and its entry still holds no path (an entry whose only globs are such reads none).
