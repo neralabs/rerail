@@ -2652,13 +2652,13 @@ impl Run<'_> {
         }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
-        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>)> {
+        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>, Vec<usize>)> {
             if scc.contains(&l.rel) {
                 let src = format!("{}{}", if idx.is_some() && idx == at { "d" } else { "c" }, ri[&l.rel]);
-                return Some((src, l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?));
+                return Some((src, l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?, (0..l.args.len()).collect()));
             }
             if native_rels.contains(&l.rel) {
-                return Some((format!("r:{}", hex(&l.rel)), l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?));
+                return Some((format!("r:{}", hex(&l.rel)), l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?, (0..l.args.len()).collect()));
             }
             let is_const = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_));
             let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
@@ -2688,7 +2688,7 @@ impl Run<'_> {
                 toks.push("_".to_owned());
             }
             let base = if prog.inputs.contains(&l.rel) || self.model.view_src.contains_key(&l.rel) { "b" } else { "d" };
-            Some((format!("t:{base}:{}:{}:{types}", hex(&sel), hex(&cols)), toks))
+            Some((format!("t:{base}:{}:{}:{types}", hex(&sel), hex(&cols)), toks, keep))
         };
         let kinds = |kset: &str| hex(&prog.kindsets[kset].join(","));
         let mut lines = Vec::new();
@@ -2698,7 +2698,7 @@ impl Run<'_> {
                     if s.mode == Some(Mode::Range) {
                         return None;
                     }
-                    let (sc, toks) = atom(l, Some(idx), &mut slots)?;
+                    let (sc, toks, _) = atom(l, Some(idx), &mut slots)?;
                     lines.push(format!("{} {sc} {}", if l.neg { "neg" } else { "pos" }, toks.join(" ")));
                 }
                 Literal::Cmp { l: Term::Call(fl, xl), op, r: Term::Call(fr, xr) }
@@ -2787,7 +2787,7 @@ impl Run<'_> {
                     if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) {
                         return None;
                     }
-                    let (sc, toks) = atom(a, None, &mut slots)?;
+                    let (sc, toks, _) = atom(a, None, &mut slots)?;
                     lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
@@ -2803,7 +2803,10 @@ impl Run<'_> {
                     }
                     let mut a = a.clone();
                     a.args[col] = Term::Wild;
-                    let (sc, toks) = atom(&a, None, &mut slots)?;
+                    let (sc, toks, columns) = atom(&a, None, &mut slots)?;
+                    // Constant-filtered input columns are not present in the native row.
+                    // The aggregate must address the same projection as its atom tokens.
+                    let col = columns.iter().position(|&original| original == col)?;
                     let name = if *op == AggOp::Min { "min" } else { "max" };
                     lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }

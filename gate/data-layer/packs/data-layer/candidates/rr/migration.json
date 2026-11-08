@@ -1527,7 +1527,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-fragment-usage.rr",
-      "sha256": "784aa3dfcc3dfe1fdbfa06c9bedc98379bf70f5b9eb63b03cf1cf4c38ea10c4c",
+      "sha256": "5d91e53ae8bf3979548aaba0288f4daa7123a7f31f2e7b94d5fa13c0a8524752",
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_fragment_usage.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1874,7 +1874,7 @@
       "legacySha256": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-fragment-usage.rr",
-      "ruleSha256": "784aa3dfcc3dfe1fdbfa06c9bedc98379bf70f5b9eb63b03cf1cf4c38ea10c4c"
+      "ruleSha256": "5d91e53ae8bf3979548aaba0288f4daa7123a7f31f2e7b94d5fa13c0a8524752"
     },
     {
       "check": "grammar_allowlist_burndown",
@@ -2603,7 +2603,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "b35055a739fcd8534e47eab26749f7112ef4ec7a304de8392fd8acc6d3b27e78"
+        "sha256": "a9eb0293f394190a0037eb5ef859a53effc9295f2209837942cace6372f80f52"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2611,7 +2611,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "773ef6e2b3a844f1dfb02ef7d19ee86967dc6432038ee8b10fd8669ca89ac6f6"
+        "sha256": "ef7ddd388422b8321b2021696c357fdb5ecc1cb11237b8b72e5de873b67fae26"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
