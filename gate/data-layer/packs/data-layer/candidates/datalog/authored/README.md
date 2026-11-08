@@ -223,18 +223,16 @@ runner too.
   `pythonAst` stage (a file `ast.parse` rejects fails the stage) is `!cpython_syntax_error(d, _, _)`; a policy's
   `parsed` stage `syntax_error` (`reported-parser-error`) is `cpython_syntax_error(d, _, _)`. A file that reads
   core.rr's `syntax_error(d, l, msg)` by that name reads the same rows (`rr::lower::core`).
-- `string_annotation(s)` and `parsed(s, "annotation", root)` (`facts::vtab::syntax::annotation`): `s` (a `string` or
-  `concatenated_string`) is a string Ruff 0.16.9's semantic model reads as a type definition (the engine's scope
-  table: `x: "Foo"`, `-> "Foo"`, `List["Foo"]` in one, `cast("Foo", x)`, `TypeVar("T", bound="Foo")`; not a
-  `Literal` argument or `Annotated` metadata), nested ones included; `root` is the tree of its value (decoded) as
-  Ruff's `parse_type_annotation` reads it, an `expression_statement` over the whole value. Each tree is a document of
-  its own, numbered past the files (no `doc`, `pkg`, `syntax_error`, `source` row): its nodes have `node`, `child`,
-  `field`, `tape`, `text`, `name`, `str`, `strprefix`, `intval`, `op`, `line`, `end_line`, `col`, `node_text`
-  and `docof` rows over the value's text (lines and offsets in it, not the file's), so `inside(n, root,
-  "expression_statement")` and `text(n, x)` read its names. A nested string (`"List['A']"`'s `'A'`) is a node of its
-  outer tree, and has its own. A string Ruff's parser refuses (CPython's `ast.parse(value, mode="eval")` refuses it
-  too) has `string_annotation` and no `parsed` row. A rule over `node(d, n, …)` that is not joined to `doc(d, …)` or
-  `in_scope(d)` also reads the trees' nodes, where the program reads `parsed` or `string_annotation`.
+- `string_annotation(s)` (`facts::vtab::syntax::annotation`): `s` (a `string` or `concatenated_string`) is a string
+  Ruff 0.16.9's semantic model reads as a type definition (the engine's scope table: `x: "Foo"`, `-> "Foo"`,
+  `List["Foo"]` in one, `cast("Foo", x)`, `TypeVar("T", bound="Foo")`; not a `Literal` argument or `Annotated`
+  metadata), nested ones included. `parsed(s, "annotation", root)` is decision 0055's guest: write it after
+  `string_annotation(s)`, which says which strings to parse (a `parsed` atom with `s` bound by nothing else asks for
+  nothing). The value (decoded) is parsed as `( … )`; `root` is the expression inside, a node of the guest document,
+  whose nodes are its subtree, placed at the file's lines and columns (`within(n, root)` and `text(n, x)` read its
+  names). A nested string (`"List['A']"`'s `'A'`) is a node of its outer guest and a `string_annotation` there, with
+  a guest of its own. A string whose guest does not parse has `string_annotation` and no `parsed` row. GAP: the
+  guest is judged as a module, `(value)`, where W asked `ast.parse(value, mode="eval")` (`(yield x)` parses here).
 - `literal_json(n, v)` (`facts::vtab::syntax::cpython`, `cpython::literal`) is W's pythonAst `literal_json` field:
   CPython 3.13's `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` of the `ast` node at
   n's span whose class n's kind is (W's worker's `KINDS`: a `string` or `concatenated_string` (not its parts), an

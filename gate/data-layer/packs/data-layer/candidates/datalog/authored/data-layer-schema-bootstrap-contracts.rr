@@ -13,9 +13,12 @@
 // str Constant (W's `value` of a string or an adjacent-string run with no b or f part), the names of
 // `ast.parse(value, mode="eval").body`, recursively (a body that is itself a str Constant is parsed again), or
 // `[value]` when it does not parse; for anything else, the Name ids and Attribute attrs below it (nested strings
-// not parsed): tree-sitter's identifiers less keyword-argument and lambda-parameter names. The parse is the
-// engine's `parsed(s, "annotation", root)` (Ruff's parse_type_annotation, CPython 3.13's verdict and names on
-// memory47); `string_annotation(s)` with no `parsed` row is a string CPython refuses. W asks this of each annotation
+// not parsed): tree-sitter's identifiers less keyword-argument and lambda-parameter names. The parse is decision
+// 0055's guest, `string_annotation(s), parsed(s, "annotation", root)`: the string's value parsed as `( … )`, root the
+// expression inside; `string_annotation(s)` with no `parsed` row is a string whose guest does not parse.
+// GAP: the guest is judged by CPython's grammar as a module, `(value)`, where W asks `ast.parse(value,
+// mode="eval")`: a value only the module form accepts (`yield x`, which ast.parse only rejects when compiled) has
+// names here and its value in W. W asks this of each annotation
 // root (fields annotation/returns) and of each Subscript value/slice below one; the clause reads the roots and,
 // for SBC002's read-only test, the slice of a root `Sequence[…]`.
 // Gaps (none in the scoped files today): a str Constant W parses where the engine has no `string_annotation` row
@@ -110,11 +113,15 @@ bootstrap_string_ann(t) :- bootstrap_ann_expr(t, s), bootstrap_plain_string(s, _
 
 // bootstrap_str_names(s, x): x is in annotation_names(s) for str Constant s: the names of the tree its value
 // parses to (a body that is a str Constant parsed again), or the value itself when it does not parse.
-// bootstrap_body(r, e): the expression a parsed tree r holds, parentheses taken off; bootstrap_body_str(r, e):
-// that expression is a str Constant (a string with no b, f or t prefix; `str` its decoded value).
+// bootstrap_body(r, e): the expression a parsed tree r holds (r itself, the guest's root), parentheses taken off;
+// bootstrap_body_str(r, e): that expression is a str Constant (a string with no b, f or t prefix; `str` its decoded
+// value). bootstrap_in_tree(r, i): i is r or a node below it.
 .decl bootstrap_body(r: node, e: node)
-bootstrap_body(r, e) :- parsed(_, "annotation", r), child(r, e, 0), !child(r, _, 1).
+bootstrap_body(r, r) :- string_annotation(s), parsed(s, "annotation", r).
 bootstrap_body(r, i) :- bootstrap_body(r, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+.decl bootstrap_in_tree(r: node, i: node)
+bootstrap_in_tree(r, r) :- string_annotation(s), parsed(s, "annotation", r).
+bootstrap_in_tree(r, i) :- string_annotation(s), parsed(s, "annotation", r), within(i, r).
 .decl bootstrap_nonstr_prefix(e: node)
 bootstrap_nonstr_prefix(e) :- bootstrap_body(_, e), strprefix(e, p), match("(?s:.*)[bBfFtT](?s:.*)", p).
 .decl bootstrap_body_str(r: node, e: node)
@@ -123,9 +130,9 @@ bootstrap_body_str(r, e) :- bootstrap_body(r, e), node(_, e, "string", _, _), !b
 bootstrap_str_value(s, v) :- bootstrap_plain_string(s, v).
 bootstrap_str_value(e, v) :- bootstrap_body_str(_, e), str(e, v).
 .decl bootstrap_str_names(s: node, x: symbol)
-bootstrap_str_names(s, x) :- parsed(s, "annotation", r), !bootstrap_body_str(r, _), node(_, i, "identifier", _, _),
-    inside(i, r, bootstrap_stmt), text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
-bootstrap_str_names(s, x) :- parsed(s, "annotation", r), bootstrap_body_str(r, e), bootstrap_str_names(e, x).
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), !bootstrap_body_str(r, _), bootstrap_in_tree(r, i),
+    node(_, i, "identifier", _, _), text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), bootstrap_body_str(r, e), bootstrap_str_names(e, x).
 bootstrap_str_names(s, x) :- string_annotation(s), !parsed(s, "annotation", _), bootstrap_str_value(s, x).
 
 // ---- parameters -----------------------------------------------------------------------------------------------

@@ -2282,9 +2282,12 @@ violation("data-layer-serverplan-quality", "spq-replay-step-tags", "SPQ-047", p,
 //   `parse_type_annotation` over the string's value, at the strings Ruff's scope table reads as type definitions
 //   (`literal::annotation`, `matcher::parse`: no table entry, no match), and reads the tree's identifiers and
 //   attributes not under an attribute as atoms (`has` stopBy end from the tree's expression_statement root). That
-//   is `parsed(s, "annotation", root)` (only a string_annotation has one) and `inside(n, root, "expression_statement")`:
-//   exact. A string Ruff's parser refuses is an ERROR root in W, whose `has` finds nothing, and has no `parsed` row
-//   here. A nested string (`"List['A']"`'s `'A'`) is a node of the outer tree, not of the file: W's `has` reads no
+//   is decision 0055's guest, `string_annotation(s), parsed(s, "annotation", root)` (the value parsed as `( … )`,
+//   root the expression inside), and the root or a node below it (`spq_runtime_state_annotations_node`). A string
+//   Ruff's parser refuses is an ERROR root in W, whose `has` finds nothing; here its guest does not parse and has no
+//   `parsed` row. GAP: the guest is judged by CPython's grammar as a module, `(value)`, where Ruff parses the value
+//   as an expression: a value only the module form accepts (`yield x`) gives atoms here and none in W. A nested
+//   string (`"List['A']"`'s `'A'`) is a node of the outer tree, not of the file: W's `has` reads no
 //   name inside it, and qstr's string is a node of the admitted file d. ATOM.text is the captured node's text in the
 //   tree's source, the decoded value: an identifier's text(), an attribute's node_text() (exact source bytes for a
 //   simple string, the value for an escaped or concatenated one, as W). The row is the string's (`each` keeps the
@@ -2389,8 +2392,12 @@ spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), 
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
 spq_runtime_state_annotations_qstr(d, s, a) :- node(d, s, "string", _, _), spq_runtime_state_annotations_in_type(d, s, a), spq_runtime_state_annotations_ann0(d, a).
 spq_runtime_state_annotations_qstr(d, s, a) :- node(d, s, "concatenated_string", _, _), spq_runtime_state_annotations_in_type(d, s, a), spq_runtime_state_annotations_ann0(d, a).
-spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), parsed(s, "annotation", r), inside(n, r, "expression_statement"), node(_, n, "identifier", _, _), !spq_runtime_state_annotations_in_attr(n), text(n, x).
-spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), parsed(s, "annotation", r), inside(n, r, "expression_statement"), node(_, n, "attribute", _, _), !spq_runtime_state_annotations_in_attr(n), node_text(n, x).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), spq_runtime_state_annotations_node(s, n), node(_, n, "identifier", _, _), !spq_runtime_state_annotations_in_attr(n), text(n, x).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), spq_runtime_state_annotations_node(s, n), node(_, n, "attribute", _, _), !spq_runtime_state_annotations_in_attr(n), node_text(n, x).
+// spq_runtime_state_annotations_node(s, n): n is the root of string annotation s's tree, or a node below it.
+.decl spq_runtime_state_annotations_node(s: node, n: node)
+spq_runtime_state_annotations_node(s, r) :- string_annotation(s), parsed(s, "annotation", r).
+spq_runtime_state_annotations_node(s, n) :- string_annotation(s), parsed(s, "annotation", r), within(n, r).
 spq_runtime_state_annotations_head_s(x) :- spq_runtime_state_annotations_atom(_, _, _, _, _, x).
 spq_runtime_state_annotations_head(x, h) :- spq_runtime_state_annotations_head_s(x), match("[A-Za-z_](?s:.*)", x), h = @rx_replace(x, "^([A-Za-z_]\\w*)(?s:.*)$", "$1").
 spq_runtime_state_annotations_need(d, s, h) :- spq_runtime_state_annotations_atom(d, a, _, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h).
