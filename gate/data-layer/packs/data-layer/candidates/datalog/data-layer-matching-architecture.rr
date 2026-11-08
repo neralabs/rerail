@@ -306,8 +306,8 @@ matching_file_doc(d) :- matching_file_candidate(d), matching_file_every_module(0
 matching_file_doc(d) :- matching_file_prefixed(d), !matching_file_every_module(0), matching_file_production(d).
 matching_file_doc(d) :- matching_file_prefixed(d), !matching_file_every_module(0), matching_file_contract_text(d).
 matching_file_doc(d) :- matching_file_prefixed(d), !matching_file_every_module(0), matching_file_layer_path(d), matching_file_def_match(d).
-matching_file_doc(d) :- matching_file_prefixed(d), !matching_file_every_module(0), doc(d, p, _), matching_file_application_path(p).
-matching_file_doc(d) :- matching_file_prefixed(d), !matching_file_every_module(0), matching_file_under_root(d).
+matching_file_doc(d) :- matching_file_candidate(d), !matching_file_every_module(0), doc(d, p, _), matching_file_application_path(p).
+matching_file_doc(d) :- matching_file_candidate(d), !matching_file_every_module(0), matching_file_under_root(d).
 matching_file_production(d) :- doc(d, p, _), match("data_layer/matching\\.py|l1470_matching_contracts/.*|(.*/)?l5250_matching/.*", p).
 matching_file_application(d) :- matching_file_doc(d), doc(d, p, _), match("(applications|application|app)/.*|(.*/)?applications/.*", p).
 matching_file_application(d) :- matching_file_doc(d), doc(d, p, _), matching_file_application_path(p).
