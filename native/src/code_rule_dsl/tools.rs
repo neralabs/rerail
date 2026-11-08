@@ -1,6 +1,7 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
+pub use super::logic::profile::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
@@ -531,6 +532,20 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
+        // A file another one `#include`s is a library of it (`…confusables.rr`), not a program of its own: alone it
+        // has neither the declarations it reads nor the rules that fill its inputs.
+        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| {
+                text.lines()
+                    .filter_map(|l| l.trim().strip_prefix("#include"))
+                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         files.iter().map(|path| crate::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]

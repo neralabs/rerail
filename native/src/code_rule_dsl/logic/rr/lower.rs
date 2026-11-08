@@ -1488,6 +1488,18 @@ impl Lowerer {
             }
             Some(SpanIn::Kinds(kinds))
         };
+        // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
+        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
+        {
+            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            for (rel, cols) in &self.prog.decls {
+                if !heads.contains(rel) && !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.natives.contains_key(rel) {
+                    for i in 0..cols.len() {
+                        columns.insert((rel.clone(), i), SpanIn::Kinds(BTreeSet::new()));
+                    }
+                }
+            }
+        }
         // Kinds only grow, but a column found later can change which atom binds a variable first: the rounds are
         // bounded.
         for _ in 0..64 {

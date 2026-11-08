@@ -358,15 +358,21 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         front::declared(&prog)?;
         Ok(prog)
     };
+    let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(parsing);
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
     // makes none is left as written.
     if parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str()))) {
+        let _hiding = crate::code_rule_dsl::logic::profile::span(|| {
+            format!("bound each program to the documents it shows ({} programs, {} rules; decision 0058)", parsed.len(), parsed.iter().map(|p| p.rules.len()).sum::<usize>())
+        });
         for p in &mut parsed {
             let bound = hiding::bound(p);
             hiding::hide(p, bound);
         }
     }
+    let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
         return Ok(parsed.pop().expect("one program"));
     }
@@ -635,16 +641,29 @@ pub(crate) fn run_with_options(
     } else {
         programs
     };
+    // The program, combined once: asked first whether it reads the file system, then run. A profiled run holds the
+    // profile (`profile::one_run`) from here, and lets go before rounds of discovery, which are runs of their own.
+    let mut early = None;
+    // The main thread's CPU and the process's peak RSS when the run began: the first phase counts combining.
+    let began = { let (u, s) = thread_usage(); (u, s, usage().2) };
     if world_round.is_none() {
+        let hold = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+        if hold.is_some() && crate::code_rule_dsl::logic::profile::on() {
+            crate::code_rule_dsl::logic::profile::reset();
+        }
+        let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
         let prog = combine(programs, "")?;
+        drop(combining);
         if world::wanted(&prog) {
+            drop(hold);
             return discover(programs, &prog, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
         }
+        early = Some((prog, hold));
     }
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
-    let mut last = main_usage();
+    let mut last = began;
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
         let now = main_usage();
@@ -663,13 +682,26 @@ pub(crate) fn run_with_options(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    let _profile = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+    let (early, held) = match early {
+        Some((prog, hold)) => (Some(prog), Some(hold)),
+        None => (None, None),
+    };
+    let _profile = match held {
+        Some(hold) => hold,
+        None => {
+            let hold = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+            if hold.is_some() && crate::code_rule_dsl::logic::profile::on() {
+                crate::code_rule_dsl::logic::profile::reset();
+            }
+            hold
+        }
+    };
     let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
-    if profiling {
-        crate::code_rule_dsl::logic::profile::reset();
-    }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let mut prog = combine(programs, "")?;
+    let mut prog = match early {
+        Some(prog) => prog,
+        None => combine(programs, "")?,
+    };
     let mut texts = texts_digest(programs, "");
     drop(combining);
     world::add_facts(&mut prog, options.get("worldFacts"));
@@ -2510,9 +2542,18 @@ impl Statements {
             let state = unsafe { &*state.cast::<StatementState>() };
             if event == ffi::SQLITE_TRACE_STMT as u32 {
                 state.count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // The statement this thread now runs, for a dump of a run that has not ended (decision 0082).
+                if crate::code_rule_dsl::logic::profile::on() {
+                    // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
+                    let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" ");
+                    crate::code_rule_dsl::logic::profile::statement(Some(text));
+                }
                 return 0;
             }
             let profiled = crate::code_rule_dsl::logic::profile::on();
+            if profiled {
+                crate::code_rule_dsl::logic::profile::statement(None);
+            }
             if state.costs.is_none() && !profiled {
                 return 0;
             }
