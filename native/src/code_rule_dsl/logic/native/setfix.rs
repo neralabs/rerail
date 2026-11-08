@@ -538,7 +538,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
-                eprintln!("      wave {waves} probe {pi} starts, delta {d}");
+                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
             }
             let n = run_join(j, p.head, store, &mut syms, &mut fresh);
             visits += n;
@@ -1543,6 +1543,8 @@ enum Step {
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
+    /// `out = @doc(n)`: node n's document, bound or tested.
+    DocOf { out: usize, n: Key, bind: bool },
     /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
     /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
     Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
@@ -1670,6 +1672,14 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     Key::Slot(_) => None,
                 };
                 steps.push(Step::Test { op, s, p, matcher, want: toks[4] == "1" });
+            }
+            "docof" => {
+                // `docof <out> <n>`
+                let (Some(Key::Slot(o)), Some(n)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad docof")) };
+                if !is_bound(&bound, n) { return Err(err("the document of an unbound slot")); }
+                let bind = !is_bound(&bound, Key::Slot(o));
+                grow(&mut bound, o); bound[o] = true;
+                steps.push(Step::DocOf { out: o, n, bind });
             }
             "testset" => {
                 // `testset <op> <s> <0|1> <constants…>`: a text test against a set of symbols' names.
@@ -1880,6 +1890,11 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 go(cx, i + 1, slots);
             }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
+            Step::DocOf { out, n, bind } => {
+                let d = val(slots, *n) >> 32;
+                if *bind { slots[*out] = d } else if slots[*out] != d { return }
+                go(cx, i + 1, slots);
+            }
             Step::Test { op, s, p, matcher, want } => {
                 let s = cx.syms.name(val(slots, *s));
                 let hit = match matcher {
