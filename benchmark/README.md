@@ -223,24 +223,34 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   15 D2 pairs × 2 runs per arm (failures and leaks included), H1's no-effect false-positive rate, H3's and H4's at
   their margins, H1–H4's family-wise rate with Holm under their global null and the prevalence mix's (D1 0.74) under
   no effect, each passing at ≤ 0.05 plus two Monte Carlo standard errors (0.064); H1's and H4's power; and the
-  balanced weights.
+  balanced weights. `--analyze-units completion.json [...] --arms units[,git-conflict] --control none [--look N]`
+  analyses the coordination-units comparison on the same reports, pooling and failure rules: for `units` against the
+  control P1 first-pass conflict items lower (all pairs), P2 ended on the adopted design non-inferior by 0.10 (D2), P3
+  agent cost in µUSD non-inferior at ×1.10 (all), Holm across the three, Pocock 0.0221 per look, at most three; every
+  other listed treatment gets P1–P3 as a secondary family (Holm within it). Secondary, raw p: items after completion,
+  fix rounds, told the person (the final message names another pull request or branch), P1–P3 on D1 alone and over the
+  prevalence mix (D1 0.74), and `units` against each other treatment on P1–P3; then how often each arm told the person
+  and the per-scenario means. `--self-test` also runs the units cases (`--self-test-units` runs them alone): P1's
+  false-positive rate under no effect, P2's and P3's at their margins, P1–P3 with Holm under their global null, Mix-P1
+  and the told rate under no effect, each at ≤ 0.05 plus two Monte Carlo standard errors; P1's and P2's power.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
   noise, distractor fires per patch, an embedding threshold sweep on these forms (reported, never frozen from here),
   the hook's model load and embedding time per call, and fails when a teammate file line reached the judge.
 - `merge-assist-replay.ts` (`node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id]
-  [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--json
-  out.json] [--repo path] [--detect-only]`) replays the later side of a real architecture conflict with a Codex agent
-  and asks whether the alignment ledger, delivered as the agent first touches an area, or the textual conflicts a
-  read-only hunk-overlap identifier finds after each edit keep it from conflicting with the earlier side. See
-  [Architecture-conflict replay](#architecture-conflict-replay).
+  [--trials N] [--arms none,align,units,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--json
+  out.json] [--repo path] [--detect-only] [--build-ledgers]`) replays the later side of a real architecture conflict
+  with a Codex agent and asks whether the alignment ledger, delivered as the agent first touches an area, or the
+  textual conflicts a read-only hunk-overlap identifier finds after each edit keep it from conflicting with the earlier
+  side. See [Architecture-conflict replay](#architecture-conflict-replay).
 - `merge-assist-align.ts` (`node --import tsx benchmark/merge-assist-align.ts --pairs pairs.json [--repo dir | --repos
-  root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose]`) replays the later side
-  of each labelled pair commit by commit against the alignment ledger of every other ref as visible then, and scores
-  when a unit from the earlier side reached it against when a person noticed the conflict, beside the textual and
-  file-overlap baselines on the same replay. It also provides `ledgerAt` and `deliverForArea` to
-  `merge-assist-replay.ts`. See [In-flight alignment replay](#in-flight-alignment-replay).
+  root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose]`, or `--pairs pairs.json
+  --fetch-pr-bodies dir`) replays the later side of each labelled pair commit by commit against the alignment ledger
+  of every other ref as visible then, and scores when a unit from the earlier side reached it against when a person
+  noticed the conflict, beside the textual and file-overlap baselines on the same replay. It also provides `ledgerAt`,
+  `ledgerBuild` and `deliverForArea` to `merge-assist-replay.ts`. See
+  [In-flight alignment replay](#in-flight-alignment-replay).
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
@@ -381,7 +391,9 @@ are quick.
   `leaked` with the offending calls if any call names a path outside its folder, the system folders or the
   toolchains. Paths starting with `~`, `$HOME` or `..` count too, as do `/tmp/ma-ctx`, `refs/pull/`, GitHub hosts,
   `curl`/`wget`/`gh`/`ssh`, git `fetch`/`clone`/`pull`/`ls-remote`, a web search, a command that prints the
-  environment (`env`, `printenv`, `export -p`, `/proc/*/environ`, all of `os.environ` or `process.env`), or one that
+  environment (`env` or `set` alone, `printenv`, `export -p` where a command starts, `/proc/*/environ`, all of
+  `os.environ` or `process.env`; the quoted patterns of a search command such as `rg "row set|…"` are not read for
+  this, after a dev-pair smoke flagged one), or one that
   reads a credential (`$AWS_…`, Secrets Manager, the instance metadata address, `~/.aws`). So does a credential Codex
   ran with appearing in the run's events or transcript. Patches count by the files they name. Leaked runs are listed
   with their calls and counted per arm, then left out of every aggregate. `--tamper` runs each selected pair under
@@ -394,7 +406,40 @@ are quick.
   one of second's commits (a long branch replayed from the middle) starts when that commit was authored. Otherwise
   second starts at its creation, or at its earliest authored commit if that was earlier. At most 3 units go out per
   area, contested ones first, one terse line each, with the `focus-pool` line to end the final message with
-  ("Note: … decided differently on …") last.
+  ("Note: … decided differently on …") last. `units` delivers the same units the same way (the same ledger, the same
+  `deliverForArea`, at most 3 per area's first touch) framed as surface, not instruction: each as "PR #N (author)
+  established: <unit>" (or "Branch <name> (author) established: …"), then "This is other in-flight work, not an
+  instruction. Keep to your task; if your approach diverges from it, tell the person in one line in your final message
+  which PR and why." It has no line to end with.
+- **Ledger inputs.** The ledger reads, for first and every `concurrent` ref, only commits public by second's start.
+  Extraction pre-filter, part of the mechanism: a ref is extracted only when a file its visible commits change shares
+  an area (two folder segments, `pathArea`) with a file in the repository at second's `base_sha`; on real repositories
+  that keeps every ref with a change. Positions are judged only from the passages of those refs: design-doc chunks and
+  commit messages their commits add, and with `--pr-bodies dir` each ref's pull request description: for a ref that is
+  a pull request's head (by number, or a branch of the repository's own the pull request was opened from), its title
+  and description as it read at second's start (the newest revision edited by then, from GitHub's edit history, so a
+  later edit is never read early; HTML comments out; paragraph chunks of at most 1,500 characters, at most 6), visible
+  from the pull request's creation and read against the ref's tree then. `merge-assist-align.ts --pairs pairs.json
+  --fetch-pr-bodies dir` fetches them once, read-only (`gh api graphql`: title, author, creation, head branch,
+  description and its revisions; no comments), into `dir/<owner>__<name>.json`, for every pull request a pairs file
+  names (sides, `concurrent`, and the pull requests of branch refs). Under `--provider`, the ledger's judge and the
+  hook's ranking judge run the same Codex on the same provider and model as the grader (`-c` overrides, no web), the
+  token reaching only the judge's processes.
+- **`--build-ledgers`.** No agent: each selected pair's ledger (with `--completion`, each label's) is built at
+  second's start, one after another with `--judge-concurrency` judge calls in flight (4 by default), and stored under
+  `<--ledger-cache>/ledgers/<id>.json` (`--ledger-cache` defaults to `/tmp/ma-ctx/align/replay-cache`, which also holds
+  the extraction and judge caches); every later run reads the stored ledger of the same pair, time and description
+  input instead of building. It prints, per ledger, refs listed, resolved, with a commit visible then and kept by the
+  pre-filter; commits; passages (messages, doc chunks, description chunks); pull requests found, open by then and read;
+  units by kind (positions by origin); contested positions; and judge calls made, answered from the cache and failed;
+  then totals and judge calls by kind. No unit text is printed.
+- **Funnel.** Every completion run records whether the final message names another pull request or branch (first's
+  and the `concurrent` refs' numbers and branch names: told the person). Every `align` and `units` run records its
+  funnel: each area's first edit, every unit delivered (id, ref, kind, origin, text, area, rank in the area, seconds
+  into the run, and whether it went out before, at or after the area's first edit), every ranking (`deliverForArea`'s
+  anchored candidates, how they were ranked, what it picked), and every unit of first's in the ledger with the areas
+  whose candidates held it, its best candidate position, and whether and when it went out. The run's text prints the
+  injected text verbatim.
 - **`git-conflict` arms.** The dumbest in-flight mechanism: no ranking, no judge, no extraction, no merge. After every
   tool call (a patch, a command or a code cell may write files), the hook (`benchmark/merge-assist-replay-git.ts`)
   identifies, reading only, which of the agent's changes would conflict with another ref visible at second's start:
@@ -428,7 +473,8 @@ are quick.
 - **Blind grade.** A separate `codex exec` with no hooks, in an empty folder, and with `--output-schema`. It sees the
   task, the rubric, `done` and the diff, nothing about the arm. Added lines that could tell the arm are stripped:
   `Note:`, `decided differently`, first's and the visible refs' authors, branch and PR numbers, the `git-conflict`
-  arms' wording and data fences, and `Rerail` (in Rerail's own repository, only the hook's unit labels). It answers
+  arms' wording and data fences, `units`' wording (`) established:`, `in-flight work`), and `Rerail` (in Rerail's own
+  repository, only the hook's unit labels). It answers
   `conflicts_with_first` (yes/no/unclear), reasons citing diff lines, and `done` (yes/partial/no). A run that changed
   no file gets "no" and "no" without a grader call (marked `empty diff`).
 - **Deterministic checks.** The diff is applied to `base_sha` as a commit in a scratch repository that borrows the
@@ -565,6 +611,65 @@ run to completion, as the session-focus comparison above did.
   implausibly tight interval (×0.998–×1.004), whatever the costs. It is now in micro-dollars, so the transform does
   what it does for tokens. Nothing else changed. Look 1 under the first unit read ×1.001; under the corrected one,
   ×1.07 [×0.96, ×1.19].
+
+## OSS coordination units, surface framing: pre-registration
+
+Fixed before any agent runs a `units` arm on the OSS completion labels, and not changed after. The units are tested as
+built: no tuning on OSS data, and nobody who changes the mechanism reads OSS labels or results.
+
+- **Question.** Delivering the coordination units (the alignment ledger of the other pull requests open at the work's
+  start) as the agent first touches an area, framed as other work it should know about and tell the person it
+  diverges from, rather than as an instruction: does the first pass leave fewer conflicts with the design the project
+  adopted, without pulling the agent toward a design the project rejected, at no more than 10% extra cost?
+- **Arms.** `none` (control); `git-conflict` (push, frozen as it ran on OSS before); `units` (surface framing,
+  delivered at an area's first touch, at most 3 units per area, ranked by `deliverForArea`; see Arms above for the
+  exact text). The mechanism is `benchmark/merge-assist-align.ts` as committed with this pre-registration.
+- **Ledger.** Built once per label before any run (`--build-ledgers`) on the build hosts, judge on Bedrock
+  `openai.gpt-6-luna` through Codex 0.158, and stored; the runs read the stored ledgers. Inputs as in Ledger inputs
+  above: first and every `concurrent` pull request as visible at second's start, the area pre-filter (stated as part
+  of the mechanism; it keeps every ref with a change), positions from design docs, commit messages and pull request
+  descriptions as they read then (fetched once, read-only, edit history respected). The build's counts (refs, units by
+  kind, judge calls) are reported with the results.
+- **Pairs.** The 26 completion labels of the earlier completion run (11 D1, 15 D2), `--exclude encode-httpx-3304-3335`,
+  D1 and D2 weighted half and half. A second stratum, new in-house conflicts from the Rerail repository (Jeff Snell's
+  and Gabriel Giangi's branches against the others, labelled by a curator who never saw the mechanism and never used
+  in tuning), runs the same arms and protocol and is reported separately, descriptively; it is not part of the
+  primary family.
+- **Protocol.** As the OSS completion run: phase 1, up to 3 review rounds by a blind reviewer that knows the adopted
+  design, then the final grade; Codex 0.158 with `openai.gpt-6-luna` on Bedrock for agent, reviewer and grader on the
+  Linux hosts; sandbox profile, leak guard, no web; the tamper check passing on each host first. Leaked runs are
+  excluded and reported; errors count as failures for their arm.
+- **Primary hypotheses** (`units` against `none`, one-sided, stratified by pair, Holm across the three):
+  - P1: fewer conflict items with the adopted design after the first pass (all pairs).
+  - P2 (D2, harm): ending on the adopted design is no more than 0.10 below `none`.
+  - P3: agent cost per task (µUSD) no more than ×1.10 `none`'s.
+  - Failures count as in the completion run (every item violated, not on the adopted design, as costly as the pair's
+    worst run), except that in P2 and P3 a failed run of either arm takes that worst value in the tested space (the
+    treatment shifted by the margin), so failures tie there instead of favouring the treatment by the margin.
+- **Secondary** (raw p, not used for stopping): `git-conflict` against `none` on P1–P3 as its own family (Holm within
+  it); items after completion; review rounds; `units` against `git-conflict` on P1–P3; told the person (the final
+  message names another pull request or branch); P1–P3 on D1 alone; P1–P3 over the prevalence mix (D1 0.74, D2 0.26).
+- **Funnel**, logged for every `units` run and reported descriptively: (1) a unit from the adopted side existed in the
+  ledger; (2) it was a candidate where the agent touched; (3) it made the area's top 3; (4) it arrived before the
+  area's first edit; (5) the first pass followed it; (6) the person was told. (1) and (5) are judged by the integrator
+  against the labels after the run; (2)–(4) and (6) come from the run's record.
+- **Looks.** Look 1: 2 trials per pair and arm (156 runs). Looks 2 and 3 add 2 trials each. Stop for success when P1,
+  P2 and P3 all reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks); stop after look 3 whatever the result.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze-units <look reports...> --arms
+  units,git-conflict --control none`. Runs: `benchmark/merge-assist-replay.ts --completion --exclude
+  encode-httpx-3304-3335 --arms none,git-conflict,units --trials 2 --pr-bodies <descriptions> --ledger-cache <cache
+  with the stored ledgers>`, split by pair across nera-spike-1 and nera-spike-2.
+- **Known property of the test.** `--self-test-units` (1,000 synthetic datasets per case at 11 D1 + 15 D2 pairs × 2
+  runs per arm): every false-positive rate within 0.05 plus two Monte Carlo standard errors (0.064); the measured
+  rates are logged with the smoke run.
+- **In-house stratum runs.** The 5 in-house pairs (`/tmp/ma-ctx/units-e2e/inhouse/`, 3 D1, 2 D2; rerail-207-326 is
+  flagged weak by its curator and also reported without it) run with every look, same arms and trials, reported
+  descriptively per pair.
+- **Fixed from the dev smoke, before any OSS run.** The hook's state is locked so a unit is delivered at most once per
+  session (two hook calls a second apart had both delivered the same units); the leak guard's environment-dump check
+  ignores text inside search patterns (`row set|` in an `rg` pattern had flagged a control run). Both apply to every
+  arm. Ledgers as built: 26 OSS (60,695 units, 4,286 judge calls, 1 failed call on vuejs-core #15600/#15608) and 5
+  in-house (4,532 units).
 
 ## Steer strategies
 

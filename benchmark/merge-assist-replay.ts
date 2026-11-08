@@ -3,10 +3,11 @@
  * areas another in-flight change established positions in, keep its solution from conflicting with that change?
  *
  *   node --import tsx benchmark/merge-assist-replay.ts --dataset <dir> [--pairs id,id] [--trials N]
- *     [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N]
+ *     [--arms none,align,units,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N]
  *     [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value]
  *     [--keep] [--tamper] [--detect-only] [--completion [--exclude id,id]] [--provider amazon-bedrock --model id]
- *     [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]
+ *     [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path] [--ledger-cache dir] [--pr-bodies dir]
+ *     [--judge-concurrency N] [--build-ledgers]
  *
  * `--dataset` holds `pairs.json` (`{ pairs: Pair[] }`) and `replay/<id>.json` (the agent-replay specs), in the formats
  * of the shared spec (`/tmp/ma-ctx/align/oss-spec.md`); every pair with a spec runs unless `--pairs` names some. A
@@ -20,7 +21,11 @@
  * stdin, at most `--timeout-min` minutes (20 by default). Under `align`, the hook delivers the ledger units the
  * alignment module's `ledgerAt` builds from first (and `concurrent`) as visible at second's start (see `ledgerTime`),
  * at each area's first touch, through `deliverForArea`: at most 3 per area, contested first, each contested unit's
- * "Note: …" line to end the final message with. Under `none` the hook only logs. Under `git-conflict` and
+ * "Note: …" line to end the final message with. Under `units`, the same units framed as surface (`renderSurface`:
+ * "PR #N (author) established: …", then that this is other in-flight work to tell the person about if the agent
+ * diverges), and each run records its funnel (`UnitsFunnel`). `--pr-bodies` adds each ledger ref's pull request
+ * description as a position passage; `--build-ledgers` builds and stores every selected pair's ledger without an
+ * agent, and later runs read the stored ledgers. Under `none` the hook only logs. Under `git-conflict` and
  * `git-conflict-pull`, the hook identifies after every tool call, read-only, which of the agent's changes would conflict
  * with first (as of `first_visible`) or a `concurrent` ref (its head as of second's start): `git diff --unified=0`
  * hunks of both sides as base lines touching or at most 3 lines apart in the same file (merge-assist-replay-git.ts).
@@ -67,8 +72,10 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import type { LedgerStats } from "./merge-assist-align.js";
+import { areaOf } from "./merge-assist-context-hook.js";
 import { clip, type CodexEvents, type CodexOutcome, type CodexRunOptions, createCodexHome, fixed, GIT_ENV, mean, median, pool, readEvents, runCodex, table, transcriptText, type Usage } from "./merge-assist-context.js";
-import { type AlignModule, CHECK_COMMAND, GIT_ARMS, type LedgerUnit, loadAlignModule, REPLAY_ARMS, type ReplayArm, type ReplayHookConfig, type ReplayHookLogEntry } from "./merge-assist-replay-hook.js";
+import { type AlignModule, CHECK_COMMAND, GIT_ARMS, LEDGER_ARMS, type LedgerOptions, type LedgerUnit, loadAlignModule, REPLAY_ARMS, type ReplayArm, type ReplayHookConfig, type ReplayHookLogEntry } from "./merge-assist-replay-hook.js";
 import { commitRanges, conflictKey, gitRead, identify, type LineRange, type RefHunk, refFiles, refHunks, type RefSide, statedIntent } from "./merge-assist-replay-git.js";
 
 const HOOK = fileURLToPath(new URL("./merge-assist-replay-hook.ts", import.meta.url));
@@ -278,6 +285,17 @@ interface Options {
   completion: boolean;
   /** `--exclude`: completion labels (by id, the file's name) `--completion` leaves out unread. */
   exclude: string[];
+  /** `--ledger-cache`: where `ledgerAt` caches extraction and judge answers, and `--build-ledgers` stores ledgers. */
+  ledgerCache: string;
+  /** `--pr-bodies`: the folder of fetched pull request descriptions the ledger reads as passages; none when unset. */
+  prBodies: string | undefined;
+  /** `--judge-concurrency`: ledger judge calls in flight while a ledger is built. */
+  judgeConcurrency: number;
+  /**
+   * `--build-ledgers`: no agent; each selected pair's (or `--completion` label's) ledger built at second's start and
+   * stored under `<ledger-cache>/ledgers/`, which later runs read instead of building.
+   */
+  buildLedgers: boolean;
 }
 
 /** The model providers `--provider` takes. */
@@ -286,7 +304,7 @@ const DEFAULT_BEDROCK_REGION = "us-east-1";
 /** The variable Codex's `amazon-bedrock` provider reads its bearer token from. */
 const BEDROCK_TOKEN_ENV = "AWS_BEARER_TOKEN_BEDROCK";
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only] [--completion] [--exclude id,id] [--provider amazon-bedrock] [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,units,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only] [--completion] [--exclude id,id] [--provider amazon-bedrock] [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path] [--ledger-cache dir] [--pr-bodies dir] [--judge-concurrency N] [--build-ledgers]";
 
 function parseOptions(argv: readonly string[]): Options {
   const options: Options = {
@@ -313,6 +331,10 @@ function parseOptions(argv: readonly string[]): Options {
     bedrockTokenCmd: undefined,
     completion: false,
     exclude: [],
+    ledgerCache: LEDGER_CACHE,
+    prBodies: undefined,
+    judgeConcurrency: 4,
+    buildLedgers: false,
   };
   const value = (flag: string, index: number): string => {
     const next = argv[index + 1];
@@ -327,10 +349,11 @@ function parseOptions(argv: readonly string[]): Options {
   let armsGiven = false;
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]!;
-    if (flag === "--keep" || flag === "--tamper" || flag === "--detect-only" || flag === "--completion") {
+    if (flag === "--keep" || flag === "--tamper" || flag === "--detect-only" || flag === "--completion" || flag === "--build-ledgers") {
       if (flag === "--keep") options.keep = true;
       else if (flag === "--tamper") options.tamper = true;
       else if (flag === "--completion") options.completion = true;
+      else if (flag === "--build-ledgers") options.buildLedgers = true;
       else options.detectOnly = true;
       continue;
     }
@@ -362,6 +385,9 @@ function parseOptions(argv: readonly string[]): Options {
     } else if (flag === "--bedrock-region") options.bedrockRegion = text;
     else if (flag === "--codex-bin") options.codexBin = resolve(text);
     else if (flag === "--bedrock-token-cmd") options.bedrockTokenCmd = text;
+    else if (flag === "--ledger-cache") options.ledgerCache = resolve(text);
+    else if (flag === "--pr-bodies") options.prBodies = resolve(text);
+    else if (flag === "--judge-concurrency") options.judgeConcurrency = positive(flag, text);
     else throw new Error(`Unknown option ${flag}\n${USAGE}`);
   }
   if (options.dataset === "") throw new Error(`--dataset is required\n${USAGE}`);
@@ -372,6 +398,7 @@ function parseOptions(argv: readonly string[]): Options {
   }
   if (options.bedrockTokenCmd !== undefined && options.provider !== "amazon-bedrock") throw new Error("--bedrock-token-cmd needs --provider amazon-bedrock");
   if (options.completion && (options.tamper || options.detectOnly)) throw new Error(`--completion takes no --tamper or --detect-only\n${USAGE}`);
+  if (options.buildLedgers && (options.tamper || options.detectOnly)) throw new Error(`--build-ledgers takes no --tamper or --detect-only\n${USAGE}`);
   if (options.completion && !armsGiven) options.arms = [...COMPLETION_ARMS];
   if (options.tamper) {
     options.arms = ["none"];
@@ -454,6 +481,8 @@ interface PairContext {
   /** null when no arm needs the ledger. */
   readonly units: readonly LedgerUnit[] | null;
   readonly ledgerMs: number | null;
+  /** What building the ledger read and asked (the alignment module's `ledgerBuild` stats); null without them. */
+  readonly ledgerStats: unknown;
   readonly ledgerError: string | null;
   /** Every file first changed from where it branched up to `first_visible`. */
   readonly firstFiles: readonly string[];
@@ -666,7 +695,84 @@ function ledgerTime(pair: Pair, baseSha: string): string {
   return times.reduce((earliest, time) => (Date.parse(time) < Date.parse(earliest) ? time : earliest));
 }
 
-async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align: AlignModule | null, label: CompletionLabel | null = null): Promise<PairContext> {
+/** How the ledger's judge runs: under `--provider`, the run's Codex on that provider with the grader's model and no web. */
+function judgeCodexOf(options: Options): LedgerOptions["judgeCodex"] {
+  if (options.provider === undefined) return undefined;
+  return {
+    executable: codexBinary(),
+    config: [`model_provider=${JSON.stringify(options.provider)}`, `model_providers.${options.provider}.aws.region=${JSON.stringify(options.bedrockRegion)}`, `web_search="disabled"`, "features.apps=false"],
+    ...(options.judgeModel === undefined ? {} : { model: options.judgeModel }),
+  };
+}
+
+/** A ledger `--build-ledgers` stored: whose, at what time, built how, its units and what building it read and asked. */
+interface StoredLedger {
+  readonly id: string;
+  readonly pair: string;
+  readonly time: string;
+  readonly prBodies: boolean;
+  readonly judge: LedgerOptions["judgeCodex"] | null;
+  readonly units: LedgerUnit[];
+  readonly stats: unknown;
+  readonly ms: number;
+}
+
+const ledgerPath = (options: Options, id: string): string => join(options.ledgerCache, "ledgers", `${id}.json`);
+
+/** The ledger stored at `path` when it is the same pair's at the same time with the same description input. */
+function storedLedger(path: string, pair: Pair, time: string, options: Options): StoredLedger | null {
+  if (!existsSync(path)) return null;
+  const stored = JSON.parse(readFileSync(path, "utf8")) as StoredLedger;
+  return stored.pair === pair.id && stored.time === time && stored.prBodies === (options.prBodies !== undefined) ? stored : null;
+}
+
+/** What the alignment module builds a ledger with: the cache, descriptions, judge calls in flight, the judge's Codex and token. */
+function ledgerOptionsOf(options: Options, codexEnv: Readonly<Record<string, string>>): LedgerOptions {
+  const judgeCodex = judgeCodexOf(options);
+  return { cacheDir: options.ledgerCache, concurrency: options.judgeConcurrency, judgeEnv: codexEnv, ...(options.prBodies === undefined ? {} : { prBodies: options.prBodies }), ...(judgeCodex === undefined ? {} : { judgeCodex }) };
+}
+
+/**
+ * The ledger of the run `id` (a pair, or a completion label) at `time`: the one `--build-ledgers` stored for the same
+ * pair, time and description input, else built now (`ledgerBuild` when the module has it) and stored.
+ */
+async function pairLedger(align: AlignModule, source: string, pair: Pair, id: string, time: string, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<StoredLedger> {
+  const path = ledgerPath(options, id);
+  const earlier = storedLedger(path, pair, time, options);
+  if (earlier !== null) return earlier;
+  const started = performance.now();
+  const ledgerOptions = ledgerOptionsOf(options, codexEnv);
+  const built = align.ledgerBuild === undefined ? { units: await align.ledgerAt(source, pair, time, ledgerOptions), stats: null } : await align.ledgerBuild(source, pair, time, ledgerOptions);
+  const stored: StoredLedger = { id, pair: pair.id, time, prBodies: options.prBodies !== undefined, judge: ledgerOptions.judgeCodex ?? null, units: built.units, stats: built.stats, ms: Math.round(performance.now() - started) };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(stored, null, 2)}\n`);
+  return stored;
+}
+
+/** Second's own head merged with first's in a scratch repository: the conflict the real history had; null without second's head. */
+async function referenceMerge(source: string, objects: string, pair: Pair): Promise<MergeCheck | null> {
+  if (!hasCommit(source, pair.second.head_sha)) return null;
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-pair-")));
+  try {
+    return mergeCheck(scratchRepository(folder, [objects]), pair.second.head_sha, pair.first.head_sha);
+  } finally {
+    await removeFolder(folder);
+  }
+}
+
+/** The pair context's ledger fields: the ledger's units, build time and stats, or why it failed; all null without a module. */
+async function ledgerFields(align: AlignModule | null, source: string, pair: Pair, id: string, time: string, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<Pick<PairContext, "units" | "ledgerMs" | "ledgerStats" | "ledgerError">> {
+  const none = { units: null, ledgerMs: null, ledgerStats: null, ledgerError: null };
+  if (align === null) return none;
+  try {
+    const ledger = await pairLedger(align, source, pair, id, time, options, codexEnv);
+    return { units: ledger.units, ledgerMs: ledger.ms, ledgerStats: ledger.stats, ledgerError: null };
+  } catch (error) {
+    return { ...none, ledgerError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align: AlignModule | null, codexEnv: Readonly<Record<string, string>>, label: CompletionLabel | null = null): Promise<PairContext> {
   const source = options.repo ?? join(options.repos, pair.repo.replace("/", "__"));
   if (!existsSync(source)) throw new Error(`${pair.id}: no repository at ${source}`);
   for (const [name, sha] of [["base_sha", spec.base_sha], ["first.head_sha", pair.first.head_sha], ["first_visible", spec.first_visible]] as const) {
@@ -674,32 +780,13 @@ async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align
   }
   const objects = join(git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim(), "objects");
   const firstFiles = git(source, ["diff", "--name-only", `${pair.first.base_sha}...${spec.first_visible}`]).split("\n").filter(path => path !== "");
-  let reference: MergeCheck | null = null;
-  if (hasCommit(source, pair.second.head_sha)) {
-    const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-pair-")));
-    try {
-      reference = mergeCheck(scratchRepository(folder, [objects]), pair.second.head_sha, pair.first.head_sha);
-    } finally {
-      await removeFolder(folder);
-    }
-  }
+  const reference = await referenceMerge(source, objects, pair);
   const time = ledgerTime(pair, spec.base_sha);
-  let units: LedgerUnit[] | null = null;
-  let ledgerError: string | null = null;
-  let ledgerMs: number | null = null;
-  if (align !== null) {
-    const started = performance.now();
-    try {
-      units = await align.ledgerAt(source, pair, time, { cacheDir: LEDGER_CACHE });
-    } catch (error) {
-      ledgerError = error instanceof Error ? error.message : String(error);
-    }
-    ledgerMs = Math.round(performance.now() - started);
-  }
+  const ledger = await ledgerFields(align, source, pair, label?.id ?? pair.id, time, options, codexEnv);
   const refsStarted = performance.now();
   const refs = options.tamper ? [] : visibleRefs(source, pair, spec.base_sha, time, spec.first_visible);
   const refsMs = Math.round(performance.now() - refsStarted);
-  return { pair, spec, source, objects, ledgerTime: time, units, ledgerMs, ledgerError, firstFiles, reference, refs, refsMs, label };
+  return { pair, spec, source, objects, ledgerTime: time, ...ledger, firstFiles, reference, refs, refsMs, label };
 }
 
 // ---------------------------------------------------------------------------------------------------------- sandbox
@@ -899,15 +986,67 @@ const OUTSIDE: ReadonlyArray<readonly [string, RegExp]> = [
   ["remote host", /\b(?:github\.com|gitlab\.com|bitbucket\.org|codeload\.github|api\.github)\b/u],
   ["pull request ref", /refs\/pull\//u],
   ["curated data", /\/tmp\/ma-ctx\b/u],
-  ["environment dump", /(?:^|[\s;&|('"`])(?:env|set)(?=\s*(?:$|[|;&>)'"`]))|\bprintenv\b|\bexport\s+-p\b|\bdeclare\s+-[a-zA-Z]*x|\/proc\/[^\s/]+\/environ|\b(?:os\.environ|process\.env)\b(?!\s*(?:\.|\[|\?\.))|\benv::vars\b|\bos\.Environ\(\)/u],
   ["credential read", /\$\{?AWS_[A-Z0-9_]+|\bAWS_BEARER_TOKEN|BEARER_TOKEN_BEDROCK|\bsecretsmanager\b|get-secret-value|169\.254\.169\.254|\.aws\/(?:credentials|config)\b/u],
 ];
+
+/**
+ * A call that prints the whole environment: `env` or `set` alone (or into a pipe or file), `printenv`, `export -p` or
+ * `declare -x` where a command starts, an `/proc/<pid>/environ` read, or all of `os.environ`, `process.env`,
+ * `env::vars` or `os.Environ()`. Tested on {@link withoutSearchPatterns}' text, so a search pattern that only names
+ * one of them (`rg "row set|…"`) is not a dump.
+ */
+const ENVIRONMENT_DUMP = /(?:^|[;&|(\n`]|\$\()\s*["'`]?(?:(?:sudo|command|exec|builtin)\s+)?(?:(?:env|set)(?=\s*(?:$|[|;&>)\n'"`]))|printenv\b|export\s+-p\b|declare\s+-[a-zA-Z]*x)|\/proc\/[^\s/]+\/environ|\b(?:os\.environ|process\.env)\b(?!\s*(?:\.|\[|\?\.))|\benv::vars\b|\bos\.Environ\(\)/u;
+
+/** Commands whose quoted arguments are patterns to search for, not code that runs. */
+const SEARCH_COMMANDS = /^(?:rg|grep|egrep|fgrep|ag|ack|git\s+grep)\b/u;
+
+/** `text` itself, or the string it encodes when it is a JSON string (the transcript quotes commands so). */
+function jsonUnquoted(text: string): string {
+  if (!text.startsWith("\"") || !text.endsWith("\"")) return text;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "string" ? parsed : text;
+  } catch {
+    return text;
+  }
+}
+
+/** A call's shell script: a JSON-quoted command (as the transcript holds it) and `bash -lc "<script>"` unwrapped. */
+function shellScript(text: string): string {
+  const script = jsonUnquoted(text.trim());
+  const wrapped = /^(?:\S*\/)?(?:bash|sh|zsh)\s+-[a-z]*c\s+(["'])([\s\S]*)\1\s*$/u.exec(script);
+  if (wrapped === null) return script;
+  return wrapped[1] === "'" ? wrapped[2]! : wrapped[2]!.replace(/\\(["\\$`])/gu, "$1");
+}
+
+/** A shell script's pieces: quoted strings, escapes, command separators, and the plain text between them. */
+const SHELL_PIECE = /'[^']*'?|"(?:[^"\\]|\\[\s\S])*"?|\\[\s\S]?|[;&|()\n`]|[^'"\\;&|()\n`]+/gu;
+
+/**
+ * `text` with the quoted arguments of search commands (`rg`, `grep`, `git grep`, …) emptied: the script is split into
+ * simple commands at unquoted `;`, `&`, `|`, parentheses, backticks and newlines, and in a command whose first word
+ * searches, each quoted string becomes `""`. Everything else is kept as written.
+ */
+export function withoutSearchPatterns(text: string): string {
+  const commands: string[][] = [[]];
+  for (const [piece] of shellScript(text).matchAll(SHELL_PIECE)) {
+    if (/^[;&|()\n`]$/u.test(piece)) commands.push([piece], []);
+    else commands.at(-1)!.push(piece);
+  }
+  return commands.map(pieces => {
+    const command = pieces.join("");
+    const searching = SEARCH_COMMANDS.test(command.replace(/^\s*(?:\w+=\S*\s+)*(?:sudo\s+|command\s+|exec\s+)?/u, ""));
+    return searching ? pieces.map(piece => (/^["']/u.test(piece) ? "\"\"" : piece)).join("") : command;
+  }).join("");
+}
+
 /** A token that starts a path: absolute, from the home folder, or climbing with `..`. */
 const PATH_TOKEN = /(?:^|[\s'"`=:(,;|&<>[{])((?:~|\$HOME|\$\{HOME\})?\/[^\s'"`;|&<>(),\]}]*|(?:\.\.\/)+[^\s'"`;|&<>(),\]}]*|\.\.(?=$|[\s'"`;|&)]))/gu;
 
 /** Why `text` (one call's command or input) reaches past `folder`, the run's folder; none when it stays inside. */
 export function leakReasons(text: string, folder: string, cwd: string): string[] {
   const reasons = OUTSIDE.flatMap(([reason, pattern]) => (pattern.test(text) ? [reason] : []));
+  if (ENVIRONMENT_DUMP.test(withoutSearchPatterns(text))) reasons.push("environment dump");
   const inside = [folder, folder.replace(/^\/private\//u, "/")];
   const allowed = [...inside, ...SYSTEM_ROOTS, ...homeReadable()];
   for (const match of text.matchAll(PATH_TOKEN)) {
@@ -1007,6 +1146,8 @@ function armMarkers(pair: Pair, authors: readonly string[]): RegExp[] {
   markers.push(/rerail/iu.test(pair.repo) ? /\bRerail (?:decision|handoff|position|retirement|contract|copy|ledger)\b/iu : /rerail/iu);
   // The `git-conflict` arms' wording and data fences.
   markers.push(/git conflict in flight/iu, /in[- ]flight conflict/iu, /would conflict with/iu, /\bgit conflicts\b/iu, /rerail-conflicts/iu, /RERAIL-DATA|<<<END [0-9a-f]/u, /\bdiverg(?:e|es|ed|ing)\s+from\b/iu);
+  // The `units` arm's surface framing.
+  markers.push(/\) established:/u, /in[- ]flight work/iu);
   for (const author of new Set([pair.first.author, ...authors])) {
     if (author.length >= 3) markers.push(new RegExp(`\\b${escape(author)}\\b`, "iu"));
   }
@@ -1254,6 +1395,17 @@ interface Workspace {
   readonly shell: Readonly<Record<string, string>>;
 }
 
+/** What the hook's arm reads: the ledger and the alignment module under the ledger arms, its ranking's judge and log. */
+function ledgerConfig(job: Job, options: Options, folder: string): Pick<ReplayHookConfig, "units" | "alignModule" | "alignOptions"> {
+  const { context, arm } = job;
+  const judgeCodex = judgeCodexOf(options);
+  // The hook's ranking judge runs on the run's provider; its token reaches the hook through Codex's environment.
+  const alignOptions = { cacheDir: join(folder, "align-cache"), rankLog: join(folder, RANK_LOG), ...(judgeCodex === undefined ? {} : { judgeCodex }) };
+  if (!LEDGER_ARMS.includes(arm)) return { units: [], alignModule: null, alignOptions };
+  if (context.units === null) throw new Error(`no ledger: ${context.ledgerError ?? "not built"}`);
+  return { units: context.units, alignModule: options.alignModule, alignOptions };
+}
+
 /**
  * The run's workspace in `folder`: the base snapshot, the spec's setup, the hook's configuration for the arm, and the
  * CODEX_HOME whose config holds the sandbox profile and the agent's shell environment.
@@ -1265,9 +1417,10 @@ function prepareWorkspace(job: Job, options: Options, folder: string, task: stri
   const codexHome = join(folder, "codex-home");
   const configPath = join(folder, "hook-config.json");
   const logPath = join(folder, "hook.log");
-  // What no replay Codex call may read: the source repository, its objects, the dataset, the clones, the ledger cache.
-  const denied = [context.source, dirname(context.objects), options.dataset, options.repos, LEDGER_CACHE];
-  if (arm === "align" && context.units === null) throw new Error(`no ledger: ${context.ledgerError ?? "not built"}`);
+  // What no replay Codex call may read: the source repository, its objects, the dataset, the clones, the ledger cache
+  // and the fetched descriptions.
+  const denied = [context.source, dirname(context.objects), options.dataset, options.repos, options.ledgerCache, ...(options.prBodies === undefined ? [] : [options.prBodies])];
+  const ledger = ledgerConfig(job, options, folder);
   checkoutBase(context, folder, repo);
   const setup = spec.setup === null ? null : runSetup(spec.setup, repo);
   const diffBase = git(repo, ["rev-parse", "HEAD"]).trim();
@@ -1278,9 +1431,7 @@ function prepareWorkspace(job: Job, options: Options, folder: string, task: stri
   }
   const config: ReplayHookConfig = {
     arm,
-    units: arm === "align" ? context.units! : [],
-    alignModule: arm === "align" ? options.alignModule : null,
-    alignOptions: { cacheDir: join(folder, "align-cache") },
+    ...ledger,
     prompt: task,
     root: repo,
     log: logPath,
@@ -1352,6 +1503,106 @@ function deliveredUnits(context: PairContext, hookLog: readonly ReplayHookLogEnt
     const unit = context.units?.find(candidate => candidate.id === item.unitId);
     return { ...item, fromFirst: unit !== undefined && fromFirst(unit, context.pair), atS: Math.round((entry.at - started) / 1000) };
   }));
+}
+
+/** The file in a run's folder `deliverForArea` logs each area's ranking to (merge-assist-align.ts `RankLogEntry`). */
+const RANK_LOG = "rank.log";
+
+/** One area's ranking as the alignment module logged it: its anchored candidates, how they were ranked, what it picked. */
+export interface RankEntry {
+  readonly area: string;
+  readonly path: string;
+  readonly anchored: number;
+  readonly candidates: ReadonlyArray<{ readonly id: string; readonly score: number }>;
+  readonly via: string;
+  readonly error: string | null;
+  readonly picked: readonly string[];
+}
+
+function readRankLog(folder: string): RankEntry[] {
+  const path = join(folder, RANK_LOG);
+  return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as RankEntry) : [];
+}
+
+/** Where a delivery stands against the agent's first edit in its area: an earlier hook call, the edit's own call, later, or no edit there. */
+export type EditTiming = "before" | "at" | "after" | "no-edit";
+
+/**
+ * The diagnostic funnel of a ledger-arm run: each area's first edit; every unit delivered (its ref, kind, origin, text,
+ * area, rank in the area, and when against the area's first edit); every ranking; and every unit of first's in the
+ * ledger with whether it was a candidate where the agent touched, its best candidate position, and whether and when
+ * it went out. Whether one of first's units states the adopted design is the integrator's to judge from the label.
+ */
+export interface UnitsFunnel {
+  readonly firstEdits: ReadonlyArray<{ readonly area: string; readonly atS: number }>;
+  readonly delivered: ReadonlyArray<{
+    readonly id: string; readonly ref: string | null; readonly pr: number | null; readonly branch: string | null; readonly author: string;
+    readonly kind: string; readonly origin: string | null; readonly text: string; readonly area: string; readonly path: string; readonly rank: number | null;
+    readonly conflict: boolean; readonly fromFirst: boolean; readonly atS: number; readonly firstEditS: number | null; readonly timing: EditTiming;
+  }>;
+  readonly rankings: readonly RankEntry[];
+  readonly firstUnits: ReadonlyArray<{
+    readonly id: string; readonly kind: string; readonly origin: string | null; readonly text: string; readonly files: readonly string[]; readonly conflict: boolean;
+    /** Areas whose ranking had it among its candidates, and its best position among them (0 first). */
+    readonly candidateIn: readonly string[]; readonly candidateRank: number | null;
+    readonly delivered: boolean; readonly rank: number | null; readonly timing: EditTiming | null;
+  }>;
+}
+
+/** Each area's first edit in the hook log: the index and time of the first `pre-edit` call touching a file there. */
+function firstEdits(hookLog: readonly ReplayHookLogEntry[]): Map<string, { index: number; at: number }> {
+  const edits = new Map<string, { index: number; at: number }>();
+  hookLog.forEach((entry, index) => {
+    if (entry.trigger !== "pre-edit") return;
+    for (const path of entry.paths.filter(item => !item.endsWith("/"))) if (!edits.has(areaOf(path))) edits.set(areaOf(path), { index, at: entry.at });
+  });
+  return edits;
+}
+
+function editTiming(index: number, edit: { index: number } | undefined): EditTiming {
+  if (edit === undefined) return "no-edit";
+  if (index === edit.index) return "at";
+  return index < edit.index ? "before" : "after";
+}
+
+/** {@link UnitsFunnel} of one run from its hook log and rank log. */
+export function unitsFunnel(context: PairContext, hookLog: readonly ReplayHookLogEntry[], rankings: readonly RankEntry[], started: number): UnitsFunnel {
+  const edits = firstEdits(hookLog);
+  const byId = new Map((context.units ?? []).map(unit => [unit.id, unit]));
+  const seconds = (at: number) => Math.round((at - started) / 1000);
+  const delivered = hookLog.flatMap((entry, index) => entry.delivered.map(item => {
+    const unit = byId.get(item.unitId);
+    const edit = edits.get(item.area);
+    return {
+      id: item.unitId, ref: unit?.ref ?? null, pr: unit?.pr ?? null, branch: unit?.branch ?? null, author: unit?.author ?? "", kind: unit?.kind ?? "", origin: unit?.origin ?? null, text: unit?.text ?? "",
+      area: item.area, path: item.path, rank: item.rank ?? null, conflict: item.conflict, fromFirst: unit !== undefined && fromFirst(unit, context.pair),
+      atS: seconds(entry.at), firstEditS: edit === undefined ? null : seconds(edit.at), timing: editTiming(index, edit),
+    };
+  }));
+  const firstUnits = (context.units ?? []).filter(unit => fromFirst(unit, context.pair)).map(unit => {
+    const offered = rankings.filter(ranking => ranking.candidates.some(candidate => candidate.id === unit.id));
+    const positions = offered.map(ranking => ranking.candidates.findIndex(candidate => candidate.id === unit.id));
+    const sent = delivered.find(item => item.id === unit.id);
+    return {
+      id: unit.id, kind: unit.kind, origin: unit.origin ?? null, text: unit.text, files: [...unit.anchors.files], conflict: unit.conflict === true,
+      candidateIn: offered.map(ranking => ranking.area), candidateRank: positions.length === 0 ? null : Math.min(...positions),
+      delivered: sent !== undefined, rank: sent?.rank ?? null, timing: sent?.timing ?? null,
+    };
+  });
+  return { firstEdits: [...edits].map(([area, edit]) => ({ area, atS: seconds(edit.at) })), delivered, rankings, firstUnits };
+}
+
+/**
+ * The other refs `message` names: first's and each `concurrent` pull request by number (`#12`, `PR 12`, `pull request
+ * #12`, `pull/12`), and first's and each `concurrent` branch by its short name.
+ */
+export function namedRefs(message: string | null, pair: Pair): string[] {
+  if (message === null) return [];
+  const numbers = [pair.first.pr, ...pair.concurrent].filter((entry): entry is number => typeof entry === "number");
+  const branches = [pair.first.ref, pair.first.branch, ...pair.concurrent.filter(entry => typeof entry === "string")].flatMap(ref => (ref === undefined || ref === null ? [] : [shortRef(ref)])).filter(branch => branch.length >= 3);
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const prs = [...new Set(numbers)].filter(number => new RegExp(`(?:#|\\bPR\\s*#?|\\bpull request\\s*#?|\\bpull/)${number}\\b`, "iu").test(message)).map(number => `#${number}`);
+  return [...prs, ...[...new Set(branches)].filter(branch => new RegExp(escape(branch), "u").test(message))];
 }
 
 async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<ReplayRun> {
@@ -1631,6 +1882,11 @@ export interface CompletionRun {
   readonly hookLog: readonly ReplayHookLogEntry[];
   readonly hookErrors: readonly string[];
   readonly delivered: ReplayRun["delivered"];
+  /** The refs the final message names (`namedRefs`): the person was told about other work when there is one. */
+  readonly namedRefs: readonly string[];
+  readonly toldPerson: boolean;
+  /** Under the ledger arms, the diagnostic funnel ({@link UnitsFunnel}); null otherwise. */
+  readonly funnel: UnitsFunnel | null;
   readonly git: GitOutcome | null;
   /** Codex's `--json` events of every agent call, in order. */
   readonly events: readonly unknown[];
@@ -1659,7 +1915,7 @@ async function runCompletionJob(job: Job, options: Options, codexEnv: Readonly<R
   const failed = (error: string): CompletionRun => ({
     pair: label.id, scenario: label.scenario, arm, trial, error, leaked: false, leaks: [], setup: null, shellPath: [], threadId: null, items: label.conflict_items.length,
     firstPass: empty, rounds: [], final: empty, itemsAfterPhase1: null, itemsAfterCompletion: null, adoptedAtEnd: null, fixRounds: 0, merge: null, mergeError: null,
-    calls, ...totals(0), longContextRequests: 0, wallMs: Date.now() - started, hookLog: [], hookErrors: [], delivered: [], git: null, events: stdouts.flatMap(parseEvents), folder: options.keep ? folder : null,
+    calls, ...totals(0), longContextRequests: 0, wallMs: Date.now() - started, hookLog: [], hookErrors: [], delivered: [], namedRefs: [], toldPerson: false, funnel: null, git: null, events: stdouts.flatMap(parseEvents), folder: options.keep ? folder : null,
   });
   try {
     const workspace = prepareWorkspace(job, options, folder, spec.task);
@@ -1748,6 +2004,9 @@ async function runCompletionJob(job: Job, options: Options, codexEnv: Readonly<R
       hookLog,
       hookErrors: hookLog.flatMap(entry => (entry.error === undefined ? [] : [entry.error])),
       delivered: deliveredUnits(context, hookLog, started),
+      namedRefs: namedRefs(finalMessage, pair),
+      toldPerson: namedRefs(finalMessage, pair).length > 0,
+      funnel: LEDGER_ARMS.includes(arm) ? unitsFunnel(context, hookLog, readRankLog(folder), started) : null,
       git: GIT_ARMS.includes(arm) ? gitOutcome(context, hookLog, events, started) : null,
       events,
       folder: options.keep ? folder : null,
@@ -1766,6 +2025,32 @@ const kilo = (value: number): string => `${Math.round(value / 1000)}k`;
 function printPrices(): void {
   const row = (name: string, prices: TokenPrices) => [name, String(prices.input), String(prices.cacheWrite), String(prices.cacheRead), String(prices.output)];
   console.log(`\nPrices: ${PRICES.model}, ${PRICES.tier}, ${PRICES.currency}\n${table(["context", "input", "cache write", "cache read", "output"], [row(`≤ ${PRICES.longContextAbove} input`, PRICES.short), row(`> ${PRICES.longContextAbove} input`, PRICES.long)])}\nSource: ${PRICES.source}`);
+}
+
+/** What the hook sent a ledger-arm run: each injected text verbatim, each area's ranking, each unit delivered. */
+function printDeliveries(run: CompletionRun, funnel: UnitsFunnel): void {
+  const atOf = (id: string | undefined) => funnel.delivered.find(item => item.id === id)?.atS ?? "?";
+  for (const entry of run.hookLog.filter(item => item.text !== undefined && item.delivered.length > 0)) {
+    console.log(`  injected at ${atOf(entry.delivered[0]?.unitId)}s (${entry.event} ${entry.tool}):\n${entry.text!.split("\n").map(line => `    | ${line}`).join("\n")}`);
+  }
+  for (const ranking of funnel.rankings) console.log(`  ranking ${ranking.area || "(root)"} at ${ranking.path}: ${ranking.anchored} anchored, ${ranking.candidates.length} offered, via ${ranking.via}${ranking.error === null ? "" : ` (${clip(ranking.error, 80)})`}, picked ${ranking.picked.length}`);
+  for (const item of funnel.delivered) {
+    const source = item.pr === null ? `branch ${item.branch ?? "?"}` : `#${item.pr}`;
+    console.log(`  unit ${item.id} [${item.kind}/${item.origin ?? "?"}] ${source}${item.fromFirst ? " (first)" : ""}, rank ${item.rank ?? "?"} in ${item.area || "(root)"}, at ${item.atS}s: ${item.timing} the area's first edit${item.firstEditS === null ? "" : ` (${item.firstEditS}s)`}`);
+  }
+}
+
+/** A ledger-arm run's funnel: its deliveries, first's units in the ledger and how far each got, the final message's refs. */
+function printFunnel(run: CompletionRun): void {
+  const funnel = run.funnel!;
+  printDeliveries(run, funnel);
+  const first = funnel.firstUnits;
+  console.log(`  first's ${first.length} ledger units: ${first.filter(unit => unit.candidateIn.length > 0).length} candidates where the agent touched, ${first.filter(unit => unit.delivered).length} delivered, ${first.filter(unit => unit.timing === "before").length} before the area's first edit`);
+  for (const unit of first) {
+    const reach = unit.delivered ? "D" : unit.candidateIn.length > 0 ? "c" : "-";
+    console.log(`    ${reach} ${unit.id} [${unit.kind}/${unit.origin ?? "?"}]${unit.candidateRank === null ? "" : ` candidate #${unit.candidateRank}`}: ${clip(unit.text, 110)}`);
+  }
+  console.log(`  told the person: ${run.namedRefs.length === 0 ? "no other PR or branch named in the final message" : run.namedRefs.join(", ")}`);
 }
 
 function printCompletionRuns(runs: readonly CompletionRun[]): void {
@@ -1790,9 +2075,11 @@ function printCompletionRuns(runs: readonly CompletionRun[]): void {
     usd(run.grader.usd),
     run.merge === null ? "err" : `${run.merge.adopted.files.length}/${run.merge.adopted.hunks}`,
     run.leaked ? `LEAK (${run.leaks.length})` : "",
+    run.funnel === null ? "-" : `${run.funnel.delivered.length} (${run.funnel.delivered.filter(item => item.fromFirst).length} first)`,
+    run.namedRefs.join(" ") || "no",
     clip(run.error ?? run.mergeError, 40),
   ]);
-  console.log(`\n${table(["pair", "scen", "arm", "trial", "items p1", "review items", "items end", "adopted", "done", "fixes", "agent min", "judge min", "agent tok/uncached", "agent $", "reviewer tok", "reviewer $", "grader tok", "grader $", "merge adopted f/h", "leaked", "error"], rows)}`);
+  console.log(`\n${table(["pair", "scen", "arm", "trial", "items p1", "review items", "items end", "adopted", "done", "fixes", "agent min", "judge min", "agent tok/uncached", "agent $", "reviewer tok", "reviewer $", "grader tok", "grader $", "merge adopted f/h", "leaked", "units", "told", "error"], rows)}`);
   for (const run of runs) {
     console.log(`\n${run.pair} ${run.arm} #${run.trial}: first pass ${run.itemsAfterPhase1 ?? "?"} of ${run.items} items violated, ${run.fixRounds} fix round(s), end ${run.itemsAfterCompletion ?? "?"}${run.final.grade?.by === "same-diff" ? " (same diff as the first pass)" : ""}; ${(run.wallMs / 60_000).toFixed(1)} min in all`);
     for (const call of run.calls) console.log(`  - ${call.role} ${call.name}: ${(call.wallMs / 60_000).toFixed(1)} min, ${call.usage === null ? "no usage" : `${kilo(call.usage.input + call.usage.output)} tokens (${kilo(call.usage.input - call.usage.cached)} uncached input, ${kilo(call.usage.output)} output)`}, ${usd(call.usd)}${call.error === null ? "" : `, ${clip(call.error, 80)}`}`);
@@ -1803,6 +2090,7 @@ function printCompletionRuns(runs: readonly CompletionRun[]): void {
     for (const [name, grade] of [["first pass", run.firstPass.grade], ["final", run.final.grade]] as const) {
       for (const item of grade?.verdict?.items.filter(entry => entry.status === "violated") ?? []) console.log(`  ${name} item ${item.item} violated: ${clip(item.reason, 200)}`);
     }
+    if (run.funnel !== null) printFunnel(run);
   }
   for (const run of runs.filter(candidate => candidate.leaked)) {
     console.log(`\n${run.pair} ${run.arm} #${run.trial} LEAKED, left out of every aggregate:`);
@@ -1849,14 +2137,14 @@ export const COMPLETION_REPORT_FORMAT = "rerail.merge-assist-replay-completion/v
 async function completionMain(options: Options): Promise<void> {
   const selected = loadCompletionDataset(options);
   if (selected.length === 0) throw new Error(`No completion label in ${join(options.dataset, "completion")}`);
-  const align = options.arms.includes("align") ? await loadAlignModule(options.alignModule) : null;
+  const codexEnv = codexEnvironment(options);
+  const align = options.arms.some(arm => LEDGER_ARMS.includes(arm)) ? await loadAlignModule(options.alignModule) : null;
   const contexts: PairContext[] = [];
-  for (const { pair, spec, label } of selected) contexts.push(await preparePair(pair, spec, options, align, label));
+  for (const { pair, spec, label } of selected) contexts.push(await preparePair(pair, spec, options, align, codexEnv, label));
   printLedgers(contexts);
   printPrices();
   const jobs = contexts.flatMap(context => Array.from({ length: options.trials }, (_, trial) => options.arms.map(arm => ({ context, arm, trial: trial + 1 }))).flat());
   console.error(`\n${jobs.length} completion runs (${contexts.length} labels × ${options.arms.join(",")} × ${options.trials} trials), ${options.concurrency} at a time, ${options.timeoutMin} min per agent call, at most ${MAX_REVIEW_ROUNDS} review rounds`);
-  const codexEnv = codexEnvironment(options);
   const startedAt = new Date().toISOString();
   const runs = await pool(jobs, options.concurrency, job => runCompletionJob(job, options, codexEnv), (done, run) => {
     console.error(`[${done}/${jobs.length}] ${run.pair} ${run.arm} #${run.trial}: ${fixed(run.wallMs / 60_000, 1)} min, items ${run.itemsAfterPhase1 ?? "?"} → ${run.itemsAfterCompletion ?? "?"} of ${run.items} after ${run.fixRounds} fix round(s), agent ${usd(run.agent.usd)}${run.error === null ? "" : `, ${clip(run.error, 80)}`}`);
@@ -1870,12 +2158,86 @@ async function completionMain(options: Options): Promise<void> {
       options,
       maxReviewRounds: MAX_REVIEW_ROUNDS,
       prices: PRICES,
-      pairs: contexts.map(({ pair, spec, label, source, ledgerTime: time, refs }) => ({ id: label!.id, label, pair, spec, source, ledgerTime: time, refs: refs.map(({ files, ...side }) => ({ ...side, files: Object.keys(files) })) })),
+      pairs: contexts.map(({ pair, spec, label, source, ledgerTime: time, refs, units, ledgerStats, ledgerError }) => ({ id: label!.id, label, pair, spec, source, ledgerTime: time, refs: refs.map(({ files, ...side }) => ({ ...side, files: Object.keys(files) })), ledger: units, ledgerStats, ledgerError })),
       runs,
     };
     writeFileSync(options.json, `${JSON.stringify(report, null, 2)}\n`);
     console.error(`wrote ${options.json}`);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------- ledger builds
+
+export const LEDGER_BUILD_FORMAT = "rerail.merge-assist-ledger-build/v1";
+
+interface BuiltLedger {
+  readonly id: string;
+  readonly pair: string;
+  readonly repo: string;
+  readonly units: number;
+  readonly ms: number;
+  readonly stats: LedgerStats | null;
+  readonly error: string | null;
+}
+
+const judgeTotal = (stats: LedgerStats | null, field: "called" | "cached" | "failed"): number => Object.values(stats?.judge ?? {}).reduce((sum, counts) => sum + counts[field], 0);
+
+/** `--build-ledgers`' table: per ledger, the extraction funnel (refs, commits, passages, descriptions), units by kind and judge calls; then totals. */
+function printBuilt(built: readonly BuiltLedger[]): void {
+  const kinds = [...new Set(built.flatMap(entry => Object.keys(entry.stats?.units ?? {})))].sort();
+  const row = (entry: BuiltLedger): string[] => {
+    const stats = entry.stats;
+    if (stats === null) return [entry.id, entry.error === null ? "no stats" : clip(entry.error, 60), ...kinds.map(() => ""), "", "", "", "", "", "", "", ""];
+    return [
+      entry.id, `${stats.refs.listed}/${stats.refs.resolved}/${stats.refs.visible}/${stats.refs.kept}`, String(stats.commits),
+      `${stats.passages.message}/${stats.passages.doc}/${stats.passages.description}`, `${stats.descriptions.found}/${stats.descriptions.visible}/${stats.descriptions.read}`,
+      String(entry.units), ...kinds.map(kind => String(stats.units[kind] ?? 0)), String(stats.contested),
+      `${judgeTotal(stats, "called")}/${judgeTotal(stats, "cached")}/${judgeTotal(stats, "failed")}`, String(stats.errors.length), fixed(entry.ms / 60_000, 1),
+    ];
+  };
+  console.log(table(["ledger", "refs listed/resolved/visible/kept", "commits", "passages msg/doc/desc", "PRs found/open/read", "units", ...kinds, "contested", "judge called/cached/failed", "errors", "min"], built.map(row)));
+  const sum = (pick: (stats: LedgerStats) => number) => built.reduce((total, entry) => total + (entry.stats === null ? 0 : pick(entry.stats)), 0);
+  console.log(`\nTotals over ${built.length} ledgers (${built.filter(entry => entry.error !== null).length} failed): refs kept ${sum(stats => stats.refs.kept)} of ${sum(stats => stats.refs.visible)} visible (${sum(stats => stats.refs.dropped.length)} dropped by the area pre-filter); ${sum(stats => stats.commits)} commits; passages ${sum(stats => stats.passages.message)} messages, ${sum(stats => stats.passages.doc)} doc chunks, ${sum(stats => stats.passages.description)} description chunks; units ${built.reduce((total, entry) => total + entry.units, 0)} (${kinds.map(kind => `${kind} ${sum(stats => stats.units[kind] ?? 0)}`).join(", ")}); judge calls ${built.reduce((total, entry) => total + judgeTotal(entry.stats, "called"), 0)} made, ${built.reduce((total, entry) => total + judgeTotal(entry.stats, "cached"), 0)} answered from the cache, ${built.reduce((total, entry) => total + judgeTotal(entry.stats, "failed"), 0)} failed`);
+  const byKind = new Map<string, { called: number; cached: number; failed: number }>();
+  for (const counts of built.flatMap(entry => Object.entries(entry.stats?.judge ?? {}))) {
+    const [kind, value] = counts;
+    const total = byKind.get(kind) ?? { called: 0, cached: 0, failed: 0 };
+    byKind.set(kind, { called: total.called + value.called, cached: total.cached + value.cached, failed: total.failed + value.failed });
+  }
+  console.log(`Judge calls by kind: ${[...byKind].map(([kind, value]) => `${kind} ${value.called} made / ${value.cached} cached / ${value.failed} failed`).join("; ")}`);
+}
+
+/**
+ * `--build-ledgers`: no agent. Each selected pair's ledger (with `--completion`, each label's, at its base) as visible
+ * at second's start, built one after another (the judge's `--judge-concurrency` calls in flight) and stored under
+ * `<ledger-cache>/ledgers/<id>.json`, where later runs read it; then the table of what each build read and asked.
+ * Only counts are printed: no unit text.
+ */
+async function buildLedgers(options: Options): Promise<void> {
+  const selected = options.completion
+    ? loadCompletionDataset(options).map(({ pair, spec, label }) => ({ id: label.id, pair, spec }))
+    : loadDataset(options).map(({ pair, spec }) => ({ id: pair.id, pair, spec }));
+  const align = await loadAlignModule(options.alignModule);
+  const codexEnv = codexEnvironment(options);
+  console.error(`Building ${selected.length} ledgers into ${join(options.ledgerCache, "ledgers")}, ${options.judgeConcurrency} judge calls in flight, descriptions ${options.prBodies ?? "off"}`);
+  const built: BuiltLedger[] = [];
+  for (const { id, pair, spec } of selected) {
+    const source = options.repo ?? join(options.repos, pair.repo.replace("/", "__"));
+    try {
+      const ledger = await pairLedger(align, source, pair, id, ledgerTime(pair, spec.base_sha), options, codexEnv);
+      built.push({ id, pair: pair.id, repo: pair.repo, units: ledger.units.length, ms: ledger.ms, stats: ledger.stats as LedgerStats | null, error: null });
+    } catch (error) {
+      built.push({ id, pair: pair.id, repo: pair.repo, units: 0, ms: 0, stats: null, error: errorLine(error) });
+    }
+    const last = built.at(-1)!;
+    console.error(`[${built.length}/${selected.length}] ${id}: ${last.error ?? `${last.units} units, ${judgeTotal(last.stats, "called")} judge calls, ${fixed(last.ms / 60_000, 1)} min`}`);
+  }
+  printBuilt(built);
+  if (options.json !== undefined) {
+    writeFileSync(options.json, `${JSON.stringify({ format: LEDGER_BUILD_FORMAT, options, ledgers: built }, null, 2)}\n`);
+    console.error(`wrote ${options.json}`);
+  }
+  if (built.some(entry => entry.error !== null)) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------- report
@@ -2166,19 +2528,19 @@ async function main(): Promise<void> {
     detectOnly(options);
     return;
   }
-  if (options.completion) {
-    await completionMain(options);
+  if (options.buildLedgers || options.completion) {
+    await (options.buildLedgers ? buildLedgers(options) : completionMain(options));
     return;
   }
   const selected = loadDataset(options);
   if (selected.length === 0) throw new Error(`No pair in ${options.dataset} has a replay spec`);
-  const align = options.arms.includes("align") ? await loadAlignModule(options.alignModule) : null;
+  const codexEnv = codexEnvironment(options);
+  const align = options.arms.some(arm => LEDGER_ARMS.includes(arm)) ? await loadAlignModule(options.alignModule) : null;
   const contexts: PairContext[] = [];
-  for (const { pair, spec } of selected) contexts.push(await preparePair(pair, spec, options, align));
+  for (const { pair, spec } of selected) contexts.push(await preparePair(pair, spec, options, align, codexEnv));
   printLedgers(contexts);
   const jobs = contexts.flatMap(context => Array.from({ length: options.trials }, (_, trial) => options.arms.map(arm => ({ context, arm, trial: trial + 1 }))).flat());
   console.error(`\n${jobs.length} runs (${contexts.length} pairs × ${options.arms.join(",")} × ${options.trials} trials), ${options.concurrency} at a time, ${options.timeoutMin} min each`);
-  const codexEnv = codexEnvironment(options);
   const runs = await pool(jobs, options.concurrency, job => runJob(job, options, codexEnv), (done, run) => {
     console.error(`[${done}/${jobs.length}] ${run.pair} ${run.arm} #${run.trial}: ${fixed(run.wallMs / 60_000, 1)} min, ${run.files.length} files, ${run.delivered.length} units, grader ${run.grade?.verdict?.conflicts_with_first ?? run.grade?.error ?? "-"}${run.error === null ? "" : `, ${clip(run.error, 80)}`}`);
   });

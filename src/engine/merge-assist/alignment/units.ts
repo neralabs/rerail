@@ -30,14 +30,16 @@ export interface ExtractedUnit {
   readonly key: string | null;
 }
 
-/** Text a judge reads positions from: one design-doc passage a commit adds, or its message. */
+/** Text a judge reads positions from: one design-doc passage a commit adds, its message, or a pull request's description. */
 export interface Passage {
   /** `<sha>:<n>`, unique within a commit. */
   readonly id: string;
-  /** The doc it is from; null for the commit message. */
+  /** The doc it is from; null for the commit message or a description. */
   readonly path: string | null;
   readonly heading: string | null;
   readonly text: string;
+  /** Where a passage that is not a doc is from (`pull request #12`); absent for the commit message. */
+  readonly source?: string;
 }
 
 /** A path in the ref's tree for a token a text names (`schema.rs`, `src/a/`), or undefined. */
