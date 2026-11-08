@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`8ce26cfb7`. Merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
+`f549a6f99`. Merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
+Earlier merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
 Earlier merge `43e884a18` adopts retained SQL waves and recursive SQL iterations across updates.
 Earlier merge `acec50e98` adopts import-component memoization and the current SQL executor.
 The typed input reader retains `projection` alongside Final shape's new `query` parameter.
