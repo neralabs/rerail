@@ -1091,7 +1091,7 @@ fn spike_o125_session_maintains_calls() {
             path.strip_prefix(&root).unwrap().display(), cpu(&r), cpu(&f), r.cross_strata, r.cross_maintained, r.memo
         );
         let ph = |r: &corpus::Report| r.phases.iter().filter(|p| p.1 + p.2 > 0.3).map(|p| format!("{} {:.1}", p.0, p.1 + p.2)).collect::<Vec<_>>().join(", ");
-        println!("  maintained rows: overdeleted {}, inserted {}, held after {}", r.cross_delta_counts[0], r.cross_delta_counts[1], r.cross_delta_counts[2]);
+        println!("  maintained rows: over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}", r.cross_delta_counts);
         println!("  phases: session [{}]; full [{}]", ph(&r), ph(&f));
         println!("  inputs changed ({}): {:?}; derived again: {:?}", r.cross_changed.len(), r.cross_changed.iter().take(30).collect::<Vec<_>>(), r.cross_again);
         if !same {
@@ -1104,6 +1104,94 @@ fn spike_o125_session_maintains_calls() {
                 }
             }
         }
+    }
+    session::stop();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Spike O125 over real history: `O125_REPLAY` holds `00` (the files before the oldest commit) and `NN` (the files commit
+/// NN changed, with `.deleted`, written by the spike's `replay.sh`). `O125_STEPS=a-b` applies `01..a-1`, runs cold in a
+/// session, then applies `a..b` one commit at a time; each step's outputs are compared with a full run's at `b`, or at
+/// every step with `O125_FULL_EACH`. With `RERAIL_PROFILE`, each run's `native.tsv` is kept as
+/// `<profile>/native-<step>-<cold|session|full>.tsv`. `RERAIL_PYTHON_TYPESHED` loads the standard library's stubs.
+#[test]
+#[ignore = "calls.rr in a session over real commits (minutes)"]
+fn spike_o125_replay() {
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let replay = PathBuf::from(std::env::var("O125_REPLAY").unwrap());
+    let (a, b): (usize, usize) = {
+        let v = std::env::var("O125_STEPS").unwrap();
+        let (a, b) = v.split_once('-').unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    };
+    let each = std::env::var_os("O125_FULL_EACH").is_some();
+    let profile = std::env::var_os("RERAIL_PROFILE").map(PathBuf::from);
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let base = std::env::temp_dir().join(format!("rerail-o125-{}", std::process::id()));
+    let (root, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&base).unwrap();
+    let overlay = |step: usize| -> usize {
+        let dir = replay.join(format!("{step:02}"));
+        let mut n = 0;
+        for f in walk(&dir) {
+            let to = root.join(f.strip_prefix(&dir).unwrap());
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(&f, &to).unwrap();
+            n += 1;
+        }
+        for gone in std::fs::read_to_string(dir.join(".deleted")).unwrap_or_default().lines().filter(|l| !l.is_empty()) {
+            let _ = std::fs::remove_file(root.join(gone));
+            n += 1;
+        }
+        n
+    };
+    for step in 0..a {
+        overlay(step);
+    }
+    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let rels = ["call_target", "call_open", "type_of", "possible_type"];
+    let outputs = || -> Vec<Vec<String>> {
+        rels.iter().map(|r| {
+            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            v.sort();
+            v
+        }).collect()
+    };
+    let keep = |step: usize, what: &str| {
+        if let Some(p) = &profile {
+            let _ = std::fs::copy(p.join("native.tsv"), p.join(format!("native-{step:02}-{what}.tsv")));
+        }
+    };
+    let phase = |r: &corpus::Report, name: &str| -> f64 { r.phases.iter().filter(|p| p.0 == name).map(|p| p.1 + p.2).sum() };
+    let cpu = |r: &corpus::Report| -> f64 { r.phases.iter().map(|p| p.1 + p.2).sum() };
+    session::start(&base.join("session")).unwrap();
+    let cold = run();
+    keep(a - 1, "cold");
+    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    for step in a..=b {
+        let files = overlay(step);
+        let r = run();
+        keep(step, "session");
+        let got = outputs();
+        let mut line = format!(
+            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s, local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
+            cpu(&r), phase(&r, "cross"), phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
+        );
+        if each || step == b {
+            let f = session::full(run);
+            keep(step, "full");
+            let want = outputs();
+            line += &format!("; full {:.1} s CPU, cross {:.1} s; same as full: {}", cpu(&f), phase(&f, "cross"), got == want);
+            for (i, rel) in rels.iter().enumerate() {
+                let (x, y): (BTreeSet<&String>, BTreeSet<&String>) = (got[i].iter().collect(), want[i].iter().collect());
+                let (extra, missing) = (x.difference(&y).count(), y.difference(&x).count());
+                if extra + missing > 0 {
+                    line += &format!("\n  {rel}: {extra} extra, {missing} missing; e.g. {:?} / {:?}", x.difference(&y).next(), y.difference(&x).next());
+                }
+            }
+        }
+        println!("{line}");
     }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);

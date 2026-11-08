@@ -16,16 +16,16 @@
 //! overdelete  h__del(..) :- B over old rows, k as its loss     (q__del, r__minus; a negated !n as n__plus)
 //! survivors   h(..)      :- h__old(..), !h__del(..).
 //! rederive    h(..)      :- h__del(..), B over new rows.
-//! insert      h__ins(..) :- B over new rows, k as its gain     (q__ins, r__plus; a negated !n as n__minus)
+//! insert      h__ins(..) :- B over new rows, k as its gain     (q__ins, r__plus; a negated !n as n__minus, !n)
 //!             h(..)      :- h__ins(..).
 //! ```
 //!
 //! An overdeleted row is a superset of the rows that lost every derivation; a survivor holds in the new rows. A new
 //! row not among the old has a derivation using a gained row at some position, by induction on its derivation, so
 //! the insert rules reach it. A head's computed term (`@dot(p, s)`) is first named: `h(@dot(p, s)) :- B` is read as
-//! `h(v) :- B, v = @dot(p, s)`, so the rows above are rows of variables. A `nearest` literal reads the tree, which the
-//! part does not change (it reads it as stage 1's cut does: not an input), so it is copied as a comparison is. A
-//! stratum with an aggregate, a relation made natively, a lattice, an `ast` literal, or a changed read whose old rows
+//! `h(v) :- B, v = @dot(p, s)`, so the rows above are rows of variables. A `nearest` literal reads the tree (`node`,
+//! `child`): while neither changed it is copied as a comparison is, and once either did its stratum is derived
+//! again. A stratum with an aggregate, a relation made natively, a lattice, an `ast` literal, or a changed read whose old rows
 //! were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
@@ -84,6 +84,7 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
             match l {
                 Literal::Atom(a) if a.gated => return Some("a gated negation"),
                 Literal::Atom(a) if changed.contains(&a.rel) && !scc.contains(&a.rel) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
+                Literal::Nearest { .. } if super::retain::TREE.iter().any(|r| changed.contains(*r)) => return Some("a nearest literal over a changed tree"),
                 Literal::Atom(_) | Literal::Cmp { .. } | Literal::Nearest { .. } => {}
                 Literal::Agg { .. } => return Some("an aggregate"),
                 Literal::Ast { .. } => return Some("an ast literal"),
@@ -126,7 +127,14 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
         let mine: Vec<&Rule> = named_rules.iter().collect();
-        if let Some(why) = unmaintainable(&part.program, scc, &mine, &changed, &old) {
+        // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
+        // none), to find a stratum whose maintenance departs from deriving it again.
+        let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
+        let why = if only.as_ref().is_some_and(|o| !scc.iter().any(|r| o.contains(r))) { Some("not chosen") } else { unmaintainable(&part.program, scc, &mine, &changed, &old) };
+        if std::env::var_os("O125_LIST").is_some() && why.is_none() {
+            eprintln!("O125_LIST {}", scc.iter().next().unwrap());
+        }
+        if let Some(why) = why {
             *again.entry(why).or_default() += 1;
             derived_again += 1;
             rules.extend(given.into_iter().cloned());
@@ -166,7 +174,18 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                     })
                     .collect();
                 rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over });
-                let ins: Vec<Literal> = rule.body.iter().enumerate().map(|(j, l)| if j == k { atom(gain.clone(), at.args.clone(), false) } else { l.clone() }).collect();
+                // A negation's gain (`n__minus`) is a row gone, which makes `!n(..)` hold only when no other row
+                // matches: with a wildcard (`!found(c, a, _)`) another may. The negation is kept, over the new rows.
+                let ins: Vec<Literal> = rule
+                    .body
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(j, l)| match j == k {
+                        true if at.neg => vec![atom(gain.clone(), at.args.clone(), false), l.clone()],
+                        true => vec![atom(gain.clone(), at.args.clone(), false)],
+                        false => vec![l.clone()],
+                    })
+                    .collect();
                 rules.push(Rule { head: Atom { rel: named(h, "ins"), args: rule.head.args.clone(), neg: false, gated: false }, body: ins });
             }
             for b in rule.body.iter().filter_map(|l| match l {

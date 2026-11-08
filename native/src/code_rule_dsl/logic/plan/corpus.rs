@@ -207,8 +207,9 @@ pub(crate) struct Report {
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
     pub(crate) cross_changed: Vec<String>,
     pub(crate) cross_again: BTreeMap<&'static str, usize>,
-    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows overdeleted, inserted, and held by the maintained relations.
-    pub(crate) cross_delta_counts: [usize; 3],
+    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows over-deleted, inserted and held by the maintained relations, the rows of
+    /// the deltas of their inputs, and the rows truly deleted and inserted.
+    pub(crate) cross_delta_counts: [usize; 6],
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1944,7 +1945,7 @@ pub(crate) fn run_with_options(
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
-    let mut cross_delta_counts = [0usize; 3];
+    let mut cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`).
     // A program that declares it and derives no row of it (a library that only names it) holds nothing.
@@ -2080,7 +2081,7 @@ pub(crate) fn run_with_options(
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
-                        keep.extend(part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned());
+                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
                     }
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     if wanted.contains("returns") {
@@ -2096,13 +2097,30 @@ pub(crate) fn run_with_options(
                     // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
                     // and hold after the run, for measuring delete-and-rederive (spike O125).
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
-                        let mut counts = [0usize; 3];
+                        // [over-deleted, inserted by the insert rules, held after, input and derived-again deltas
+                        // (`__minus` + `__plus`), truly deleted, truly inserted].
+                        let mut counts = [0usize; 6];
+                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s)| (rel.as_str(), s.len())).collect();
+                        let derived_here: BTreeSet<&String> = part.program.rules.iter().map(|r| &r.head.rel).collect();
+                        let rows_of = |rel: &str| held_rows(&db, &got, rel, part.program.decls[rel].len()).unwrap_or_default();
                         for (rel, cols) in &part.program.decls {
-                            if !part.program.rules.iter().any(|r| &r.head.rel == rel) || cols.is_empty() {
+                            if !derived_here.contains(rel) || cols.is_empty() {
                                 continue;
                             }
-                            let at = if rel.ends_with("__del") { 0 } else if rel.ends_with("__ins") { 1 } else if part.program.decls.contains_key(&format!("{rel}__del")) { 2 } else { continue };
-                            counts[at] += held_rows(&db, &got, rel, cols.len()).map_or(0, |r| r.len());
+                            if rel.ends_with("__minus") || rel.ends_with("__plus") {
+                                counts[3] += rows_of(rel).len();
+                            } else if rel.ends_with("__ins") {
+                                counts[1] += rows_of(rel).len();
+                            } else if !rel.ends_with("__del") && part.program.decls.contains_key(&format!("{rel}__del")) {
+                                let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
+                                let del = rows_of(&format!("{rel}__del"));
+                                let gone = del.iter().filter(|r| !after.contains(*r)).count();
+                                let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
+                                counts[0] += del.len();
+                                counts[2] += after.len();
+                                counts[4] += gone;
+                                counts[5] += (after.len() + gone).saturating_sub(old);
+                            }
                         }
                         cross_delta_counts = counts;
                     }

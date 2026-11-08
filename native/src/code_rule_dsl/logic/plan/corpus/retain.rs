@@ -83,6 +83,9 @@ pub(in crate::code_rule_dsl) struct Cut {
     pub(in crate::code_rule_dsl) changed: Vec<String>,
 }
 
+/// The relations a `nearest` literal reads.
+pub(in crate::code_rule_dsl) const TREE: [&str; 2] = ["node", "child"];
+
 /// The relations each stratum's rules read (atoms, aggregates' atoms and a native operator's inputs).
 fn reads(prog: &front::Program, scc: &BTreeSet<String>) -> BTreeSet<String> {
     let mut out: BTreeSet<String> = prog
@@ -92,6 +95,10 @@ fn reads(prog: &front::Program, scc: &BTreeSet<String>) -> BTreeSet<String> {
         .flat_map(|r| &r.body)
         .filter_map(|l| l.atom().map(|a| a.rel.clone()))
         .collect();
+    // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
+    if prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).any(|r| r.body.iter().any(|l| matches!(l, front::Literal::Nearest { .. }))) {
+        out.extend(TREE.iter().map(|r| (*r).to_owned()));
+    }
     for rel in scc {
         if let Some(native) = prog.natives.get(rel) {
             out.extend(native.reads().into_iter().map(str::to_owned));
