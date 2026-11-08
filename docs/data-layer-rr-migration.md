@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`4e409af94`. This merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
+`79fabb23d`. The latest merge adds cross-file rows memoized by import component.
+The preceding merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
 The preceding merge adopts SQL execution phases, fused reductions, and the phased-facts direction.
 Merge `16e572605` adopts in-fixpoint request answers, retained cross-file session strata, bulk memo replay, and span/grammar updates.
 Merge `a8124a128` adopts Final's terminating hiding pass, type checks, and rule-specific planning errors.

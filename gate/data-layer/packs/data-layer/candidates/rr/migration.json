@@ -2712,8 +2712,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "4e409af94823bd34508254c399fffaab9be9756a",
-    "status": "Root Final shape through 4e409af94 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "upstreamCommit": "79fabb23d768c9eb6153e921068426f9b657e921",
+    "status": "Root Final shape through 79fabb23d with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2789,7 +2789,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "4d2be1eb9b5ca2ff0760b0df7c486c7c60360bff4b2b7cb89e05639207c5bb99"
+        "sha256": "3ef943c0a9842c7832457916e9527a030e8c42f3182d2855e53bc4d5d1fcf755"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
@@ -2801,7 +2801,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "4c1b1569a53dbeeac7787afbe9417037d33bc037faae16f787392359bc82afa8"
+        "sha256": "8fde919e2c922c0d2edd8776f97b93b5d5f13728fa25e6c8fd6cc62680a0b75e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2845,7 +2845,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "d64ff82f222c7bd1e630471fc293901c1605ae98",
+    "upstreamMerge": "d1ee5d5fb18c223ae265ee71849dd34fab8f47aa",
     "cliArtifact": {
       "engineCommit": "81b2ac5a0804bfff5b605ec3267b222168990c67",
       "upstreamCommit": "4e409af94823bd34508254c399fffaab9be9756a",
