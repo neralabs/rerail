@@ -2384,3 +2384,70 @@ once, and no measurement on the 9,010-file repository exists yet. A column bound
 
 **Closure:** containers are matched in one chunked pass over the file's bytes, with matches kept per container,
 measured at full size; and a column of any expression is scanned, or the rule binds its kinds.
+
+
+## O125. Delete-and-rederive on the points-to fixpoint (decision 0083, spike 1)
+
+0083 §2 maintains the stored fixpoint by deltas. Delete-and-rederive can over-delete in a large recursive
+component, and `calls.rr`'s `pv`/`bv` stratum is one: 51 relations, most of the cross-file cost.
+
+**Method:** apply real edits (the last 20 commits touching the 84 files, and the `exceptions.py` comment) as
+deltas to today's fixpoint, through More-ergonomic-rule-syntax's `maintain.rs`.
+
+**Closure:** measured rows over-deleted, rows re-derived and CPU against a cold run, results equal to a full run.
+A one-function edit costs under 5% of a cold run, or the fallback (support counts per row, or maintenance per
+component of definitions) is measured and chosen.
+
+## O126. How big a base delta is per definition (decision 0083, spike 2)
+
+0083 §2–3 make the definition the unit of change, with node ids `(definition, index)`.
+
+**Method:** replay the data layer's history (a few hundred commits). For each commit, count files changed,
+definitions whose digest changed, and base rows changed under `(document, preorder)` ids against
+`(definition, index)` ids. Count the cases a symbol key must cover: redefinitions, conditional definitions,
+`TYPE_CHECKING` branches, overloads, properties.
+
+**Closure:** the distributions recorded in 0083, and the symbol key's form decided.
+
+## O127. Layout invariance of today's engine (decision 0083, spike 3)
+
+**Method:** move definitions between modules of the 84 files, with imports rewritten by a script. Run with and
+without typeshed, and compare findings and work (CPU, rows per stratum).
+
+**Closure:** the departure measured, and the layout-invariance test (0083 §0) in the suite as a guard.
+
+## O128. Search against eager propagation, counted (decision 0083, spike 4)
+
+**Method:** from today's relations, on the 84 files and on 500 data-layer files:
+- distinct `(f, targs)` keys against `gpar`/`gbind` rows;
+- distinct `(class, attribute)` lookups against `found` rows and the `sub` closure.
+
+**Closure:** the ratios recorded, and each question in 0083 §4's table confirmed as a search or moved to eager.
+
+## O129. Structure and declared types over the real library (decision 0083, spike 5)
+
+**Method:** a first `struct.rr` (imports, bindings, class headers, written signatures) over the data layer's venv
+and typeshed.
+
+**Closure:** measured documents loaded, waves for the import frontier to settle, rows, CPU, RSS, and the share
+that is the same for another workspace on the same interpreter. The library's P1 and P2 run once per machine and
+are reused.
+
+## O130. One analysis that really crosses files (decision 0083, spike 6)
+
+**Method:** `param_in(f, i)` (parameter types from callers) and "never called", over the data layer's 9,010
+files: full, then after one edit.
+
+**Closure:** both cost what their delta reaches, under 1 GB, with no mechanism special to them.
+
+## O131. The stored fixpoint read in place under 1 GB (decision 0083, spike 7)
+
+**Closure:** measured sizes of P3's relations on 9,010 files, and the cost of maintaining a delta by index through
+the vtabs without loading relations whole. The store layout (one table per relation, keyed indexes) decided.
+
+## O132. Freshness of library state outside Git (decision 0083, spike 8)
+
+**Method:** stat-check what P1 read in a real venv, parse `RECORD` and `pyvenv.cfg`, and hand-edit one
+site-packages file.
+
+**Closure:** an unchanged venv is verified in milliseconds, and the edit reaches P1 as a content delta.
