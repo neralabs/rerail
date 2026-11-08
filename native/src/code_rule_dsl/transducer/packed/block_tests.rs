@@ -220,9 +220,8 @@ const BODY_OPCODES: &[&str] = &[
     "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
     // `within`: the bits below the stream's end, from its length (clamp, two shifts).
     "isub", "smin", "smax", "ishl",
-    // The extract pass, in the loop (simdjson's `flatten_bits`): each extract word's popcount,
-    // and eight positions from trailing zeros, written as `u32`s.
-    "popcnt", "ctz", "ireduce", "select",
+    // The extract pass's size: each extract's popcount, summed as the plane is written.
+    "popcnt",
     // Constants, made where they are used (decision 0047): `movi` and literal-pool loads, and
     // the output words' one pointer (`i * outputs * 8`).
     "splat", "vconst", "imul_imm",
@@ -240,9 +239,7 @@ fn check_lowering(name: &str, p: &Program) {
         assert!(BODY_OPCODES.contains(&opcode(line)), "{name}: `{line}` is not a bit operation");
     }
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    // One branch: the loop's, or with an extract, the extract pass's test for more than eight
-    // positions (as simdjson's `flatten_bits`; the rest run over set bits, never bytes).
-    assert_eq!(branches, 1, "{name}: the body's only branch is the loop's or the extract pass's");
+    assert_eq!(branches, 1, "{name}: the body's only branch is the loop's");
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
     assert!(!compiled.disassembly.contains(" bl ") && !compiled.disassembly.contains("blr"), "{name}: no calls");
 
@@ -911,8 +908,8 @@ fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     let block = &p.block_programs()[0];
     let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
     let mut out = vec![
+        // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
         ("cpu interpreter".to_owned(), block.run(bytes)),
-        ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").extract(bytes)),
     ];
     #[cfg(target_os = "macos")]
     {
@@ -1076,6 +1073,9 @@ fn stage1_equals_simdjson_on_every_executor() {
         };
         for (name, got) in runs {
             check_stage1(&format!("{path}, {name}"), &bytes, &got.outputs, want);
+            if name == "cranelift" {
+                continue; // no `extract` lowering on the CPU (docs/parser-generators/20-the-ir.md)
+            }
             // The extract pass's positions are simdjson's structural indexes.
             let found = &got.positions[0];
             assert_eq!((found.len(), fnv(found)), want, "{path}, {name}: extracted indexes differ from simdjson's");
@@ -1255,7 +1255,7 @@ fn stage1_loop_keeps_values_in_registers() {
     assert_eq!((stack, mvn), (0, 0), "stage 1's loop spills or inverts vectors:\n{}", lines.join("\n"));
     let block = &p.block_programs()[0];
     // The state is packed: one carried word per 64 state bits (decision 0048).
-    let words = state_bits(block).div_ceil(64) + native.extracts.len();
+    let words = state_bits(block).div_ceil(64);
     assert_eq!(carried_params(&compiled.clif), words, "stage 1's carried state is not packed");
 }
 
@@ -1326,46 +1326,4 @@ pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
     use super::block::BlockOp::*;
     let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
     bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
-}
-
-/// A block program runs in place (tier 2's `CHECK` over a token): over a slice of a larger
-/// buffer, the bytes around it read as zero, so its outputs equal the slice's on its own. Here
-/// `pair` (the byte before, here bytes 0x10 to 0xef after such a byte) and `within`, at every
-/// length to 200 and inside bytes that would change them.
-#[test]
-fn a_block_program_runs_in_place() {
-    let rows = "  block 0 table 0 lo=ffffffffffffffffffffffffffffffff hi=00ffffffffffffffffffffffffffff00
-  block 0 %0 = pair t0 t0 0x01
-  block 0 %1 = eq 0x00
-  block 0 %2 = within
-  block 0 %3 = and %1, %2
-  block 0 %4 = prev %3, 1
-  block 0 output %0
-  block 0 output %3
-  block 0 output %4
-";
-    let p = program(rows);
-    let compiled = native_cpu_block::compile(&native_ir::lower(&p).expect("lowers").block_programs.remove(0)).expect("compiles");
-    for len in 0..200usize {
-        let slice: Vec<u8> = (0..len).map(|j| if j % 7 == 3 { 0 } else { b'a' + (j % 5) as u8 }).collect();
-        for around in [0u8, 0xff, b'x'] {
-            let mut arena = vec![around; 1 + 3];
-            let start = arena.len();
-            arena.extend_from_slice(&slice);
-            arena.resize(arena.len() + 128, around);
-            assert_eq!(compiled.run_in_place(&arena, start, len), compiled.run(&slice), "{len} bytes, around {around:#04x}");
-        }
-    }
-}
-
-/// The compiled path runs no extract pass in Rust: Cranelift's lowering of a program's
-/// `extracts` writes the positions in its loop, and the host only hands them over. The Rust
-/// extract pass, `undelay`'s and `mask_tail`'s work on positions belong to the interpreter.
-#[test]
-fn the_compiled_path_computes_no_positions_in_rust() {
-    for (file, source) in [("native_cpu_block.rs", include_str!("native_cpu_block.rs")), ("native_cpu_stream.rs", include_str!("native_cpu_stream.rs"))] {
-        for needle in ["extract::positions", "positions(&", "mask_tail", "interpret("] {
-            assert!(!source.contains(needle), "{file} uses `{needle}`: the extract pass is the compiled code's");
-        }
-    }
 }

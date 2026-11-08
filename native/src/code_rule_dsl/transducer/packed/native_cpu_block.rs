@@ -10,8 +10,8 @@
 //!
 //! A file's words in `out` start at its row's `out`: block `i`'s words together, output `k`'s
 //! at `i * outputs + k` (one pointer in the loop, each store at an immediate offset, as
-//! simdjson's one index array); then each extract's popcount over all its blocks, the size of
-//! its extract pass.
+//! simdjson's one index array). `extract` rows have no lowering here yet: a run holds the
+//! outputs only.
 
 use super::Error;
 use super::block::{BatchFile, BlockRun, padded_by, undelay};
@@ -42,8 +42,6 @@ pub(super) struct CompiledBlock {
     _module: JITModule,
     entry: Entry,
     outputs: usize,
-    /// The outputs whose positions the extract pass writes.
-    extracts: Vec<usize>,
     /// The program's delay (`block::BlockProgram::delay`), and each output's.
     delay: u8,
     output_delays: Vec<u8>,
@@ -54,32 +52,13 @@ pub(super) struct CompiledBlock {
 }
 
 impl CompiledBlock {
-    /// The function's address and its delay, for a caller in compiled code (tier 2's `CHECK`,
-    /// `native_cpu_stream`): it takes `(bytes, rows, nrows, out)` as `Entry`.
-    pub(super) fn entry(&self) -> (*const u8, u8) {
-        (self.entry as *const u8, self.delay)
-    }
-
-    /// Every output's words over `len` bytes at `start` of `arena`, read in place: the bytes
-    /// around them are not the file's, and read as zero (the edge blocks' masks).
-    #[cfg(test)]
-    pub(super) fn run_in_place(&self, arena: &[u8], start: usize, len: usize) -> Vec<Vec<u64>> {
-        let blocks = (len + usize::from(self.delay)).div_ceil(64);
-        assert!(start >= 1 && start + 64 * blocks <= arena.len(), "a byte before and the blocks inside the arena");
-        let row = Row { bytes: start as u64, blocks: blocks as u64, len: len as u64, out: 0 };
-        let mut out = vec![0u64; self.outputs * blocks + self.extracts.len()];
-        // SAFETY: the row's blocks and the byte before them lie in `arena`; `out` holds its words.
-        unsafe { (self.entry)(arena.as_ptr(), &row, 1, out.as_mut_ptr()) };
-        (0..self.outputs).map(|k| undelay(&(0..blocks).map(|i| out[i * self.outputs + k]).collect::<Vec<_>>(), self.output_delays[k], len)).collect()
-    }
-
     /// Every output's words over `bytes`; bits past the end are zero.
     pub(super) fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
         self.extract(bytes).outputs
     }
 
-    /// The outputs, then the extract pass: each extract's positions, into a vector allocated at
-    /// the count the function summed as it wrote the plane.
+    /// The outputs over `bytes`, as a run. The CPU backend has no lowering of `extract` rows yet
+    /// (docs/parser-generators/20-the-ir.md): its runs hold no positions.
     pub(super) fn extract(&self, bytes: &[u8]) -> BlockRun {
         self.run_files(&[bytes]).pop().expect("one file")
     }
@@ -108,7 +87,7 @@ impl Batch {
             bytes.resize(bytes.len() + FRONT, 0);
             let row = Row { bytes: bytes.len() as u64, blocks: blocks.len() as u64, len: file.len() as u64, out: words };
             bytes.extend(blocks.iter().flatten());
-            words += (program.outputs * blocks.len() + program.extracts.len() * (1 + region_words(blocks.len()))) as u64;
+            words += (program.outputs * blocks.len()) as u64;
             rows.push(row);
         }
         Self { bytes, rows, out: vec![0u64; words as usize] }
@@ -116,7 +95,7 @@ impl Batch {
 
     pub(super) fn call(&mut self, program: &CompiledBlock) {
         // SAFETY: each row's blocks lie in `bytes` after `FRONT` zero bytes, and its words (each
-        // output's per block, then a count per extract) in `out`; the function reads and writes
+        // output's per block) in `out`; the function reads and writes
         // nothing else.
         unsafe { (program.entry)(self.bytes.as_ptr(), self.rows.as_ptr(), self.rows.len() as u64, self.out.as_mut_ptr()) };
     }
@@ -127,21 +106,10 @@ impl Batch {
             .zip(files)
             .map(|(row, bytes)| {
                 let (n, base) = (row.blocks as usize, row.out as usize);
-                let e_n = program.extracts.len();
-                let out = &self.out[base..base + program.outputs * n + e_n * (1 + region_words(n))];
+                let out = &self.out[base..base + program.outputs * n];
                 let words_of = |k: usize| -> Vec<u64> { (0..n).map(|i| out[i * program.outputs + k]).collect() };
-                // The positions the function wrote (its extract pass), handed over as they are.
-                let positions = (0..e_n)
-                    .map(|e| {
-                        let count = out[program.outputs * n + e] as usize;
-                        let from = program.outputs * n + e_n + e * region_words(n);
-                        let region = &out[from..from + region_words(n)];
-                        // SAFETY: the region's words hold `count` `u32`s, which the function wrote.
-                        unsafe { std::slice::from_raw_parts(region.as_ptr().cast::<u32>(), count) }.to_vec()
-                    })
-                    .collect();
                 let outputs = (0..program.outputs).map(|k| undelay(&words_of(k), program.output_delays[k], bytes.len())).collect();
-                BlockRun { outputs, positions }
+                BlockRun { outputs, positions: Vec::new() }
             })
             .collect()
     }
@@ -279,7 +247,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
-        // -> exit (the file's counts) -> row or done. A full block lies inside the file and is
+        // -> exit -> row or done. A full block lies inside the file and is
         // not the first: every `within` is all ones, so its body (the hot loop, block2) has no
         // end-of-file arithmetic. The first block and the last ones take the general body.
         let entry = f.create_block();
@@ -296,19 +264,11 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let state = State::of(native);
         let carried = state.words;
         // Each loop block's parameters: the block index, the byte and output pointers (so that
-        // every load and store is `[pointer, #offset]`), the state words, the counts.
+        // every load and store is `[pointer, #offset]`), the state words.
         for b in [body, general, head] {
             for _ in 0..3 + carried {
                 f.append_block_param(b, types::I64);
             }
-            // One loop-carried popcount per extract, the mask pass's count for the extract
-            // pass; stored after the outputs' words at the exit.
-            for _ in &native.extracts {
-                f.append_block_param(b, types::I64);
-            }
-        }
-        for _ in &native.extracts {
-            f.append_block_param(exit, types::I64);
         }
 
         // The entry: constants every block uses, and each output's first word.
@@ -348,27 +308,21 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The first block's carries are zero, made here: the entry's zero, live across every
         // row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
-        // Each extract's positions follow the outputs' words and the counts (`region_words`);
-        // its cursor starts at its region.
-        let regions = extract_regions(&mut f, out, blocks, native.outputs.len(), native.extracts.len());
         let first: Vec<cranelift_codegen::ir::BlockArg> = [zero.into(), bytes.into(), out.into()]
             .into_iter()
             .chain(std::iter::repeat_n(zero.into(), carried))
-            .chain(regions.iter().map(|&r| r.into()))
             .collect();
-        let no_counts: Vec<cranelift_codegen::ir::BlockArg> = regions.iter().map(|&r| r.into()).collect();
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
-        f.ins().brif(none, exit, &no_counts, head, &first);
+        f.ins().brif(none, exit, &[], head, &first);
 
         // The head: the end, or the next block's body.
         f.switch_to_block(head);
         let hp = f.block_params(head).to_vec();
         let args: Vec<cranelift_codegen::ir::BlockArg> = hp.iter().map(|&v| v.into()).collect();
-        let counted: Vec<cranelift_codegen::ir::BlockArg> = hp[3 + carried..].iter().map(|&v| v.into()).collect();
         let ended = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, hp[0], blocks);
         let next_block = f.create_block();
-        f.ins().brif(ended, exit, &counted, next_block, &[]);
+        f.ins().brif(ended, exit, &[], next_block, &[]);
         f.switch_to_block(next_block);
         let past_first = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, hp[0], 1);
         let inside = f.ins().icmp(IntCC::UnsignedLessThan, hp[0], full_end);
@@ -382,7 +336,6 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let i = f.block_params(body)[0];
         let (base, dst) = (f.block_params(body)[1], f.block_params(body)[2]);
         let packed_in: Vec<Value> = f.block_params(body)[3..3 + carried].to_vec();
-        let counts_in: Vec<Value> = f.block_params(body)[3 + carried..].to_vec();
         // The state carried out, word by word: each field ORed in as soon as its value is made,
         // so that no value stays live to the back edge for its carry.
         let mut packed_out: Vec<Option<Value>> = vec![None; carried];
@@ -415,63 +368,16 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let mut values: Vec<Option<Value>> = Vec::with_capacity(native.insts.len());
         // The block's 64 bytes, loaded once for every compare and class.
         let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
-        // The general body reads the file's bytes only: a lane past its end, or the byte
-        // before its first, reads as zero, as in the interpreter's padded blocks. So a block
-        // program runs in place over a slice of a larger buffer (tier 2's `CHECK` over a token,
-        // as simdjson's `parse_number` reads the number where it is). A full block needs no mask.
-        // Lane `j` of part `k` is byte `16k + j` of the block. `rel` is how many of the block's
-        // bytes are the file's; a lane's byte before is the file's when `lane - lo < rel + 1 - lo`
-        // (unsigned), `lo` being 1 in the first block, whose lane 0 has none.
-        let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
-        let masks: Option<(Value, Value, Value)> = (!full && (reads || back)).then(|| {
-            let start = f.ins().ishl_imm(i, 6);
-            let left = f.ins().isub(len, start);
-            let zero = f.ins().iconst(types::I64, 0);
-            let all = f.ins().iconst(types::I64, 64);
-            let left = f.ins().smin(left, all);
-            let rel = f.ins().smax(left, zero);
-            let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
-            let lo = f.ins().uextend(types::I64, first);
-            let rel_before = f.ins().iadd_imm(rel, 1);
-            let rel_before = f.ins().isub(rel_before, lo);
-            let mut splat8 = |v: Value| {
-                let v = f.ins().ireduce(types::I8, v);
-                f.ins().splat(types::I8X16, v)
-            };
-            (splat8(rel), splat8(lo), splat8(rel_before))
-        });
-        let lane_of = |f: &mut FunctionBuilder<'_>, part: i64| {
-            let lanes: Vec<u8> = (0..16).map(|j| (16 * part + j) as u8).collect();
-            let handle = f.func.dfg.constants.insert(ConstantData::from(&lanes[..]));
-            f.ins().vconst(types::I8X16, handle)
-        };
         let chunks: Vec<Value> = if reads {
-            (0..4)
-                .map(|part| {
-                    let v = f.ins().load(types::I8X16, loads, base, (part * 16) as i32);
-                    let Some((rel, _, _)) = masks else { return v };
-                    let lane = lane_of(&mut f, part);
-                    let keep = f.ins().icmp(IntCC::UnsignedLessThan, lane, rel);
-                    f.ins().band(v, keep)
-                })
-                .collect()
+            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
         } else {
             vec![]
         };
         // The block's bytes one back (each byte's byte before), loaded once for every `pair`:
-        // unaligned loads at -1, the first block's reading `FRONT`'s zeros (or, in place, the
-        // byte before, masked).
+        // unaligned loads at -1, the first block's reading `FRONT`'s zeros.
+        let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
         let befores: Vec<Value> = if back {
-            (0..4)
-                .map(|part| {
-                    let v = f.ins().load(types::I8X16, loads, base, (part * 16 - 1) as i32);
-                    let Some((_, lo, rel_before)) = masks else { return v };
-                    let lane = lane_of(&mut f, part);
-                    let lane = f.ins().isub(lane, lo);
-                    let keep = f.ins().icmp(IntCC::UnsignedLessThan, lane, rel_before);
-                    f.ins().band(v, keep)
-                })
-                .collect()
+            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16 - 1)).collect()
         } else {
             vec![]
         };
@@ -692,23 +598,11 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let value = plain(&mut f, &syms, &mut values, usize::from(v));
             f.ins().store(MemFlags::new().with_notrap(), value, dst, 8 * k as i32);
         }
-        // The extract pass, in the loop (simdjson's `flatten_bits`): each extract's set bits as
-        // byte positions, written at its cursor (`counts_in`, carried).
-        let counts_out: Vec<Value> = native
-            .extracts
-            .iter()
-            .zip(&counts_in)
-            .map(|(&k, &cursor)| {
-                let w = values[usize::from(native.outputs[k])].expect("stored, so plain");
-                flatten(&mut f, w, cursor, i, len, native.output_delays[k], full)
-            })
-            .collect();
         let next = f.ins().iadd_imm(i, 1);
         let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, stride));
         let again: Vec<cranelift_codegen::ir::BlockArg> = [next.into(), next_base.into(), next_dst.into()]
             .into_iter()
             .chain(packed_out.iter().map(|&c| c.expect("every carried word holds a field").into()))
-            .chain(counts_out.iter().map(|&c| c.into()))
             .collect();
         if full {
             // The hot loop's back edge: to itself while the next block is full.
@@ -719,19 +613,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         }
         }
 
-        // Each extract's count, from its cursor.
         f.switch_to_block(exit);
-        let cursors = f.block_params(exit).to_vec();
-        if !cursors.is_empty() {
-            let words = f.ins().imul_imm(blocks, native.outputs.len() as i64);
-            let from = f.ins().ishl_imm(words, 3);
-            let after = f.ins().iadd(out, from);
-            for (e, (&c, &r)) in cursors.iter().zip(&regions).enumerate() {
-                let bytes = f.ins().isub(c, r);
-                let n = f.ins().ushr_imm(bytes, 2);
-                f.ins().store(MemFlags::new().with_notrap(), n, after, (e * 8) as i32);
-            }
-        }
         let next_row = f.ins().iadd_imm(r, 1);
         let more_rows = f.ins().icmp(IntCC::UnsignedLessThan, next_row, nrows);
         f.ins().brif(more_rows, row, &[next_row.into()], done, &[]);
@@ -752,102 +634,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, output_delays: native.output_delays.clone(), clif, disassembly })
-}
-
-/// The extract pass's layout in a file's words: after the outputs' words, a count per extract,
-/// then each extract's positions (`u32`), room for every byte of its blocks and 16 more (the
-/// writes in eights past the last, as simdjson's).
-pub(super) fn region_words(blocks: usize) -> usize {
-    32 * blocks + 8
-}
-
-/// Each extract's region, a byte pointer, from the file's first output word `out`.
-fn extract_regions(f: &mut FunctionBuilder<'_>, out: Value, blocks: Value, outputs: usize, extracts: usize) -> Vec<Value> {
-    let words = f.ins().imul_imm(blocks, outputs as i64);
-    let words = f.ins().iadd_imm(words, extracts as i64);
-    let from = f.ins().ishl_imm(words, 3);
-    let first = f.ins().iadd(out, from);
-    let size = f.ins().ishl_imm(blocks, 8);
-    let size = f.ins().iadd_imm(size, 64);
-    (0..extracts)
-        .map(|e| {
-            let at = f.ins().imul_imm(size, e as i64);
-            f.ins().iadd(first, at)
-        })
-        .collect()
-}
-
-/// The extract pass over one block's word `w` of an output delayed by `d` (bit `j` is byte
-/// `64 i + j - d`): its set bits' byte positions, written at `cursor`, eight at a time as
-/// simdjson's `flatten_bits` (the writes past the last are overwritten, or past the count). In
-/// an edge block, only the file's bytes. Returns the cursor after them.
-fn flatten(f: &mut FunctionBuilder<'_>, w: Value, cursor: Value, i: Value, len: Value, d: u8, full: bool) -> Value {
-    let mut w = w;
-    let start = f.ins().ishl_imm(i, 6);
-    if !full {
-        // Bytes below the file's end: t = clamp(len + d - 64 i, 0, 64) low bits, by two shifts.
-        let end = f.ins().iadd_imm(len, i64::from(d));
-        let left = f.ins().isub(end, start);
-        let zero = f.ins().iconst(types::I64, 0);
-        let all = f.ins().iconst(types::I64, 64);
-        let left = f.ins().smin(left, all);
-        let t = f.ins().smax(left, zero);
-        let half = f.ins().ushr_imm(t, 1);
-        let rest = f.ins().isub(t, half);
-        let one = f.ins().iconst(types::I64, 1);
-        let m = f.ins().ishl(one, half);
-        let m = f.ins().ishl(m, rest);
-        let m = f.ins().iadd_imm(m, -1);
-        w = f.ins().band(w, m);
-        if d > 0 {
-            // And not before the file: the first block's low `d` bits.
-            let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
-            let low = f.ins().iconst(types::I64, !((1i64 << d) - 1));
-            let keep = f.ins().iconst(types::I64, -1);
-            let mask = f.ins().select(first, low, keep);
-            w = f.ins().band(w, mask);
-        }
-    }
-    let base = f.ins().iadd_imm(start, -i64::from(d));
-    let cnt = f.ins().popcnt(w);
-    let flags = MemFlags::new().with_notrap();
-    let write = |f: &mut FunctionBuilder<'_>, w: Value, at: Value, off: i32| -> Value {
-        let t = f.ins().ctz(w);
-        let p = f.ins().iadd(base, t);
-        let p = f.ins().ireduce(types::I32, p);
-        f.ins().store(flags, p, at, off);
-        let less = f.ins().iadd_imm(w, -1);
-        f.ins().band(w, less)
-    };
-    for k in 0..8 {
-        w = write(f, w, cursor, 4 * k);
-    }
-    let (second, rest, join) = (f.create_block(), f.create_block(), f.create_block());
-    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, cnt, 8);
-    f.ins().brif(more, second, &[], join, &[]);
-    f.switch_to_block(second);
-    let mut w2 = w;
-    for k in 8..16 {
-        w2 = write(f, w2, cursor, 4 * k);
-    }
-    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, cnt, 16);
-    let sixteen = f.ins().iconst(types::I64, 16);
-    f.ins().brif(more, rest, &[sixteen.into(), w2.into()], join, &[]);
-    // The rest, one at a time: a loop over set bits, not bytes.
-    f.append_block_param(rest, types::I64);
-    f.append_block_param(rest, types::I64);
-    f.switch_to_block(rest);
-    let (k, wr) = (f.block_params(rest)[0], f.block_params(rest)[1]);
-    let off = f.ins().ishl_imm(k, 2);
-    let at = f.ins().iadd(cursor, off);
-    let wn = write(f, wr, at, 0);
-    let k1 = f.ins().iadd_imm(k, 1);
-    let again = f.ins().icmp(IntCC::UnsignedLessThan, k1, cnt);
-    f.ins().brif(again, rest, &[k1.into(), wn.into()], join, &[]);
-    f.switch_to_block(join);
-    let bytes = f.ins().ishl_imm(cnt, 2);
-    f.ins().iadd(cursor, bytes)
+    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), delay: native.delay, output_delays: native.output_delays.clone(), clif, disassembly })
 }
 
 /// A value of the bit logic: a known word, or a value that is the word itself or its complement.
