@@ -19,7 +19,7 @@ The questions, and who answers them:
 | Where may a fact over every document be read? | 0093: only by findings (reports) | accepted, not built |
 | How is a library held? | 0089: a module, held once per run; equal requests share one cone | stages 1–2 built |
 | What does a policy's scope limit? | 0091: its own rules and findings, never which facts exist | built |
-| How is a changed fact maintained? | 0077 (delete-and-rederive) by 0090's route | DRed built; 0090 step 1 |
+| How is a changed fact maintained? | deferred: exact maintenance (counting or another), or 0077's DRed | DRed built; 0090 step 1 |
 | When is a fact a search? | 0083 §4: `.search`, memoised, after maintenance | not built |
 | How is a node named? | §2 below | flag only |
 | What does a run load, and what changed? | §6 below (phase 0) | being designed |
@@ -89,11 +89,16 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
 
 - **SQLite holds the durable state.** Its writes may lag: valid state that a later write will make durable may be
   in memory only. (Already decided; restated so the rest reads against it.)
-- **Delete-and-rederive is the mechanism** (0077). O125 found it right on 18 of 19 real commits; the two
-  departures are O137, and the negation fix is in. Over-deletion is 1.23–1.35x, so counting supports is not needed.
-- **0090's route makes it cost what the delta reaches:** the engine's relations kept and read in place, base
-  deltas per file and then per definition, a stratum's net delta as the cutoff, a size threshold to derive again,
-  memoised rewrites. Today a maintained run costs 2.5–4x a cold one; the target is under 5% of cold.
+- **The maintenance mechanism is deferred.** The owner leans towards no DRed: maintenance kept exact, by counting
+  derivations or another mechanism. Until it is decided, 0077's delete-and-rederive stays as built (O125: right on
+  18 of 19 real commits, the two departures O137; over-deletion 1.23–1.35x). Whatever is chosen is judged by its
+  own work, not by today's overhead around it.
+- **0090's route is needed by any mechanism:** the engine's relations kept and read in place, base deltas per
+  file and then per definition, a stratum's net delta as the cutoff, a size threshold to derive again, memoised
+  rewrites. Today a maintained run costs 2.5–4x a cold one; the target is under 5% of cold. On O125's step 17 the
+  maintenance proper (over-delete, insert, rederive) is 5% of cold already; the rest is overhead linear in the
+  stored fixpoint (deltas as anti-joins of whole relations, survivor copies, binding, re-planning), plus input
+  deltas inflated by preorder ids (§2).
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.
@@ -159,5 +164,5 @@ Open: the name of `.global` (§3), against 0093's global facts. `.shared` says w
 - **Trap T2** (union-scoped sharing lost through scope inflation): *agrees* with §3, where each policy's rules read
   only its scope; it does not argue for narrowing the library.
 - **Target architecture (03) §2**: "No DRed and no level witness". *Departs*: O125 measured DRed right and its
-  over-deletion mild. 0090 §6 left the conflict to the architecture owner; this record proposes DRed and leaves that
-  choice open until the owner rules.
+  over-deletion mild. 0090 §6 left the conflict to the architecture owner, who deferred it (2026-11-08), leaning
+  towards exact maintenance without DRed.
