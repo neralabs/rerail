@@ -93,13 +93,13 @@ def install(suite,module):
         for row in rows:
             if row['code']=='TP_CATEGORY_MEMBER':result[row['parameters']['category']].add(row['parameters']['name'])
         return result
-    def message(value):
-        rows=query(suite,'_compute_signature_message',signature(value))
+    def message(categories):
+        rows=query(suite,'_compute_signature_message',signature(categories))
         return next(r['parameters']['value'].encode('utf-8') for r in rows if r['code']=='TP_SIGNATURE_MESSAGE')
     def verify(categories,signature_b64):
         rows=query(suite,'_verify_signature',dict(**signature(categories),publicKey=module.BASELINE_PUBLIC_KEY_HEX,signature=signature_b64))
         return bool(next(r['parameters']['answer'] for r in rows if r['code']=='TP_BOOL'))
-    def visit(owner,node):owner.findings=graph(suite,'ConnectionParameterFinder.visit',owner,node)
+    def visit(self,node):self.findings=graph(suite,'ConnectionParameterFinder.visit',self,node)
     def internal(owner,node,single=False):
         options=dict(internalProbe='true')
         if owner.conn_param_name is not None:options['connectionName']=owner.conn_param_name
@@ -137,8 +137,10 @@ def install(suite,module):
         '_compute_signature_message':message,'_verify_signature':verify,'_check_for_internal_transactions':check,
         '_facts_for_files':facts,'analyze_source':analyze_source,'analyze_file':analyze_file,'_collect_current_findings':collect,
         '_load_baseline':load,'_get_public_key_bytes':lambda:bytes.fromhex(module.BASELINE_PUBLIC_KEY_HEX),
-        '_baseline_cache_token':token,'_root_for_analysis_file':lambda path:root_for(path,module.BASELINE_FILE)}
+        '_baseline_cache_token':token,'_root_for_analysis_file':lambda file_path:root_for(file_path,module.BASELINE_FILE)}
     for name,fn in functions.items():suite.replace(module,name,fn)
     suite.replace(module.ConnectionParameterFinder,'visit',visit)
-    suite.replace(module.InternalTransactionFinder,'visit',internal)
-    suite.replace(module.InternalTransactionFinder,'_check_call',lambda owner,node:internal(owner,node,single=True))
+    def internal_visit(self,node):internal(self,node)
+    def check_call(self,node):internal(self,node,single=True)
+    suite.replace(module.InternalTransactionFinder,'visit',internal_visit)
+    suite.replace(module.InternalTransactionFinder,'_check_call',check_call)

@@ -205,7 +205,9 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
             Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
         }
     }
-    if !errors.is_empty() {
+    // This reader owns the declared error relation even after successful reads. Leaving it as an
+    // unbound tape input makes a rule's `!input_error` ask the syntax provider for nonexistent columns.
+    if program.decls.contains_key("input_error") || !errors.is_empty() {
         program.inputs.retain(|name| name != "input_error");
         program.facts.entry("input_error".to_owned()).or_default().extend(errors);
     }
@@ -214,6 +216,19 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn successful_file_reads_publish_a_known_empty_error_relation() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl sample(n: number)
+.input sample(IO=json, filename="shared.json", path="/n")
+.decl input_error(path: symbol, kind: symbol, detail: symbol)
+.input input_error
+"#).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| Ok(r#"{"n":7}"#.to_owned())).unwrap();
+        assert!(!program.inputs.iter().any(|name| name == "input_error"));
+        assert_eq!(program.facts.get("input_error"), Some(&Vec::new()));
+    }
+
     #[test]
     fn ordered_object_wildcards_keep_first_key_order_and_last_value_with_array_duplicates() {
         let source = r#"{"categories":{"Z":["old"],"NEEDS_REVIEW":["foo","foo"],"Z":["last"],"EMPTY":[],"A":["tail"]}}"#;
