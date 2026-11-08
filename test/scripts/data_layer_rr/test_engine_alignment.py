@@ -14,6 +14,19 @@ class EngineAlignmentTests(unittest.TestCase):
     def setUp(self):
         getattr(migration,'_SOURCE_COHORTS',set()).clear()
 
+    def test_registered_source_cohort_can_start_new_shards_after_a_peer_advances(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            source.update(checkout='.',nativeExtensions=[])
+            with patch.object(migration,'git',self.artifact_git), \
+                 patch.object(migration,'verify_engine_alignment',side_effect=ValueError('peer advanced')) as live:
+                migration.verify_source_cohort(root,source)
+                migration.verify_engine_artifact(root,source,binary)
+                migration._SOURCE_COHORTS.clear()  # The next shard starts a fresh process.
+                migration.verify_source_cohort(root,source)
+                migration.verify_engine_artifact(root,source,binary)
+                live.assert_not_called()
+
     def test_live_tip_audit_repeats_at_new_process_or_adoption_boundaries(self):
         source=dict(checkout='.',upstreamCommit='adopted')
         with patch.object(migration,'verify_engine_alignment') as audit:
