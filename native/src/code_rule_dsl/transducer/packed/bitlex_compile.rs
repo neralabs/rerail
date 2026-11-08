@@ -15,8 +15,9 @@
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
 //! - **Tokens**, `keywords` and `skip`: each token kind's start and last-byte masks, and the
 //!   coverage and overlap checks.
-//! - **The tree section** (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1): its masks, and
-//!   its `node` and `code` rows, with grammar ids from `Symbols`.
+//! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): each token kind's row
+//!   (its start and end outputs), its keywords, the skipped bytes, and the grammar's state
+//!   machine (`grammar`), with grammar ids from `Symbols`.
 //! - **Errors and escapes.** Each mask joins the fallback output (`FALLBACK`); a file with a bit
 //!   of it goes to tree-sitter.
 //!
@@ -53,8 +54,9 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, ClassTable, CodeRow, Fact, KeywordRow, NodeRow, RowCond, RowEnd, RowStart, Validator};
-use ::bitlex::syntax::{Arg, Cond, Expr, FactWhen, Nest, NodeEnd, NodeStart, Stmt};
+use super::block::{BlockOp, BlockProgram, ClassTable, KeywordRow, TokenRow};
+use super::grammar;
+use ::bitlex::syntax::{Arg, Expr, Stmt};
 use std::collections::HashMap;
 
 /// A compiled program: its `rir` rows (`block 0 …`), whose outputs are the requested masks in
@@ -62,9 +64,8 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) rows: String,
-    /// Each requested name, then each row's mask (`node KIND start`, `node KIND end`,
-    /// `level KIND up`, `level KIND down`, `code KIND NAME`), and its output: a value asked for
-    /// twice is one output.
+    /// Each requested name, then each token row's masks (`token KIND start`, `token KIND end`)
+    /// and `skip`, and its output: a value asked for twice is one output.
     pub(super) labels: Vec<(String, u16)>,
     /// The fallback's outputs (`FALLBACK`): one per delay its masks have, none brought to
     /// another delay; the file goes to tree-sitter when any has a bit.
@@ -117,69 +118,9 @@ struct Lowering {
     tokens: Vec<(String, Val, Option<TokenEnd>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     skip: Option<Val>,
-    tree: Tree,
-}
-
-/// A tree row before outputs are numbered: its masks as indexes into the compiled values.
-struct RowSpec {
-    kind: String,
-    start: SpecStart,
-    end: SpecEnd,
-    leaf: bool,
-    nested: Option<u32>,
-    when: Option<Cond>,
-    also: Option<Cond>,
-    scan: bool,
-}
-
-enum SpecStart {
-    At(usize),
-    /// Where a token of a keyword's kind starts.
-    Kind(String),
-    First,
-}
-
-enum SpecEnd {
-    At(usize),
-    Kind(String),
-    With(String),
-    Last,
-}
-
-#[derive(Clone)]
-enum FactSpec {
-    At(usize),
-    StartOf(String),
-    NotStartOf(String),
-    After(Vec<String>),
-    Always,
-}
-
-/// The rows of the nodes of `kind`: its own row; a supertype's kinds' rows; a keyword's token
-/// row (a keyword is a token of that row, retyped).
-fn kind_rows(specs: &[RowSpec], facts: &[(bool, String, Vec<String>, TreeFact)], keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], kind: &str) -> Result<Vec<usize>, String> {
-    if let Some(r) = specs.iter().position(|r| r.kind == kind) {
-        return Ok(vec![r]);
-    }
-    for (token, words, _) in keywords {
-        let named = |(w, alias): &(Vec<u8>, Option<String>)| alias.as_deref().map_or(w.as_slice() == kind.as_bytes(), |a| a == kind);
-        if words.iter().any(named) {
-            return kind_rows(specs, facts, keywords, token);
-        }
-    }
-    let members: Vec<&String> = facts.iter().filter(|f| !f.0 && f.1 == kind).flat_map(|f| f.2.iter()).collect();
-    if members.is_empty() {
-        return Err(format!("no node kind, keyword or supertype `{kind}`"));
-    }
-    let mut out = Vec::new();
-    for m in members {
-        for r in kind_rows(specs, facts, keywords, m)? {
-            if !out.contains(&r) {
-                out.push(r);
-            }
-        }
-    }
-    Ok(out)
+    /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
+    tree: Vec<Stmt>,
+    extra: Vec<String>,
 }
 
 /// Whether a keyword gives kind `name`.
@@ -205,42 +146,9 @@ struct Count {
     planes: Vec<Val>,
 }
 
-/// The tree section, as read (decision 0049: tier-2 rules on the token stream).
-#[derive(Default)]
-struct Tree {
-    nodes: Vec<TreeNode>,
-    facts: Vec<(bool, String, Vec<String>, TreeFact)>,
-    checks: Vec<(String, Validator)>,
-    extra: Vec<String>,
-    untoken: Vec<String>,
-}
-
-/// A `node` statement, its masks lowered.
-struct TreeNode {
-    kind: String,
-    /// A mask, another kind's starts (by name), or the first token.
-    start: Result<Option<Val>, String>,
-    when: Option<Cond>,
-    also: Option<Cond>,
-    /// A mask, `with` a field, or the last token.
-    end: NodeEnd,
-    end_mask: Option<Val>,
-    nested: Option<u32>,
-    /// `match scan`: closes find their opens by a scan, not a barrier.
-    scan: bool,
-}
-
-/// A code fact's test, its mask lowered.
-enum TreeFact {
-    Mask(Val),
-    StartOf(String),
-    NotStartOf(String),
-    Cond(Cond),
-    Always,
-}
 
 /// Compile `stmts`, with `outputs` (mask names, or `FALLBACK`) as the block program's first
-/// outputs, then the tree section's row masks. `symbols` names the grammar's ids; a program
+/// outputs, then the token rows' masks. `symbols` names the grammar's ids; a program
 /// with a tree section needs it.
 pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) -> Result<Compiled, String> {
     let mut low = Lowering {
@@ -254,7 +162,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         tokens: Vec::new(),
         keywords: Vec::new(),
         skip: None,
-        tree: Tree::default(),
+        tree: Vec::new(),
+        extra: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -278,79 +187,20 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             vals.push(((*name).to_owned(), x));
         }
     }
-    // The rows: declared kinds in rank order, then the tokens; each mask an output.
-    let has_tree = !low.tree.nodes.is_empty();
-    let push = |vals: &mut Vec<(String, Val)>, label: String, x: Val| {
-        vals.push((label, x));
-        vals.len() - 1
-    };
-    let mut specs: Vec<RowSpec> = Vec::new();
-    let mut facts: Vec<(usize, bool, String, FactSpec)> = Vec::new();
+    // The tree section: each token kind's start and end, then the skipped bytes; each mask an
+    // output.
+    let has_tree = !low.tree.is_empty();
+    let mut token_specs: Vec<(String, usize, usize)> = Vec::new();
     let mut skip = None;
     if has_tree {
-        let untoken = low.tree.untoken.clone();
-        let token_rows: Vec<(String, Val, Val)> = token_rows.into_iter().filter(|t| !untoken.contains(&t.0)).collect();
-        let declared = std::mem::take(&mut low.tree.nodes);
-        // `start K`: kind K's own start mask.
-        let start_of = |name: &str| -> Result<Val, String> {
-            if let Some(t) = token_rows.iter().find(|t| t.0 == name) {
-                return Ok(t.1);
-            }
-            match declared.iter().find(|n| n.kind == name).map(|n| &n.start) {
-                Some(Ok(Some(v))) => Ok(*v),
-                _ => Err(format!("`start {name}`: no mask, token or node kind of that name")),
-            }
-        };
-        // A kind a keyword gives: its tokens start and end where the writer reads their text.
-        let keyword_kind = |name: &str| is_keyword_kind(&low.keywords, name);
-        for n in &declared {
-            let start = match &n.start {
-                Ok(None) => SpecStart::First,
-                Ok(Some(v)) => SpecStart::At(push(&mut vals, format!("node {} start", n.kind), *v)),
-                Err(name) if keyword_kind(name) => SpecStart::Kind(name.clone()),
-                Err(name) => SpecStart::At(push(&mut vals, format!("node {} start", n.kind), start_of(name)?)),
-            };
-            let end = match (&n.end, n.end_mask) {
-                (NodeEnd::At(_), Some(m)) => SpecEnd::At(push(&mut vals, format!("node {} end", n.kind), m)),
-                (NodeEnd::Kind(k), _) if keyword_kind(k) => SpecEnd::Kind(k.clone()),
-                (NodeEnd::Kind(k), _) => return Err(format!("node {}: `end '{k}'` names no keyword's kind", n.kind)),
-                (NodeEnd::With(f), _) => SpecEnd::With(f.clone()),
-                _ => SpecEnd::Last,
-            };
-            specs.push(RowSpec { kind: n.kind.clone(), start, end, leaf: false, nested: n.nested, when: n.when.clone(), also: n.also.clone(), scan: n.scan });
-        }
         for (kind, start, last) in &token_rows {
-            let s = push(&mut vals, format!("node {kind} start"), *start);
-            let e = push(&mut vals, format!("node {kind} end"), *last);
-            specs.push(RowSpec { kind: kind.clone(), start: SpecStart::At(s), end: SpecEnd::At(e), leaf: true, nested: None, when: None, also: None, scan: false });
+            vals.push((format!("token {kind} start"), *start));
+            vals.push((format!("token {kind} end"), *last));
+            token_specs.push((kind.clone(), vals.len() - 2, vals.len() - 1));
         }
-
-        let tree_facts = std::mem::take(&mut low.tree.facts);
-        let rows_of = |kind: &str| kind_rows(&specs, &tree_facts, &low.keywords, kind);
-        for (field, name, kinds, fact) in &tree_facts {
-            let spec = match fact {
-                TreeFact::Mask(m) => FactSpec::At(push(&mut vals, format!("code {name}"), *m)),
-                TreeFact::StartOf(k) => FactSpec::StartOf(k.clone()),
-                TreeFact::NotStartOf(k) => FactSpec::NotStartOf(k.clone()),
-                TreeFact::Cond(c) if c.parent.is_none() => FactSpec::After(c.after.clone()),
-                TreeFact::Cond(_) => return Err(format!("{name}: a fact's condition is `after` only")),
-                TreeFact::Always => FactSpec::Always,
-            };
-            let mut rows: Vec<usize> = Vec::new();
-            for kind in kinds {
-                for r in rows_of(kind)? {
-                    if !rows.contains(&r) {
-                        rows.push(r);
-                    }
-                }
-            }
-            for r in rows {
-                facts.push((r, *field, name.clone(), spec.clone()));
-            }
-        }
-        low.tree.facts = tree_facts;
         if let Some(sk) = low.skip {
-            skip = Some(push(&mut vals, "skip".to_owned(), sk));
+            vals.push(("skip".to_owned(), sk));
+            skip = Some(vals.len() - 1);
         }
     }
     let delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
@@ -380,78 +230,28 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
         let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
-        let keyword_kind = |name: &str| is_keyword_kind(&low.keywords, name);
-        // `after K`: a token's kind (its keyword's, if any), by grammar id.
-        let token_kinds = |kinds: &[String]| -> Result<Vec<u16>, String> {
-            kinds
-                .iter()
-                .map(|k| {
-                    if specs.iter().any(|r| r.leaf && r.kind == *k) || keyword_kind(k) { id(k) } else { Err(format!("`after {k}`: no token or keyword of that kind")) }
-                })
-                .collect()
-        };
-        let row_of = |k: &str| specs.iter().position(|r| r.kind == k).map(|r| r as u16).ok_or_else(|| format!("no node kind `{k}`"));
         // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
         let required: Vec<&String> = low.keywords.iter().filter(|k| k.2).map(|k| &k.0).collect();
-        let cond = |c: &Cond| -> Result<RowCond, String> {
-            Ok(RowCond {
-                after: token_kinds(&c.after)?,
-                before: token_kinds(&c.before)?,
-                parent: c.parent.as_deref().map(|p| row_of(p).and_then(|_| id(p))).transpose()?,
-            })
-        };
-        for spec in &specs {
-            let RowCond { after, before, parent } = spec.when.as_ref().map(cond).transpose()?.unwrap_or_default();
-            let also = spec.also.as_ref().map(cond).transpose()?;
-            low.program.nodes.push(NodeRow {
-                kind: if spec.leaf && required.contains(&&spec.kind) { 0 } else { id(&spec.kind)? },
-                start: match &spec.start {
-                    SpecStart::At(v) => RowStart::At(at[*v]),
-                    SpecStart::Kind(k) => RowStart::Kind(id(k)?),
-                    SpecStart::First => RowStart::FirstToken,
-                },
-                end: match &spec.end {
-                    SpecEnd::At(v) => RowEnd::At(at[*v]),
-                    SpecEnd::Kind(k) => RowEnd::Kind(id(k)?),
-                    SpecEnd::With(f) => RowEnd::With(field_id(f)?),
-                    SpecEnd::Last => RowEnd::LastToken,
-                },
-                extra: low.tree.extra.contains(&spec.kind),
-                leaf: spec.leaf,
-                nested: spec.nested.map(|d| d.min(63) as u8),
-                after,
-                parent,
-                before,
-                also,
-                match_scan: spec.scan,
-                check: None,
-            });
-        }
-        for (kind, v) in low.tree.checks.clone() {
-            for r in kind_rows(&specs, &low.tree.facts, &low.keywords, &kind)? {
-                low.program.nodes[r].check = Some((id(&kind)?, v));
-            }
-        }
-        for (row, field, name, spec) in facts {
-            let fid = if field { field_id(&name)? } else { id(&name)? };
-            let when = match spec {
-                FactSpec::At(w) => Fact::At(at[w]),
-                FactSpec::StartOf(k) => Fact::StartOf(row_of(&k)?),
-                FactSpec::NotStartOf(k) => Fact::NotStartOf(row_of(&k)?),
-                FactSpec::After(ks) => Fact::After(token_kinds(&ks)?),
-                FactSpec::Always => Fact::Always,
-            };
-            low.program.codes.push(CodeRow { node: row as u16, field, id: fid, when });
+        for (kind, s, e) in &token_specs {
+            let k = if required.contains(&kind) { 0 } else { id(kind)? };
+            low.program.tokens.push(TokenRow { kind: k, start: at[*s], end: at[*e], extra: low.extra.contains(kind) });
         }
         for (kind, words, _) in low.keywords.clone() {
-            let node = specs.iter().position(|r| r.leaf && r.kind == kind).ok_or_else(|| format!("keywords {kind}: no token of that kind"))? as u16;
+            let node = token_specs.iter().position(|t| t.0 == kind).ok_or_else(|| format!("keywords {kind}: no token of that kind"))? as u16;
             for (word, alias) in words {
                 let name = alias.unwrap_or_else(|| String::from_utf8_lossy(&word).into_owned());
                 low.program.keywords.push(KeywordRow { node, word, kind: id(&name)? });
             }
         }
         low.program.skip = skip.map(|k| at[k]);
-
+        // The grammar's state machine (doc 18 §2). A token kind is a token row's that is not all
+        // keywords, or a keyword's.
+        let is_token = |name: &str| token_specs.iter().any(|t| t.0 == name && !required.contains(&&t.0)) || is_keyword_kind(&low.keywords, name);
+        let kind = |name: &str| id(name);
+        let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
+        let (states, arms) = grammar::build(&low.tree, &ids)?;
+        low.program.states = states;
+        low.program.arms = arms;
     }
     low.program.delay = delay;
     let program = live(&low.program);
@@ -506,49 +306,10 @@ impl Lowering {
                     });
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
-                Stmt::Node { kind, start, when, also, end, level, matching } => {
-                    let scan = match matching.as_deref() {
-                        None | Some("barrier") => false,
-                        Some("scan") => true,
-                        Some(m) => return Err(format!("node {kind}: `match {m}`: a close finds its open by `barrier` or `scan`")),
-                    };
-                    if scan && !matches!(level, Some(Nest::Nested(_))) {
-                        return Err(format!("node {kind}: `match` is for a `nested` node"));
-                    }
-                    let start = match start {
-                        NodeStart::FirstToken => Ok(None),
-                        // Another node kind's starts, resolved with the rows.
-                        NodeStart::Kind(k) => Err(k.clone()),
-                        NodeStart::At(Expr::Name(n)) if !self.names.contains_key(n) && !self.classes.contains_key(n) => Err(n.clone()),
-                        NodeStart::At(e) => Ok(Some(self.expr(e)?)),
-                    };
-                    let end_mask = match end {
-                        NodeEnd::At(e) => Some(self.expr(e)?),
-                        _ => None,
-                    };
-                    let nested = match level {
-                        None => None,
-                        Some(Nest::Nested(max)) => Some(max.unwrap_or(63)),
-                        Some(Nest::Level(_)) => return Err(format!("node {kind}: a count level is not compiled; nest it on the writer's stack (`nested`, decision 0049)")),
-                    };
-                    self.tree.nodes.push(TreeNode { kind: kind.clone(), start, when: when.clone(), also: also.clone(), end: end.clone(), end_mask, nested, scan });
-                }
-                Stmt::Fact { field, name, kinds, expr } => {
-                    let fact = match expr {
-                        FactWhen::Mask(e) => TreeFact::Mask(self.expr(e)?),
-                        FactWhen::StartOf(k) => TreeFact::StartOf(k.clone()),
-                        FactWhen::NotStartOf(k) => TreeFact::NotStartOf(k.clone()),
-                        FactWhen::Cond(c) => TreeFact::Cond(c.clone()),
-                        FactWhen::Always => TreeFact::Always,
-                    };
-                    self.tree.facts.push((*field, name.clone(), kinds.clone(), fact));
-                }
-                Stmt::Check { kind, validator } => {
-                    let v = Validator::named(validator).ok_or_else(|| format!("check {kind}: no built-in validator `{validator}`"))?;
-                    self.tree.checks.push((kind.clone(), v));
-                }
-                Stmt::Extra(kinds) => self.tree.extra.extend(kinds.iter().cloned()),
-                Stmt::Untoken(kinds) => self.tree.untoken.extend(kinds.iter().cloned()),
+                // The grammar's rules: the state machine is built once the token rows are known.
+                Stmt::Node { .. } | Stmt::Choice { .. } => self.tree.push(stmt.clone()),
+                Stmt::Check { kind, .. } => return Err(format!("check {kind}: a validator is tier-1 masks and errors (doc 18 §4), not a check")),
+                Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
             }
         }
@@ -1015,10 +776,10 @@ impl Lowering {
             return Ok(Vec::new());
         }
         let tokens = std::mem::take(&mut self.tokens);
-        // With a tree section the tape writer checks, once per token, that the tokens tile the
-        // file and that no two start at one byte, and retypes keywords (decision 0049): tier 1
-        // keeps each token's start and last byte only.
-        let tier2 = !self.tree.nodes.is_empty();
+        // With a tree section tier 2 takes the tokens in order and retypes keywords; a token no
+        // state takes sends the file to tree-sitter (doc 18 §2). Tier 1 keeps each token's start
+        // and last byte only.
+        let tier2 = !self.tree.is_empty();
         if tier2 {
             let mut out = Vec::new();
             for (kind, start, end) in tokens {
@@ -1203,32 +964,9 @@ fn live(program: &BlockProgram) -> BlockProgram {
     let n = |v: u16| number[usize::from(v)];
     out.outputs = program.outputs.iter().map(|&v| n(v)).collect();
     out.output_delays = program.output_delays.clone();
-    out.nodes = program
-        .nodes
-        .iter()
-        .map(|r| NodeRow {
-            start: match r.start {
-                RowStart::At(v) => RowStart::At(n(v)),
-                other => other,
-            },
-            end: match r.end {
-                RowEnd::At(v) => RowEnd::At(n(v)),
-                other => other,
-            },
-            ..r.clone()
-        })
-        .collect();
-    out.codes = program
-        .codes
-        .iter()
-        .map(|c| CodeRow {
-            when: match &c.when {
-                Fact::At(v) => Fact::At(n(*v)),
-                other => other.clone(),
-            },
-            ..c.clone()
-        })
-        .collect();
+    out.tokens = program.tokens.iter().map(|r| TokenRow { start: n(r.start), end: n(r.end), ..r.clone() }).collect();
+    out.states = program.states.clone();
+    out.arms = program.arms.clone();
     out.keywords = program.keywords.clone();
     out.skip = program.skip.map(n);
     out

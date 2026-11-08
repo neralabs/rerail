@@ -1,5 +1,10 @@
 # Parser generators: the analysis, and how scans and barriers are represented
 
+**Superseded by doc 18 (decision 0051):** the tree section is now a grammar, and tier 2 is its
+state machine. The start and end rules here (`after`, `before`, `also`, `parent`, code facts)
+and the dataflow built on them are gone; Metal's tier 2 is redone from the state machine
+(doc 17 §6).
+
 Status: proposal, for review (2026-11-07). Nothing here is built. It is the compiler half of
 `14-tier-2-design.md`: how the Bitlex compiler finds JSON's plan from the Bitlex file, and the
 form that plan takes before it is lowered to Cranelift and Metal.

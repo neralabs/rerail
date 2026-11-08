@@ -256,7 +256,6 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let n = bytes.len();
         let tables = std::collections::HashMap::new();
         let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).unwrap_or_else(|e| panic!("evaluates: {e}"));
-        let tree = out.tree.as_ref().expect("a tree section");
         let token_mask = |kind: &str, last: bool| {
             let mut w = vec![0u64; n.div_ceil(64)];
             let kinds = members(kind);
@@ -269,12 +268,8 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let want = |label: &str| -> Option<Vec<u64>> {
             let words: Vec<&str> = label.split(' ').collect();
             match words.as_slice() {
-                // Tier-2 nodes are the writer's: the evaluator has masks only for tier 1's.
-                ["node", k, side] => match tree.nodes.iter().find(|r| r.0 == *k) {
-                    Some(r) => Some(if *side == "start" { r.1.w.clone() } else { r.2.w.clone() }),
-                    None => tokens.contains(k).then(|| token_mask(k, *side == "end")),
-                },
-                ["code", _, name] => Some(tree.facts.iter().find(|f| f.1 == *name).expect("a fact").3.w.clone()),
+                // A token row's first and last bytes.
+                ["token", k, side] => tokens.contains(k).then(|| token_mask(k, *side == "end")),
                 _ => None,
             }
         };
@@ -292,9 +287,24 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
                 conservative += 1;
                 continue;
             }
+            // Every token's last byte, of any kind.
+            let mut ends = vec![0u64; n.div_ceil(64)];
+            for t in &out.tokens {
+                ends[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
+            }
             for (label, k) in &compiled.labels {
                 if let Some(want) = want(label) {
-                    assert_eq!(cut(got[usize::from(*k)].clone(), n), cut(want, n), "{label}, {executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
+                    let got = cut(got[usize::from(*k)].clone(), n);
+                    let at = format!("{label}, {executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
+                    if label.ends_with(" end") {
+                        // A row's end is tier 1's last-byte mask, which the row's kinds may share
+                        // (`atom` and `number` both end at `lasts(word)`): it holds each of its
+                        // tokens' last bytes, and only tokens' last bytes.
+                        assert!(got.iter().zip(&want).all(|(g, w)| w & !g == 0), "{at}: a last byte missing");
+                        assert!(got.iter().zip(&ends).all(|(g, e)| g & !e == 0), "{at}: a bit at no token's last byte");
+                    } else {
+                        assert_eq!(got, cut(want, n), "{at}");
+                    }
                 }
             }
             compared += 1;
@@ -515,21 +525,12 @@ pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
 /// `json.bitlex`'s text.
 pub(super) const JSON_BITLEX: &str = JSON;
 
-/// JSON's rows as doc 16 §3 has them: the pair found from the token after its string, with
-/// the rule from the left kept as its `also`. The one-byte kinds are the punctuation token's
-/// keywords, which tier 2 reads from the token's byte: they are not tier 1's outputs, so tier 1
-/// stays simdjson's stage 1 (its ratchets hold).
+/// The one-byte kinds are the punctuation token's keywords, which tier 2 reads from the token's
+/// byte: they are not tier 1's outputs, so tier 1 stays simdjson's stage 1 (its ratchets hold).
 #[test]
-fn json_rows_read_kinds_as_designed() {
+fn json_punctuation_is_one_token_row() {
     let p = json_program();
     let b = &p.block_programs()[0];
-    let kw = |w: &[u8]| b.keywords.iter().find(|k| k.word == w).map(|k| k.kind).expect("a keyword");
-    let (colon, comma, lbrace) = (kw(b":"), kw(b","), kw(b"{"));
-    let pair = b.nodes.iter().find(|r| r.also.is_some()).expect("the pair row has an also rule");
-    assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![colon], vec![], None));
-    let also = pair.also.clone().expect("also");
-    assert_eq!((also.after, also.before), (vec![lbrace, comma], vec![]));
-    assert!(also.parent.is_some());
     let one_byte: Vec<&[u8]> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| &k.word[..]).collect();
     assert_eq!(one_byte, [&b"{"[..], b"}", b"[", b"]", b",", b":"]);
     let rows: std::collections::BTreeSet<u16> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| k.node).collect();
@@ -548,24 +549,6 @@ fn json_fallbacks() -> Vec<u16> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
-}
-
-/// The tape a block program writes (decision 0046) equals tree-sitter's byte for byte, for every
-/// file that does not go to tree-sitter; a file tree-sitter finds an error in always goes to it.
-/// Open: waits for the generated tier 2 (decision 0050).
-#[test]
-#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
-fn json_tapes_equal_tree_sitter_byte_for_byte() {
-    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
-}
-
-/// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
-/// (one path a line), on Cranelift's batch: each file's tape equals tree-sitter's byte for byte,
-/// or the file goes to tree-sitter; never a tape where tree-sitter finds an error. Run by name.
-#[test]
-#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
-fn json_corpus_tapes_equal_tree_sitter() {
-    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
 }
 
 
@@ -643,8 +626,8 @@ const JSON_STATE_BITS: usize = 4;
 fn one_byte_tokens_end_at_their_start() {
     let program = json_program();
     let p = &program.block_programs()[0];
-    let same = p.nodes.iter().filter(|n| matches!((n.start, n.end), (block::RowStart::At(s), block::RowEnd::At(e)) if s == e)).count();
-    assert_eq!(same, 2, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
+    let same = p.tokens.iter().filter(|n| n.start == n.end).count();
+    assert_eq!(same, 2, "json's one-byte tokens' rows: {:?}", p.tokens.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
 }
 
 /// JSON's budgets (ratchets: lower them as the compiler improves).
@@ -742,4 +725,127 @@ fn json_tier1_is_simdjsons_stage1() {
     assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
     assert!(bits <= 4, "json tier 1: {bits} state bits (at most 4)");
     assert!(lines.len() <= 150 && stack == 0, "json tier 1 loop: {} instructions (at most 150), {stack} stack loads or stores (0)", lines.len());
+}
+
+/// JSON's tier 2 (doc 18 §3): the grammar's state machine, as `rir` text, pinned whole. Kinds:
+/// 15 document, 17 object, 18 pair, 19 array, 20 string, 16 `_value`; tokens 1 `{`, 3 `}`,
+/// 5 `[`, 6 `]`, 2 `,`, 4 `:`, 7 `"`, 8 string_content, 9 escape_sequence, 10 number, 11 true,
+/// 12 false, 13 null; fields 1 key, 2 value. The states, by simdjson's stage-2 labels: 0 the
+/// root's start, 2 `document_end`; 1 `object_begin`, 11 and 14 `object_field`, 15 and 18
+/// `object_continue`, 17 after `,`; 3 `array_begin`, 12 `array_value`, 7 and 13
+/// `array_continue`; 4, 5, 8, 16 `parse_string` (root, key, array, pair value); 10 after a root
+/// string; 6 and 9 `scope_end`. A pair closes on the `,` or `}` after its value.
+#[test]
+fn json_tier2_states_print_as_designed() {
+    let text = rir::disassemble(&json_program(), None);
+    let got: String = text.lines().filter(|l| l.starts_with("  block 0 state ") || l.starts_with("  block 0 arm ")).map(|l| format!("{}\n", &l[10..])).collect();
+    assert_eq!(got, JSON_STATES, "\n{got}");
+}
+
+const JSON_STATES: &str = "\
+state 0 level 15\n\
+state 1 level 17\n\
+state 2 level 15 end 0\n\
+state 3 level 19\n\
+state 4 level 15\n\
+state 5 level 17\n\
+state 6 level 17 end 0\n\
+state 7 level 19\n\
+state 8 level 19\n\
+state 9 level 19 end 0\n\
+state 10 level 15 end 1\n\
+state 11 level 17\n\
+state 12 level 19\n\
+state 13 level 19\n\
+state 14 level 17\n\
+state 15 level 17\n\
+state 16 level 17\n\
+state 17 level 17\n\
+state 18 level 17\n\
+arm 0 token 1 to 1 push 2 do open 15 open 17 s 16 leaf\n\
+arm 0 token 5 to 3 push 2 do open 15 open 19 s 16 leaf\n\
+arm 0 token 7 to 4 do open 15 open 20 s 16 leaf\n\
+arm 0 token 10 to 2 do open 15 leaf s 16\n\
+arm 0 token 11 to 2 do open 15 leaf s 16\n\
+arm 0 token 12 to 2 do open 15 leaf s 16\n\
+arm 0 token 13 to 2 do open 15 leaf s 16\n\
+arm 1 token 7 to 5 do open 18 open 20 f 1 leaf\n\
+arm 1 token 3 to 6 do leaf\n\
+arm 3 token 1 to 1 push 7 do open 17 s 16 leaf\n\
+arm 3 token 5 to 3 push 7 do open 19 s 16 leaf\n\
+arm 3 token 7 to 8 do open 20 s 16 leaf\n\
+arm 3 token 10 to 7 do leaf s 16\n\
+arm 3 token 11 to 7 do leaf s 16\n\
+arm 3 token 12 to 7 do leaf s 16\n\
+arm 3 token 13 to 7 do leaf s 16\n\
+arm 3 token 6 to 9 do leaf\n\
+arm 4 token 8 to 4 do leaf\n\
+arm 4 token 9 to 4 do leaf\n\
+arm 4 token 7 to 10 do leaf\n\
+arm 5 token 8 to 5 do leaf\n\
+arm 5 token 9 to 5 do leaf\n\
+arm 5 token 7 to 11 do leaf\n\
+arm 7 token 2 to 12 do leaf\n\
+arm 7 token 6 to 9 do leaf\n\
+arm 8 token 8 to 8 do leaf\n\
+arm 8 token 9 to 8 do leaf\n\
+arm 8 token 7 to 13 do leaf\n\
+arm 11 token 4 to 14 do close leaf\n\
+arm 12 token 1 to 1 push 7 do open 17 s 16 leaf\n\
+arm 12 token 5 to 3 push 7 do open 19 s 16 leaf\n\
+arm 12 token 7 to 8 do open 20 s 16 leaf\n\
+arm 12 token 10 to 7 do leaf s 16\n\
+arm 12 token 11 to 7 do leaf s 16\n\
+arm 12 token 12 to 7 do leaf s 16\n\
+arm 12 token 13 to 7 do leaf s 16\n\
+arm 13 token 2 to 12 do close leaf\n\
+arm 13 token 6 to 9 do close leaf\n\
+arm 14 token 1 to 1 push 15 do open 17 f 2 s 16 leaf\n\
+arm 14 token 5 to 3 push 15 do open 19 f 2 s 16 leaf\n\
+arm 14 token 7 to 16 do open 20 f 2 s 16 leaf\n\
+arm 14 token 10 to 15 do leaf f 2 s 16\n\
+arm 14 token 11 to 15 do leaf f 2 s 16\n\
+arm 14 token 12 to 15 do leaf f 2 s 16\n\
+arm 14 token 13 to 15 do leaf f 2 s 16\n\
+arm 15 token 2 to 17 do close leaf\n\
+arm 15 token 3 to 6 do close leaf\n\
+arm 16 token 8 to 16 do leaf\n\
+arm 16 token 9 to 16 do leaf\n\
+arm 16 token 7 to 18 do leaf\n\
+arm 17 token 7 to 5 do open 18 open 20 f 1 leaf\n\
+arm 18 token 2 to 17 do close close leaf\n\
+arm 18 token 3 to 6 do close close leaf\n\
+";
+
+/// Tier 2's states and arms are data (doc 18, decision 0051): the compiler pass makes them, `rir`
+/// prints and assembles them, `validate` and the digest check them, and the lowering to the IR
+/// (`native_ir`) reads them. Nothing walks them to parse a file: tier 2 runs as the IR, on the
+/// IR's interpreter, Cranelift and Metal. A file outside this list that reads them fails here.
+#[test]
+fn only_the_compiler_reads_tier2s_states() {
+    const ALLOWED: [&str; 7] = ["block.rs", "rir.rs", "rir_tests.rs", "grammar.rs", "bitlex_compile.rs", "bitlex_compile_tests.rs", "native_ir.rs"];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer");
+    // The table's types and its arms (`.states` is a common name; a state row is read through
+    // its type).
+    let needles = [".arms", "ArmRow", "StateRow", "block::Act", "Act::Open", "Act::Close", "Act::Leaf"];
+    let mut readers = Vec::new();
+    let mut dirs = vec![root];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("reads the source") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+            if !(name.ends_with(".rs") || name.ends_with(".metal")) || ALLOWED.contains(&name.as_str()) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("reads a source file");
+            if needles.iter().any(|n| text.contains(n)) {
+                readers.push(path.display().to_string());
+            }
+        }
+    }
+    assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
 }

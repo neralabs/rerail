@@ -35,3 +35,8 @@ the states nor the grammar check. It now states each node's content, as tree-sit
    stack of return states and open ords, as simdjson's. No search, no count, no call.
 4. **The tape is written directly,** at speculated widths, written once more at most.
 5. **Metal later,** from the same automaton (doc 18 §5).
+6. **The states and arms are data.** The compiler pass makes them; `rir`, `validate` and the
+   digest read them; the compiler lowers them to the transducer's IR, which the IR's
+   interpreter, Cranelift and Metal run. No Rust function walks them to parse a file, and
+   generated code calls no Rust. A structural test (`only_the_compiler_reads_tier2s_states`)
+   holds it.

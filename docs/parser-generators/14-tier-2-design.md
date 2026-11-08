@@ -1,5 +1,10 @@
 # Parser generators: JSON's two tiers on Metal, designed before they are built
 
+**Superseded by doc 18 (decision 0051):** the tree section is now a grammar, and tier 2 is its
+state machine. The start and end rules here (`after`, `before`, `also`, `parent`, code facts)
+and the dataflow built on them are gone; Metal's tier 2 is redone from the state machine
+(doc 17 §6).
+
 Status: design, for review (2026-11-07). Nothing here is built. It is designed for JSON, the
 simdjson case, first. §10 lists what must generalise. §11 records the answers given so far.
 

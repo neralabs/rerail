@@ -267,6 +267,7 @@ pub(in crate::code_rule_dsl) mod block;
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+mod grammar;
 #[cfg(test)]
 mod bitlex_compile_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).

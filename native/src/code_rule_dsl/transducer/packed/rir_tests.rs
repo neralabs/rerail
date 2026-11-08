@@ -372,55 +372,31 @@ fn the_frontends_dumps_are_the_goldens() {
     assert!(expected == dump, "the dumps differ from {} (RERAIL_BLESS=1 to accept them)", golden.display());
 }
 
-/// A block program's tree rows (`13-tape-on-the-gpu.md` §3.1, decision 0049): node rows in rank
-/// order with their tier-2 rules (leaf, nested, after, parent, check, extra), code rows with each
-/// kind of test, keywords and the skip mask; each mask must be an output, each row a row.
+/// A block program's tree section (doc 18): token rows in rank order, keywords, the skip mask,
+/// states and arms; each mask an output, each arm between states, one arm per state and token.
 #[test]
 fn block_tree_rows_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start %0 end %1 nested 13\n  block 0 node 2 kind 18 start %2 end with 2 after k1 k9 parent k3\n  block 0 node 3 kind 1 start %0 end %0 leaf\n  block 0 node 4 kind 9 start %2 end %2 leaf check 10 json_number extra\n  block 0 code 4 field 4 when %2\n  block 0 code 1 supertype 12 when always\n  block 0 code 4 field 1 when start r2\n  block 0 code 4 supertype 12 when not r2\n  block 0 code 1 field 2 when after k1\n  block 0 node 5 kind 0 start %1 end %1 leaf\n  block 0 node 6 kind 4 start k11 end k1 nested 13\n  block 0 keyword 5 7d 2\n  block 0 keyword 4 74727565 11\n  block 0 skip %1\n  0000 STOP 0\n";
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 token 0 kind 0 start %0 end %0\n  block 0 token 1 kind 9 start %2 end %1 extra\n  block 0 keyword 0 7b 1\n  block 0 keyword 0 7d 2\n  block 0 skip %1\n  block 0 state 0 level 15\n  block 0 state 1 level 3\n  block 0 state 2 level 15 end 0\n  block 0 arm 0 token 1 to 1 push 2 do open 15 open 3 f 4 s 12 s 13 leaf\n  block 0 arm 1 token 2 to 2 do leaf f 2 close\n  0000 STOP 0\n";
     let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
     let block = &program.block_programs()[0];
-    assert_eq!(block.nodes.len(), 7);
-    assert_eq!(block.nodes[1].nested, Some(13));
-    // `after` and `parent` are kinds: a token's kind is its keyword's.
-    assert_eq!((block.nodes[2].after.clone(), block.nodes[2].parent), (vec![1, 9], Some(3)));
-    assert_eq!((block.nodes[6].start, block.nodes[6].end), (block::RowStart::Kind(11), block::RowEnd::Kind(1)));
-    assert!(block.nodes[4].extra && block.nodes[4].leaf && block.codes[0].field && !block.codes[1].field);
-    assert_eq!((block.keywords[0].word.clone(), block.keywords[1].word.clone()), (b"}".to_vec(), b"true".to_vec()));
+    assert_eq!((block.tokens.len(), block.states.len(), block.arms.len()), (2, 3, 2));
+    assert!(block.tokens[1].extra && block.tokens[0].kind == 0);
+    assert_eq!((block.states[2].end, block.arms[0].push), (Some(0), Some(2)));
+    assert_eq!(block.arms[0].acts[1], block::Act::Open { kind: 3, field: 4, supers: vec![12, 13] });
+    assert_eq!(block.arms[1].acts, [block::Act::Leaf { field: 2, supers: vec![] }, block::Act::Close]);
     assert_eq!(block.skip, Some(1));
     let text = round_trip(&program, None);
-    assert!(text.contains("node 4 kind 9 start %2 end %2 leaf check 10 json_number extra"), "{text}");
-    let without = assemble(&rows.replace("  block 0 code 4 field 4 when %2\n", "")).unwrap_or_else(|e| panic!("{e}"));
-    assert_ne!(without.plain_digest(), program.plain_digest(), "the rows are in the digest");
-    let unkeyed = assemble(&rows.replace("  block 0 keyword 4 74727565 11\n", "")).unwrap_or_else(|e| panic!("{e}"));
-    assert_ne!(unkeyed.plain_digest(), program.plain_digest(), "the keywords are in the digest");
-    assert!(refused(&rows.replace("node 1 kind", "node 2 kind")).contains("out of order"));
-    assert!(!refused(&rows.replace("  block 0 output %2\n", "")).is_empty(), "a row's mask must be an output");
-    assert!(!refused(&rows.replace("code 4 field 4", "code 9 field 4")).is_empty(), "a code row's node must be a row");
-    assert!(text.contains("node 6 kind 4 start k11 end k1 nested 13") && text.contains("after k1 k9 parent k3"), "{text}");
-    assert!(!refused(&rows.replace("  block 0 keyword 5 7d 2\n", "")).is_empty(), "a kind-0 token row has keywords");
-    assert!(!refused(&rows.replace("node 5 kind 0 start %1", "node 5 kind 0 start k2")).is_empty(), "a token starts at a mask");
-    assert!(refused(&rows.replace("extra\n", "wide\n")).contains("wide"));
-}
-
-/// `before` (the token after the node's first child, as `after` reads the one before) and
-/// `also` (the same nodes by another rule, which a target checks) round-trip and are in the
-/// digest.
-#[test]
-fn block_tree_rows_before_and_also_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start k1 end k2 nested 13 match scan\n  block 0 node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3\n  block 0 node 3 kind 0 start %0 end %0 leaf\n  block 0 keyword 3 7b 1\n  block 0 keyword 3 7d 2\n  0000 STOP 0\n";
-    let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
-    let block = &program.block_programs()[0];
-    let pair = &block.nodes[2];
-    assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![4], vec![], None));
-    let also = pair.also.clone().expect("an also rule");
-    assert_eq!((also.before, also.after, also.parent), (vec![], vec![1, 9], Some(3)));
-    assert!(block.nodes[1].match_scan);
-    let text = round_trip(&program, None);
-    assert!(text.contains("node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3"), "{text}");
-    assert!(text.contains("nested 13 match scan"), "{text}");
-    let plain = assemble(&rows.replace(" also after k1 k9 parent k3", "")).unwrap_or_else(|e| panic!("{e}"));
-    assert_ne!(plain.plain_digest(), program.plain_digest(), "`also` is in the digest");
-    assert!(!refused(&rows.replace("before k4 also", "before k4 also after k1 also")).is_empty(), "a second `also`");
-    assert!(!refused(&rows.replace("also after", "also also after")).is_empty(), "one `also`");
+    assert!(text.contains("arm 0 token 1 to 1 push 2 do open 15 open 3 f 4 s 12 s 13 leaf"), "{text}");
+    for (from, to, what) in [("  block 0 keyword 0 7d 2\n", "", "keywords"), (" level 15 end 0", " level 15", "states"), ("  block 0 arm 1 token 2 to 2 do leaf f 2 close\n", "", "arms")] {
+        let other = assemble(&rows.replace(from, to)).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_ne!(other.plain_digest(), program.plain_digest(), "the {what} are in the digest");
+    }
+    assert!(refused(&rows.replace("token 1 kind 9", "token 2 kind 9")).contains("out of order"));
+    assert!(refused(&rows.replace("state 1 level 3", "state 2 level 3")).contains("out of order"));
+    assert!(!refused(&rows.replace("  block 0 output %2\n", "")).is_empty(), "a token's mask must be an output");
+    assert!(!refused(&rows.replace("  block 0 keyword 0 7b 1\n  block 0 keyword 0 7d 2\n", "")).is_empty(), "a kind-0 token row has keywords");
+    assert!(!refused(&rows.replace("to 2 do leaf", "to 7 do leaf")).is_empty(), "an arm goes to a state");
+    assert!(!refused(&rows.replace("arm 1 token 2", "arm 0 token 1")).is_empty(), "one arm per state and token");
+    assert!(!refused(&rows.replace("open 3 f 4", "open 0 f 4")).is_empty(), "an open of kind 0");
+    assert!(refused(&rows.replace("do leaf f 2 close", "do leaf f 2 shut")).contains("shut"));
 }

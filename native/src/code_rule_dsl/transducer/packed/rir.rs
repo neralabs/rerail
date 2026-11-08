@@ -247,16 +247,7 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-/// Kind ids `kA kB …`, as many as follow.
-fn kind_list(line: &mut Line<'_>) -> Result<Vec<u16>, String> {
-    let mut out = Vec::new();
-    while line.peek_word().is_some_and(|w| w.starts_with('k') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1) {
-        out.push(line.number("k")?);
-    }
-    Ok(out)
-}
-
-/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, node and code rows.
+/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, and the tree section (`tree_rows`).
 pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (t, table) in block.tables.iter().enumerate() {
@@ -284,82 +275,24 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     tree_rows(out, at, block);
 }
 
-/// Block program `at`'s tree rows (decision 0049):
+/// Block program `at`'s tree section (docs/parser-generators/18-tree-as-grammar.md):
 ///
 /// ```text
-/// block N node R kind K start %s|first end %e|with F|last [leaf] [nested D] [after rA rB…]
-///     [parent rP] [check K V] [extra]
-/// block N code R field|supertype ID when %m | start rS | not rS | after rA rB… | always
+/// block N token R kind K start %s end %e [extra]
 /// block N keyword R HEX K
 /// block N skip %v
+/// block N state S level K [end C]
+/// block N arm S token K to T [push P] do ACT…
 /// ```
 ///
-/// A node row's conditions: `after kA…`, `parent kP`, `before kB…`, then `also` and the other
-/// rule's.
+/// An arm's acts, in order: `close`; `open K [f F] [s K]…`; `leaf [f F] [s K]…` (`f` a field,
+/// `s` a supertype, outermost first). A state's `end C`: its level may end there, after `C`
+/// closes.
 pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
-    use super::block::{Fact, RowEnd, RowStart};
-    let kinds = |ks: &[u16]| ks.iter().map(|k| format!(" k{k}")).collect::<String>();
-    for (r, row) in block.nodes.iter().enumerate() {
-        let start = match row.start {
-            RowStart::At(v) => format!("%{v}"),
-            RowStart::Kind(k) => format!("k{k}"),
-            RowStart::FirstToken => "first".to_owned(),
-        };
-        let end = match row.end {
-            RowEnd::At(v) => format!("%{v}"),
-            RowEnd::Kind(k) => format!("k{k}"),
-            RowEnd::With(f) => format!("with {f}"),
-            RowEnd::LastToken => "last".to_owned(),
-        };
-        let mut more = String::new();
-        if row.leaf {
-            more.push_str(" leaf");
-        }
-        if let Some(d) = row.nested {
-            let _ = write!(more, " nested {d}");
-        }
-        if row.match_scan {
-            more.push_str(" match scan");
-        }
-        if !row.after.is_empty() {
-            let _ = write!(more, " after{}", kinds(&row.after));
-        }
-        if let Some(p) = row.parent {
-            let _ = write!(more, " parent k{p}");
-        }
-        if !row.before.is_empty() {
-            let _ = write!(more, " before{}", kinds(&row.before));
-        }
-        if let Some(c) = &row.also {
-            more.push_str(" also");
-            if !c.after.is_empty() {
-                let _ = write!(more, " after{}", kinds(&c.after));
-            }
-            if let Some(p) = c.parent {
-                let _ = write!(more, " parent k{p}");
-            }
-            if !c.before.is_empty() {
-                let _ = write!(more, " before{}", kinds(&c.before));
-            }
-        }
-        if let Some((k, v)) = row.check {
-            let _ = write!(more, " check {k} {}", v.name());
-        }
-        if row.extra {
-            more.push_str(" extra");
-        }
-        let _ = writeln!(out, "  block {at} node {r} kind {} start {start} end {end}{more}", row.kind);
-    }
-    for c in &block.codes {
-        let what = if c.field { "field" } else { "supertype" };
-        let when = match &c.when {
-            Fact::At(v) => format!("%{v}"),
-            Fact::StartOf(r) => format!("start r{r}"),
-            Fact::NotStartOf(r) => format!("not r{r}"),
-            Fact::After(ks) => format!("after{}", kinds(ks)),
-            Fact::Always => "always".to_owned(),
-        };
-        let _ = writeln!(out, "  block {at} code {} {what} {} when {when}", c.node, c.id);
+    use super::block::Act;
+    for (r, row) in block.tokens.iter().enumerate() {
+        let extra = if row.extra { " extra" } else { "" };
+        let _ = writeln!(out, "  block {at} token {r} kind {} start %{} end %{}{extra}", row.kind, row.start, row.end);
     }
     for k in &block.keywords {
         let hex: String = k.word.iter().map(|b| format!("{b:02x}")).collect();
@@ -368,9 +301,38 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
     if let Some(v) = block.skip {
         let _ = writeln!(out, "  block {at} skip %{v}");
     }
+    for (s, state) in block.states.iter().enumerate() {
+        let end = state.end.map_or(String::new(), |c| format!(" end {c}"));
+        let _ = writeln!(out, "  block {at} state {s} level {}{end}", state.level);
+    }
+    let marks = |field: u16, supers: &[u16]| {
+        let mut m = String::new();
+        if field != 0 {
+            let _ = write!(m, " f {field}");
+        }
+        for s in supers {
+            let _ = write!(m, " s {s}");
+        }
+        m
+    };
+    for arm in &block.arms {
+        let mut acts = String::new();
+        for act in &arm.acts {
+            match act {
+                Act::Close => acts.push_str(" close"),
+                Act::Open { kind, field, supers } => {
+                    let _ = write!(acts, " open {kind}{}", marks(*field, supers));
+                }
+                Act::Leaf { field, supers } => {
+                    let _ = write!(acts, " leaf{}", marks(*field, supers));
+                }
+            }
+        }
+        let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
+        let _ = writeln!(out, "  block {at} arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
+    }
 }
 
-/// The program as `rir`, its kinds and fields named by `names` where given.
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
     let grammar = names.map_or("none".to_owned(), Names::header);
@@ -636,6 +598,12 @@ impl Line<'_> {
         Ok(out)
     }
 
+    /// The next word, which must be `key`.
+    fn want(&mut self, key: &str) -> Result<(), String> {
+        let word = self.word()?;
+        if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
+    }
+
     fn end(&mut self) -> Result<(), String> {
         match self.tokens.next() {
             None => Ok(()),
@@ -824,107 +792,91 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
-            } else if first == "node" {
-                // `block N node R kind K start … end … [more]` (`tree_rows`), in rank order.
-                use super::block::{RowEnd, RowStart};
+            } else if first == "token" {
+                // `block N token R kind K start %s end %e [extra]` (`tree_rows`), in rank order.
                 let r: usize = line.number("")?;
-                if r != program.nodes.len() {
-                    return Err(format!("block {at} node {r} out of order (expected {})", program.nodes.len()));
+                if r != program.tokens.len() {
+                    return Err(format!("block {at} token {r} out of order (expected {})", program.tokens.len()));
                 }
-                let want = |line: &mut Line<'_>, key: &str| -> Result<(), String> {
-                    let word = line.word()?;
-                    if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
-                };
-                want(line, "kind")?;
+                line.want("kind")?;
                 let kind = line.number("")?;
-                want(line, "start")?;
-                let start = match line.word()?.as_str() {
-                    "first" => RowStart::FirstToken,
-                    v if v.starts_with('k') => RowStart::Kind(v[1..].parse().map_err(|_| format!("a bad start `{v}`"))?),
-                    v => RowStart::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad start `{v}`"))?),
-                };
-                want(line, "end")?;
-                let end = match line.word()?.as_str() {
-                    "last" => RowEnd::LastToken,
-                    "with" => RowEnd::With(line.number("")?),
-                    v if v.starts_with('k') => RowEnd::Kind(v[1..].parse().map_err(|_| format!("a bad end `{v}`"))?),
-                    v => RowEnd::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad end `{v}`"))?),
-                };
-                let mut row = block::NodeRow {
-                    kind,
-                    start,
-                    end,
-                    extra: false,
-                    leaf: false,
-                    nested: None,
-                    after: Vec::new(),
-                    parent: None,
-                    before: Vec::new(),
-                    also: None,
-                    match_scan: false,
-                    check: None,
-                };
-                while let Ok(word) = line.word() {
-                    if word == "also" {
-                        if row.also.is_some() {
-                            return Err("a node row has one `also`".into());
-                        }
-                        row.also = Some(block::RowCond::default());
-                        continue;
+                line.want("start")?;
+                let start = line.number("%")?;
+                line.want("end")?;
+                let end = line.number("%")?;
+                let extra = match line.peek_word().as_deref() {
+                    Some("extra") => {
+                        line.word()?;
+                        true
                     }
-                    // After `also`, the conditions are the other rule's.
-                    if let Some(c) = row.also.as_mut() {
-                        match word.as_str() {
-                            "after" => c.after = kind_list(line)?,
-                            "before" => c.before = kind_list(line)?,
-                            "parent" => c.parent = Some(line.number("k")?),
-                            other => return Err(format!("`also` is followed by conditions only, not `{other}`")),
-                        }
-                        continue;
-                    }
-                    match word.as_str() {
-                        "leaf" => row.leaf = true,
-                        "extra" => row.extra = true,
-                        "nested" => row.nested = Some(line.number("")?),
-                        "match" => match line.word()?.as_str() {
-                            "scan" => row.match_scan = true,
-                            "barrier" => {}
-                            other => return Err(format!("a close finds its open by `barrier` or `scan`, not `{other}`")),
-                        },
-                        "after" => row.after = kind_list(line)?,
-                        "before" => row.before = kind_list(line)?,
-                        "parent" => row.parent = Some(line.number("k")?),
-                        "check" => {
-                            let k = line.number("")?;
-                            let name = line.word()?;
-                            row.check = Some((k, block::Validator::named(&name).ok_or_else(|| format!("no validator `{name}`"))?));
-                        }
-                        other => return Err(format!("a node row has no `{other}`")),
-                    }
+                    _ => false,
+                };
+                program.tokens.push(block::TokenRow { kind, start, end, extra });
+            } else if first == "state" {
+                // `block N state S level K [end C]`, in order.
+                let s: usize = line.number("")?;
+                if s != program.states.len() {
+                    return Err(format!("block {at} state {s} out of order (expected {})", program.states.len()));
                 }
-                program.nodes.push(row);
-            } else if first == "code" {
-                // `block N code R field|supertype ID when …` (`tree_rows`).
-                use super::block::Fact;
-                let node = line.number("")?;
-                let field = match line.word()?.as_str() {
-                    "field" => true,
-                    "supertype" => false,
-                    other => return Err(format!("a code row is a field or a supertype, not `{other}`")),
+                line.want("level")?;
+                let level = line.number("")?;
+                let end = match line.peek_word().as_deref() {
+                    Some("end") => {
+                        line.word()?;
+                        Some(line.number("")?)
+                    }
+                    _ => None,
                 };
-                let id = line.number("")?;
-                let word = line.word()?;
-                if word != "when" {
-                    return Err(format!("expected `when`, found `{word}`"));
+                program.states.push(block::StateRow { level, end });
+            } else if first == "arm" {
+                // `block N arm S token K to T [push P] do ACT…` (`tree_rows`).
+                use super::block::Act;
+                let from = line.number("")?;
+                line.want("token")?;
+                let token = line.number("")?;
+                line.want("to")?;
+                let to = line.number("")?;
+                let mut push = None;
+                if line.peek_word().as_deref() == Some("push") {
+                    line.word()?;
+                    push = Some(line.number("")?);
                 }
-                let when = match line.word()?.as_str() {
-                    "start" => Fact::StartOf(line.number("r")?),
-                    "not" => Fact::NotStartOf(line.number("r")?),
-                    "after" => Fact::After(kind_list(line)?),
-                    "always" => Fact::Always,
-                    v => Fact::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad fact `{v}`"))?),
+                line.want("do")?;
+                // A field and supertypes, after an `open K` or a `leaf`.
+                let marks = |line: &mut Line<'_>| -> Result<(u16, Vec<u16>), String> {
+                    let (mut field, mut supers) = (0, Vec::new());
+                    while let Some(w) = line.peek_word() {
+                        match w.as_str() {
+                            "f" => {
+                                line.word()?;
+                                field = line.number("")?;
+                            }
+                            "s" => {
+                                line.word()?;
+                                supers.push(line.number("")?);
+                            }
+                            _ => break,
+                        }
+                    }
+                    Ok((field, supers))
                 };
-                program.codes.push(block::CodeRow { node, field, id, when });
+                let mut acts = Vec::new();
+                while let Ok(w) = line.word() {
+                    acts.push(match w.as_str() {
+                        "close" => Act::Close,
+                        "open" => {
+                            let kind = line.number("")?;
+                            let (field, supers) = marks(line)?;
+                            Act::Open { kind, field, supers }
+                        }
+                        "leaf" => {
+                            let (field, supers) = marks(line)?;
+                            Act::Leaf { field, supers }
+                        }
+                        other => return Err(format!("an arm's act is `close`, `open` or `leaf`, not `{other}`")),
+                    });
+                }
+                program.arms.push(block::ArmRow { from, token, acts, to, push });
             } else if first == "keyword" {
                 let node = line.number("")?;
                 let hex = line.word()?;

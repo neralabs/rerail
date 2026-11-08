@@ -50,15 +50,15 @@ For each level (the root and each nested node) the compiler builds a DFA over th
 
 1. **Inline** every non-nested node and choice into the level's expression. A use of a nested
    node stays a symbol: a call.
-2. **Glushkov's construction**, then subset construction: a state per set of positions.
-3. **Actions on each transition**, from the positions it crosses, in preorder:
+2. **Glushkov's construction:** a state per position, merged where states act alike.
+3. **Actions on each transition**, from the edge it crosses, in order:
+   - close the nodes the previous token was the last of (innermost first), at its end;
    - open the nodes whose first token this is (outermost first), each with its field and
      supertypes from the path to it;
-   - the token's own leaf node;
-   - close the nodes whose last token this is (innermost first).
+   - the token's own leaf node.
 4. **A call** to a nested node is a transition on the node's first token: open the node, push
-   the return state, enter the node's level. The node's last token closes it and pops; the
-   return state then takes the closes that were waiting on it (a pair whose value it was).
+   the return state, enter the node's level. After the node's last token the level pops at
+   once; the return state's next arm closes what was waiting on it (a pair whose value it was).
 5. **Refusals:** a token with no transition, or the end of the file anywhere but an accepting
    root state with the stack empty, sends the file to tree-sitter.
 
@@ -67,28 +67,37 @@ refuses a grammar that is not.
 
 ## 3. JSON's states
 
-| state | level | after | on | simdjson |
+The compiler gives JSON 19 states (`json_tier2_states_print_as_designed` pins them whole):
+
+| state | level | after | takes | simdjson |
 |---|---|---|---|---|
-| D0 | document | the start | a value | `visit_root_primitive` / first `{` `[` |
-| D1 | document | the value | the end | `document_end` |
-| O0 | object | `{` | `"` (a key) or `}` | `object_begin` |
-| O1 | object | a key | `:` | `object_field` |
-| O2 | object | `:` | a value | `object_field` |
-| O3 | object | a value | `,` or `}` | `object_continue` |
-| O4 | object | `,` | `"` (a key) | `object_continue` → `object_field` |
-| A0 | array | `[` | a value or `]` | `array_begin` |
-| A1 | array | a value | `,` or `]` | `array_continue` |
-| A2 | array | `,` | a value | `array_value` |
-| Dk, Ok, Ov, Av | each | an opening `"` | content, escape, `"` | `parse_string` |
+| 0 | document | the start | a value | first `{` `[`, or `visit_root_primitive` |
+| 2 | document | a value | the end | `document_end` |
+| 4, 10 | document | `"`, the string | content; the end | `parse_string` |
+| 1 | object | `{` | `"` (a key) or `}` | `object_begin` |
+| 5, 11 | object | the key's `"`, the key | content; `:` | `parse_string`, `object_field` |
+| 14 | object | `:` | a value | `object_field` |
+| 15, 18 | object | a value, a string value | `,` or `}` | `object_continue` |
+| 16 | object | a value's `"` | content, escape, `"` | `parse_string` |
+| 17 | object | `,` | `"` (a key) | `object_continue` |
+| 3 | array | `[` | a value or `]` | `array_begin` |
+| 7, 13 | array | a value, a string value | `,` or `]` | `array_continue` |
+| 8 | array | `"` | content, escape, `"` | `parse_string` |
+| 12 | array | `,` | a value | `array_value` |
+| 6, 9 | object, array | `}`, `]` | (pops) | `scope_end` |
 
-A pop returns to O3 (closing the pair) or A1 or D1: simdjson's `scope_end`, which branches on
-`is_array[depth]`.
+A string is inlined into each place it is used, so each has its own inner state, and a state
+after its closing `"` that closes it on the next token. A pop returns to 2, 7 or 15: simdjson's
+`scope_end`, which branches on `is_array[depth]`.
 
-Two arms, as they come out:
+Three arms, as `rir` prints them (kinds: 17 object, 18 pair, 20 string, 16 `_value`; field 1
+`key`, 2 `value`):
 
 ```
-O2 on '{':  open object field value supertype _value; leaf '{'; push O3 closing pair; to O0
-Ov on '"':  leaf '"'; close string; close pair; to O3
+arm 14 token 1 to 1 push 15 do open 17 f 2 s 16 leaf    # `{` after `:`: a call
+arm 17 token 7 to 5 do open 18 open 20 f 1 leaf         # `"` after `,`: a pair and its key
+arm 18 token 2 to 17 do close close leaf                # `,` after a string value: closes
+                                                        # the string and the pair
 ```
 
 ## 4. The stream and the kinds

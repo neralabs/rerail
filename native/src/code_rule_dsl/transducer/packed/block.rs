@@ -275,111 +275,18 @@ impl ClassTable {
     }
 }
 
-/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1, decision
-/// 0049): its grammar id, where its nodes start and end, and its tier-2 rules, which the tape
-/// writer runs once per token. Its place in `BlockProgram::nodes` is its rank.
+/// A token kind's row (decision 0049): where its tokens start and end, as tier-1 outputs. Its
+/// place in `BlockProgram::tokens` is its rank.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct NodeRow {
-    /// Its grammar id. A token row's kind may be 0: each of its tokens is a keyword, which gives
-    /// its kind, and one that is not goes to tree-sitter.
+pub(in crate::code_rule_dsl) struct TokenRow {
+    /// Its grammar id. It may be 0: each of its tokens is a keyword, which gives its kind, and one
+    /// that is not goes to tree-sitter.
     pub(super) kind: u16,
-    pub(super) start: RowStart,
-    pub(super) end: RowEnd,
-    /// The kind's nodes carry the extra flag.
+    /// The outputs whose bits are its tokens' first and last bytes.
+    pub(super) start: u16,
+    pub(super) end: u16,
+    /// Its nodes carry the extra flag.
     pub(super) extra: bool,
-    /// A token's row: the tokens tile the file (apart from the skipped bytes), and `after` reads
-    /// the previous one.
-    pub(super) leaf: bool,
-    /// On the writer's stack of nested nodes, at most this deep: an end closes the innermost
-    /// open nested node, which must be of this row.
-    pub(super) nested: Option<u8>,
-    /// A node starts only where the previous token's kind is one of these (none: anywhere).
-    /// Kinds, not rows: a token's kind is its keyword's, known at its start.
-    pub(super) after: Vec<u16>,
-    /// A node starts only where the innermost open node is of this kind.
-    pub(super) parent: Option<u16>,
-    /// A node starts only where the token after its first child is of one of these kinds
-    /// (none: anywhere): the token after a string, for a key. Read from the right.
-    pub(super) before: Vec<u16>,
-    /// The same nodes by another rule. A target uses one of the two and checks the other; a
-    /// file where they differ goes to tree-sitter.
-    pub(super) also: Option<RowCond>,
-    /// A `nested` row's closes find their opens by a scan over the entries, not by a barrier
-    /// in pass B (`match scan`; docs/parser-generators/14-tier-2-design.md §4).
-    pub(super) match_scan: bool,
-    /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
-    pub(super) check: Option<(u16, Validator)>,
-}
-
-/// A row's start condition: `after`, `before` and `parent` as `NodeRow`'s.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct RowCond {
-    pub(super) after: Vec<u16>,
-    pub(super) before: Vec<u16>,
-    pub(super) parent: Option<u16>,
-}
-
-/// Where a row's nodes start: at each bit of an output, where a token of a kind starts (its
-/// kind after its keywords), or at the first token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowStart {
-    At(u16),
-    Kind(u16),
-    FirstToken,
-}
-
-/// Where a row's node ends: at the first bit of an output at or after its start; where a token
-/// of a kind ends; with its child that has field `With`'s id; or with the last token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowEnd {
-    At(u16),
-    Kind(u16),
-    With(u16),
-    LastToken,
-}
-
-/// A built-in validator of a token's text (decision 0049): one check per token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Validator {
-    /// JSON's number: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)?`, tree-sitter-json's.
-    JsonNumber,
-}
-
-impl Validator {
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Validator::JsonNumber => "json_number",
-        }
-    }
-
-    pub(super) fn named(name: &str) -> Option<Self> {
-        [Validator::JsonNumber].into_iter().find(|v| v.name() == name)
-    }
-}
-
-/// A fact of a node kind's code: its field, or one of its supertypes, where its test holds at the
-/// node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct CodeRow {
-    /// The node row the fact is about.
-    pub(super) node: u16,
-    /// A field (else a supertype), by grammar id.
-    pub(super) field: bool,
-    pub(super) id: u16,
-    pub(super) when: Fact,
-}
-
-/// A code fact's test at a node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Fact {
-    /// A bit of an output.
-    At(u16),
-    /// A node of this row starts at the same byte; or does not.
-    StartOf(u16),
-    NotStartOf(u16),
-    /// The previous token's kind is one of these.
-    After(Vec<u16>),
-    Always,
 }
 
 /// A keyword of a token row: a token of the row whose text is `word` has kind `kind`.
@@ -388,6 +295,42 @@ pub(in crate::code_rule_dsl) struct KeywordRow {
     pub(super) node: u16,
     pub(super) word: Vec<u8>,
     pub(super) kind: u16,
+}
+
+/// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
+/// tree section's grammar, one level per nested node. State 0 is the root's start.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct StateRow {
+    /// The node kind of its level: the root's, or a nested node's.
+    pub(super) level: u16,
+    /// Its level may end here, after this many closes inside it: a nested level then closes its
+    /// node and pops (at once, when the state has no arms); the root accepts at the end of the
+    /// file. `None`: it may not end here.
+    pub(super) end: Option<u8>,
+}
+
+/// What a transition does, in order: close nodes (innermost first), open nodes (outermost
+/// first), then the token's own leaf.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum Act {
+    /// Close the innermost open node, at the end of the token before.
+    Close,
+    /// Open a node of `kind` at the token's start, with a field (0: none) and supertypes
+    /// (outermost first).
+    Open { kind: u16, field: u16, supers: Vec<u16> },
+    /// The token's leaf node, of the token's kind.
+    Leaf { field: u16, supers: Vec<u16> },
+}
+
+/// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
+/// enters a nested level and keeps the state to return to.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct ArmRow {
+    pub(super) from: u16,
+    pub(super) token: u16,
+    pub(super) acts: Vec<Act>,
+    pub(super) to: u16,
+    pub(super) push: Option<u16>,
 }
 
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
@@ -409,12 +352,15 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0047).
     pub(super) output_delays: Vec<u8>,
-    /// The tree section's node kinds, code facts and keywords, for the tape writer; every mask
-    /// an output. `skip`: the bytes between tokens that belong to none.
-    pub(super) nodes: Vec<NodeRow>,
-    pub(super) codes: Vec<CodeRow>,
+    /// The tree section (docs/parser-generators/18-tree-as-grammar.md): its token rows and
+    /// keywords, every mask an output; `skip`, the bytes between tokens that belong to none; and
+    /// tier 2's state machine. The states and arms are data: tier 2 runs as the IR the compiler
+    /// lowers them to, never as a walk over them.
+    pub(super) tokens: Vec<TokenRow>,
     pub(super) keywords: Vec<KeywordRow>,
     pub(super) skip: Option<u16>,
+    pub(super) states: Vec<StateRow>,
+    pub(super) arms: Vec<ArmRow>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -459,23 +405,26 @@ impl BlockProgram {
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         let output = |v: u16| self.outputs.contains(&v);
-        let row = |r: u16| usize::from(r) < self.nodes.len();
+        let row = |r: u16| usize::from(r) < self.tokens.len();
         let keyworded = |r: usize| self.keywords.iter().any(|k| usize::from(k.node) == r);
-        let nodes = self.nodes.iter().enumerate().all(|(i, r)| {
-            !matches!(r.start, RowStart::At(v) if !output(v))
-                && !matches!(r.end, RowEnd::At(v) if !output(v))
-                // A token's start and end are masks; a kind-0 row's tokens are all keywords.
-                && (!r.leaf || matches!((r.start, r.end), (RowStart::At(_), RowEnd::At(_))))
-                && (r.kind != 0 || r.leaf && keyworded(i))
-        }) && self.codes.iter().all(|c| {
-            row(c.node)
-                && match &c.when {
-                    Fact::At(v) => output(*v),
-                    Fact::StartOf(r) | Fact::NotStartOf(r) => row(*r),
-                    Fact::After(_) | Fact::Always => true,
-                }
-        }) && self.keywords.iter().all(|k| row(k.node) && self.nodes[usize::from(k.node)].leaf && !k.word.is_empty() && k.word.len() <= 8)
+        // A token row's start and end are outputs; a kind-0 row's tokens are all keywords.
+        let tokens = self.tokens.iter().enumerate().all(|(i, r)| output(r.start) && output(r.end) && (r.kind != 0 || keyworded(i)))
+            && self.keywords.iter().all(|k| row(k.node) && !k.word.is_empty() && k.word.len() <= 8)
             && self.skip.is_none_or(output);
+        // The state machine: arms between states, one arm per state and token kind, and an open
+        // of a real kind. No tree section: no states.
+        let state = |s: u16| usize::from(s) < self.states.len();
+        let machine = self.states.len() <= usize::from(u16::MAX)
+            && (self.states.is_empty() || !self.tokens.is_empty())
+            && self.arms.iter().enumerate().all(|(i, a)| {
+                state(a.from)
+                    && state(a.to)
+                    && a.push.is_none_or(state)
+                    && a.token != 0
+                    && !self.arms[..i].iter().any(|b| b.from == a.from && b.token == a.token)
+                    && a.acts.iter().all(|act| !matches!(act, Act::Open { kind: 0, .. }))
+            });
+        let nodes = tokens && machine;
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
             return Err(Error::InvalidTarget(0));
         }
@@ -515,10 +464,10 @@ impl BlockProgram {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
-        // And the tree section's rows.
-        if !self.nodes.is_empty() || !self.codes.is_empty() {
-            // The rows' text (`rir`), which names every field of every row.
-            out.extend_from_slice(b"tree2");
+        // And the tree section: its rows and its state machine.
+        if !self.tokens.is_empty() || !self.states.is_empty() {
+            // Their text (`rir`), which names every field of every row.
+            out.extend_from_slice(b"tree3");
             let mut text = String::new();
             super::rir::tree_rows(&mut text, 0, self);
             out.extend_from_slice(&(text.len() as u32).to_le_bytes());
