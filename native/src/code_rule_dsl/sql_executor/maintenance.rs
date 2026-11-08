@@ -201,7 +201,7 @@ fn insert_query(db: &rusqlite::Connection, table: &str, q: &Query) -> Result<usi
     )
     .map_err(error)
 }
-fn anchor(q: &mut Query, at: usize) {
+pub(super) fn anchor(q: &mut Query, at: usize) {
     let mut delta = q.body.from.remove(at);
     if let Join::On(conditions) = std::mem::replace(&mut delta.join, Join::Cross) {
         q.body.predicates.extend(conditions);
@@ -339,6 +339,7 @@ pub(super) fn maintain(
     let mut refreshed = Vec::new();
     let mut incremental = Vec::new();
     let mut recursive_partitions = 0u64;
+    let mut recursive_frames = 0u64;
     let (mut reducer_groups, mut context_rows) = (0u64, 0u64);
     let mut outputs = BTreeMap::new();
     for (_, group) in groups {
@@ -380,8 +381,7 @@ pub(super) fn maintain(
             .iter()
             .any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
             || steps.iter().filter_map(|(_, q)| q.as_ref()).any(barrier);
-        if nonmonotone
-            && group.len() == 1
+        if group.len() == 1
             && let Some(r) = group.first()
             && let Some(state) = run
                 .reductions
@@ -405,6 +405,24 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
+            let stratum = e.program.steps.iter().filter(|s|group.contains(&s.output)).map(|s|s.stratum).max().unwrap_or(0);
+            if let Some(state) = run.temporal.get_mut(&stratum) {
+                let store = w.versions.ok_or_else(||error("temporal execution requires versioned storage"))?;
+                let (deltas,waves) = state.apply(w,store,changes,limit)?;
+                positives += u64::from(waves);
+                recursive_frames += u64::from(waves);
+                let objects = state.objects().collect::<Vec<_>>();
+                let owned = run.objects.iter().map(|(n,_)|n.clone()).collect::<BTreeSet<_>>();
+                run.objects.extend(objects.into_iter().filter(|(n,_)|!owned.contains(n)));
+                for (r,d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0)+d.inserted-d.deleted;
+                    run.counts.insert(r.clone(),count);
+                    if run.outputs.contains(&r) {outputs.insert(r.clone(),json!({"inserted":d.inserted,"deleted":d.deleted}));}
+                    incremental.push(r.clone());
+                    changes.insert(r,d);
+                }
+                continue;
+            }
             if let Some(state) = group
                 .first()
                 .and_then(|r| {
@@ -748,6 +766,6 @@ pub(super) fn maintain(
         }
     }
     Ok(
-        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
+        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"recursive_frames":recursive_frames,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
     )
 }

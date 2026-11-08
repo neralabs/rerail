@@ -355,7 +355,17 @@ impl Reducer {
         };
         let scalar = E::Scalar(Box::new(Select {
             distinct: false,
-            columns: vec![(column(alias, "value"), None)],
+            columns: vec![(
+                if matches!(self.kind, Kind::Sum) {
+                    E::Call {
+                        name: "rr_sum_value",
+                        arguments: vec![column(alias, "high"), column(alias, "value")],
+                    }
+                } else {
+                    column(alias, "value")
+                },
+                None,
+            )],
             from: vec![FromItem::cross(
                 Rel::Bound {
                     rel: self.groups.clone(),
@@ -394,19 +404,24 @@ impl Reducer {
         let keys = self.keys();
         let cols = names("", keys);
         let value = format!("c{keys}");
+        let wide = if matches!(self.kind, Kind::Sum) {
+            ",high INTEGER NOT NULL"
+        } else {
+            ""
+        };
         owned(
             db,
             objects,
             &self.groups,
             &format!(
-                "{},n INTEGER NOT NULL CHECK(n>0),value INTEGER NOT NULL,PRIMARY KEY({cols})",
+                "{},n INTEGER NOT NULL CHECK(n>0),value INTEGER NOT NULL{wide},PRIMARY KEY({cols})",
                 schema(keys)
             ),
             storage,
         )?;
         let reduction = match self.kind {
             Kind::Count | Kind::Matches(_) => "count(*)".into(),
-            Kind::Sum => format!("sum({value})"),
+            Kind::Sum => format!("rr_sum_low({value},1,NULL),rr_sum_high({value},1,NULL)"),
             Kind::Min => format!("min({value})"),
             Kind::Max => format!("max({value})"),
             Kind::Join => self.join.as_ref().unwrap().render(),
@@ -485,21 +500,31 @@ impl Reducer {
             return Ok(None);
         }
         let group_join = equal("g", "d", k);
+        let wide = if matches!(self.kind, Kind::Sum) {
+            ",high INTEGER,old_high INTEGER"
+        } else {
+            ""
+        };
         let totals = temporary(
             w,
             k,
-            "n INTEGER NOT NULL CHECK(n>=0),value INTEGER,old_value INTEGER",
+            &format!("n INTEGER NOT NULL CHECK(n>=0),value INTEGER,old_value INTEGER{wide}"),
             Some(k),
         )?;
         if matches!(self.kind, Kind::Min | Kind::Max | Kind::Join) {
             self.values_delta(w, &signed)?;
         }
         let sum_values = if matches!(self.kind, Kind::Sum) {
-            let sums = temporary(w, k, "value INTEGER NOT NULL", Some(k))?;
+            let sums = temporary(
+                w,
+                k,
+                "value INTEGER NOT NULL,high INTEGER NOT NULL",
+                Some(k),
+            )?;
             execute(
                 w.db,
                 &format!(
-                    "INSERT INTO {sums} SELECT {cols},rr_update_sum(v,weight) FROM (SELECT {cols},{val} AS v,weight FROM {signed} UNION ALL SELECT {},g.value,1 FROM {keys} k CROSS JOIN {} g WHERE {}) GROUP BY {cols}",
+                    "INSERT INTO {sums} SELECT {cols},rr_sum_low(v,weight,high),rr_sum_high(v,weight,high) FROM (SELECT {cols},{val} AS v,weight,NULL AS high FROM {signed} UNION ALL SELECT {},g.value,1,g.high FROM {keys} k CROSS JOIN {} g WHERE {}) GROUP BY {cols}",
                     names("g", k),
                     self.groups,
                     equal("g", "k", k)
@@ -520,7 +545,7 @@ impl Reducer {
             Kind::Count | Kind::Matches(_) => n.to_owned(),
             Kind::Sum => format!(
                 "(SELECT s.value FROM {} s WHERE {})",
-                sum_values.unwrap(),
+                sum_values.as_ref().unwrap(),
                 equal("s", "d", k)
             ),
             Kind::Min | Kind::Max => format!(
@@ -534,10 +559,19 @@ impl Reducer {
                 }
             ),
         };
+        let high = sum_values
+            .as_ref()
+            .map(|table| {
+                format!(
+                    ",(SELECT s.high FROM {table} s WHERE {}),g.high",
+                    equal("s", "d", k)
+                )
+            })
+            .unwrap_or_default();
         execute(
             w.db,
             &format!(
-                "INSERT INTO {totals} SELECT {},{n},{next},g.value FROM (SELECT {cols},sum(weight) AS n FROM {signed} GROUP BY {cols}) d LEFT JOIN {} g ON {group_join}",
+                "INSERT INTO {totals} SELECT {},{n},{next},g.value{high} FROM (SELECT {cols},sum(weight) AS n FROM {signed} GROUP BY {cols}) d LEFT JOIN {} g ON {group_join}",
                 names("d", k),
                 self.groups
             ),
@@ -548,7 +582,8 @@ impl Reducer {
                 "coalesce(old_value,{0}) IS NOT coalesce(value,{0})",
                 Self::empty_join().render()
             ),
-            Kind::Count | Kind::Sum => "coalesce(old_value,0) IS NOT coalesce(value,0)".into(),
+            Kind::Count => "coalesce(old_value,0) IS NOT coalesce(value,0)".into(),
+            Kind::Sum => "coalesce(old_value,0) IS NOT coalesce(value,0) OR coalesce(old_high,0) IS NOT coalesce(high,0)".into(),
             Kind::Matches(_) => "(coalesce(old_value,0)>0) <> (coalesce(value,0)>0)".into(),
             _ => "old_value IS NOT value".into(),
         };
@@ -563,10 +598,15 @@ impl Reducer {
                 self.groups
             ),
         )?;
+        let high = if matches!(self.kind, Kind::Sum) {
+            ",high"
+        } else {
+            ""
+        };
         execute(
             w.db,
             &format!(
-                "INSERT OR REPLACE INTO {} SELECT {cols},n,value FROM {totals} WHERE n>0",
+                "INSERT OR REPLACE INTO {} SELECT {cols},n,value{high} FROM {totals} WHERE n>0",
                 self.groups
             ),
         )?;

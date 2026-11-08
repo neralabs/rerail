@@ -9,10 +9,12 @@ pub(super) struct Pool {
 
 pub(super) struct Work<'a> {
     pub db: &'a rusqlite::Connection,
+    pub versions: Option<&'a versions::Store>,
     pub pool: Pool,
     used: Vec<String>,
     positions: BTreeMap<(String, bool), usize>,
     pub created: usize,
+    pub version_nodes: usize,
 }
 pub(super) struct Mark {
     used: usize,
@@ -51,10 +53,12 @@ impl<'a> Work<'a> {
     pub fn new(db: &'a rusqlite::Connection, pool: &Pool) -> Self {
         Self {
             db,
+            versions: None,
             pool: pool.clone(),
             used: vec![],
             positions: BTreeMap::new(),
             created: 0,
+            version_nodes: 0,
         }
     }
     pub fn allocate(&mut self, definition: String, without_rowid: bool) -> Result<String> {

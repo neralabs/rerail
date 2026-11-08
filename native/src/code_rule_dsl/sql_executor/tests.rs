@@ -6,6 +6,7 @@ mod recursive;
 mod registered_joins;
 mod scaling;
 mod updates;
+mod temporal;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

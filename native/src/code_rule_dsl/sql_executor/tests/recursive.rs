@@ -77,7 +77,7 @@ fn recursive_dependencies_that_cross_partition_keys_match_fresh_execution() {
 }
 
 #[test]
-fn recursive_partitions_restore_simultaneous_old_sql_inputs_and_retry_atomically() {
+fn recursive_iterations_restore_simultaneous_sql_changes_and_retry_atomically() {
     let (_d, mut e) = executor();
     bind(
         &mut e,
@@ -91,7 +91,7 @@ fn recursive_partitions_restore_simultaneous_old_sql_inputs_and_retry_atomically
     e.run(PATHS.into(), "python".into(), None).unwrap();
     let initial = rows(&e, "SELECT * FROM distance ORDER BY c0,c1");
     let patch = json!([{"name":"source","delete":[[1,17,0,1,5],[2,17,1,2,3]],"insert":[[4,17,0,1,9],[5,17,1,2,1]]},{"name":"active","delete":[[17]]}]);
-    e.connection().execute_batch("CREATE TEMP TRIGGER stop_old_recursive BEFORE INSERT ON weighted WHEN NEW.c0=17 AND NEW.c3=5 BEGIN SELECT RAISE(ABORT,'stop old recursive input'); END").unwrap();
+    e.connection().execute_batch("CREATE TEMP TRIGGER stop_old_recursive BEFORE DELETE ON distance WHEN OLD.c0=17 BEGIN SELECT RAISE(ABORT,'stop old recursive input'); END").unwrap();
     assert!(
         e.apply_changes(patch.to_string(), None)
             .unwrap_err()
@@ -117,7 +117,10 @@ fn recursive_partitions_restore_simultaneous_old_sql_inputs_and_retry_atomically
             json!([]),
             "{report}"
         );
-        assert_eq!(report["programs"][1]["recursive_partitions"], 1, "{report}");
+        assert!(
+            report["programs"][1]["recursive_frames"].as_u64().unwrap() > 0,
+            "{report}"
+        );
         let (_d, mut fresh) = executor();
         bind(
             &mut fresh,
@@ -166,7 +169,7 @@ fn recursive_counts_wake_full_queries_and_retract_independent_cycles() {
         rows(&e, "SELECT * FROM item WHERE c0=17 ORDER BY c1"),
         json!([[17, 0], [17, 1], [17, 2], [17, 3], [17, 42]])
     );
-    assert!(!e.executions[0].recursive.is_empty());
+    assert!(!e.executions[0].temporal.is_empty());
     for patch in [
         json!([{"name":"owner","delete":[[17]]},{"name":"seed","delete":[[17,42]]}]),
         json!([{"name":"owner","insert":[[17]]}]),
@@ -183,7 +186,10 @@ fn recursive_counts_wake_full_queries_and_retract_independent_cycles() {
             json!([]),
             "{report}"
         );
-        assert_eq!(report["programs"][0]["recursive_partitions"], 1, "{report}");
+        assert!(
+            report["programs"][0]["recursive_frames"].as_u64().unwrap() > 0,
+            "{report}"
+        );
         assert!(work.data_scans.get() < 1000, "{work:?}");
         e.set_limits("{}".into()).unwrap();
         compare(
@@ -223,7 +229,7 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
     );
     let p = ".decl root(g:number)\n.decl weighted(g:number,a:number,b:number,w:number)\n.input root,weighted\n.decl distance(n:number,g:number,v:min<>) widen 2\ndistance(0,g,0) :- root(g).\ndistance(b,g,d+w) :- distance(a,g,d), weighted(g,a,b,w).\n.output distance\n";
     e.run(p.into(), "python".into(), None).unwrap();
-    assert!(!e.executions[0].recursive.is_empty());
+    assert!(!e.executions[0].temporal.is_empty());
     assert_eq!(
         rows(&e, "SELECT c2 < -1000000 FROM distance WHERE c0=1 AND c1=1"),
         json!([[1]])
@@ -245,7 +251,7 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
             json!([]),
             "{report}"
         );
-        assert_eq!(report["programs"][0]["recursive_partitions"], 1);
+        assert!(report["programs"][0]["recursive_frames"].as_u64().unwrap() > 0);
         assert_eq!(
             rows(
                 &e,
@@ -298,7 +304,7 @@ fn partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fres
         json!((0..20000).map(|g| vec![g]).collect::<Vec<_>>()),
     );
     e.run(PATHS.into(), "python".into(), None).unwrap();
-    assert!(!e.executions[0].recursive.is_empty());
+    assert!(!e.executions[0].temporal.is_empty());
     let inputs = [
         ("weighted", &["g", "a", "b", "w"][..]),
         ("root", &["g"][..]),
@@ -321,7 +327,10 @@ fn partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fres
             json!([]),
             "{report}"
         );
-        assert_eq!(report["programs"][0]["recursive_partitions"], 1, "{report}");
+        assert!(
+            report["programs"][0]["recursive_frames"].as_u64().unwrap() > 0,
+            "{report}"
+        );
         assert!(work.data_scans.get() < 1000, "{work:?}");
         eprintln!("recursive partition: {work:?}");
         e.set_limits("{}".into()).unwrap();

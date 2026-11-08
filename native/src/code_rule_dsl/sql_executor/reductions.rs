@@ -11,6 +11,7 @@ mod lattice;
 mod maintain;
 mod plan;
 mod reducer;
+mod sums;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
 
@@ -22,6 +23,34 @@ pub(super) struct Retained {
     rules: Vec<Rule>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
+}
+
+impl Retained {
+    pub(super) fn reducer_inputs(&self) -> impl Iterator<Item = &str> {
+        self.rules
+            .iter()
+            .flat_map(|r| &r.reducers)
+            .map(|r| r.relation.as_str())
+    }
+
+    /// Drop support for an empty positive body, retaining global scalar input indexes.
+    pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
+        let mut objects = vec![self.heads.clone()];
+        for rule in &self.rules {
+            objects.extend([rule.contexts.clone(), rule.contributions.clone()]);
+            objects.extend(rule.reducers.iter().filter_map(Reducer::dependency_object));
+        }
+        if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
+            objects.extend([tree.nodes.clone(), tree.roots.clone()]);
+        }
+        for name in objects {
+            let version = store.version(&name);
+            if version.len() > 0 {
+                store.replace(&name, version.empty_like())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Sum signed deltas with a wider intermediate; fail atomically instead of storing SQLite REALs.
@@ -47,7 +76,8 @@ pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         SignedSum,
     )
-    .map_err(error)
+    .map_err(error)?;
+    sums::register(db)
 }
 
 fn owned(
@@ -212,7 +242,7 @@ fn planned(
                 }
             }
         }
-        if !eligible || !nonmonotone {
+        if !eligible || (!nonmonotone && !native) {
             continue;
         }
         let state = Retained {

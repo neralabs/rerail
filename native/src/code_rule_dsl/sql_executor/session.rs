@@ -11,6 +11,7 @@ pub(super) struct Execution {
     pub max_waves: u32,
     pub reductions: Option<BTreeMap<String, reductions::Retained>>,
     pub recursive: BTreeMap<u32, recursive::Partitioned>,
+    pub temporal: BTreeMap<u32, temporal::Trace>,
 }
 
 impl CodeRuleSqlExecutor {
@@ -52,6 +53,10 @@ impl CodeRuleSqlExecutor {
             .collect();
         for table in [false, true] {
             for (name, is_table) in objects.iter().filter(|(_, is_table)| *is_table == table) {
+                if self.versions.owns(name) {
+                    self.versions.remove_all(&self.db, name)?;
+                    continue;
+                }
                 self.db
                     .execute_batch(&format!(
                         "DROP {} IF EXISTS temp.{}",

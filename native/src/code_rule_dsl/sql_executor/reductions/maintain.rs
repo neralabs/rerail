@@ -45,13 +45,7 @@ pub(super) fn apply(
             };
             let mut q = rule.context_query.clone();
             q.body.from[atom.at].relation = source(&delta.plus, &atom.columns);
-            let anchor = q.body.from.remove(atom.at);
-            q.body.from.insert(0, anchor);
-            for item in &mut q.body.from {
-                if let Join::On(on) = std::mem::replace(&mut item.join, Join::Cross) {
-                    q.body.predicates.extend(on);
-                }
-            }
+            maintenance::anchor(&mut q, atom.at);
             let added = w.table(rule.width)?;
             execute(
                 w.db,

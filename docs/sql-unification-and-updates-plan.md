@@ -431,7 +431,7 @@ The final 235-test run, including the simultaneous lattice replacement regressio
 Host load affects this timing. The probe counts, scan bounds, VM budgets, and output comparisons provide the repeatable checks.
 The headless library and engine binary pass `cargo check --locked --lib --features headless --bin rerail-engine`.
 
-## Active completion goal: remaining execution work
+## Completion criteria for execution work
 
 The scope includes all five remaining items. Completion requires evidence for each item.
 
@@ -443,7 +443,7 @@ The scope includes all five remaining items. Completion requires evidence for ea
 | Registered lattice joins | Retain a balanced reduction tree over candidate support and combine summaries with the registered merge. | A sparse edit at a large key processes a logarithmic number of summaries, including retractions from top. |
 | Temporary-table overhead | Reuse typed scratch tables and indexes across operations. | Repeated edits create no scratch schema objects, leave no scratch rows, and preserve pool consistency after rollback and reset. |
 
-The previous implementation commit is verified progress. The five completion requirements remain active until their implementation and checks pass.
+The implementation and final checks below provide evidence for each requirement. Follow-up work is listed separately from these completion criteria.
 
 ### Preparation, reusable scratch state, and registered joins
 
@@ -572,7 +572,8 @@ General recursive maintenance remains unfinished. The next algorithm needs retai
 Copying SQL tables or initializing support for every new iteration would scan accumulated state again.
 The engine now has an internal storage backend that shares immutable index roots between operator versions.
 SQL still evaluates rules and applies their deltas through writable temporary virtual tables.
-The public session continues to use its existing tables. This backend is not yet connected to recursive scheduling.
+At this storage milestone, the public session still used its existing tables.
+The next section describes the recursive session integration.
 
 Each relation has persistent indexes for complete rows, primary keys, row IDs, and individual columns.
 Writes copy affected search paths. Active cursors pin their version before reading.
@@ -596,7 +597,7 @@ Two integration failures had specific causes:
 
 The constraint protocol follows [SQLite's virtual-table configuration API](https://www.sqlite.org/c3ref/c_vtab_constraint_support.html).
 Native state uses an explicit Rust transaction guard to restore previous roots and remove tables created by a failed batch.
-Ordinary SQL rollback alone does not restore this backend. Session transaction integration is still required.
+Ordinary SQL rollback alone does not restore this backend. Session integration must restore native roots too.
 
 The combined suite passes 268 tests, with four ignored tests and the separate syntax census excluded.
 It covers SQL execution, compiler emission, front-end checks, rule syntax, corpus scheduling, virtual-table bindings, and the content store.
@@ -609,4 +610,144 @@ Preserve the cold scheduler's gates and widening order, then publish only actual
 Integrate native rollback and cleanup before enabling this path in sessions.
 Compare cyclic and mutually recursive programs against fresh execution after every edit, including failures and retries.
 Measure native index work as well as SQL instructions: SQL counters exclude native hashing, allocation, and index traversal.
-Until that integration passes, unpartitioned recursive lattices and aggregates retain their visible stratum-refresh fallback.
+That milestone left the visible stratum-refresh fallback for unpartitioned recursive lattices and aggregates.
+
+### Retained recursive iterations
+
+The session now prepares iteration state for supported recursive lattice and aggregate components.
+This includes components with a proven partition key. They no longer rederive a whole affected partition.
+Each frame retains its preceding inputs, rule-result caches, published rows, frontier rows, and widening counters.
+SQL evaluates rule deltas and folds candidate values at changed keys.
+
+Every recursive read uses the preceding frame's version. A cycle cannot supply support to its own initial frame.
+Edits propagate through retained frames, including retractions, then publish actual output differences.
+An initial comparison rejects any trace whose final rows differ from the cold SQL kernel.
+Rules retain the kernel's original pending gates, step order, full queries, and semi-naive variants.
+Constant seeds remain in stratum zero, including when the program also lifts a tree walk.
+
+Inactive rule caches record net external changes. They evaluate their queries when the original gate becomes active.
+Each trace also retains a closing frame with an empty final frontier.
+Positive contexts can then be cleared by replacing native roots, without enumerating an obsolete frontier.
+This clearing preserves scalar input indexes and changes still needed by those indexes.
+Unused tail frames remain available for later edits and do not consume the wave limit.
+
+Frames share fixed SQL table names and schemas. Scope activation changes their bound native roots.
+Forking another frame shares persistent indexes and clones its descriptors, without SQL DDL or row copying.
+The session coordinates native undo logs with SQL savepoints.
+Failed batches restore changed roots, deleted tables, and tables created while extending the trace.
+Cleanup also handles SQLite rolling back the SQL transaction before native rollback runs.
+Writable modules use ordinary temporary virtual tables, without an implicit eponymous table after the schema disappears.
+Rollback restores the original binding cell when SQLite revives an earlier table instance.
+
+The tests cover shortest paths, alternate support, unsupported cycles, longer paths, negative cycles, and retraction from top.
+They compare published values and widening counters with fresh execution after edits.
+Other cases cover mutually recursive global counts, physical sentinel columns, registered joins, empty keys, and recursive walks with scalar and negative blocks.
+Failures during publication and wave-limit failures restore the previous state and permit retries.
+Forty deterministic mixed graph edits also match fresh execution.
+Ordinary and recursive sums retain unused overflowing groups without failing preparation.
+Reading an overflowing group fails atomically; correcting its inputs permits a retry.
+These tests cover both signs, fresh-execution comparisons, and native-state rollback.
+
+Sparse edits over 50,000 weighted edges and 10,000 disconnected regions have these measured costs:
+
+| Edit | SQL instructions | Data scan steps | Native columns read | Version-diff nodes |
+| --- | ---: | ---: | ---: | ---: |
+| Delete an alternate path edge | 9,870 | 59 | 220 | 1,043 |
+| Remove the region's root | 12,581 | 218 | 223 | 1,346 |
+| Restore the root and edge | 17,397 | 284 | 529 | 1,600 |
+
+The instruction limit is 50,000. Triggers reject publication changes outside the selected region.
+Native column reads and version comparisons are counted separately because SQLite counters exclude native index work.
+A recursive count with negation over 3,000 groups uses 26,939–36,573 instructions and 113–356 scan steps per edit.
+That test extends the old iteration history, removes support, changes the negative input, then restores support.
+It also rejects writes to unrelated count groups.
+
+Integration exposed additional root causes:
+
+| Finding | Root cause | Fix |
+| --- | --- | --- |
+| One retained CPython join consumed 119 million instructions. | Moving the delta first left an unrelated table before the next connected join. | Apply equality-based join ordering to retained context updates. |
+| CPython preparation exceeded its existing 200-million-instruction limit. | Each frame repeated schema changes and SQL preparation. | Reuse fixed SQL slots and fork their native roots within separate scopes. |
+| A sparse count edit exceeded 50,000 instructions when it needed another round. | A new cache inherited thousands of unrelated rows from the last nonempty frontier. | Retain a closing frame and clear provably empty positive contexts by roots. |
+| An unused sum group failed an otherwise valid run. | Scalar preparation narrowed every group to 64 bits before a rule read it. | Retain exact 128-bit sums in two SQL integer columns; check the public range during context lookup. |
+| Lifting an unrelated walk changed widening. | Dependency ordering moved constant seeds into the recursive stratum. | Preserve the original stratum-zero seed timing. |
+| Recursive `split_dot` could not retain its operator. | The retained planner did not recognize the immutable integer domain. | Treat `rdl_int` as a positive source that never supplies an input delta. |
+| A generated ancestor walk retained hundreds of thousands of intermediate rows. | Each seed carried every candidate function before testing the actual ancestor. | Move an independent candidate lookup to an existence check at the terminal ancestor. |
+| Native preparation hashed every secondary-index path. | Secondary indexes computed Merkle hashes although comparisons use complete rows only. | Hash complete-row trees; retain secondary indexes without subtree hashes. |
+| Cleanup hid an interrupted query behind a virtual-table drop error. | SQLite had already removed the temporary schema, leaving the module registered. | Check the actual schema and restore original module bindings during rollback. |
+
+The ancestor rewrite checks that the candidate stays passive throughout the climb.
+It preserves implicit column names, duplicate target rows, empty target sets, and distinct seed values.
+Correlated candidates and candidates used during traversal are excluded from this rewrite.
+
+The eligibility audit distinguishes public rule syntax from arbitrary checked SQL:
+
+- Aggregate bodies with joins already lower to helper relations. Retained execution handles those helpers, including recursive bodies.
+- Tested aggregate-dependent correlation expressions retain their dependency indexes. This is not a blanket guarantee for arbitrary SQL scalar subqueries.
+- Generated nearest walks have positive traversal arms. Supported scalar queries and negation occur in their seeds or outputs.
+- Dynamic nearest stop sets are rejected by the rule lowerer; they are not an accepted SQL maintenance shape awaiting retention.
+- The standalone session binds all rule inputs as batch sources in atom mode. It does not emit the product planner's document-range optimization.
+- Arbitrary checked CTEs and unsupported scalar shapes keep the existing explicit refresh or partition fallback.
+  Unsupported retention alone does not fail a previously accepted program. Real evaluation errors and budget failures still propagate.
+
+### Optimized measurements and final validation
+
+The benchmark driver now includes recursive lattice edits at 1,000 and 10,000 disconnected regions.
+Each case runs the same removal and restoration sequence twice, checks output deltas, and rejects unrelated publication writes.
+The second cycle must create no scratch tables. Every edit must stay below 50,000 measured SQL instructions.
+The reducer benchmarks also require no first-edit support initialization.
+
+These are single runs of the optimized `profiling` build, with SQLite statement tracing enabled:
+
+| Case | Initial execution CPU | Initial peak RSS | Edit CPU range | Edit SQL instructions |
+| --- | ---: | ---: | ---: | ---: |
+| 5,000 edges, 1,000 regions | 565 ms | 125.5 MiB | 3.45–4.47 ms | 9,754–17,397 |
+| 50,000 edges, 10,000 regions | 6,754 ms | 1,123.1 MiB | 3.98–6.26 ms | 9,754–17,397 |
+| Reducers over 10,000 rows | 51 ms | 26.5 MiB | 0.93–2.66 ms | 5,007–6,879 |
+| Reducers over 100,000 rows | 500 ms | 130.9 MiB | 1.10–2.58 ms | 5,007–6,879 |
+
+CPU time excludes other processes. Wall time varied under concurrent builds and is not used for these comparisons.
+Peak RSS includes the process, retained session state, and SQL trace data. It is not a live-heap measurement.
+An optimized standalone CLI run without statement tracing confirms the memory cost: 1,114.5 MiB maximum RSS.
+Its full request takes 7.52 seconds CPU, including binding, initial execution, six edits, queries, and teardown.
+The same final outputs and scratch-reuse checks pass, so tracing does not explain the large peak.
+Recursive scratch allocations were `4, 7, 2` on the first cycle and `0, 0, 0` on the second.
+The reducer case created 65 scratch tables on its first edit, then reused them for all six later edits.
+New scratch shapes still allocate capacity. Repeated shapes reuse it until reset.
+
+The final combined run passes 286 tests, with four ignored tests and the separate syntax census excluded.
+The 100,000-edge cyclic path regression also passes its large fresh-execution, rollback, and retry comparisons.
+That large run preceded the final sum-only change; the final combined run and 16 focused reducer tests cover that change.
+Both ordinary and recursive unused-overflow examples now pass, including a standalone CLI check.
+The headless engine and optimized benchmark probe build successfully.
+The structural gate reports the same 15 failing metrics as `HEAD`, with no new findings.
+
+The five acceptance criteria have implementation and regression evidence:
+
+| Requirement | Evidence |
+| --- | --- |
+| First-edit preparation | Large-input edits report no migration or support initialization; reducer instruction counts stay unchanged at 10,000 and 100,000 rows. |
+| Recursive lattices and aggregates | Cyclic edits match fresh values and widening counters, including unpartitioned dependencies, global counts, registered joins, and failure recovery. Supported components publish no refreshed strata. |
+| Remaining rule shapes | Ordered strings, aggregate-dependent keys, and generated walks with scalar or negative blocks retain state through repeated edits, empty inputs, rollback, and fresh-execution comparisons. |
+| Registered lattice joins | Large-key tests update balanced summary paths, preserve duplicate support, retract top, and restore state after errors. |
+| Temporary-table overhead | Repeated edit shapes reuse scratch schemas. Extending recursive histories forks native roots within fixed SQL slots. Failure and reset checks cover cleanup. |
+
+### Follow-up work
+
+Initial recursive execution is the clearest remaining performance problem.
+The session runs the cold kernel, then separately constructs and verifies a retained trace.
+Dense transitions also build persistent indexes through individual writes and retain multiple iteration versions.
+The 50,000-edge measurements show the resulting CPU and memory cost; sparse edits are much cheaper.
+
+1. Capture retained state during cold execution, so the session does not evaluate another complete trace.
+   Add bulk index construction for initial loads and dense transitions. Preserve canonical roots, stable cursors, and native undo.
+   Validate values, gates, frontiers, and widening counters against the current cold oracle before removing the duplicate preparation pass.
+   Repeat both the phase benchmarks and the untraced standalone memory measurement.
+2. Extend the failure-behavior audit beyond sums, especially aggregate-dependent keys and arbitrary checked expressions.
+   Unused sum groups now have regression coverage. Deferring an inactive rule query alone does not prove every initialization path safe.
+3. Extend retention where arbitrary checked SQL needs it. Keep fallback visible until that shape has correctness and sparse-work evidence.
+4. Reduce history traversal after changes stop propagating, while preserving gates, frontiers, counters, and failure behavior.
+   Retain external input versions or revision journals so skipped frames can later consume their accumulated changes.
+   Skipping frames without that accounting would leave stale scalar indexes.
+
+These follow-ups are distinct from first-edit migration. Preparation, registered joins, string reductions, correlations, and scratch reuse now meet the stated checks.

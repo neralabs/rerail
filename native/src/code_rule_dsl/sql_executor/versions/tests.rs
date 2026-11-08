@@ -250,3 +250,136 @@ fn version_hashes_are_independent_of_insertion_order_and_checks_precede_mutation
     tx.commit();
     store.close(&db).unwrap();
 }
+
+#[test]
+fn native_rollback_restores_removed_tables_and_roots_across_sql_savepoints() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    store
+        .create(&db, "version_lifecycle", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO version_lifecycle VALUES(1,2)", [])
+        .unwrap();
+    let before = store.version("version_lifecycle");
+    db.execute_batch("SAVEPOINT lifecycle").unwrap();
+    store.begin().unwrap();
+    store
+        .replace("version_lifecycle", before.empty_like())
+        .unwrap();
+    store.remove(&db, "version_lifecycle").unwrap();
+    store
+        .create(&db, "version_lifecycle", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO version_lifecycle VALUES(3,4)", [])
+        .unwrap();
+    store.remove(&db, "version_lifecycle").unwrap();
+    store
+        .create(&db, "version_lifecycle", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO version_lifecycle VALUES(5,6)", [])
+        .unwrap();
+    store.rollback(&db).unwrap();
+    db.execute_batch("ROLLBACK TO lifecycle; RELEASE lifecycle")
+        .unwrap();
+    assert!(before.same(&store.version("version_lifecycle")));
+    assert_eq!(data(&db, "version_lifecycle"), vec![vec![Some(1), Some(2)]]);
+    db.execute("INSERT INTO version_lifecycle VALUES(7,8)", [])
+        .unwrap();
+    assert_eq!(store.version("version_lifecycle").len(), 2);
+    db.execute_batch("SAVEPOINT automatic_rollback").unwrap();
+    store.begin().unwrap();
+    store.remove(&db, "version_lifecycle").unwrap();
+    store
+        .create(&db, "version_interrupted", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO version_interrupted VALUES(3,4)", [])
+        .unwrap();
+    // SQLite can roll back the entire transaction when a write is interrupted.
+    db.execute_batch("ROLLBACK").unwrap();
+    store.rollback(&db).unwrap();
+    assert_eq!(store.version("version_lifecycle").len(), 2);
+    assert!(db.prepare("SELECT * FROM version_interrupted").is_err());
+    assert_eq!(
+        data(&db, "version_lifecycle"),
+        vec![vec![Some(1), Some(2)], vec![Some(7), Some(8)]]
+    );
+    store.close(&db).unwrap();
+}
+
+#[test]
+fn scopes_reuse_sql_slots_and_restore_binding_cells_when_tables_return_on_rollback() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    store
+        .create(&db, "scoped_rows", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO scoped_rows VALUES(1,2)", [])
+        .unwrap();
+    let schema = db
+        .query_row("PRAGMA temp.schema_version", [], |r| r.get::<_, i64>(0))
+        .unwrap();
+    let next = store.fork_scope(0).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA temp.schema_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        schema
+    );
+    assert!(Arc::ptr_eq(
+        store.version("scoped_rows").full.as_ref().unwrap(),
+        store.version_at(next, "scoped_rows").full.as_ref().unwrap()
+    ));
+    {
+        let _scope = store.activate(next).unwrap();
+        db.execute("UPDATE scoped_rows SET c1=9", []).unwrap();
+        assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(9)]]);
+        {
+            let _original = store.activate(0).unwrap();
+            assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(2)]]);
+        }
+        assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(9)]]);
+    }
+    assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(2)]]);
+    db.execute_batch("SAVEPOINT scoped_lifecycle").unwrap();
+    store.begin().unwrap();
+    store.remove_all(&db, "scoped_rows").unwrap();
+    store
+        .create(&db, "scoped_rows", Schema::integers(2, 1))
+        .unwrap();
+    db.execute("INSERT INTO scoped_rows VALUES(3,4)", [])
+        .unwrap();
+    store.rollback(&db).unwrap();
+    db.execute_batch("ROLLBACK TO scoped_lifecycle; RELEASE scoped_lifecycle")
+        .unwrap();
+    assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(2)]]);
+    {
+        let _scope = store.activate(next).unwrap();
+        assert_eq!(data(&db, "scoped_rows"), vec![vec![Some(1), Some(9)]]);
+        db.execute("UPDATE scoped_rows SET c1=11", []).unwrap();
+        assert_eq!(store.version("scoped_rows").value(0, 1), 11);
+    }
+    assert_eq!(store.version("scoped_rows").value(0, 1), 2);
+    store.close(&db).unwrap();
+}
+
+#[test]
+fn interrupted_slot_creation_releases_the_module_before_it_can_be_owned() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    db.progress_handler(1, Some(|| true)).unwrap();
+    assert!(
+        store
+            .create(&db, "version_failed", Schema::integers(2, 1))
+            .is_err()
+    );
+    db.progress_handler(0, None::<fn() -> bool>).unwrap();
+    assert!(!store.owns("version_failed"));
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM pragma_module_list WHERE name='version_failed'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}

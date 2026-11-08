@@ -403,14 +403,24 @@ An AST matcher atom must become native match facts before the rule enters this e
 The standalone session does not publish derivation records or replace the product audit path.
 The product path continues to use the same SQL scheduler with its provenance and incremental storage.
 
-## Recursive maintenance work in progress
+## Retained recursive iterations
 
-Recursive lattice and aggregate components can rederive independent partitions when checked queries prove an invariant partition key.
-Components without that proof still refresh their affected stratum.
-General incremental recursion needs retained iteration state so unsupported cycles cannot preserve their own results.
+Supported recursive lattice and aggregate components now use retained iteration state, including components with proven partition keys.
+Each frame reads preceding-wave versions, so cycles cannot preserve their own initial support.
+Edits propagate through cached operators and publish changed rows without whole-stratum or whole-partition rederivation.
 
-An internal backend now provides versioned integer relations through writable temporary virtual tables.
-It can fork retained reducer state by sharing persistent indexes, then apply sparse SQL updates to each fork independently.
-This backend has storage and operator tests. The public session does not yet use it for recursive execution.
-Its native writes require an explicit rollback guard; SQL rollback alone is insufficient.
-See the [implementation plan](sql-unification-and-updates-plan.md#versioned-storage-for-iteration-state) for results, limitations, and remaining integration work.
+The internal backend provides versioned integer relations through writable temporary virtual tables.
+Frames share fixed SQL slots. Forking a frame shares persistent indexes without copying support rows or creating another schema.
+The session restores native roots alongside SQL savepoints after failure.
+Cached improvements preserve the cold scheduler's pending gates, constant-seed timing, and widening counters.
+A closing frame retains the empty final frontier. Clearing its positive contexts preserves scalar input indexes.
+Sum indexes retain exact 128-bit totals in two integer columns. A rule lookup checks the public 64-bit range, so unused groups do not raise overflow errors.
+
+The update report includes `recursive_frames` per program and `version_nodes` for the batch.
+The latter counts native version-diff traversal, which SQLite instruction counts do not include.
+
+Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
+Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
+Arbitrary checked CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
+Initial preparation builds and checks a separate trace, so its CPU and memory costs still need improvement.
+See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.

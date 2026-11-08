@@ -26,6 +26,7 @@ mod reductions;
 mod scratch;
 mod updates;
 mod versions;
+mod temporal;
 mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
@@ -68,6 +69,8 @@ pub struct CodeRuleSqlExecutor {
     live_inputs: BTreeMap<String, Arc<live::Live>>,
     documents: Option<documents::Documents>,
     scratch: scratch::Pool,
+    versions: versions::Store,
+    next_trace: usize,
 }
 
 #[napi]
@@ -94,6 +97,8 @@ impl CodeRuleSqlExecutor {
             live_inputs: BTreeMap::new(),
             documents: None,
             scratch: scratch::Pool::default(),
+            versions: versions::Store::default(),
+            next_trace: 0,
         })
     }
 
@@ -654,6 +659,7 @@ impl CodeRuleSqlExecutor {
         );
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
+        walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;
         Ok(emitted)
     }
@@ -730,6 +736,12 @@ impl CodeRuleSqlExecutor {
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
+        if let Err(e) = self.versions.begin() {
+            let _ = self.db.execute_batch("RELEASE sql_extension_run");
+            return Err(e);
+        }
+        let trace_namespace = self.next_trace;
+        self.next_trace += 1;
         let previous = (self.generated.clone(), self.executions.clone());
         let mut affected: BTreeSet<usize> = self
             .executions
@@ -820,8 +832,10 @@ impl CodeRuleSqlExecutor {
                 max_waves,
                 reductions: None,
                 recursive: BTreeMap::new(),
+                temporal: BTreeMap::new(),
             };
             let mut work = maintenance::Work::new(&self.db, &self.scratch);
+            work.versions = Some(&self.versions);
             let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
             let constant_tables = constants::prepare(&self.db, &mut execution)?;
             // These views used to inherit native estimates. Their retained SQL tables need
@@ -841,23 +855,29 @@ impl CodeRuleSqlExecutor {
             )?);
             initializations.sort();
             initializations.dedup();
+            temporal::prepare(&mut work, &self.versions, &mut execution, trace_namespace)?;
             recursive::prepare(&self.db, &mut execution)?;
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>()});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
             Ok((waves, execution, work.pool, preparation))
         })();
         let (waves, execution, pool, preparation) = match result {
-            Ok(value) => value,
+            Ok(value) => {
+                self.versions.commit();
+                value
+            },
             Err(e) => {
+                let native_rollback = self.versions.rollback(&self.db);
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
                 self.generated = previous.0;
                 self.executions = previous.1;
                 self.db.reset_execution();
+                native_rollback?;
                 return Err(e);
             }
         };
@@ -879,6 +899,10 @@ impl CodeRuleSqlExecutor {
                 .rev()
                 .filter(|(_, is_table)| *is_table == table)
             {
+                if self.versions.owns(name) {
+                    self.versions.remove_all(&self.db, name)?;
+                    continue;
+                }
                 let kind = if *is_table { "TABLE" } else { "VIEW" };
                 self.db
                     .execute_batch(&format!("DROP {kind} IF EXISTS temp.{}", quote(name)))

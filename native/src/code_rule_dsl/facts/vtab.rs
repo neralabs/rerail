@@ -215,6 +215,20 @@ pub(crate) struct Modules {
 impl Modules {
     /// Binds `source` to the table `name`, registering it on `db` the first time.
     pub(crate) fn bind(&self, db: &Connection, name: &str, source: Arc<dyn Source>) -> Result<()> {
+        self.bind_inner(db,name,source,false)
+    }
+    /// SQL can restore a dropped virtual-table schema before native rollback runs.
+    pub(crate) fn restore(&self, db: &Connection, name: &str, source: Arc<dyn Source>) -> Result<()> {
+        self.bind_inner(db,name,source,true)
+    }
+    /// Keep the same binding cell when SQL rollback revives an earlier table instance.
+    pub(crate) fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
+        register(db,name,binding.clone(),true)?;
+        BOUND.lock().insert((unsafe {db.handle()} as usize,name.to_owned()),binding.clone());
+        self.bindings.borrow_mut().insert(name.into(),binding);
+        Ok(())
+    }
+    fn bind_inner(&self, db:&Connection, name:&str, source:Arc<dyn Source>, restored:bool)->Result<()> {
         let mut bindings = self.bindings.borrow_mut();
         if let Some(binding) = bindings.get(name) {
             return binding.set(source);
@@ -224,7 +238,7 @@ impl Modules {
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
-        register(db, name, binding.clone())?;
+        register(db, name, binding.clone(), restored)?;
         BOUND.lock().insert((unsafe { db.handle() } as usize, name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
@@ -234,7 +248,8 @@ impl Modules {
     }
     /// Releases the table without a schema write or a retained row source.
     pub(crate) fn unregister(&self, db: &Connection, name: &str) -> Result<()> {
-        if self.bindings.borrow().get(name).is_some_and(|b|b.schema.writable) {
+        if self.bindings.borrow().get(name).is_some_and(|b|b.schema.writable)
+            && db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))? {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}",quote(name)))?;
         }
         self.bindings.borrow_mut().remove(name);
@@ -277,7 +292,7 @@ struct Table {
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
-fn register(db: &Connection, name: &str, binding: Binding) -> Result<()> {
+fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Result<()> {
     if name.is_empty() || name.len() > 120 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return Err(failure("invalid native table name"));
     }
@@ -288,10 +303,21 @@ fn register(db: &Connection, name: &str, binding: Binding) -> Result<()> {
     db.create_module(module.as_c_str(), if writable { &WRITABLE } else { &MODULE }, Some(binding))?;
     // Mutable execution state is temporary. An eponymous table in main would make
     // SQLite classify volatile writes as durable store writes (including its atom guard).
-    if writable {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
+    let result=(|| {
+    if writable {
+        let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
+        if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
+    }
     // Resolve xConnect before an authored-query authorizer is installed.
     db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
     Ok(())
+    })();
+    if result.is_err() {
+        // Registration precedes schema preparation. A budget interruption can fail the
+        // latter before the owner records this module, so release its auxiliary source here.
+        unsafe {rusqlite::ffi::sqlite3_create_module_v2(db.handle(),module.as_ptr(),std::ptr::null(),std::ptr::null_mut(),None);}
+    }
+    result
 }
 
 /// A constant's integer under the column's INTEGER affinity, if it has one: only such constants can
@@ -537,7 +563,7 @@ impl Cursor {
     }
 }
 impl<'vtab> rusqlite::vtab::CreateVTab<'vtab> for Table {
-    const KIND:rusqlite::vtab::VTabKind=rusqlite::vtab::VTabKind::Eponymous;
+    const KIND:rusqlite::vtab::VTabKind=rusqlite::vtab::VTabKind::Default;
 }
 impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
     fn delete(&mut self,arg:rusqlite::types::ValueRef<'_>)->Result<()> {
