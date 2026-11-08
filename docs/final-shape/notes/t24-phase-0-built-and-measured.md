@@ -112,7 +112,7 @@ average was 10–46.
   nothing; partial reuse is below.
 - **Peak RSS.** The report's peak is 762 MB for the prime and 355 MB warm. `/usr/bin/time` gives 1.46 GB and
   1.07 GB for the same processes, above the 1 GB budget. Both peaks appear with the cutoff off, so recording is
-  not the cause. The report samples RSS at phase ends; the gap is a transient peak between samples. Open item O138.
+  not the cause. The report samples RSS at phase ends; the gap is a transient peak between samples. Open item O142.
 
 ## Against t23's order of work
 

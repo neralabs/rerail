@@ -75,7 +75,6 @@ const OPCODES: &[(u8, &str)] = &[
     (TOKEN, "TOKEN"),
     (SWITCH, "SWITCH"),
     (WORD_IS, "WORD"),
-    (CHECK, "CHECK"),
     (OPEN, "OPEN"),
     (CLOSE, "CLOSE"),
     (LEAF, "LEAF"),
@@ -296,31 +295,6 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
-    }
-    tree_rows(out, at, block);
-}
-
-/// Block program `at`'s token checks (decision 0086): `block N check C`, then its program's
-/// tables, operations (`%i = op`), `fail %v` and `delay D`. Tier 2 itself is the program's
-/// words (decision 0087).
-pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
-    // A check: its straight-line program over the token's window, as a block program's rows.
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    for (c, check) in block.checks.iter().enumerate() {
-        let q = &check.program;
-        let _ = writeln!(out, "  block {at} check {c}");
-        for (t, table) in q.tables.iter().enumerate() {
-            let _ = writeln!(out, "  block {at} check {c} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
-        }
-        for (value, op) in q.ops.iter().enumerate() {
-            let _ = writeln!(out, "  block {at} check {c} %{value} = {}", op.text());
-        }
-        for value in &q.outputs {
-            let _ = writeln!(out, "  block {at} check {c} fail %{value}");
-        }
-        if q.delay != 0 {
-            let _ = writeln!(out, "  block {at} check {c} delay {}", q.delay);
-        }
     }
 }
 
@@ -789,50 +763,6 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     let k = program.outputs.len() - 1;
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
-                }
-            } else if first == "check" {
-                // `block N check C`, then its program's rows (`tree_rows`), in order.
-                let c: usize = line.number("")?;
-                if line.tokens.peek().is_none() {
-                    if c != program.checks.len() {
-                        return Err(format!("block {at} check {c} out of order (expected {})", program.checks.len()));
-                    }
-                    program.checks.push(block::CheckRow { program: block::BlockProgram::default() });
-                    return Ok(());
-                }
-                let word = line.word()?;
-                if c + 1 != program.checks.len() {
-                    return Err(format!("block {at} check {c}: a row of a check not started last"));
-                }
-                let q = &mut program.checks.last_mut().expect("a check").program;
-                if word == "table" {
-                    let t: usize = line.number("")?;
-                    if t != q.tables.len() || !q.ops.is_empty() {
-                        return Err(format!("block {at} check {c} table {t} out of order"));
-                    }
-                    let lo = table_half(line, "lo=")?;
-                    let hi = table_half(line, "hi=")?;
-                    q.tables.push(block::ClassTable { lo, hi });
-                } else if word == "fail" {
-                    q.outputs.push(line.number("%")?);
-                } else if word == "delay" {
-                    // The output's delay, the program's: a check has one output.
-                    let d: u8 = line.number("")?;
-                    q.delay = d;
-                    q.output_delays = vec![d; q.outputs.len()];
-                } else {
-                    let value: usize = word.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad check row `{word}`"))?;
-                    if value != q.ops.len() || !q.outputs.is_empty() {
-                        return Err(format!("block {at} check {c} value %{value} out of order"));
-                    }
-                    if line.word()? != "=" {
-                        return Err("a check row is `%i = op …`".into());
-                    }
-                    let mut words = Vec::new();
-                    while line.tokens.peek().is_some() {
-                        words.push(line.word()?);
-                    }
-                    q.ops.push(block::BlockOp::parse(&words)?);
                 }
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).

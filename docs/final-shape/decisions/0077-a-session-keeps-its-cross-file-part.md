@@ -164,7 +164,7 @@ Sibling branches (surveyed 2026-11-08):
 ## Open
 
 - Inputs are digested whole each run, and a maintained stratum's deltas, survivors and copies scan whole relations
-  (O(rows)). Per-file deltas (ledger #14) would make both O(changed). Today the saving is in joins: a changed stratum
+  (O(rows)); O125 measured this at 2.5–4x a cold cross part on `calls.rr`. Decision 0090 sets the way out. Per-file deltas (ledger #14) would make both O(changed). Today the saving is in joins: a changed stratum
   joins only its deltas, where it would otherwise derive everything again.
 - Aggregates are maintained by changed groups, not counted: a group with many rows costs them all on any change.
   Incremental reducers (the SQL executor's counts, sums and min/max multiplicities) would make it O(delta). The

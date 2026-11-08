@@ -409,12 +409,179 @@ fn json_shapes() {
         eprintln!("tier 1: {} operations {ops:?}", p.ops.len());
         eprintln!("  carried words {}, state bits {}, outputs {}, delay {}", super::block_tests::carried_words(p), super::block_tests::state_bits(p), p.outputs.len(), p.delay);
         eprintln!("  loop body: {} CLIF instructions {clif:?}", body.len());
+        // Each block of the hot loop: the full body's head (the ASCII test), its two bodies, the
+        // sinks after them, the flattening.
+        let blocks: Vec<String> = super::block_tests::hot_loop(&c.parser.tier1.clif)
+            .iter()
+            .map(|(b, l)| {
+                let masks = l.iter().filter(|x| super::block_tests::opcode(x) == "iadd_pairwise").count() / 4;
+                format!("{b} {} ({masks} masks)", l.len())
+            })
+            .collect();
+        eprintln!("  hot loop blocks: {}; carried words {}", blocks.join(", "), super::block_tests::carried_params(&c.parser.tier1.clif) - super::block_tests::sink_params(&c.native.block_programs[0]));
+        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        for r in &plan.regions {
+            let insts = &c.native.block_programs[0].insts;
+            let gate = insts[r.gate];
+            let of: Vec<String> = gate.operands().iter().map(|&o| format!("%{o} = {:?}", insts[o])).collect();
+            eprintln!("  gated region: gate %{} = {gate:?} ({}), {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
+        }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
-        eprintln!("  switches {}, strings {}, checks {}", c.native.switches.len(), c.native.strings.len(), p.checks.len());
+        eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
-        if std::env::var("RERAIL_DUMP").is_ok() {
-            eprintln!("{}", c.parser.tier1.disassembly);
+        match std::env::var("RERAIL_DUMP").as_deref() {
+            Ok("clif") => eprintln!("{}", c.parser.tier1.clif),
+            Ok("ops") => {
+                // Each value: on the byte vectors, made a mask, its region, its readers.
+                let insts = &c.native.block_programs[0].insts;
+                for (at, inst) in insts.iter().enumerate() {
+                    let users: Vec<String> = (0..insts.len()).filter(|&u| insts[u].operands().contains(&at)).map(|u| format!("%{u}")).collect();
+                    eprintln!("%{at} = {inst:?} lane={} mask={} full={:?} region={:?} users={}", plan.lanes[at], plan.mask[at], plan.full[at], plan.region_of[at], users.join(","));
+                }
+            }
+            Ok(_) => eprintln!("{}", c.parser.tier1.disassembly),
+            Err(_) => {}
+        }
+    }
+}
+
+/// Tier 1 on the byte vectors (`native_cpu_lanes`) equals the block interpreter on files that
+/// mix ASCII and other bytes: UTF-8 that is valid, cut short or out of range, across block
+/// edges, in the 16 bytes before an ASCII block (the ASCII test reads them), and at a file's
+/// first byte, where the bytes before are no file's. One file at a time, and all in one batch.
+#[test]
+fn json_tier1_vectors_equal_the_interpreter() {
+    let pieces: [&[u8]; 16] = [
+        b"{\"a\": [1, 2.5e3, true]}", b" ", b"\"", b"\\", b"x", b"\\u00e9", b"\xc3\xa9", b"\xe2\x82\xac", b"\xf0\x9f\x98\x80",
+        b"\x80", b"\xc3", b"\xed\xa0\x80", b"\xf5\x80\x80\x80", b"\xef\xbb\xbf", b"\x00", b"\\ud83d\\ude00",
+    ];
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let mut rng = super::bitlex_corpus_tests::Rng(0x9e37_79b9_7f4a_7c15);
+        let mut files: Vec<Vec<u8>> = Vec::new();
+        for _ in 0..300 {
+            let mut f = Vec::new();
+            let len = 1 + rng.below(300) as usize;
+            while f.len() < len {
+                // Mostly ASCII, so that some blocks are all ASCII and others not.
+                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { &pieces[..2][rng.below(2) as usize] };
+                f.extend_from_slice(p);
+            }
+            files.push(f);
+        }
+        // One non-ASCII sequence at each offset around the first two block edges.
+        for at in 0..140 {
+            for seq in [&b"\xe2\x82\xac"[..], b"\x80", b"\xf0\x9f\x98\x80"] {
+                let mut f = vec![b' '; 200];
+                f[at..at + seq.len()].copy_from_slice(seq);
+                files.push(f);
+            }
+        }
+        let block = &c.program.block_programs()[0];
+        for f in &files {
+            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+        }
+        let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+        assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
+        assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
+    }
+}
+
+/// The gated regions (`native_cpu_lanes::Region`): skipped on a block without their gate's bytes
+/// and without their carried bits, so a number, an escape or a keyword must come out the same
+/// wherever it falls, a block edge inside it, or spanning a block, or ending one.
+#[test]
+fn json_gated_regions_equal_the_interpreter() {
+    let tokens: [&[u8]; 14] = [
+        b"1", b"-12.5e+30", b"0", b"01", b"1.", b"-", b"2e", b"123456789012345678901234567890", b"\"\\u00e9\"", b"\"\\ud83d\\ude00\"",
+        b"\"\\u12\"", b"true", b"nul", b"[1,2]",
+    ];
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        // Each region behind its branch in both full bodies, none computed in place.
+        let regions = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan.regions.len();
+        assert!(regions > 0, "{name}: no gated region");
+        assert_eq!(c.parser.tier1.gate_branches, regions * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        let block = &c.program.block_programs()[0];
+        let mut files: Vec<Vec<u8>> = Vec::new();
+        for t in tokens {
+            for at in 0..140 {
+                // In a file of spaces, and at the file's end.
+                let mut f = vec![b' '; 200];
+                f[at..at + t.len()].copy_from_slice(t);
+                files.push(f[..at + t.len()].to_vec());
+                files.push(f);
+            }
+            // One file of the token over and over: every block holds one, or a part.
+            files.push(t.iter().chain(b" ").copied().cycle().take(400).collect());
+        }
+        for f in &files {
+            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+        }
+    }
+}
+
+/// Tier 1 on Metal, generated MSL, over the corpus as one batch: GPU seconds (the fastest of
+/// `RERAIL_ITERS` runs, default 5) and launches at each lane width, each form; the outputs and
+/// positions equal Cranelift's.
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+fn json_metal_bench() {
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let mut paths = files_in("RERAIL_JSON_CORPUS");
+    let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    // `RERAIL_SPLIT=n`: each file cut into `n` files (at a space or comma, so each piece is
+    // tier-1 input like any other), to see what a file's length costs.
+    // `RERAIL_REPEAT=n`: the files n times over, as one batch of many files.
+    if let Some(n) = std::env::var("RERAIL_REPEAT").ok().and_then(|v| v.parse::<usize>().ok()) {
+        (files, paths) = ((0..n).flat_map(|_| files.clone()).collect(), (0..n).flat_map(|_| paths.clone()).collect());
+    }
+    if let Some(n) = std::env::var("RERAIL_SPLIT").ok().and_then(|v| v.parse::<usize>().ok()) {
+        let (mut fs, mut ps) = (Vec::new(), Vec::new());
+        for (f, p) in files.iter().zip(&paths) {
+            for piece in f.chunks(f.len().div_ceil(n).max(1)) {
+                fs.push(piece.to_vec());
+                ps.push(p.clone());
+            }
+        }
+        (files, paths) = (fs, ps);
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let total: usize = files.iter().map(Vec::len).sum();
+    let widths: Vec<LaneWidth> = match std::env::var("RERAIL_WIDTH").as_deref() {
+        Ok("16") => vec![LaneWidth::W16],
+        Ok("32") => vec![LaneWidth::W32],
+        Ok("64") => vec![LaneWidth::W64],
+        _ => LaneWidth::ALL.to_vec(),
+    };
+    println!("{} files, {} bytes", files.len(), total);
+    println!("form\twidth\tgpu_ms\tGB/s\tlaunches");
+    for name in ["14-json", "15-jsonc"] {
+        if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
+            continue;
+        }
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let want = c.parser.tier1.run_files(&refs);
+        for &width in &widths {
+            eprintln!("{name}, {}-byte lanes: {}", width.bytes(), metal_program_backend::block_program::kernel_report(native, width).expect("compiles"));
+        }
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        for &width in &widths {
+            let mut best = f64::MAX;
+            let mut launches = 0;
+            for _ in 0..iters {
+                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)).unwrap_or_else(|e| panic!("metal: {e:?}"));
+                for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
+                    assert!(got.outputs == want.outputs && got.positions == want.positions, "{name}, {}-byte lanes: {} differs", width.bytes(), base(&paths[k]));
+                }
+                best = best.min(run.seconds);
+                launches = run.launches;
+            }
+            println!("{name}\t{}\t{:.3}\t{:.2}\t{launches}", width.bytes(), best * 1e3, total as f64 / best / 1e9);
         }
     }
 }

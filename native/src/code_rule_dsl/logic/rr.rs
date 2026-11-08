@@ -52,6 +52,17 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
 /// `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing is
 /// read as it is, without `core.rr`.
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
+    parse_with(src, true)
+}
+
+/// A program's `.rr` text as `parse` reads it, but with only its libraries' declarations, not their clauses: what a
+/// run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation. Its own
+/// rules are lowered against the library's names; the library's rules are the run's, lowered once.
+pub(in crate::code_rule_dsl) fn parse_own(src: &str) -> Result<Program, Error> {
+    parse_with(src, false)
+}
+
+fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
     let statements = from_tape::statements(src, &tape(src))?;
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         return lower::lower(statements);
@@ -62,6 +73,24 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     // `core.rr`'s names, unless the text is in T's shape and reads no `core.rr` (`resolve`).
     let reads_core = files.first().is_some_and(|(path, _)| path.ends_with("core.rr"));
     check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
+    // Lowering reads one kind of clause statically: a kind set's (`fscope("module")`, `lfscope(k) :- fscope(k)`),
+    // whose relation has one column. Those are kept; the rest are the run's.
+    if !clauses {
+        let unary: std::collections::BTreeSet<String> = files
+            .iter()
+            .flat_map(|(_, statements)| statements)
+            .filter_map(|(item, _)| match item {
+                syntax::Item::Decl { name, cols, .. } if cols.len() == 1 => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        for (_, statements) in &mut files {
+            statements.retain(|(item, _)| match item {
+                syntax::Item::Clause { heads, .. } => heads.iter().all(|h| unary.contains(&h.rel)),
+                _ => true,
+            });
+        }
+    }
     files.push((PathBuf::from("<program>"), own));
     lower::lower(files.into_iter().flat_map(|(_, statements)| statements).collect())
 }

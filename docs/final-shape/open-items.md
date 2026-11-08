@@ -2820,6 +2820,54 @@ What remains against the closure:
 - `push_local_joins` is not yet measured as linear in the rules.
 - Hiding still runs over the whole combined program once. Stage 2 makes it per module.
 
+**Progress (2026-11-08, 0089 stage 2).** Equal requests now share one cone. A program that asks nothing is read
+with its libraries' declarations and kind sets only.
+
+- **Requests are keyed.** A request is held as a unit: the library relations of its cone, plus the program's own
+  relations they read. Its key is the digest of the unit's rules and declarations, with variables as written, so
+  equal keys mean equal questions. Programs with equal keys read one copy, `q<k>_…`.
+  - `RERAIL_REQUESTS=copied` keeps one copy per program, for comparison.
+  - A unit that reads a repository file the policy names stays per program.
+  - Test: `libraries_are_held_once_and_equal_requests_share_one_cone`.
+- **What this saves on this pack: little.** 29 of 534 programs ask, with 26 distinct requests, so 3 copies are
+  saved. The cones are 159 relations in all. The largest share is 6 copies, for `cmp_same` and its cone.
+- **Parsing is halved.** 505 of the 534 programs ask nothing. Each of them is read with its libraries' statements
+  except their clauses. The exception is kind sets (unary relations), which lowering reads statically
+  (`rr::parse_own`). Leaving the kind sets out lost 22 findings in quarter 2 (`nearest(…, fscope)`).
+  - "parse each program": 7.84 s CPU and 17.3 GB allocated, now 3.3 s and 7.3 GB.
+  - "parse the program": 10.1 s, now 5.1 s.
+- **Hiding runs once.** It covers the 12,850 rules of the combined program, in 1.67 s. It was 19.5 s per program.
+  Programs read under different bounds (`.guests off`) still take the copied path. The pack has none, and holding
+  a library once per bound is left until one appears.
+- **Whole pack, keyed requests, declarations-only parse:**
+  - rc 0, 6,184 findings, equal to the union of the four quarters;
+  - 100.1 s CPU at load 35 to 82, with the profile on;
+  - peak footprint 1,076 MB (max RSS 1.57 GB, which counts mapped pages).
+  - The quarters match stage 1: 3,776, 943, 387 and 1,078 findings.
+- **What is left:**
+  - `push_local_joins`, 13.2 s, now the largest preparation span;
+  - the footprint peak, 1,076 MB, against the 1 GB budget. The largest rises are evaluation (`local/run`, 365 MB)
+    and "stats" (355 MB).
+
+**Before 0089 stage 3 (2026-11-08): what a per-unit memo could save.** This uses the profile of the same whole-pack
+run. Adding one rule changes the file-local digest, so every file is evaluated again. Of that work:
+
+| span | CPU | under stage 3 |
+|---|---|---|
+| `local/run` | 34.2 s | |
+| … library strata (unprefixed names) | 3.8 s | read from the library unit's rows |
+| … lowering helpers (`fl…`, `rr_in_annotation…`, not a program's) | 3.0 s | mostly the library's, so mostly read |
+| … programs' own and requests' strata | 6.8 s | made again |
+| … the rest (per chunk: opening, loading inputs, indexes) | about 20 s | made again |
+| `local/guests` | 18.1 s | unchanged (tape cache, already content-keyed) |
+| preparing (`stats`; `push_local_joins` is 13.2 s of it) | 24.3 s | unchanged: the prepared program is keyed by the whole pack |
+
+So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit costs. The larger costs are three:
+
+- the per-chunk overhead of `local/run`;
+- `push_local_joins`;
+- preparing the whole program again for one rule.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
@@ -2874,7 +2922,72 @@ scripts/profiling/o125/files.txt`, then run `O125_REPLAY=<replay dir> O125_STEPS
 
 **Closure:** both runs equal a full run, with the cause found and a test that fails without the fix.
 
-## O138. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
+## O138. Two data-layer checks read run artifacts, and no artifact or revision reader exists
+
+Found 2026-11-08, over the 75 data-layer candidate checks on 133 files of the data layer. `plan-composition-architecture`
+and `test-budget` fail before evaluation: `spc_fingerprint: revision and stamped-artifact readers are not implemented`
+(`corpus/inputs.rs`, `populate_with`). They read `artifact="plan_composition_probes"` and `artifact="test_collection"`.
+No candidate check uses `at="base"` yet.
+
+The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-layer/RUN-FACTS.md` §2–§5;
+`FINDINGS-LAYER.md` §2). What is missing:
+
+1. `.artifact "name" inputs globs` kept as a program setting, checked for one declaration per name.
+2. `artifact="name"`: the file `name.json` in the facts directory (`--facts DIR`, default `.rerail/facts/`), its
+   envelope (`format`, `artifact`, `inputs`, `status`, `data`) checked, and `path=` applied to `data` with every
+   `IO=json` option.
+3. Freshness: SHA-256 over sorted `path NUL blob-id LF` of the files the walk sees under the globs. The blob ids are
+   the content hashes the store already has (decision 0092 §2's leaves). A different digest gives no rows.
+4. `input_error("artifact:NAME", kind, detail)` with `missing`, `stale`, `failed` or `malformed`.
+5. Withholding: rules that read the artifact through `!` or an aggregate give no findings when it has no rows, and
+   their places are Unknown (FINDINGS-LAYER §2). Until the findings layer has Unknown, the run reports the
+   withheld relations, so a missing artifact is never a silent pass.
+6. `rerail facts stamp DIR --out DIR`, so a test can make a fresh artifact.
+7. `at="base"`: the file as it is at `git_rev("base", …)`, read from the object store.
+
+**Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
+with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
+
+## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
+
+Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3
+s with `RERAIL_PROFILE` set. Over six checks the run's phases account for the same time either way. The rest, 8.5–9 s
+per check at that load, lies outside every phase and span: the profile's own report. Profiled timings of the data-layer
+checks taken before this was found are inflated by it.
+
+**Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
+
+## O140. Engine rules that make per-file facts look global
+
+Found 2026-11-08 by `RERAIL_SPLIT_DUMP` (decision 0093 §4). After a30c360ee fixed the demand context, the data-layer
+checks are file-local or same-unit in 42 checks by their own rules, but in 17 with the library's and lowering's;
+unions of per-file rows rise from 1 check to 19. Two causes remain:
+
+1. **Located rows projected to a set** (`x(c) :- x_at(_, c)`): lowering drops the document column, and readers that
+   bind the document read the union.
+2. **An equality between two per-file pieces' carriers placed in the cross-file part** (`deco_word`'s `$e0 = $d`).
+   `file_local::push_local_joins` should treat the equality as one document, as the classifier does.
+
+And the findings assembly (`rr_diagnostic`, `violation`), which drops the document in cross-file rules; it is the
+findings layer's stages 2–3.
+
+**Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
+equal on the 65 checks that finish both ways.
+
+## O141. The 66-rule pack costs 70% more instructions after the merges of 2026-11-08
+
+On s50 (43 files), with the scope guards off, the pack took 380.8G instructions at `329e0b5d1` and 644.5G at
+`9be591511` (load 33–77). The guards' own share is unchanged (681.1G on, +5.7%), and the 32 violations are the same.
+So the rise is in what the merges brought (trunk's 0081–0089, phases, Typing-support, O136's demand rule, the SQL
+work), not in 0091.
+
+**Repro:** `packguard.sh s50 240 off` (the measuring harness: `measure_converted_rules` over the data-layer
+candidates) on each merge of the day.
+
+**Closure:** the merge that adds the cost is found by bisecting the day's merges, and the cost is explained or
+removed.
+
+## O142. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
 
 **Seen (2026-11-08, t24).** On the 84 files with typeshed and both memos on, the run's report gives a peak RSS of
 762 MB for a cold run and 355 MB for a warm one. `/usr/bin/time -l` gives 1.46 GB and 1.07 GB for the same
