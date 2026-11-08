@@ -12,7 +12,17 @@
 //! the memo rows of plans no kept manifest names are deleted in batches. The bound is by size, not by age: a branch
 //! can be churned whole many times a day.
 
-use super::{CollectionReport, ContentStore, MAX_COLLECTION_BATCH, SourceId, StoreError, StoreResult};
+use super::{CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId, StoreError, StoreResult};
+use super::rows::intern_string;
+
+/// `object_pins`' kind for a memo plan a run holds (O95): its id is the plan digest's first eight bytes.
+const OBJECT_PLAN: i64 = 3;
+
+fn plan_object(plan: &[u8]) -> i64 {
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&plan[..8]);
+    i64::from_le_bytes(first)
+}
 use rusqlite::{OptionalExtension, params};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -28,11 +38,26 @@ pub struct CorpusPolicy {
     pub low_water: u64,
     /// A root not run for this many seconds keeps nothing, its last runs included.
     pub backstop_secs: i64,
+    /// A root whose directory is gone and that has not run for this many seconds keeps nothing: no run can be warm
+    /// there again (a test's or a replay's temporary roots).
+    pub missing_secs: i64,
+    /// With no root past its protected runs, a decision waits for this many runs since the last one…
+    pub decide_every_runs: i64,
+    /// …or this many seconds (for the backstop and gone roots).
+    pub decide_every_secs: i64,
 }
 
 impl Default for CorpusPolicy {
     fn default() -> Self {
-        CorpusPolicy { protected_runs: 2, high_water: 512 << 20, low_water: 384 << 20, backstop_secs: 30 * 86_400 }
+        CorpusPolicy {
+            protected_runs: 2,
+            high_water: 512 << 20,
+            low_water: 384 << 20,
+            backstop_secs: 30 * 86_400,
+            missing_secs: 3_600,
+            decide_every_runs: 256,
+            decide_every_secs: 600,
+        }
     }
 }
 
@@ -68,6 +93,7 @@ impl CorpusPass {
 /// Memo rows of dead plans deleted per pass.
 const PLAN_ROWS_PER_PASS: i64 = 4096;
 
+#[derive(Clone)]
 struct Manifest {
     id: i64,
     root: i64,
@@ -216,9 +242,67 @@ impl ContentStore {
         })
     }
 
+    /// Holds memo plan `plan` for `owner` until unix second `lease_until`, and makes it live, in one transaction
+    /// (O95). A run writes its memo rows before it records its manifest, and a plan an earlier, evicted manifest
+    /// named may be dead, its rows being deleted. Held, it stays live and keeps its rows until the run's manifest
+    /// names it. `release_pins(owner)` ends the hold; a run that dies leaves it to lapse with its lease.
+    pub fn hold_corpus_plan(&self, plan: [u8; 32], owner: &str, lease_until: i64) -> StoreResult<()> {
+        if owner.is_empty() || lease_until <= 0 {
+            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
+        }
+        self.immediate_transaction(|tx| {
+            let owner_id = intern_string(tx, STRING_OWNER, owner)?;
+            tx.execute(
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4) \
+                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+                params![OBJECT_PLAN, plan_object(&plan), owner_id, lease_until],
+            )?;
+            tx.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1) ON CONFLICT(plan_digest) DO UPDATE SET live=1", [&plan[..]])?;
+            Ok(())
+        })
+    }
+
     /// Whether corpus collection has work: a new manifest to decide on, or a decision's rows not yet collected.
     pub fn corpus_collection_due(&self) -> StoreResult<bool> {
         Ok(self.corpus_due()? != 0)
+    }
+
+    /// Whether a pass under `policy` at unix second `now` has work: a decision's rows being collected, or a decision
+    /// due that can change something (`corpus_decision_worth`). A due decision that cannot is cleared here, so a run
+    /// of fresh roots neither decides nor sweeps the store after each run.
+    pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
+        match self.corpus_due()? {
+            0 => Ok(false),
+            1 if !self.corpus_decision_worth(policy, now)? => {
+                self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
+                Ok(false)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    /// Whether a keep decision can change anything now: a root recorded since the last decision has more manifests
+    /// than its protected runs (history grows only so), or `decide_every_runs` runs or `decide_every_secs` seconds
+    /// have passed since it (the backstop and gone roots). Reads the recent manifests through `last_run`'s index.
+    fn corpus_decision_worth(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store connection unavailable");
+        let (run, decided_run, decided_time): (i64, i64, i64) = connection.query_row(
+            "SELECT s.run, coalesce(d.run, 0), coalesce(d.time, 0) FROM corpus_state s LEFT JOIN corpus_decided d ON d.singleton=1 WHERE s.singleton=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        if run - decided_run >= policy.decide_every_runs || now - decided_time >= policy.decide_every_secs {
+            return Ok(true);
+        }
+        let displaced: Option<i64> = connection
+            .query_row(
+                "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 \
+                 AND (SELECT count(*) FROM corpus_manifests o WHERE o.root_id=m.root_id) > ?2 LIMIT 1",
+                params![decided_run, policy.protected_runs as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(displaced.is_some())
     }
 
     /// `corpus_state.due`: 0 nothing, 1 a new manifest (a decision is due), 2 a decision's rows being collected.
@@ -236,9 +320,10 @@ impl ContentStore {
     }
 
     fn keep_corpus_runs_held(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusKept> {
-        let (manifests, sizes, live) = {
-            let connection = self.connection.lock().expect("content store connection unavailable");
-            let manifests = connection
+        // Read, decided and applied in one transaction (O95): a manifest or plan another run records meanwhile waits
+        // for the write lock, so a decision never drops what it did not see.
+        self.immediate_transaction(|tx| {
+            let manifests = tx
                 .prepare("SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources FROM corpus_manifests ORDER BY last_run DESC")?
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?)))?
                 .collect::<Result<Vec<(i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>)>, _>>()?
@@ -250,32 +335,53 @@ impl ContentStore {
             // Bytes of each live source, and of its tape of the live grammar version and format.
             let mut sizes = Sizes::default();
             let mut live = HashSet::new();
-            let mut rows = connection.prepare(
-                "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(length(s.frame), 0), \
-                 coalesce((SELECT length(t.frame) FROM tape_objects t WHERE t.source_id=l.source_id \
-                           AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
-                 FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
-            )?;
-            let mut q = rows.query([])?;
-            while let Some(r) = q.next()? {
-                let key: (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
-                sizes.source.insert(key.0, r.get::<_, i64>(3)? as u64);
-                sizes.tape.insert(key, r.get::<_, i64>(4)? as u64);
-                live.insert(key);
+            {
+                let mut rows = tx.prepare(
+                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(length(s.frame), 0), \
+                     coalesce((SELECT length(t.frame) FROM tape_objects t WHERE t.source_id=l.source_id \
+                               AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
+                     FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
+                )?;
+                let mut q = rows.query([])?;
+                while let Some(r) = q.next()? {
+                    let key: (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
+                    sizes.source.insert(key.0, r.get::<_, i64>(3)? as u64);
+                    sizes.tape.insert(key, r.get::<_, i64>(4)? as u64);
+                    live.insert(key);
+                }
             }
-            (manifests, sizes, live)
-        };
-        let decided = decide(&manifests, &sizes, policy, now);
-        let kept_ids: HashSet<i64> = decided.kept.iter().copied().collect();
-        let mut keep_live: HashSet<(i64, i64, i64)> = HashSet::new();
-        let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
-        for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
-            keep_live.extend(m.sources.iter().map(|&s| (s, m.grammar_version, m.tape_format)));
-            keep_plans.insert(m.plan.clone());
-        }
-        let unlive: Vec<&(i64, i64, i64)> = live.iter().filter(|k| !keep_live.contains(k)).collect();
-        let evicted: Vec<i64> = manifests.iter().map(|m| m.id).filter(|id| !kept_ids.contains(id)).collect();
-        self.immediate_transaction(|tx| {
+            // A root whose directory is gone keeps nothing once it has been idle `missing_secs`: its manifests are
+            // left out of the decision (so evicted), and its stat index and row go with them.
+            let gone_roots: HashSet<i64> = {
+                let mut last: HashMap<i64, i64> = HashMap::new();
+                for m in &manifests {
+                    let t = last.entry(m.root).or_insert(m.last_time);
+                    *t = (*t).max(m.last_time);
+                }
+                let roots: Vec<(i64, String)> = tx.prepare("SELECT root_id, path FROM corpus_roots")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+                roots
+                    .into_iter()
+                    .filter(|(id, path)| last.get(id).is_none_or(|&t| now - t >= policy.missing_secs) && !std::path::Path::new(path).exists())
+                    .map(|(id, _)| id)
+                    .collect()
+            };
+            let present: Vec<Manifest>;
+            let considered: &[Manifest] = if gone_roots.is_empty() {
+                &manifests
+            } else {
+                present = manifests.iter().filter(|m| !gone_roots.contains(&m.root)).map(Manifest::clone).collect();
+                &present
+            };
+            let decided = decide(considered, &sizes, policy, now);
+            let kept_ids: HashSet<i64> = decided.kept.iter().copied().collect();
+            let mut keep_live: HashSet<(i64, i64, i64)> = HashSet::new();
+            let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
+            for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
+                keep_live.extend(m.sources.iter().map(|&s| (s, m.grammar_version, m.tape_format)));
+                keep_plans.insert(m.plan.clone());
+            }
+            let unlive: Vec<&(i64, i64, i64)> = live.iter().filter(|k| !keep_live.contains(k)).collect();
+            let evicted: Vec<i64> = manifests.iter().map(|m| m.id).filter(|id| !kept_ids.contains(id)).collect();
             let mut gone = tx.prepare_cached("DELETE FROM corpus_manifests WHERE manifest_id=?1")?;
             for id in &evicted {
                 gone.execute([id])?;
@@ -284,17 +390,30 @@ impl ContentStore {
             for (s, g, f) in &unlive {
                 unlived.execute(params![s, g, f])?;
             }
-            // A plan a kept manifest names is live; any other recorded plan is dead.
+            // A plan a kept manifest names, or a run holds (`hold_corpus_plan`), is live; any other recorded plan is dead.
+            let held: HashSet<i64> = tx
+                .prepare("SELECT object_id FROM object_pins WHERE object_kind_id=?1 AND lease_until>=?2")?
+                .query_map(params![OBJECT_PLAN, now], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
             let plans: Vec<Vec<u8>> = tx.prepare("SELECT plan_digest FROM corpus_plans")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             let mut mark = tx.prepare_cached("UPDATE corpus_plans SET live=?1 WHERE plan_digest=?2")?;
             for plan in plans {
-                mark.execute(params![i64::from(keep_plans.contains(&plan)), plan])?;
+                let live = keep_plans.contains(&plan) || (plan.len() >= 8 && held.contains(&plan_object(&plan)));
+                mark.execute(params![i64::from(live), plan])?;
             }
+            {
+                let mut stats = tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id=?1")?;
+                let mut root = tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id=?1")?;
+                for id in &gone_roots {
+                    stats.execute([id])?;
+                    root.execute([id])?;
+                }
+            }
+            tx.execute("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
             tx.execute("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
-            Ok(())
-        })?;
-        Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
+            Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
+        })
     }
 
     /// One bounded pass: the keep decision when one is due, up to `PLAN_ROWS_PER_PASS` memo rows of dead plans, and
@@ -304,6 +423,12 @@ impl ContentStore {
         let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
         if self.corpus_due()? == 1 {
+            if !self.corpus_decision_worth(policy, now)? {
+                // Nothing a decision could change: no root went past its protected runs, and the last decision is
+                // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
+                self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
+                return Ok(pass);
+            }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
         }
         pass.plan_rows = self.immediate_transaction(|tx| {

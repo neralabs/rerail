@@ -57,6 +57,7 @@ fn document(store: &ContentStore, file: FileInput) -> Result<Document> {
         digest: [0; 32],
         facts: Arc::new(facts),
         guest: None,
+        module: None,
     };
     Ok(Document {
         file,

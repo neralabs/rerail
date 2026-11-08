@@ -3,7 +3,7 @@ use super::core_rr::py_unescape;
 
 #[cfg(test)]
 pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
-    use crate::code_rule_dsl::{facts::core::{self, Built, KIND_STRIDE}, model::FileInput};
+    use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
     if parts.is_empty() { return Vec::new(); }
     let mut source = "x = ".to_owned();
@@ -16,7 +16,7 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
     source.push('\n');
     let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
-    let dialect = Dialect::new((facts.kind[0] / KIND_STRIDE) as u8).unwrap();
+    let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
     let p = Projected::new(0, Arc::new(facts), &dialect, super::Shape::Core, false, None);
     let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {

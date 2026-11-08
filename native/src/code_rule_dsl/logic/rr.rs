@@ -11,11 +11,15 @@
 //! A file read with `parse_file` has `core.rr` before it, included or not.
 
 mod check;
+mod from_tape;
 mod lower;
 mod print;
 mod syntax;
+pub(in crate::code_rule_dsl) mod tape;
 mod translate;
 
+#[cfg(test)]
+mod tape_tests;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+pub(in crate::code_rule_dsl) use lower::WORLD;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
 pub(in crate::code_rule_dsl) use translate::translate;
@@ -45,8 +50,50 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
 
 /// A program's `.rr` text, which includes nothing.
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
-    let statements = syntax::Parser::new(src)?.statements()?;
+    let statements = from_tape::statements(src, &tape(src))?;
     lower::lower(statements)
+}
+
+/// A `.rr` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments as extras, and an ERROR
+/// leaf for each statement that does not parse. Never fails: a file the engine refuses to run still has a tape.
+pub(in crate::code_rule_dsl) fn tape(src: &str) -> Vec<tape::Node> {
+    let mut parser = syntax::Parser::taped(src);
+    // A taped parse reads on past an error; what it could not read is in the tree.
+    let _ = parser.statements();
+    parser.into_tape().0
+}
+
+/// The first error a `.rr` file's parse gives, as running it would report it: its line and message
+/// (`syntax_error/3`). `None` when it parses.
+pub(in crate::code_rule_dsl) fn syntax_error(src: &str) -> Option<(usize, String)> {
+    let error = match syntax::Parser::new(src).and_then(|mut parser| parser.statements()) {
+        Ok(_) => return None,
+        Err(error) => error,
+    };
+    let mut parser = syntax::Parser::taped(src);
+    let _ = parser.statements();
+    let at = parser.into_tape().1.map_or(0, |(at, _)| at);
+    let message = match error {
+        Error::Syntax(message) => message,
+        other => format!("{other:?}"),
+    };
+    Some((syntax::line_of(src, at), message))
+}
+
+/// A `.rr` string literal's value, as the rule engine reads it (`"a\nb"` is `a`, newline, `b`); `None` for text
+/// that is no whole string literal.
+pub(in crate::code_rule_dsl) fn string_value(text: &str) -> Option<String> {
+    match syntax::tokens(text).ok()?.as_slice() {
+        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// A backtick literal's body, without its fences (and, for a fence of two or more, the one space inside each).
+pub(in crate::code_rule_dsl) fn code_body(text: &str) -> &str {
+    let n = text.bytes().take_while(|&b| b == b'`').count();
+    let body = text.get(n..text.len().saturating_sub(n)).unwrap_or("");
+    if n > 1 { body.strip_prefix(' ').unwrap_or(body).strip_suffix(' ').unwrap_or(body) } else { body }
 }
 
 /// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
@@ -104,7 +151,8 @@ impl LibraryFile {
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
-const LIBRARY_DERIVED: [&str; 2] = ["embed", "embed_value"];
+/// And the documents they load (t21 E2).
+const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
@@ -161,10 +209,43 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
 fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
     use sha2::{Digest as _, Sha256};
     let bytes = std::fs::read(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let file = LibraryFile { path: path.to_owned(), sha256: Some(Sha256::digest(&bytes).into()) };
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
+    // (the Python pack's files) parse it once, not once per program.
+    static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Vec<syntax::Statement>)>>> = OnceLock::new();
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
+    let cache = PARSED.get_or_init(Default::default);
+    if let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
+        && *kept == digest
+    {
+        crate::code_rule_dsl::prof::count("rr.file_reused", 1);
+        return Ok((statements.clone(), file));
+    }
     let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let statements = syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let statements = stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, statements.clone()));
     Ok((statements, file))
+}
+
+/// A rule file's statements, read off its tape (decision 0062). The tape is the content store's, as any corpus
+/// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
+/// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
+/// here.
+fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
+    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
+    if let Some(store) = store {
+        let src = std::sync::Arc::new(src);
+        let file = crate::code_rule_dsl::model::FileInput::new(path.display().to_string(), "rr".to_owned(), std::sync::Arc::clone(&src), None, None, "core")
+            .map_err(|e| Error::Syntax(format!("{e:?}")))?;
+        if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
+            crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
+            return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
+        }
+        return from_tape::statements(&src, &tape(&src));
+    }
+    from_tape::statements(&src, &tape(&src))
 }
 
 type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
@@ -200,8 +281,16 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         Ok(())
     }
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
-    // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
-    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+    // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
+    // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
+    // read only the relations both shapes have.
+    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+        .0
+        .iter()
+        .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    if !t_shape {
+        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+    }
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen)?;
     Ok((out, read_files))

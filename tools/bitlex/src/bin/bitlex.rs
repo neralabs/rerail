@@ -1,6 +1,10 @@
 //! bitlex tokens LEXER FILE        print the tokens and errors of one file
 //! bitlex diff LEXER LIST          tokens against tree-sitter's leaves, for every file in LIST
 //! bitlex strings LEXER LIST       Python: string and comment bytes against the 13-state machine
+//! bitlex tree LEXER LIST          the tree section's nodes against tree-sitter's, for every file
+//!                                 in LIST: kind, field, supertypes, extra, span and size per node
+//!                                 in preorder (the tape's inputs)
+//! bitlex nodes LEXER FILE         the tree section's nodes and tree-sitter's, side by side
 //! bitlex fstr LEXER LIST          Python: interpolations, format expressions and specs against
 //!                                 tree-sitter and the f-string oracle
 //!
@@ -496,6 +500,169 @@ fn fstr(prog: &[Stmt], list: &str) {
     }
 }
 
+
+unsafe extern "C" {
+    fn ts_tree_cursor_current_status(
+        cursor: *const tree_sitter::ffi::TSTreeCursor,
+        field_id: *mut tree_sitter::ffi::TSFieldId,
+        has_later_siblings: *mut bool,
+        has_later_named_siblings: *mut bool,
+        can_have_later_siblings_with_this_field: *mut bool,
+        supertypes: *mut tree_sitter::ffi::TSSymbol,
+        supertype_count: *mut std::ffi::c_uint,
+    );
+}
+
+/// A node as the tape encodes it: kind id, field id, supertype ids (ascending), extra, span,
+/// size (the nodes of its subtree).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TapeNode {
+    kind: u16,
+    field: u16,
+    supertypes: Vec<u16>,
+    extra: bool,
+    start: usize,
+    end: usize,
+    size: usize,
+}
+
+/// tree-sitter's nodes in preorder, every node (anonymous ones and extras too), with the field
+/// and supertype memberships its cursor reports, as the engine's tape encoder reads them.
+fn ts_nodes(tree: &tree_sitter::Tree) -> Vec<TapeNode> {
+    let mut out: Vec<TapeNode> = vec![];
+    let mut parents: Vec<usize> = vec![];
+    let mut cursor = tree.walk();
+    loop {
+        let node = cursor.node();
+        let field = cursor.field_id().map_or(0, |f| f.get());
+        let mut supertypes = [0u16; 8];
+        let mut count = supertypes.len() as std::ffi::c_uint;
+        let (mut f, mut a, mut b, mut c) = (0u16, false, false, false);
+        // SAFETY: `TreeCursor` wraps `TSTreeCursor` (repr(transparent)); the outputs are live and
+        // tree-sitter writes at most `count` symbols.
+        unsafe {
+            ts_tree_cursor_current_status(std::ptr::from_ref(&cursor).cast(), &mut f, &mut a, &mut b, &mut c, supertypes.as_mut_ptr(), &mut count);
+        }
+        let mut supertypes = supertypes[..count as usize].to_vec();
+        supertypes.sort_unstable();
+        supertypes.dedup();
+        let index = out.len();
+        out.push(TapeNode { kind: node.kind_id(), field, supertypes, extra: node.is_extra(), start: node.start_byte(), end: node.end_byte(), size: 1 });
+        for &p in &parents {
+            out[p].size += 1;
+        }
+        if cursor.goto_first_child() {
+            parents.push(index);
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return out;
+            }
+            parents.pop();
+        }
+    }
+}
+
+/// The tree section's nodes as tape nodes: names resolved against the grammar (a named kind when
+/// the grammar has one by that name, else the anonymous one).
+fn resolved(lang: &Language, nodes: &[bitlex::tree::Node]) -> Result<Vec<TapeNode>, String> {
+    let kind = |name: &str| -> Result<u16, String> {
+        match lang.id_for_node_kind(name, true) {
+            0 => match lang.id_for_node_kind(name, false) {
+                0 => Err(format!("no kind `{name}` in the grammar")),
+                id => Ok(id),
+            },
+            id => Ok(id),
+        }
+    };
+    nodes
+        .iter()
+        .map(|n| {
+            let field = match &n.field {
+                Some(f) => lang.field_id_for_name(f).ok_or(format!("no field `{f}`"))?.get(),
+                None => 0,
+            };
+            let mut supertypes = n.supertypes.iter().map(|s| kind(s)).collect::<Result<Vec<_>, _>>()?;
+            supertypes.sort_unstable();
+            Ok(TapeNode { kind: kind(&n.kind)?, field, supertypes, extra: n.extra, start: n.start, end: n.end, size: n.size })
+        })
+        .collect()
+}
+
+/// One file: tree-sitter's nodes and the tree section's (or why there are none).
+fn tree_pair(prog: &[Stmt], lang: &Language, tabs: &HashMap<String, Vec<(u32, u32)>>, src: &[u8]) -> (Option<Vec<TapeNode>>, Result<Vec<TapeNode>, String>) {
+    let mut p = Parser::new();
+    p.set_language(lang).unwrap();
+    let t = p.parse(src, None).unwrap();
+    let ts = (!t.root_node().has_error()).then(|| ts_nodes(&t));
+    let ours = Ev::run(prog, src, tabs).and_then(|o| {
+        if !o.errors.is_empty() {
+            return Err(format!("lexer: {}", o.errors.join("; ")));
+        }
+        let decl = o.tree.as_ref().ok_or("no tree section")?;
+        let nodes = bitlex::tree::nodes(decl, &o.tokens, src.len())?;
+        resolved(lang, &nodes)
+    });
+    (ts, ours)
+}
+
+fn tree(prog: &[Stmt], list: &str) {
+    let lang = lang_of(prog);
+    let tabs = tables(prog);
+    let res = par_files(list, |_, src| {
+        let (ts, ours) = tree_pair(prog, &lang, &tabs, src);
+        match (ts, ours) {
+            (None, _) => ("tree-sitter error".to_owned(), None),
+            (Some(_), Err(e)) => (format!("falls back: {}", e.split(" at byte").next().unwrap_or(&e)), Some(e)),
+            (Some(ts), Ok(ours)) => {
+                let at = (0..ts.len().max(ours.len())).find(|&i| ts.get(i) != ours.get(i));
+                match at {
+                    None => ("equal".to_owned(), None),
+                    Some(i) => ("differ".to_owned(), Some(format!("node {i}: tree-sitter {:?}, ours {:?}", ts.get(i), ours.get(i)))),
+                }
+            }
+        }
+    });
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut shown = 0;
+    for (path, (verdict, detail)) in &res {
+        *counts.entry(verdict.clone()).or_default() += 1;
+        if verdict != "equal" && verdict != "tree-sitter error" && shown < 12 {
+            println!("{path}: {verdict}: {}", detail.as_deref().unwrap_or(""));
+            shown += 1;
+        }
+    }
+    println!("{} files", res.len());
+    for (verdict, n) in counts {
+        println!("{n:8} {verdict}");
+    }
+}
+
+fn nodes_of(prog: &[Stmt], file: &str) {
+    let lang = lang_of(prog);
+    let tabs = tables(prog);
+    let src = std::fs::read(file).unwrap();
+    let (ts, ours) = tree_pair(prog, &lang, &tabs, &src);
+    let ts = ts.unwrap_or_default();
+    let ours = ours.unwrap_or_else(|e| {
+        println!("ours: {e}");
+        vec![]
+    });
+    for i in 0..ts.len().max(ours.len()) {
+        let show = |n: Option<&TapeNode>| {
+            n.map_or("-".to_owned(), |n| {
+                format!("{} {} f{} s{:?}{} [{}, {}) size {}", lang.node_kind_for_id(n.kind).unwrap_or("?"), n.kind, n.field, n.supertypes, if n.extra { " extra" } else { "" }, n.start, n.end, n.size)
+            })
+        };
+        let mark = if ts.get(i) == ours.get(i) { " " } else { "*" };
+        println!("{mark} {i:4}  {:52} {}", show(ts.get(i)), show(ours.get(i)));
+    }
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 4 {
@@ -528,6 +695,8 @@ fn main() {
         "diff" => diff(&prog, &a[3]),
         "strings" => strings(&prog, &a[3]),
         "fstr" => fstr(&prog, &a[3]),
+        "tree" => tree(&prog, &a[3]),
+        "nodes" => nodes_of(&prog, &a[3]),
         c => eprintln!("unknown command {c}"),
     }
 }

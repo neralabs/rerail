@@ -167,8 +167,8 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; `rx_group(s, re, name)`: the named group's text (`group`); and `core.rr`'s
-/// text functors (`functions`). NULL gives NULL.
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them). NULL
+/// gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -176,12 +176,6 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
             return Ok(None);
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
-    })?;
-    db.create_scalar_function(c"rx_group", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let (Some(s), Some(re), Some(name)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
-            return Ok(None);
-        };
-        Ok(group(&s, &re, &name))
     })?;
     functions::register(db)
 }
@@ -197,7 +191,10 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
+    /// Each test's input relation and matcher (`again` keeps them for another run).
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
+    /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
+    pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -302,10 +299,24 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
     }
 }
 
+impl Vocabulary {
+    /// The same tests for another run, with nothing tested yet.
+    pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
+        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), ..Vocabulary::default() }
+    }
+
+    /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
+    /// decision 0073).
+    pub(in crate::code_rule_dsl) fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
+        let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
+        Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
+    }
+}
+
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
-    let mut tests = Vec::new();
+    let (mut tests, mut specs) = (Vec::new(), Vec::new());
     for rule in &mut prog.rules {
         let texts: HashSet<String> = rule
             .body
@@ -338,6 +349,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                         format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
                     });
                     tests.push((rel.clone(), Arc::new(matcher)));
+                    specs.push(key.clone());
                     ids.insert(key, rel.clone());
                     rel
                 }
@@ -351,7 +363,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, seen: Mutex::default(), tested: Mutex::default() })
+    Ok(Vocabulary { tests, specs, seen: Mutex::default(), tested: Mutex::default() })
 }
 
 pub(in crate::code_rule_dsl) mod functions;

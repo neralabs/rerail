@@ -50,7 +50,9 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
         }
         let start = pos;
         let rest = &src[pos..];
-        if rest.starts_with("//") {
+        // An `#include` (a `.rr` program's, passed through by `rr::translate`) is a directive the files it names
+        // resolve: the text parse reads past it, as `rr::parse` does.
+        if rest.starts_with("//") || rest.starts_with("#include") {
             pos += rest.find('\n').unwrap_or(rest.len());
             continue;
         }
@@ -90,12 +92,22 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
     }
 }
 
+/// A comparison's operator: one of the parser's punctuation. Named so serde's derive reads it by `punctuation`, not
+/// as a string borrowed from its input.
+pub(in crate::code_rule_dsl) type Op = &'static str;
+
+/// A comparison's operator read back (a stored prepared program, decision 0073): one of the parser's own.
+fn punctuation<'de, D: serde::Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
+    let op = <String as serde::Deserialize>::deserialize(d)?;
+    PUNCT.iter().copied().find(|p| *p == op).ok_or_else(|| serde::de::Error::custom(format!("no operator {op:?}")))
+}
+
 fn near(src: &str, pos: usize) -> &str {
     let end = (pos..=src.len().min(pos + 40)).rev().find(|&i| src.is_char_boundary(i)).unwrap_or(pos);
     &src[pos..end]
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Term {
     Var(String),
     Wild,
@@ -122,7 +134,7 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct Atom {
     pub(in crate::code_rule_dsl) rel: String,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
@@ -142,7 +154,7 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
@@ -154,10 +166,15 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
-    Cmp { l: Term, op: &'static str, r: Term },
+    Cmp {
+        l: Term,
+        #[serde(deserialize_with = "punctuation")]
+        op: Op,
+        r: Term,
+    },
     /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
@@ -278,14 +295,14 @@ pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
     pub(in crate::code_rule_dsl) body: Vec<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct LatticeDecl {
     pub(in crate::code_rule_dsl) keys: usize,
     /// The value column's type, which names the lattice (`flat`, `min`, `max`) unless `merge` does.
@@ -305,13 +322,13 @@ impl LatticeDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Value {
     Int(i64),
     Str(String),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct Program {
     /// Each relation's columns: (name, type).
     pub(in crate::code_rule_dsl) decls: BTreeMap<String, Vec<(String, String)>>,
@@ -344,15 +361,17 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), or each line (`src_line`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
+/// comment node (`kind(c, "comment")`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
+    Comment,
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
     /// second column, one memo shared).
@@ -706,11 +725,13 @@ impl Parser<'_> {
                 let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
                     return self.fail("a pragma's two strings");
                 };
-                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
-                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
-                }
                 self.i += 2;
-                prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                    self.i -= 2;
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
+                } else {
+                    prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                }
             }
             "kindset" => {
                 let name = self.id()?;
@@ -801,6 +822,21 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     }
     cycles::check(&prog)?;
     Ok(prog)
+}
+
+/// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.)
+pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
+    for rule in &prog.rules {
+        let mut read = rule.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+            _ => None,
+        });
+        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel)) {
+            return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
+        }
+    }
+    Ok(())
 }
 
 /// The prefix of the relations the engine names itself (helpers, axes, places): a rule file may not declare one

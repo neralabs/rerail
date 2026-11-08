@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None }
         })
         .collect()
 }
@@ -92,8 +92,8 @@ fn relations_hold_t_exporters_rows() {
                         Ty::Node if v == -1 => "-1".to_owned(),
                         Ty::Node => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         Ty::Kind => {
-                            assert_eq!(v / i64::from(KIND_STRIDE), i64::from(tag));
-                            catalog.kind_name((v % i64::from(KIND_STRIDE)) as u16).unwrap().to_owned()
+                            assert_eq!(crate::code_rule_dsl::facts::core::kind_tag(v as u32), tag);
+                            catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(v as u32)).unwrap().to_owned()
                         }
                         Ty::Field => {
                             assert_eq!(v >> 16, i64::from(tag));
@@ -227,6 +227,9 @@ fn modules_and_packages_follow_t() {
     assert_eq!((module("json/__init__.py"), package("json/__init__.py")), ("json".to_owned(), "json".to_owned()));
     assert_eq!((module("json/tool.py"), package("json/tool.py")), ("json.tool".to_owned(), "json".to_owned()));
     assert_eq!((module("shlex.py"), package("shlex.py")), ("shlex".to_owned(), String::new()));
+    // Stubs are named as their modules.
+    assert_eq!((module("os/__init__.pyi"), package("os/__init__.pyi")), ("os".to_owned(), "os".to_owned()));
+    assert_eq!((module("os/path.pyi"), package("os/path.pyi")), ("os.path".to_owned(), "os".to_owned()));
     assert_eq!(module("x/src/a/mod.rs"), "crate.a");
     assert_eq!(module("src/lib.rs"), "crate");
 }
@@ -236,7 +239,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None, module: None }
 }
 
 /// `core.rr`'s relations of `docs`, each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself.
@@ -253,7 +256,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let kinds: HashMap<i64, String> = read("node")
         .into_iter()
         .map(|r| {
-            let (tag, code) = ((r[2] / i64::from(KIND_STRIDE)) as u8, (r[2] % i64::from(KIND_STRIDE)) as u16);
+            let (tag, code) = (crate::code_rule_dsl::facts::core::kind_tag(r[2] as u32), crate::code_rule_dsl::facts::core::kind_code(r[2] as u32));
             (r[1], from_tape_tag(tag).unwrap().kinds().kind_name(code).unwrap_or("ERROR").to_owned())
         })
         .collect();
@@ -410,7 +413,7 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None });
     }
     let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
     let nodes = *batch.nodes.last().unwrap();
@@ -462,7 +465,7 @@ fn within_holds_exactly_the_contained_pairs() {
 /// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
 #[test]
 fn the_kind_set_axes_hold_exactly_their_pairs() {
-    use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
+    use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
     let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
@@ -475,8 +478,8 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
-        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
+        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();

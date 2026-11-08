@@ -148,6 +148,29 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     }
 }
 
+/// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
+/// through an equality).
+fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
+    let mut groups: Vec<BTreeSet<String>> = Vec::new();
+    for (j, l) in rule.body.iter().enumerate() {
+        let joins = match l {
+            Literal::Atom(a) => !a.neg && !cut(j),
+            Literal::Cmp { op: "=", .. } => true,
+            _ => false,
+        };
+        let vars = l.vars();
+        if !joins || vars.is_empty() {
+            continue;
+        }
+        let (mut joined, rest): (Vec<_>, Vec<_>) = groups.into_iter().partition(|g| !g.is_disjoint(&vars));
+        let mut all = vars;
+        joined.iter_mut().for_each(|g| all.append(g));
+        groups = rest;
+        groups.push(all);
+    }
+    groups.len() > 1
+}
+
 /// `prog` split for `candidates`, or the candidates whose split failed.
 fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>) -> Result<(Program, Vec<String>), BTreeSet<String>> {
     // Each reader: its reads of candidates. A negation's variables the rest of its body binds (a safe rule's do); a
@@ -186,6 +209,12 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             // lookup (`reached`; an `inside_<set>` read from its ancestor, a rare kind, still reaches 18M nodes),
             // unless the reader is itself demanded, when its `pre_<i>` starts from that demand.
             if !own && !small {
+                refused.insert(a.rel.clone());
+            }
+            // The body less the demanded reads must be one join: kept atoms that only a demanded read connects
+            // (`p13_er_body(f, n)` and `p13_unparen(e, m)`, joined by the read alone) would make `pre_<i>` their
+            // cross product.
+            if !own && disconnected(rule, |j| negated(rule, j)) {
                 refused.insert(a.rel.clone());
             }
         }
@@ -374,4 +403,29 @@ fn var_type(prog: &Program, body: &[&Literal], var: &str) -> Option<String> {
         Literal::Nearest { n, a, .. } if n == var || a == var => Some("node".to_owned()),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// A split whose kept atoms only the demanded read joins is refused: its `pre_<i>` would be their cross product.
+    #[test]
+    fn kept_atoms_that_only_the_cut_joins_are_disconnected() {
+        let p = super::super::super::front::parse(
+            r#"
+            .decl body(f: node, n: node)
+            .decl unp(e: node, m: node)
+            .decl d(n: node, e: node)
+            .decl out(f: node, e: node)
+            .input body, unp, d
+            .output out
+            out($f, $e) :- body($f, $n), unp($e, $m), d($n, $e).
+            out($f, $e) :- body($f, $n), unp($e, $n), d($n, $e).
+            "#,
+        )
+        .unwrap();
+        for (r, apart) in p.rules.iter().zip([true, false]) {
+            let cut = |j: usize| matches!(&r.body[j], super::Literal::Atom(a) if a.rel == "d");
+            assert_eq!(super::disconnected(r, cut), apart, "{r}");
+        }
+    }
 }

@@ -123,10 +123,9 @@ impl Within {
 
     /// Whether node `local` of document `doc` is of a kind in the axis's set.
     fn member(&self, doc: usize, local: u32) -> bool {
-        use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         let p = &self.batch.docs[doc];
-        let code = (p.facts.kind[p.core[local as usize] as usize] % KIND_STRIDE) as usize;
-        self.members.get(&p.tag).is_some_and(|t| t[code])
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local as usize] as usize]);
+        self.members.get(&p.tag).is_some_and(|t| t.get(usize::from(code)).is_some_and(|&m| m))
     }
 
     /// The document and local node of node row `row`.

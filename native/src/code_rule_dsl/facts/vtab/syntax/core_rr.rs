@@ -29,6 +29,8 @@ pub(super) enum Family {
     Ecma,
     Php,
     Rust,
+    /// `.rr` rule files (decision 0061).
+    Rr,
     Other,
 }
 
@@ -39,6 +41,7 @@ impl Family {
             Some("javascript" | "typescript" | "tsx" | "vue") => Self::Ecma,
             Some("php" | "blade") => Self::Php,
             Some("rust") => Self::Rust,
+            Some("rr") => Self::Rr,
             _ => Self::Other,
         }
     }
@@ -195,6 +198,17 @@ pub(super) struct Literal {
 pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
     let mut out = Literal::default();
     match (family, kind) {
+        // A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.
+        (Family::Rr, "string") => {
+            if let Some(v) = crate::code_rule_dsl::logic::rr::string_value(text) {
+                out.value = Some((v.clone(), "string"));
+                out.str = Some(v);
+            }
+        }
+        (Family::Rr, "code_literal") => out.str = Some(crate::code_rule_dsl::logic::rr::code_body(text).to_owned()),
+        (Family::Rr, "number") => out.value = text.parse::<i64>().ok().map(|v| (v.to_string(), "number")),
+        (Family::Rr, "float") => out.value = text.parse::<f64>().ok().map(|v| (v.to_string(), "float")),
+        (Family::Rr, _) => {}
         (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
             let Some((prefix, body)) = string_contents(family, text) else { return out };
             let ty = if family == Family::Python { "str" } else { "string" };
@@ -447,6 +461,10 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
     if dialect.family == Family::Python {
         return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
     }
+    // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
+    if dialect.family == Family::Rr {
+        return f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message));
+    }
     first_error(f, &Lines::new(&f.source, dialect.family == Family::Python), &|id| dialect.name(f, id))
 }
 
@@ -547,6 +565,8 @@ impl CoreRows {
             }
             if let Some(s) = name(kind, text) {
                 self.name.push([n, string(&s) as i64]);
+            } else if dialect.family == Family::Rr && kind == "variable" {
+                self.name.push([n, string(text) as i64]);
             }
             let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
             let interpolated = match (dialect.family, kind) {
@@ -676,25 +696,32 @@ impl CoreRows {
     }
 
     /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
-    /// one of its lines (`src_line`), is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
+    /// one of its lines (`src_line`) or a comment node, is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
     /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
     /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
-    pub(super) fn matches(&mut self, p: &mut Projected, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
         use crate::code_rule_dsl::logic::front::SpanIn;
         let facts = std::sync::Arc::clone(&p.facts);
         let src = facts.source.as_str();
         let base = p.len();
+        // Comment nodes, by local id: their own spans.
+        let comments: Vec<([u32; 2], u32)> = if patterns.iter().any(|(w, _, _)| *w == SpanIn::Comment) {
+            (0..base).filter(|&l| is_comment(dialect.name(&facts, p.core[l as usize]))).map(|l| (p.span(l), l)).collect()
+        } else {
+            Vec::new()
+        };
         let x = p.extra.as_mut().expect("core.rr's spans");
         let source = x.tokens;
         for &(within, pattern, ref re) in patterns {
             let pat = string(pattern) as i64;
-            let containers: Vec<u32> = match within {
-                SpanIn::Source => vec![source],
-                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| source + l).collect(),
+            // Each container's text and its local id.
+            let containers: Vec<([u32; 2], u32)> = match within {
+                SpanIn::Source => vec![(x.spans[source as usize], base + source)],
+                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| (x.spans[(source + l) as usize], base + source + l)).collect(),
+                SpanIn::Comment => comments.clone(),
             };
-            for c in containers {
-                let [a, b] = x.spans[c as usize];
-                let cid = i64::from(p.key) << 32 | i64::from(base + c);
+            for ([a, b], c) in containers {
+                let cid = i64::from(p.key) << 32 | i64::from(c);
                 for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
                     for (g, name) in re.capture_names().enumerate() {
                         let name = match (g, name) {

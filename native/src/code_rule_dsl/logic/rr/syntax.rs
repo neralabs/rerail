@@ -7,6 +7,8 @@
 //! `ast(n, { … })` and the policy document `.policy { … }`.
 
 use super::Error;
+use super::tape::{self, Field, Kind, Tree};
+use std::cell::Cell;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Tok {
@@ -20,6 +22,8 @@ pub(super) enum Tok {
     /// `#include` and other `#` lines.
     Hash(String),
     P(&'static str),
+    /// What the lexer could not read (`lex`): only a taped parse sees one.
+    Bad,
     Eof,
 }
 
@@ -96,27 +100,58 @@ pub(in crate::code_rule_dsl) fn quote(s: &str) -> String {
     out
 }
 
+/// What the lexer reads: the tokens, the comments' spans (a tape's extras), and the first error. A token the lexer
+/// cannot read is `Tok::Bad`; an unterminated string, backtick literal or comment is one `Bad` to the end of the file.
+pub(super) struct Lexed {
+    pub(super) toks: Vec<Spanned>,
+    pub(super) comments: Vec<(usize, usize)>,
+    pub(super) error: Option<(usize, Error)>,
+}
+
 pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
+    let lexed = lex(src);
+    match lexed.error {
+        Some((_, error)) => Err(error),
+        None => Ok(lexed.toks),
+    }
+}
+
+pub(super) fn lex(src: &str) -> Lexed {
     let bytes = src.as_bytes();
-    let (mut pos, mut out) = (0, Vec::new());
+    let (mut pos, mut out, mut comments, mut error) = (0, Vec::new(), Vec::new(), None);
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let fail = |pos: usize, what: &str| Error::Syntax(format!("{what} at line {}", line_of(src, pos)));
+    let mut bad = |out: &mut Vec<Spanned>, start: usize, end: usize, what: &str| {
+        out.push((Tok::Bad, start, end));
+        if error.is_none() {
+            error = Some((start, Error::Syntax(format!("{what} at line {}", line_of(src, start)))));
+        }
+    };
     loop {
         while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
             pos += 1;
         }
         if pos >= bytes.len() {
-            return Ok(out);
+            break;
         }
         let start = pos;
         let rest = &src[pos..];
         if rest.starts_with("//") {
             pos += rest.find('\n').unwrap_or(rest.len());
+            comments.push((start, pos));
             continue;
         }
         if rest.starts_with("/*") {
-            pos += rest.find("*/").map(|e| e + 2).ok_or_else(|| fail(pos, "unterminated comment"))?;
-            continue;
+            match rest.find("*/") {
+                Some(e) => {
+                    pos += e + 2;
+                    comments.push((start, pos));
+                    continue;
+                }
+                None => {
+                    bad(&mut out, start, src.len(), "unterminated comment");
+                    break;
+                }
+            }
         }
         let c = bytes[pos];
         if c == b'"' {
@@ -125,10 +160,13 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
                 end += if bytes[end] == b'\\' { 2 } else { 1 };
             }
             if end >= bytes.len() {
-                return Err(fail(pos, "unterminated string"));
+                bad(&mut out, start, src.len(), "unterminated string");
+                break;
             }
-            let value = unescape(&src[pos + 1..end]).map_err(|e| fail(pos, &e))?;
-            out.push((Tok::Str(value), start, end + 1));
+            match unescape(&src[pos + 1..end]) {
+                Ok(value) => out.push((Tok::Str(value), start, end + 1)),
+                Err(e) => bad(&mut out, start, end + 1, &e),
+            }
             pos = end + 1;
         } else if c == b'`' {
             let n = bytes[pos..].iter().take_while(|&&b| b == b'`').count();
@@ -142,7 +180,10 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
                     pos += 2;
                     continue;
                 }
-                None => return Err(fail(pos, "unterminated backtick literal")),
+                None => {
+                    bad(&mut out, start, src.len(), "unterminated backtick literal");
+                    break;
+                }
             };
             let mut body = &src[body_start..close];
             if n > 1 {
@@ -160,8 +201,10 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
                 pos = end;
                 continue;
             }
-            let value = src[pos..end].parse().map_err(|_| fail(pos, "bad number"))?;
-            out.push((Tok::Num(value), start, end));
+            match src[pos..end].parse() {
+                Ok(value) => out.push((Tok::Num(value), start, end)),
+                Err(_) => bad(&mut out, start, end, "bad number"),
+            }
             pos = end;
         } else if c == b'#' {
             let end = pos + 1 + bytes[pos + 1..].iter().take_while(|&&b| ident(b)).count();
@@ -175,9 +218,12 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
             out.push((Tok::Id(src[pos..end].to_owned()), start, end));
             pos = end;
         } else {
-            return Err(fail(pos, &format!("bad input {:?}", &rest[..rest.char_indices().nth(10).map_or(rest.len(), |(i, _)| i)])));
+            let end = pos + rest.chars().next().map_or(1, char::len_utf8);
+            bad(&mut out, start, end, &format!("bad input {:?}", &rest[..rest.char_indices().nth(10).map_or(rest.len(), |(i, _)| i)]));
+            pos = end;
         }
     }
+    Lexed { toks: out, comments, error }
 }
 
 pub(super) fn line_of(src: &str, pos: usize) -> usize {
@@ -272,17 +318,53 @@ pub(super) struct Suppress {
 /// A statement and the line it starts on.
 pub(super) type Statement = (Item, usize);
 
+/// Reads statements; `taped` also builds the file's tree (decision 0061). Each production that makes a node opens it
+/// at its first token and closes it after its last; tokens become leaves as they are read. Without a tree every
+/// tree step does nothing.
 pub(super) struct Parser<'s> {
     src: &'s str,
     toks: Vec<Spanned>,
     i: usize,
     /// Inside an aggregate's value or key, where `x :` ends the term (`agg_part`).
     no_named: bool,
+    tree: Option<Tree>,
+    comments: Vec<(usize, usize)>,
+    /// Where the last `fail` was, in bytes.
+    failed_at: Cell<usize>,
+    /// The first error, and where it is: the lexer's, else the first statement's that did not parse.
+    error: Option<(usize, Error)>,
+}
+
+/// Where a parse can go back to: the token, and the tree's state.
+struct Save {
+    i: usize,
+    tree: Option<tape::Mark>,
 }
 
 impl<'s> Parser<'s> {
     pub(super) fn new(src: &'s str) -> Result<Self, Error> {
-        Ok(Self { src, toks: tokens(src)?, i: 0, no_named: false })
+        Ok(Self { src, toks: tokens(src)?, i: 0, no_named: false, tree: None, comments: Vec::new(), failed_at: Cell::new(0), error: None })
+    }
+
+    /// A parser that builds the file's tree, and reads on past a statement that does not parse (`recover`).
+    pub(super) fn taped(src: &'s str) -> Self {
+        let lexed = lex(src);
+        Self {
+            src,
+            toks: lexed.toks,
+            i: 0,
+            no_named: false,
+            tree: Some(Tree::new(src.len())),
+            comments: lexed.comments,
+            failed_at: Cell::new(0),
+            error: lexed.error,
+        }
+    }
+
+    /// The tree read, in preorder with its comments (`tape::flatten`), and the first error.
+    pub(super) fn into_tape(self) -> (Vec<tape::Node>, Option<(usize, Error)>) {
+        let nodes = self.tree.as_ref().map_or_else(Vec::new, |tree| tape::flatten(tree, &self.comments));
+        (nodes, self.error)
     }
 
     fn peek(&self) -> &Tok {
@@ -320,13 +402,119 @@ impl<'s> Parser<'s> {
 
     fn fail<T>(&self, what: &str) -> Result<T, Error> {
         let at = self.start();
+        self.failed_at.set(at);
         let near: String = self.src[at..].chars().take(40).collect();
         Err(Error::Syntax(format!("line {}: expected {what}, got {:?} near {near:?}", line_of(self.src, at), self.peek())))
     }
 
+    // The tree's steps.
+
+    fn save(&self) -> Save {
+        Save { i: self.i, tree: self.tree.as_ref().map(|tree| tree.mark(self.i)) }
+    }
+
+    fn restore(&mut self, save: Save) {
+        self.i = save.i;
+        if let (Some(tree), Some(mark)) = (&mut self.tree, save.tree) {
+            tree.reset(mark);
+        }
+    }
+
+    fn open(&mut self, kind: Kind) {
+        let at = self.start();
+        if let Some(tree) = &mut self.tree {
+            tree.push(kind as u16, at, at, true);
+        }
+    }
+
+    fn close(&mut self) {
+        let end = self.i.checked_sub(1).and_then(|i| self.toks.get(i)).map_or(0, |t| t.2);
+        if let Some(tree) = &mut self.tree {
+            tree.close(end);
+        }
+    }
+
+    fn here(&self) -> usize {
+        self.tree.as_ref().map_or(0, Tree::here)
+    }
+
+    fn wrap(&mut self, from: usize, kind: Kind) {
+        if let Some(tree) = &mut self.tree {
+            tree.wrap(from, kind as u16);
+        }
+    }
+
+    /// Gives the open node's last child `field`.
+    fn field(&mut self, field: Field) {
+        if let Some(tree) = &mut self.tree
+            && let Some(last) = tree.last()
+        {
+            tree.nodes[last as usize].field = field as u16;
+        }
+    }
+
+    /// A leaf of `kind` over tokens `from..to`.
+    fn leaf_over(&mut self, kind: u16, from: usize, to: usize) {
+        if let Some(tree) = &mut self.tree
+            && from < to
+            && to <= self.toks.len()
+        {
+            tree.push(kind, self.toks[from].1, self.toks[to - 1].2, false);
+        }
+    }
+
+    /// The next token, as a leaf of `kind`.
+    fn bump_as(&mut self, kind: Kind) {
+        self.leaf_over(kind as u16, self.i, self.i + 1);
+        self.i += 1;
+    }
+
+    /// The anonymous token `text` at token `at`.
+    fn anon_over(&mut self, text: &str, at: usize) {
+        if self.tree.is_some() {
+            let kind = tape::anonymous(text).unwrap_or(Kind::Identifier as u16);
+            self.leaf_over(kind, at, at + 1);
+        }
+    }
+
+    /// The next token, as an anonymous leaf (punctuation, a reserved word).
+    fn anon(&mut self) {
+        if self.tree.is_some() {
+            let kind = match self.peek() {
+                Tok::P(p) => tape::anonymous(p),
+                Tok::Id(s) => tape::anonymous(s),
+                Tok::Hash(h) => tape::anonymous(&format!("#{h}")),
+                _ => None,
+            };
+            self.leaf_over(kind.unwrap_or(Kind::Identifier as u16), self.i, self.i + 1);
+        }
+        self.i += 1;
+    }
+
+    /// The next token as one of a line's words (a modifier, a setting's argument), given `field` if it is named.
+    fn word(&mut self, field: Field) -> Result<(), Error> {
+        let kind = match self.peek() {
+            Tok::Id(_) => Kind::Identifier,
+            Tok::Num(_) => Kind::Number,
+            Tok::Float(_) => Kind::Float,
+            Tok::Str(_) => Kind::String,
+            Tok::Tick(_) => Kind::CodeLiteral,
+            Tok::Bad => return self.fail("a word"),
+            Tok::P(_) | Tok::Hash(_) | Tok::Eof => {
+                self.anon();
+                return Ok(());
+            }
+        };
+        self.bump_as(kind);
+        self.field(field);
+        Ok(())
+    }
+
+    // Tokens.
+
     fn p(&mut self, p: &str) -> Result<(), Error> {
         if self.is_p(p) {
-            self.i += 1;
+            self.anon();
             Ok(())
         } else {
             self.fail(&format!("{p:?}"))
@@ -336,7 +524,7 @@ impl<'s> Parser<'s> {
     fn id(&mut self) -> Result<String, Error> {
         match self.peek().clone() {
             Tok::Id(s) => {
-                self.i += 1;
+                self.bump_as(Kind::Identifier);
                 Ok(s)
             }
             _ => self.fail("an identifier"),
@@ -346,36 +534,43 @@ impl<'s> Parser<'s> {
     fn string(&mut self) -> Result<String, Error> {
         match self.peek().clone() {
             Tok::Str(s) => {
-                self.i += 1;
+                self.bump_as(Kind::String);
                 Ok(s)
             }
             _ => self.fail("a string"),
         }
     }
 
-    fn list<T>(&mut self, close: &str, mut item: impl FnMut(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
+    /// Items separated by commas, up to `close`, each given `field`.
+    fn list<T>(&mut self, close: &str, field: Field, mut item: impl FnMut(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
         let mut out = Vec::new();
         if self.is_p(close) {
             return Ok(out);
         }
         out.push(item(self)?);
+        self.field(field);
         while self.is_p(",") {
-            self.i += 1;
+            self.anon();
             out.push(item(self)?);
+            self.field(field);
         }
         Ok(out)
     }
 
-    /// The text of a balanced `{ … }`, braces included.
+    /// The text of a balanced `{ … }`, braces included. Its tokens make no leaves: the caller makes one.
     fn braces(&mut self) -> Result<String, Error> {
         let start = self.start();
-        self.p("{")?;
+        if !self.is_p("{") {
+            return self.fail("\"{\"");
+        }
+        self.i += 1;
         let mut depth = 1;
         while depth > 0 {
             match self.peek() {
                 Tok::P("{") => depth += 1,
                 Tok::P("}") => depth -= 1,
                 Tok::Eof => return self.fail("a closing brace"),
+                Tok::Bad => return self.fail("a closing brace"),
                 _ => {}
             }
             self.i += 1;
@@ -383,31 +578,84 @@ impl<'s> Parser<'s> {
         Ok(self.src[start..self.toks[self.i - 1].2].to_owned())
     }
 
+    /// `{ … }` as one `json_object` leaf, given `field`.
+    fn json(&mut self, field: Field) -> Result<String, Error> {
+        let from = self.i;
+        let text = self.braces()?;
+        self.leaf_over(Kind::JsonObject as u16, from, self.i);
+        self.field(field);
+        Ok(text)
+    }
+
+    /// `{c}`: a column named in braces (`code {c}`, `tag {t}`, `over {n}`), its name an identifier given `field`.
+    fn brace_column(&mut self, field: Field) -> Result<String, Error> {
+        let from = self.i;
+        let text = self.braces()?;
+        if self.i - from == 3 && matches!(self.toks[from + 1].0, Tok::Id(_)) {
+            self.anon_over("{", from);
+            self.leaf_over(Kind::Identifier as u16, from + 1, from + 2);
+            self.field(field);
+            self.anon_over("}", from + 2);
+        } else {
+            self.leaf_over(Kind::RawText as u16, from, self.i);
+            self.field(field);
+        }
+        Ok(text.trim_start_matches('{').trim_end_matches('}').trim().to_owned())
+    }
+
     /// A type: `number`, `node`, `flat<>`, `shortlex_min<>`.
     fn ty(&mut self) -> Result<String, Error> {
+        self.open(Kind::Type);
         let mut t = self.id()?;
+        self.field(Field::Name);
         if self.is_p("<") {
-            self.i += 1;
-            let inner = if self.is_p(">") { String::new() } else { self.id()? };
+            self.anon();
+            let inner = if self.is_p(">") {
+                String::new()
+            } else {
+                let inner = self.id()?;
+                self.field(Field::Argument);
+                inner
+            };
             self.p(">")?;
             t = format!("{t}<{inner}>");
         }
+        self.close();
         Ok(t)
     }
 
     fn columns(&mut self) -> Result<Vec<(String, String)>, Error> {
+        self.open(Kind::ColumnList);
         self.p("(")?;
-        let cols = self.list(")", |p| {
+        let cols = self.list(")", Field::Column, |p| {
+            p.open(Kind::Column);
             let c = p.id()?;
+            p.field(Field::Name);
             p.p(":")?;
-            Ok((c, p.ty()?))
+            let t = p.ty()?;
+            p.field(Field::Type);
+            p.close();
+            Ok((c, t))
         })?;
         self.p(")")?;
+        self.close();
+        self.field(Field::Columns);
         Ok(cols)
     }
 
-    /// The words left on the current line: a declaration's modifiers.
-    fn rest_of_line(&mut self, line: usize) -> Vec<String> {
+    /// `( term, … )`, given the field `arguments`.
+    fn arguments(&mut self) -> Result<Vec<Term>, Error> {
+        self.open(Kind::ArgumentList);
+        self.p("(")?;
+        let args = self.list(")", Field::Argument, Self::term)?;
+        self.p(")")?;
+        self.close();
+        self.field(Field::Arguments);
+        Ok(args)
+    }
+
+    /// The words left on the current line: a declaration's modifiers, each a leaf given `field`.
+    fn rest_of_line(&mut self, line: usize, field: Field) -> Result<Vec<String>, Error> {
         let mut out = Vec::new();
         while !matches!(self.peek(), Tok::Eof) && self.line() == line {
             out.push(match self.peek() {
@@ -418,100 +666,211 @@ impl<'s> Parser<'s> {
                 Tok::P(p) => (*p).to_owned(),
                 other => format!("{other:?}"),
             });
+            self.word(field)?;
+        }
+        Ok(out)
+    }
+
+    /// The tokens left on the current line, as one `raw_text` leaf given `field`.
+    fn raw_line(&mut self, line: usize, field: Field) -> Result<(), Error> {
+        let from = self.i;
+        while !matches!(self.peek(), Tok::Eof) && self.line() == line {
+            if *self.peek() == Tok::Bad {
+                return self.fail("a word");
+            }
             self.i += 1;
         }
-        out
+        self.leaf_over(Kind::RawText as u16, from, self.i);
+        self.field(field);
+        Ok(())
     }
 
     pub(super) fn statements(&mut self) -> Result<Vec<Statement>, Error> {
         let mut out = Vec::new();
         while *self.peek() != Tok::Eof {
             let line = self.line();
-            let item = if let Tok::Hash(h) = self.peek().clone() {
-                self.i += 1;
-                if h != "include" {
-                    return self.fail("#include");
-                }
-                Item::Include(self.string()?)
-            } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(_)) {
-                self.i += 1;
-                self.directive(line)?
-            } else {
-                self.clause()?
-            };
-            out.push((item, line));
+            let save = self.save();
+            match self.statement(line) {
+                Ok(item) => out.push((item, line)),
+                Err(error) if self.tree.is_some() => self.recover(save, error),
+                Err(error) => return Err(error),
+            }
         }
         Ok(out)
     }
 
-    fn directive(&mut self, line: usize) -> Result<Item, Error> {
-        let d = self.id()?;
+    /// After a statement that did not parse: one ERROR leaf from its first token to where parsing resumes, the next
+    /// `#include`, a `.word` at the start of a line, or the token after the next `.` that ends a clause.
+    fn recover(&mut self, save: Save, error: Error) {
+        if self.error.is_none() {
+            self.error = Some((self.failed_at.get(), error));
+        }
+        let first = save.i;
+        self.restore(save);
+        let line_start = |at: usize| self.src[..at].bytes().rev().take_while(|&b| b != b'\n').all(|b| b.is_ascii_whitespace());
+        let mut k = first + 1;
+        while k < self.toks.len() {
+            match &self.toks[k].0 {
+                Tok::Hash(_) => break,
+                Tok::P(".") if matches!(self.toks.get(k + 1).map(|t| &t.0), Some(Tok::Id(_))) && line_start(self.toks[k].1) => break,
+                Tok::P(".") => {
+                    k += 1;
+                    break;
+                }
+                _ => k += 1,
+            }
+        }
+        let k = k.min(self.toks.len());
+        self.leaf_over(tape::ERROR, first, k);
+        self.i = k;
+    }
+
+    fn statement(&mut self, line: usize) -> Result<Item, Error> {
+        if let Tok::Hash(h) = self.peek().clone() {
+            self.open(Kind::Include);
+            self.anon();
+            if h != "include" {
+                return self.fail("#include");
+            }
+            let path = self.string()?;
+            self.field(Field::Path);
+            self.close();
+            Ok(Item::Include(path))
+        } else if self.is_p(".")
+            && let Tok::Id(d) = self.peek_at(1).clone()
+        {
+            let policy = d == "policy" && self.is_p_at(2, "{");
+            let kind = match d.as_str() {
+                "decl" => Kind::Declaration,
+                "edit" => Kind::EditDeclaration,
+                "functor" => Kind::FunctorDeclaration,
+                "type" => Kind::TypeDeclaration,
+                "input" | "output" => Kind::IoDirective,
+                "lattice" => Kind::LatticeDeclaration,
+                "pragma" => Kind::Pragma,
+                "violation" => Kind::ViolationDeclaration,
+                "policy" if policy => Kind::PolicyDocument,
+                _ => Kind::Setting,
+            };
+            self.open(kind);
+            match tape::directive(&d).filter(|_| kind != Kind::Setting) {
+                Some(keyword) => {
+                    self.leaf_over(keyword, self.i, self.i + 2);
+                    self.i += 2;
+                }
+                None => {
+                    self.anon();
+                    self.bump_as(Kind::Identifier);
+                    self.field(Field::Name);
+                }
+            }
+            let item = self.directive(line, d)?;
+            self.close();
+            Ok(item)
+        } else {
+            self.clause()
+        }
+    }
+
+    /// A directive's statement, after its `.word`.
+    fn directive(&mut self, line: usize, d: String) -> Result<Item, Error> {
         Ok(match d.as_str() {
             "decl" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 let cols = self.columns()?;
                 let at = self.last_line();
-                Item::Decl { name, cols, tail: self.rest_of_line(at) }
+                Item::Decl { name, cols, tail: self.rest_of_line(at, Field::Modifier)? }
             }
             "edit" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 self.columns()?;
                 Item::Edit { name }
             }
             "functor" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 self.columns()?;
                 self.p(":")?;
                 self.ty()?;
+                self.field(Field::ReturnType);
                 let at = self.last_line();
-                self.rest_of_line(at);
+                self.rest_of_line(at, Field::Modifier)?;
                 Item::Functor { name }
             }
             "type" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 let at = self.last_line();
-                self.rest_of_line(at);
+                self.raw_line(at, Field::Definition)?;
                 Item::Type { name }
             }
             "input" | "output" => {
                 let mut params = Vec::new();
-                let names = self.list(".", |p| {
+                let names = self.list(".", Field::Relation, |p| {
+                    p.open(Kind::IoRelation);
                     let name = p.id()?;
+                    p.field(Field::Name);
                     if p.is_p("(") {
                         let start = p.start();
-                        p.i += 1;
+                        p.anon();
+                        let from = p.i;
                         let mut depth = 1;
                         while depth > 0 {
                             match p.peek() {
                                 Tok::P("(") => depth += 1,
                                 Tok::P(")") => depth -= 1,
-                                Tok::Eof => return p.fail("a closing parenthesis"),
+                                Tok::Eof | Tok::Bad => return p.fail("a closing parenthesis"),
                                 _ => {}
                             }
                             p.i += 1;
                         }
-                        let text = p.src[start + 1..p.toks[p.i - 1].1].to_owned();
+                        let close = p.i - 1;
+                        p.leaf_over(Kind::RawText as u16, from, close);
+                        p.field(Field::Parameters);
+                        p.anon_over(")", close);
+                        let text = p.src[start + 1..p.toks[close].1].to_owned();
                         params.push((name.clone(), text));
                     }
+                    p.close();
                     Ok(name)
                 })?;
                 Item::Io { output: d == "output", names, params }
             }
             "lattice" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 self.p("<")?;
-                let base = if self.is_p(">") { String::new() } else { self.id()? };
+                let base = if self.is_p(">") {
+                    String::new()
+                } else {
+                    let base = self.id()?;
+                    self.field(Field::Base);
+                    base
+                };
                 self.p(">")?;
                 self.p("{")?;
-                let ops = self.list("}", |p| {
+                let ops = self.list("}", Field::Operation, |p| {
+                    p.open(Kind::LatticeOperation);
                     let op = p.id()?;
+                    p.field(Field::Name);
                     p.p("->")?;
                     // A functor named, not called: `Lub -> @shortlex_min`.
                     if p.is_p("@") && matches!(p.peek_at(1), Tok::Id(_)) && !p.is_p_at(2, "(") {
-                        p.i += 1;
-                        return Ok((op, Term::Call { name: p.id()?, functor: true, args: Vec::new() }));
+                        p.open(Kind::FunctorCall);
+                        p.anon();
+                        let name = p.id()?;
+                        p.field(Field::Function);
+                        p.close();
+                        p.field(Field::Value);
+                        p.close();
+                        return Ok((op, Term::Call { name, functor: true, args: Vec::new() }));
                     }
-                    Ok((op, p.term()?))
+                    let t = p.term()?;
+                    p.field(Field::Value);
+                    p.close();
+                    Ok((op, t))
                 })?;
                 self.p("}")?;
                 Item::Lattice { name, base, ops }
@@ -520,66 +879,84 @@ impl<'s> Parser<'s> {
                 let mut words = Vec::new();
                 while let Tok::Str(_) = self.peek() {
                     words.push(self.string()?);
+                    self.field(Field::Argument);
                 }
                 Item::Pragma(words)
             }
             "violation" => {
                 let name = self.id()?;
+                self.field(Field::Name);
                 let cols = self.columns()?;
                 // `code {c}`: the finding's code, from a column (`in "re"` after it: the codes it may produce);
                 // `code "X"`: a constant code; `tag {t}`: an extra key field.
                 let (mut code, mut code_in, mut tag) = (None, None, None);
                 loop {
                     if self.is_id("code") && matches!(self.peek_at(1), Tok::Str(_)) {
-                        self.i += 1;
+                        self.anon();
                         code = Some(Code::Constant(self.string()?));
+                        self.field(Field::Code);
                     } else if (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
                         let is_code = self.is_id("code");
-                        self.i += 1;
-                        let text = self.braces()?;
-                        let column = text.trim_start_matches('{').trim_end_matches('}').trim().to_owned();
+                        self.open(if is_code { Kind::CodeColumn } else { Kind::TagColumn });
+                        self.anon();
+                        let column = self.brace_column(Field::Column)?;
                         if is_code {
                             code = Some(Code::Column(column));
                             if self.is_id("in") && matches!(self.peek_at(1), Tok::Str(_)) {
-                                self.i += 1;
+                                self.anon();
                                 code_in = Some(self.string()?);
+                                self.field(Field::Codes);
                             }
                         } else {
                             tag = Some(column);
                         }
+                        self.close();
+                        self.field(if is_code { Field::Code } else { Field::Tag });
                     } else {
                         break;
                     }
                 }
                 let message = self.string()?;
+                self.field(Field::Message);
                 let (mut fixes, mut suppress) = (Vec::new(), Vec::new());
                 // Continuation lines: `fix [safe] name "…"`, `suppress TOOL "rule", …`, `options { … }`.
                 loop {
                     if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
-                        self.i += 1;
+                        self.open(Kind::FixLine);
+                        self.anon();
                         if self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_)) {
-                            self.i += 1;
+                            self.anon();
                         }
                         fixes.push(self.id()?);
+                        self.field(Field::Relation);
                         self.string()?;
+                        self.field(Field::Description);
+                        self.close();
+                        self.field(Field::Fix);
                     } else if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
-                        self.i += 1;
+                        self.open(Kind::SuppressLine);
+                        self.anon();
                         let tool = self.id()?;
+                        self.field(Field::Tool);
                         let mut rules = vec![self.string()?];
+                        self.field(Field::Rule);
                         while self.is_p(",") && matches!(self.peek_at(1), Tok::Str(_)) {
-                            self.i += 1;
+                            self.anon();
                             rules.push(self.string()?);
+                            self.field(Field::Rule);
                         }
                         // `over {c}`: the comment is read on the lines of column c's node too.
                         let mut over = None;
                         if self.is_id("over") && self.is_p_at(1, "{") {
-                            self.i += 1;
-                            over = Some(self.braces()?.trim_start_matches('{').trim_end_matches('}').trim().to_owned());
+                            self.anon();
+                            over = Some(self.brace_column(Field::Over)?);
                         }
+                        self.close();
+                        self.field(Field::Suppress);
                         suppress.push(Suppress { tool, rules, over });
                     } else if self.is_id("options") && self.is_p_at(1, "{") {
-                        self.i += 1;
-                        self.braces()?;
+                        self.anon();
+                        self.json(Field::Options)?;
                     } else {
                         break;
                     }
@@ -587,7 +964,7 @@ impl<'s> Parser<'s> {
                 Item::Violation { name, cols, code, code_in, tag, message, fixes, suppress }
             }
             "policy" if self.is_p("{") => {
-                let text = self.braces()?;
+                let text = self.json(Field::Document)?;
                 Item::Policy(serde_json::from_str(&text).map_err(|e| Error::Syntax(format!("line {line}: bad .policy document: {e}")))?)
             }
             _ => {
@@ -599,9 +976,9 @@ impl<'s> Parser<'s> {
                 while !matches!(self.peek(), Tok::Eof) && (self.line() == line || (self.i > 0 && self.toks[self.i - 1].0 == Tok::P(","))) {
                     line = self.line();
                     if self.is_p("{") {
-                        self.braces()?;
+                        self.json(Field::Argument)?;
                     } else {
-                        self.i += 1;
+                        self.word(Field::Argument)?;
                     }
                     end = self.toks[self.i - 1].2;
                 }
@@ -611,57 +988,86 @@ impl<'s> Parser<'s> {
     }
 
     fn head(&mut self) -> Result<Head, Error> {
-        let modal = if (self.is_id("must") || self.is_id("may")) && matches!(self.peek_at(1), Tok::Id(_)) { Some(self.id()?) } else { None };
+        self.open(Kind::Head);
+        let modal = if (self.is_id("must") || self.is_id("may")) && matches!(self.peek_at(1), Tok::Id(_)) {
+            let Tok::Id(modal) = self.peek().clone() else { unreachable!() };
+            self.anon();
+            self.field(Field::Modal);
+            Some(modal)
+        } else {
+            None
+        };
         let rel = self.id()?;
-        self.p("(")?;
-        let args = self.list(")", Self::term)?;
-        self.p(")")?;
+        self.field(Field::Relation);
+        let args = self.arguments()?;
+        self.close();
         Ok(Head { modal, rel, args })
     }
 
     fn clause(&mut self) -> Result<Item, Error> {
+        self.open(Kind::Clause);
         let mut heads = vec![self.head()?];
+        self.field(Field::Head);
         while self.is_p(",") {
-            self.i += 1;
+            self.anon();
             heads.push(self.head()?);
+            self.field(Field::Head);
         }
         let mut body = Vec::new();
         if self.is_p(":-") {
-            self.i += 1;
+            self.anon();
             let alts = self.disjunction()?;
+            self.field(Field::Body);
             body = if alts.len() == 1 { alts.into_iter().next().expect("one") } else { vec![Lit::Group { alts, neg: false }] };
         }
         let mut edits = Vec::new();
         if self.is_p("=>") {
-            self.i += 1;
-            edits = self.list(".", Self::term)?;
+            self.anon();
+            edits = self.list(".", Field::Edit, Self::term)?;
         }
         self.p(".")?;
+        self.close();
         Ok(Item::Clause { heads, body, edits })
     }
 
+    /// A body: a `conjunction`, or a `disjunction` of them where a `;` follows the first.
     fn disjunction(&mut self) -> Result<Vec<Vec<Lit>>, Error> {
+        let from = self.here();
         let mut alts = vec![self.conjunction()?];
-        while self.is_p(";") {
-            self.i += 1;
-            alts.push(self.conjunction()?);
+        if self.is_p(";") {
+            self.wrap(from, Kind::Disjunction);
+            self.field(Field::Alternative);
+            while self.is_p(";") {
+                self.anon();
+                alts.push(self.conjunction()?);
+                self.field(Field::Alternative);
+            }
+            self.close();
         }
         Ok(alts)
     }
 
     fn conjunction(&mut self) -> Result<Vec<Lit>, Error> {
+        self.open(Kind::Conjunction);
         let mut out = vec![self.literal()?];
+        self.field(Field::Literal);
         while self.is_p(",") {
-            self.i += 1;
+            self.anon();
             out.push(self.literal()?);
+            self.field(Field::Literal);
         }
+        self.close();
         Ok(out)
     }
 
     fn literal(&mut self) -> Result<Lit, Error> {
         if self.is_p("!") {
-            self.i += 1;
-            return Ok(match self.literal()? {
+            self.open(Kind::Negation);
+            self.anon();
+            let inner = self.literal()?;
+            self.field(Field::Operand);
+            self.close();
+            return Ok(match inner {
                 Lit::Atom { rel, args, neg } => Lit::Atom { rel, args, neg: !neg },
                 Lit::Pattern { subject, pattern, neg } => Lit::Pattern { subject, pattern, neg: !neg },
                 Lit::Group { alts, neg } => Lit::Group { alts, neg: !neg },
@@ -670,152 +1076,234 @@ impl<'s> Parser<'s> {
         }
         if self.is_p("(") {
             // A group `( a ; b )`, or a parenthesized term that a comparison follows: `(a - b) * 10 > o`.
-            let save = self.i;
-            self.i += 1;
-            let group = self.disjunction().and_then(|alts| self.p(")").map(|()| alts));
+            let save = self.save();
+            self.open(Kind::Group);
+            self.anon();
+            let group = self.disjunction().and_then(|alts| {
+                self.field(Field::Body);
+                self.p(")").map(|()| alts)
+            });
             let term_follows = matches!(self.peek(), Tok::P("=" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/" | "%"));
             match group {
-                Ok(alts) if !term_follows => return Ok(Lit::Group { alts, neg: false }),
-                _ => self.i = save,
+                Ok(alts) if !term_follows => {
+                    self.close();
+                    return Ok(Lit::Group { alts, neg: false });
+                }
+                _ => self.restore(save),
             }
         }
+        let from = self.here();
         let l = self.term()?;
         if self.is_p("~") {
-            self.i += 1;
+            self.wrap(from, Kind::PatternMatch);
+            self.field(Field::Subject);
+            self.anon();
             let pattern = match self.peek().clone() {
                 Tok::Tick(t) => t,
                 _ => return self.fail("a backtick pattern"),
             };
-            self.i += 1;
+            self.bump_as(Kind::CodeLiteral);
+            self.field(Field::Pattern);
+            self.close();
             return Ok(Lit::Pattern { subject: l, pattern, neg: false });
         }
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,
             _ => {
                 return match l {
-                    Term::Call { name, functor: false, args } => Ok(Lit::Atom { rel: name, args, neg: false }),
+                    Term::Call { name, functor: false, args } => {
+                        self.retag_atom();
+                        Ok(Lit::Atom { rel: name, args, neg: false })
+                    }
                     _ => self.fail("an atom or a comparison"),
                 };
             }
         };
-        self.i += 1;
-        Ok(Lit::Cmp { l, op, r: self.term()? })
+        self.wrap(from, Kind::Comparison);
+        self.field(Field::Left);
+        self.anon();
+        self.field(Field::Operator);
+        let r = self.term()?;
+        self.field(Field::Right);
+        self.close();
+        Ok(Lit::Cmp { l, op, r })
+    }
+
+    /// The `call` just read is a literal: an `atom`, whose function is its `relation`.
+    fn retag_atom(&mut self) {
+        if let Some(tree) = &mut self.tree
+            && let Some(call) = tree.last()
+        {
+            tree.nodes[call as usize].kind = Kind::Atom as u16;
+            let children = tree.nodes[call as usize].children.clone();
+            for child in children {
+                let node = &mut tree.nodes[child as usize];
+                if node.field == Field::Function as u16 {
+                    node.field = Field::Relation as u16;
+                }
+            }
+        }
     }
 
     pub(super) fn term(&mut self) -> Result<Term, Error> {
+        let from = self.here();
         let mut l = self.product()?;
         while let Tok::P(op @ ("+" | "-")) = self.peek() {
             let op = *op;
-            self.i += 1;
-            l = Term::Bin { op, l: Box::new(l), r: Box::new(self.product()?) };
+            self.wrap(from, Kind::BinaryExpression);
+            self.field(Field::Left);
+            self.anon();
+            self.field(Field::Operator);
+            let r = self.product()?;
+            self.field(Field::Right);
+            self.close();
+            l = Term::Bin { op, l: Box::new(l), r: Box::new(r) };
         }
         Ok(l)
     }
 
     fn product(&mut self) -> Result<Term, Error> {
+        let from = self.here();
         let mut l = self.primary()?;
         while let Tok::P(op @ ("*" | "/" | "%")) = self.peek() {
             let op = *op;
-            self.i += 1;
-            l = Term::Bin { op, l: Box::new(l), r: Box::new(self.primary()?) };
+            self.wrap(from, Kind::BinaryExpression);
+            self.field(Field::Left);
+            self.anon();
+            self.field(Field::Operator);
+            let r = self.primary()?;
+            self.field(Field::Right);
+            self.close();
+            l = Term::Bin { op, l: Box::new(l), r: Box::new(r) };
         }
         Ok(l)
     }
 
+    /// An aggregate, from its operator word `op`: `count : { … }`, `min x : { … }`, `join x by k sep "," : { … }`.
     fn aggregate(&mut self, op: String) -> Result<Term, Error> {
-        let over = if self.is_p(":") { None } else { Some(Box::new(self.agg_part()?)) };
+        self.open(Kind::Aggregate);
+        self.anon();
+        self.field(Field::Operator);
+        let over = if self.is_p(":") {
+            None
+        } else {
+            let over = self.agg_part()?;
+            self.field(Field::Value);
+            Some(Box::new(over))
+        };
         let (mut by, mut sep) = (Vec::new(), None);
         if self.is_id("by") {
-            self.i += 1;
+            self.anon();
             if self.is_p("(") {
-                self.i += 1;
-                by = self.list(")", Self::term)?;
+                self.anon();
+                by = self.list(")", Field::Key, Self::term)?;
                 self.p(")")?;
             } else {
                 by.push(self.agg_part()?);
+                self.field(Field::Key);
             }
         }
         if self.is_id("sep") {
-            self.i += 1;
+            self.anon();
             sep = Some(self.string()?);
+            self.field(Field::Separator);
         }
         self.p(":")?;
         self.p("{")?;
         let alts = self.disjunction()?;
+        self.field(Field::Body);
         self.p("}")?;
+        self.close();
         let body = if alts.len() == 1 { alts.into_iter().next().expect("one") } else { vec![Lit::Group { alts, neg: false }] };
         Ok(Term::Agg { op, over, by, sep, body })
     }
 
     fn primary(&mut self) -> Result<Term, Error> {
-        let t = match self.peek().clone() {
-            Tok::Num(n) => Term::Num(n),
-            Tok::Float(f) => Term::Float(f),
-            Tok::Str(s) => Term::Str(s),
-            Tok::Tick(t) => Term::Tick(t),
-            Tok::P("-") if matches!(self.peek_at(1), Tok::Num(_)) => {
-                self.i += 1;
-                let Tok::Num(n) = self.peek().clone() else { unreachable!() };
-                Term::Num(-n)
-            }
-            Tok::P("-") if matches!(self.peek_at(1), Tok::Float(_)) => {
-                self.i += 1;
-                let Tok::Float(f) = self.peek().clone() else { unreachable!() };
-                Term::Float(format!("-{f}"))
+        let (t, kind) = match self.peek().clone() {
+            Tok::Num(n) => (Term::Num(n), Kind::Number),
+            Tok::Float(f) => (Term::Float(f), Kind::Float),
+            Tok::Str(s) => (Term::Str(s), Kind::String),
+            Tok::Tick(t) => (Term::Tick(t), Kind::CodeLiteral),
+            // A negative literal is one token: `-1` is a `number` that spans the sign.
+            Tok::P("-") if matches!(self.peek_at(1), Tok::Num(_) | Tok::Float(_)) => {
+                let from = self.i;
+                let term = match self.peek_at(1).clone() {
+                    Tok::Num(n) => Term::Num(-n),
+                    Tok::Float(f) => Term::Float(format!("-{f}")),
+                    _ => unreachable!(),
+                };
+                let kind = if matches!(term, Term::Num(_)) { Kind::Number } else { Kind::Float };
+                self.i += 2;
+                self.leaf_over(kind as u16, from, from + 2);
+                return Ok(term);
             }
             // `-x`, `-f(x)`: zero minus it.
             Tok::P("-") => {
-                self.i += 1;
-                return Ok(Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.primary()?) });
+                self.open(Kind::UnaryExpression);
+                self.anon();
+                self.field(Field::Operator);
+                let operand = self.primary()?;
+                self.field(Field::Operand);
+                self.close();
+                return Ok(Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(operand) });
             }
             Tok::P("(") => {
-                self.i += 1;
+                self.open(Kind::ParenthesizedExpression);
+                self.anon();
                 let t = self.term()?;
+                self.field(Field::Expression);
                 self.p(")")?;
+                self.close();
                 return Ok(t);
             }
-            Tok::P("{") => return Ok(Term::Json(self.braces()?)),
+            Tok::P("{") => return Ok(Term::Json(self.json(Field::None)?)),
             Tok::P("@") => {
-                self.i += 1;
+                self.open(Kind::FunctorCall);
+                self.anon();
                 let name = self.id()?;
-                self.p("(")?;
-                let args = self.list(")", Self::term)?;
-                self.p(")")?;
+                self.field(Field::Function);
+                let args = self.arguments()?;
+                self.close();
                 return Ok(Term::Call { name, functor: true, args });
             }
-            Tok::Id(s) if s == "_" => Term::Wild,
-            Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => {
-                self.i += 1;
-                return self.aggregate(s);
-            }
+            Tok::Id(s) if s == "_" => (Term::Wild, Kind::Wildcard),
+            Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s),
             // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
             Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s),
             // `sum x : {…}`, `sum strlen(x) - strlen(a) : {…}`, `join x by k sep "," : {…}`: an aggregate over a term,
             // when a `:`, `by` or `sep` follows it; otherwise a variable named like an aggregate.
             Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
-                let save = self.i;
+                let save = self.save();
                 self.i += 1;
-                if self.agg_part().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep")) {
-                    self.i = save + 1;
+                let aggregate = self.agg_part().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep"));
+                self.restore(save);
+                if aggregate {
                     return self.aggregate(s);
                 }
-                self.i = save;
-                Term::Var(s)
+                (Term::Var(s), Kind::Variable)
             }
             Tok::Id(s) if self.is_p_at(1, "(") => {
-                self.i += 2;
-                let args = self.list(")", Self::term)?;
-                self.p(")")?;
+                self.open(Kind::Call);
+                self.bump_as(Kind::Identifier);
+                self.field(Field::Function);
+                let args = self.arguments()?;
+                self.close();
                 return Ok(Term::Call { name: s, functor: false, args });
             }
             Tok::Id(s) if self.is_p_at(1, ":") && !self.no_named => {
-                self.i += 2;
-                return Ok(Term::Named(s, Box::new(self.term()?)));
+                self.open(Kind::NamedArgument);
+                self.bump_as(Kind::Identifier);
+                self.field(Field::Name);
+                self.anon();
+                let value = self.term()?;
+                self.field(Field::Value);
+                self.close();
+                return Ok(Term::Named(s, Box::new(value)));
             }
-            Tok::Id(s) => Term::Var(s),
+            Tok::Id(s) => (Term::Var(s), Kind::Variable),
             _ => return self.fail("a term"),
         };
-        self.i += 1;
+        self.bump_as(kind);
         Ok(t)
     }
 
@@ -830,12 +1318,14 @@ impl<'s> Parser<'s> {
 
     /// `min(a, b)` is a call unless a `:` follows the parentheses (`min (a + b) : { … }`).
     fn call_or_aggregate(&mut self, op: String) -> Result<Term, Error> {
-        let save = self.i;
-        self.i += 2;
-        let args = self.list(")", Self::term)?;
-        self.p(")")?;
+        let save = self.save();
+        self.open(Kind::Call);
+        self.bump_as(Kind::Identifier);
+        self.field(Field::Function);
+        let args = self.arguments()?;
+        self.close();
         if self.is_p(":") {
-            self.i = save + 1;
+            self.restore(save);
             return self.aggregate(op);
         }
         Ok(Term::Call { name: op, functor: false, args })

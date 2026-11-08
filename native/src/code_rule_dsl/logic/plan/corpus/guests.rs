@@ -43,7 +43,7 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 /// The demands rules make.
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
-pub(super) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
+pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
 /// requests, which the runner reads by name, and the guest policy.
 pub(super) const SHARED: [&str; 6] = ["embed", "embed_value", DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
@@ -157,8 +157,8 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
     let &(id, kind) = ids.get(local as usize)?;
     let (start, end) = (f.start[id as usize], f.end[id as usize]);
     let node = [start, end];
-    let tag = f.kind.first().map_or(0, |k| k / core::KIND_STRIDE);
-    let label = u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).and_then(crate::code_rule_dsl::language::label).unwrap_or("");
+    let tag = core::facts_tag(f);
+    let label = crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label).unwrap_or("");
     let is_string = |kind: &str| matches!(kind, "string" | "string_literal" | "raw_string_literal" | "interpreted_string_literal");
     if is_string(kind) {
         return string_text(label, kind, f.text(id), start, node);
@@ -311,6 +311,7 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            module: host.module.clone(),
         }))
     }
 
@@ -338,6 +339,8 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+            // A value is no module's: its text is a rule's, not a file's.
+            module: None,
         }))
     }
 
@@ -363,8 +366,8 @@ impl Guests {
         let grammar = match d.guest.as_deref() {
             Some(g) => g.grammar.clone(),
             None => {
-                let tag = d.facts.kind.first().map_or(0, |k| k / core::KIND_STRIDE);
-                let Some(label) = u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).and_then(crate::code_rule_dsl::language::label) else { return Ok(None) };
+                let tag = core::facts_tag(&d.facts);
+                let Some(label) = crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label) else { return Ok(None) };
                 label.to_owned()
             }
         };
@@ -394,7 +397,8 @@ fn wrapped(text: String, place: Placement) -> (String, Placement) {
 /// gives no facts.
 fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(core::Facts, u32)>, String> {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
-    // The cache is shared by every run on the machine; a failed write there (O95) parses without it.
+    // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
+    // parses without it. A source collected under the run is stored again with its tape (O95).
     let built = match cache.map(|cache| core::build_cached(&file, cache)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
@@ -414,7 +418,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
 fn wrapped_root(f: &core::Facts, label: &str) -> u32 {
     let Some(dialect) = crate::code_rule_dsl::language::dialect_by_label(label) else { return 0 };
     let kinds = dialect.kinds();
-    let name = |id: u32| kinds.kind_name((f.kind[id as usize] % core::KIND_STRIDE) as u16).unwrap_or("");
+    let name = |id: u32| kinds.kind_name(core::kind_code(f.kind[id as usize])).unwrap_or("");
     let named = |id: u32| -> Vec<u32> { f.children(id).iter().copied().filter(|&c| f.named(c) && !name(c).contains("comment")).collect() };
     let first = named(0).first().copied().unwrap_or(0);
     let path = (|| {

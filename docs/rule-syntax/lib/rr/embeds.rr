@@ -1,0 +1,18 @@
+// The code inside a `.rr` file, as guests (decision 0061 §5, decision 0055's `embed`). A row names a grammar; it
+// makes a guest once that grammar is registered (`json`, `regex` and the pattern grammars are not yet), and none
+// before.
+
+// The language a rule file's patterns are written in: its `.language` setting.
+.decl program_language(d: number, g: symbol)
+program_language(d, g) :- node(d, s, "setting", _, _), field(s, "name", k), name(k, "language"),
+    field(s, "argument", a), name(a, g).
+program_language(d, g) :- node(d, s, "setting", _, _), field(s, "name", k), name(k, "language"),
+    field(s, "argument", a), str(a, g).
+
+// A pattern is code of the program's language, with metavariables.
+embed(d, p, g, "pattern") :- node(d, m, "pattern_match", _, _), field(m, "pattern", p), program_language(d, g).
+// A JSON object is a JSON document: an `ast` matcher, a policy, a violation's options.
+embed(d, j, "json", "fragment") :- node(d, j, "json_object", _, _).
+// The first argument of `match` is a regex.
+embed_value(d, s, "regex", "fragment", v) :- node(d, a, "atom", _, _), field(a, "relation", r), name(r, "match"),
+    field(a, "arguments", l), child(l, s, 0), str(s, v).

@@ -156,6 +156,7 @@ fn native_shards_match_the_original_batch_and_both_probe_directions() {
                 digest: [0; 32],
                 facts: Arc::new(facts),
                 guest: None,
+                module: None,
             }
         })
         .collect();
