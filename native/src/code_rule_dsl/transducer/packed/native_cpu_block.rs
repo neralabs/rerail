@@ -14,7 +14,7 @@
 //! its extract pass.
 
 use super::Error;
-use super::block::{BatchFile, BlockRun, extract::positions, mask_tail, padded_by, undelay};
+use super::block::{BatchFile, BlockRun, padded_by, undelay};
 use super::native_ir::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -108,7 +108,7 @@ impl Batch {
             bytes.resize(bytes.len() + FRONT, 0);
             let row = Row { bytes: bytes.len() as u64, blocks: blocks.len() as u64, len: file.len() as u64, out: words };
             bytes.extend(blocks.iter().flatten());
-            words += (program.outputs * blocks.len() + program.extracts.len()) as u64;
+            words += (program.outputs * blocks.len() + program.extracts.len() * (1 + region_words(blocks.len()))) as u64;
             rows.push(row);
         }
         Self { bytes, rows, out: vec![0u64; words as usize] }
@@ -127,29 +127,17 @@ impl Batch {
             .zip(files)
             .map(|(row, bytes)| {
                 let (n, base) = (row.blocks as usize, row.out as usize);
-                let out = &self.out[base..base + program.outputs * n + program.extracts.len()];
+                let e_n = program.extracts.len();
+                let out = &self.out[base..base + program.outputs * n + e_n * (1 + region_words(n))];
                 let words_of = |k: usize| -> Vec<u64> { (0..n).map(|i| out[i * program.outputs + k]).collect() };
-                // The function counts whole blocks; the bits past the end (the padding's) come off.
-                let past = |words: &[u64]| match (words.last(), bytes.len() % 64) {
-                    (Some(&w), r) if r != 0 => (w >> r).count_ones() as usize,
-                    _ => 0,
-                };
-                let positions = program
-                    .extracts
-                    .iter()
-                    .enumerate()
-                    .map(|(e, &k)| {
-                        // A delayed output's bits are its bytes' `delay` later: extract from the output
-                        // undelayed, and count it so.
-                        if program.output_delays[k] != 0 {
-                            let words = undelay(&words_of(k), program.output_delays[k], bytes.len());
-                            let count = words.iter().map(|w| w.count_ones() as usize).sum();
-                            return positions(&words, count);
-                        }
-                        let mut words = words_of(k);
-                        let count = out[program.outputs * n + e] as usize - past(&words);
-                        mask_tail(&mut words, bytes.len());
-                        positions(&words, count)
+                // The positions the function wrote (its extract pass), handed over as they are.
+                let positions = (0..e_n)
+                    .map(|e| {
+                        let count = out[program.outputs * n + e] as usize;
+                        let from = program.outputs * n + e_n + e * region_words(n);
+                        let region = &out[from..from + region_words(n)];
+                        // SAFETY: the region's words hold `count` `u32`s, which the function wrote.
+                        unsafe { std::slice::from_raw_parts(region.as_ptr().cast::<u32>(), count) }.to_vec()
                     })
                     .collect();
                 let outputs = (0..program.outputs).map(|k| undelay(&words_of(k), program.output_delays[k], bytes.len())).collect();
@@ -360,11 +348,15 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The first block's carries are zero, made here: the entry's zero, live across every
         // row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
+        // Each extract's positions follow the outputs' words and the counts (`region_words`);
+        // its cursor starts at its region.
+        let regions = extract_regions(&mut f, out, blocks, native.outputs.len(), native.extracts.len());
         let first: Vec<cranelift_codegen::ir::BlockArg> = [zero.into(), bytes.into(), out.into()]
             .into_iter()
-            .chain(std::iter::repeat_n(zero.into(), carried + native.extracts.len()))
+            .chain(std::iter::repeat_n(zero.into(), carried))
+            .chain(regions.iter().map(|&r| r.into()))
             .collect();
-        let no_counts: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), native.extracts.len()).collect();
+        let no_counts: Vec<cranelift_codegen::ir::BlockArg> = regions.iter().map(|&r| r.into()).collect();
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
         f.ins().brif(none, exit, &no_counts, head, &first);
@@ -700,13 +692,15 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let value = plain(&mut f, &syms, &mut values, usize::from(v));
             f.ins().store(MemFlags::new().with_notrap(), value, dst, 8 * k as i32);
         }
+        // The extract pass, in the loop (simdjson's `flatten_bits`): each extract's set bits as
+        // byte positions, written at its cursor (`counts_in`, carried).
         let counts_out: Vec<Value> = native
             .extracts
             .iter()
             .zip(&counts_in)
-            .map(|(&k, &c)| {
-                let n = f.ins().popcnt(values[usize::from(native.outputs[k])].expect("stored, so plain"));
-                f.ins().iadd(c, n)
+            .map(|(&k, &cursor)| {
+                let w = values[usize::from(native.outputs[k])].expect("stored, so plain");
+                flatten(&mut f, w, cursor, i, len, native.output_delays[k], full)
             })
             .collect();
         let next = f.ins().iadd_imm(i, 1);
@@ -725,14 +719,17 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         }
         }
 
+        // Each extract's count, from its cursor.
         f.switch_to_block(exit);
-        let totals = f.block_params(exit).to_vec();
-        if !totals.is_empty() {
+        let cursors = f.block_params(exit).to_vec();
+        if !cursors.is_empty() {
             let words = f.ins().imul_imm(blocks, native.outputs.len() as i64);
             let from = f.ins().ishl_imm(words, 3);
             let after = f.ins().iadd(out, from);
-            for (e, &t) in totals.iter().enumerate() {
-                f.ins().store(MemFlags::new().with_notrap(), t, after, (e * 8) as i32);
+            for (e, (&c, &r)) in cursors.iter().zip(&regions).enumerate() {
+                let bytes = f.ins().isub(c, r);
+                let n = f.ins().ushr_imm(bytes, 2);
+                f.ins().store(MemFlags::new().with_notrap(), n, after, (e * 8) as i32);
             }
         }
         let next_row = f.ins().iadd_imm(r, 1);
@@ -756,6 +753,101 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, output_delays: native.output_delays.clone(), clif, disassembly })
+}
+
+/// The extract pass's layout in a file's words: after the outputs' words, a count per extract,
+/// then each extract's positions (`u32`), room for every byte of its blocks and 16 more (the
+/// writes in eights past the last, as simdjson's).
+pub(super) fn region_words(blocks: usize) -> usize {
+    32 * blocks + 8
+}
+
+/// Each extract's region, a byte pointer, from the file's first output word `out`.
+fn extract_regions(f: &mut FunctionBuilder<'_>, out: Value, blocks: Value, outputs: usize, extracts: usize) -> Vec<Value> {
+    let words = f.ins().imul_imm(blocks, outputs as i64);
+    let words = f.ins().iadd_imm(words, extracts as i64);
+    let from = f.ins().ishl_imm(words, 3);
+    let first = f.ins().iadd(out, from);
+    let size = f.ins().ishl_imm(blocks, 8);
+    let size = f.ins().iadd_imm(size, 64);
+    (0..extracts)
+        .map(|e| {
+            let at = f.ins().imul_imm(size, e as i64);
+            f.ins().iadd(first, at)
+        })
+        .collect()
+}
+
+/// The extract pass over one block's word `w` of an output delayed by `d` (bit `j` is byte
+/// `64 i + j - d`): its set bits' byte positions, written at `cursor`, eight at a time as
+/// simdjson's `flatten_bits` (the writes past the last are overwritten, or past the count). In
+/// an edge block, only the file's bytes. Returns the cursor after them.
+fn flatten(f: &mut FunctionBuilder<'_>, w: Value, cursor: Value, i: Value, len: Value, d: u8, full: bool) -> Value {
+    let mut w = w;
+    let start = f.ins().ishl_imm(i, 6);
+    if !full {
+        // Bytes below the file's end: t = clamp(len + d - 64 i, 0, 64) low bits, by two shifts.
+        let end = f.ins().iadd_imm(len, i64::from(d));
+        let left = f.ins().isub(end, start);
+        let zero = f.ins().iconst(types::I64, 0);
+        let all = f.ins().iconst(types::I64, 64);
+        let left = f.ins().smin(left, all);
+        let t = f.ins().smax(left, zero);
+        let half = f.ins().ushr_imm(t, 1);
+        let rest = f.ins().isub(t, half);
+        let one = f.ins().iconst(types::I64, 1);
+        let m = f.ins().ishl(one, half);
+        let m = f.ins().ishl(m, rest);
+        let m = f.ins().iadd_imm(m, -1);
+        w = f.ins().band(w, m);
+        if d > 0 {
+            // And not before the file: the first block's low `d` bits.
+            let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
+            let low = f.ins().iconst(types::I64, !((1i64 << d) - 1));
+            let keep = f.ins().iconst(types::I64, -1);
+            let mask = f.ins().select(first, low, keep);
+            w = f.ins().band(w, mask);
+        }
+    }
+    let base = f.ins().iadd_imm(start, -i64::from(d));
+    let cnt = f.ins().popcnt(w);
+    let flags = MemFlags::new().with_notrap();
+    let write = |f: &mut FunctionBuilder<'_>, w: Value, at: Value, off: i32| -> Value {
+        let t = f.ins().ctz(w);
+        let p = f.ins().iadd(base, t);
+        let p = f.ins().ireduce(types::I32, p);
+        f.ins().store(flags, p, at, off);
+        let less = f.ins().iadd_imm(w, -1);
+        f.ins().band(w, less)
+    };
+    for k in 0..8 {
+        w = write(f, w, cursor, 4 * k);
+    }
+    let (second, rest, join) = (f.create_block(), f.create_block(), f.create_block());
+    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, cnt, 8);
+    f.ins().brif(more, second, &[], join, &[]);
+    f.switch_to_block(second);
+    let mut w2 = w;
+    for k in 8..16 {
+        w2 = write(f, w2, cursor, 4 * k);
+    }
+    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, cnt, 16);
+    let sixteen = f.ins().iconst(types::I64, 16);
+    f.ins().brif(more, rest, &[sixteen.into(), w2.into()], join, &[]);
+    // The rest, one at a time: a loop over set bits, not bytes.
+    f.append_block_param(rest, types::I64);
+    f.append_block_param(rest, types::I64);
+    f.switch_to_block(rest);
+    let (k, wr) = (f.block_params(rest)[0], f.block_params(rest)[1]);
+    let off = f.ins().ishl_imm(k, 2);
+    let at = f.ins().iadd(cursor, off);
+    let wn = write(f, wr, at, 0);
+    let k1 = f.ins().iadd_imm(k, 1);
+    let again = f.ins().icmp(IntCC::UnsignedLessThan, k1, cnt);
+    f.ins().brif(again, rest, &[k1.into(), wn.into()], join, &[]);
+    f.switch_to_block(join);
+    let bytes = f.ins().ishl_imm(cnt, 2);
+    f.ins().iadd(cursor, bytes)
 }
 
 /// A value of the bit logic: a known word, or a value that is the word itself or its complement.

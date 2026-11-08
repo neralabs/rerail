@@ -220,8 +220,9 @@ const BODY_OPCODES: &[&str] = &[
     "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
     // `within`: the bits below the stream's end, from its length (clamp, two shifts).
     "isub", "smin", "smax", "ishl",
-    // The extract pass's size: each extract's popcount, summed as the plane is written.
-    "popcnt",
+    // The extract pass, in the loop (simdjson's `flatten_bits`): each extract word's popcount,
+    // and eight positions from trailing zeros, written as `u32`s.
+    "popcnt", "ctz", "ireduce", "select",
     // Constants, made where they are used (decision 0047): `movi` and literal-pool loads, and
     // the output words' one pointer (`i * outputs * 8`).
     "splat", "vconst", "imul_imm",
@@ -239,7 +240,9 @@ fn check_lowering(name: &str, p: &Program) {
         assert!(BODY_OPCODES.contains(&opcode(line)), "{name}: `{line}` is not a bit operation");
     }
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1, "{name}: the body's only branch is the loop's");
+    // One branch: the loop's, or with an extract, the extract pass's test for more than eight
+    // positions (as simdjson's `flatten_bits`; the rest run over set bits, never bytes).
+    assert_eq!(branches, 1, "{name}: the body's only branch is the loop's or the extract pass's");
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
     assert!(!compiled.disassembly.contains(" bl ") && !compiled.disassembly.contains("blr"), "{name}: no calls");
 
@@ -1351,6 +1354,18 @@ fn a_block_program_runs_in_place() {
             arena.extend_from_slice(&slice);
             arena.resize(arena.len() + 128, around);
             assert_eq!(compiled.run_in_place(&arena, start, len), compiled.run(&slice), "{len} bytes, around {around:#04x}");
+        }
+    }
+}
+
+/// The compiled path runs no extract pass in Rust: Cranelift's lowering of a program's
+/// `extracts` writes the positions in its loop, and the host only hands them over. The Rust
+/// extract pass, `undelay`'s and `mask_tail`'s work on positions belong to the interpreter.
+#[test]
+fn the_compiled_path_computes_no_positions_in_rust() {
+    for (file, source) in [("native_cpu_block.rs", include_str!("native_cpu_block.rs")), ("native_cpu_stream.rs", include_str!("native_cpu_stream.rs"))] {
+        for needle in ["extract::positions", "positions(&", "mask_tail", "interpret("] {
+            assert!(!source.contains(needle), "{file} uses `{needle}`: the extract pass is the compiled code's");
         }
     }
 }
