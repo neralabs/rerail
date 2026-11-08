@@ -219,6 +219,8 @@ pub(crate) struct Report {
     /// What the run consulted, as (what, path, digest): each workspace document's bytes, and what its requests read
     /// (`world::World::consulted`). A run whose consulted things are as they were derives the same (`unchanged`).
     pub(crate) consulted: Vec<(String, String, String)>,
+    /// What phase 0's observer did during the run: stats, answers reused, files hashed, directories listed.
+    pub(crate) files_observed: crate::content_store::observe::Counts,
 }
 
 /// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
@@ -857,6 +859,14 @@ pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<Conte
     tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
 }
 
+/// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
+/// in memory for the process when there is none. Every path the engine reads goes through it: rule files, corpus
+/// files, what resolution rules list, read and load.
+pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -> T) -> T {
+    let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
+    crate::content_store::observe::with(store.as_deref(), f)
+}
+
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(test)]
@@ -888,7 +898,33 @@ const RUN_MB: f64 = 1024.0;
 /// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
 const MIN_CHUNK_NODES: usize = 8_192;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_with_options(
+    programs: &[&str],
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
+    let before = observe(|o| o.counts);
+    let report = run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
+    // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
+    let did = observe(|o| {
+        o.flush();
+        o.counts.since(&before)
+    });
+    report.map(|mut r| {
+        r.files_observed = did;
+        r
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_observed(
     programs: &[&str],
     root: &Path,
     t_facts: Option<&Path>,
@@ -3085,7 +3121,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, files_observed: Default::default() })
 }
 
 
@@ -3564,12 +3600,14 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
+    observe(|o| o.preload(root));
     while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
-            let path = entry.map_err(|e| Error::Plan(e.to_string()))?.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.is_dir() {
+        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+        for (name, is_dir) in listing.iter() {
+            let path = dir.join(name);
+            if *is_dir {
                 if !name.starts_with('.') && name != "target" {
                     pending.push(path);
                 }

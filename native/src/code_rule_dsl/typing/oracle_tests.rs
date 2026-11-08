@@ -56,11 +56,11 @@ fn line(source: &str, offset: usize) -> u64 {
 /// The spans the scorer reads, added to the program as one more output: each answered call's and each named
 /// definition's `(start, end)` bytes. A definition's line is its `def`'s, decorated or not, as the oracle records it.
 const SPANS: &str = "
-.decl rr_score_at(n: node, s: number, e: number)
-rr_score_at(n, s, e) :- call_target(n, _), node(_, n, _, s, e).
-rr_score_at(n, s, e) :- call_open(n), node(_, n, _, s, e).
-rr_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
-.output rr_score_at
+.decl oracle_score_at(n: node, s: number, e: number)
+oracle_score_at(n, s, e) :- call_target(n, _), node(_, n, _, s, e).
+oracle_score_at(n, s, e) :- call_open(n), node(_, n, _, s, e).
+oracle_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
+.output oracle_score_at
 ";
 
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
@@ -77,7 +77,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
-    let at: BTreeMap<String, (usize, usize)> = rows("rr_score_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
+    let at: BTreeMap<String, (usize, usize)> = rows("oracle_score_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
     let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
     let key = |node: &str| {
         let (s, e) = at[node];
@@ -897,14 +897,14 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
 /// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
 /// callers, which a run memoising per import component (decision 0076) needs.
 const JEDI_SPANS: &str = "
-.decl rr_jedi_cls(c: node, k: node)
-rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
-.decl rr_jedi_at(n: node, s: number, e: number)
-rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
-rr_jedi_at(f, s, e) :- kind(f, \"function_definition\"), node(_, f, _, s, e).
-rr_jedi_at(f, s, e) :- kind(f, \"class_definition\"), node(_, f, _, s, e).
-rr_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
-.output rr_jedi_cls, rr_jedi_at
+.decl oracle_jedi_cls(c: node, k: node)
+oracle_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
+.decl oracle_jedi_at(n: node, s: number, e: number)
+oracle_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
+oracle_jedi_at(f, s, e) :- kind(f, \"function_definition\"), node(_, f, _, s, e).
+oracle_jedi_at(f, s, e) :- kind(f, \"class_definition\"), node(_, f, _, s, e).
+oracle_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
+.output oracle_jedi_cls, oracle_jedi_at
 ";
 
 /// `calls.rr` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
@@ -937,7 +937,7 @@ fn benchmark_python_calls_program_corpus() {
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
-    let at: BTreeMap<String, (usize, usize)> = rows("rr_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
+    let at: BTreeMap<String, (usize, usize)> = rows("oracle_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
     let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();
     let mut line_of = |f: &str, s: usize| -> u64 {
@@ -959,7 +959,7 @@ fn benchmark_python_calls_program_corpus() {
         named.entry(key(&r[0])).or_default().insert(t);
     }
     let mut classes: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
-    for r in rows("rr_jedi_cls") {
+    for r in rows("oracle_jedi_cls") {
         let t = target(&r[1]);
         classes.entry(key(&r[0])).or_default().insert(t);
     }
@@ -975,7 +975,7 @@ fn benchmark_python_calls_program_corpus() {
             format!("{f}:{}:{column}", line(src, s))
         };
         let mut lines: Vec<String> = Vec::new();
-        for (kind, rel) in [("def", "call_target"), ("class", "rr_jedi_cls")] {
+        for (kind, rel) in [("def", "call_target"), ("class", "oracle_jedi_cls")] {
             for r in rows(rel) {
                 let s = site(&r[0]);
                 let f = file(&r[1]);

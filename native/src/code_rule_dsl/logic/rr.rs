@@ -249,9 +249,9 @@ pub(in crate::code_rule_dsl) struct LibraryFile {
 }
 
 impl LibraryFile {
+    /// The file as it is now, by phase 0's observer: one `stat`, and a read only when it changed.
     fn now(path: &Path) -> Self {
-        use sha2::{Digest as _, Sha256};
-        Self { path: path.to_owned(), sha256: std::fs::read(path).ok().map(|bytes| Sha256::digest(&bytes).into()) }
+        Self { path: path.to_owned(), sha256: super::plan::corpus::observe(|o| o.digest(path)) }
     }
 
     /// The seeded fact, for a file that exists.
@@ -353,22 +353,22 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
 }
 
 fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
-    use sha2::{Digest as _, Sha256};
-    let bytes = std::fs::read(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
-    // (the Python pack's files) parse it once, not once per program.
+    // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
+    // while the file is unchanged, so a kept file is not read again.
     static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Vec<syntax::Statement>)>>> = OnceLock::new();
-    let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
     let cache = PARSED.get_or_init(Default::default);
-    if let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
+    if let Some(digest) = super::plan::corpus::observe(|o| o.digest(path))
+        && let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
         && *kept == digest
     {
         crate::code_rule_dsl::prof::count("rr.file_reused", 1);
-        return Ok((statements.clone(), file));
+        return Ok((statements.clone(), LibraryFile { path: path.to_owned(), sha256: Some(digest) }));
     }
+    let (bytes, digest) = super::plan::corpus::observe(|o| o.read(path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
+    let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
     let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let statements = stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, statements.clone()));

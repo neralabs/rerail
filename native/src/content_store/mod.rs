@@ -19,6 +19,7 @@ mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;
+pub(crate) mod observe;
 pub(crate) use objects::ResidentFrames;
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
