@@ -53,6 +53,51 @@ class EngineAlignmentTests(unittest.TestCase):
                 checkout='.', upstreamCommit='adopted', upstreamBranch=branch,
                 nativeExtensions=[]))
 
+    def test_engine_audit_rejects_a_newer_remote_tip_even_when_local_is_merged(self):
+        branch = 'refs/heads/jeremybarnes/final-rerail-shape'
+        remote = 'refs/remotes/origin/jeremybarnes/final-rerail-shape'
+        def git(_root, *args):
+            if args == ('rev-parse', '--verify', branch):
+                return 'adopted'
+            if args == ('rev-parse', '--verify', remote):
+                return 'new-remote-final-shape'
+            if args == ('merge-base', '--is-ancestor', 'new-remote-final-shape', 'HEAD'):
+                raise migration.subprocess.CalledProcessError(1, 'git')
+            return ''
+        with patch.object(migration, 'git', git):
+            with self.assertRaisesRegex(ValueError, 'newer.*Final shape'):
+                migration.verify_engine_alignment(Path('/unused'), dict(
+                    checkout='.', upstreamCommit='adopted', upstreamBranch=branch,
+                    nativeExtensions=[]))
+
+    def test_native_acceptance_checks_alignment_before_starting_its_worker(self):
+        import suite
+        manifest = dict(engineSource=dict(checkout='.'))
+        with patch.object(migration, 'read_json', return_value=manifest), \
+                patch.object(migration, 'verify_engine_alignment', side_effect=ValueError('outdated engine')) as audit, \
+                patch.object(suite.subprocess, 'Popen') as worker:
+            with self.assertRaisesRegex(ValueError, 'outdated engine'):
+                suite.Suite(Path('/source'), Path('/engine'), [], 0, 1, Path('/baseline'))
+            audit.assert_called_once_with(migration.ROOT, manifest['engineSource'])
+            worker.assert_not_called()
+
+    def test_native_acceptance_rejects_a_binary_in_either_retired_engine(self):
+        import suite
+        for retired in ['.rerail/rr-migration-20261106/engine',
+                        '.rerail/data-layer-batch-seven/engine-source']:
+            with self.subTest(retired=retired), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                binary = root / retired / 'target/debug/rerail-engine'
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b'identical bytes do not make this the active checkout')
+                with patch.object(suite, 'ROOT', root), \
+                        patch.object(migration, 'read_json', return_value=dict(engineSource={})), \
+                        patch.object(migration, 'verify_engine_alignment'), \
+                        patch.object(suite.subprocess, 'Popen') as worker:
+                    with self.assertRaisesRegex(ValueError, 'retired engine'):
+                        suite.Suite(Path('/source'), binary, [], 0, 1, Path('/baseline'))
+                    worker.assert_not_called()
+
     def test_engine_audit_checks_ancestry_and_exact_reviewed_extensions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
