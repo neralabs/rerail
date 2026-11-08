@@ -793,10 +793,10 @@ pub(crate) fn run_with_options(
     // has import rules in `components.rr`. Not for a discovery round of `world`, which runs part of the program; the
     // final round's world facts are program facts, so they are in the plan's digest.
     let cross_mode = cross_memo::mode();
-    // Not yet with requests answered inside the fixpoint: the component memo reads exports only, and the rest of a
-    // loading run reads its cone's rows (decision 0065 §2a).
+    // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
+    // component rules' only reads, are in before the components are (decision 0065 §2a).
     let loading_run = world::wanted(&prog);
-    let cross_declared = cross_memo::declared(&prog).filter(|_| !loading_run && cross_mode != cross_memo::Mode::Off && label == "python");
+    let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
     if cross_declared.is_some() {
         cross_memo::add(&mut prog)?;
     }
@@ -938,7 +938,7 @@ pub(crate) fn run_with_options(
     };
     crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
         (None, _) if cross_memo::declared(&prog).is_none() => "off: the program declares no `.pragma \"cross-memo\"`".to_owned(),
-        (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else if loading_run { "requests answered inside the fixpoint" } else { "no import rules for the run's language" }),
+        (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else { "no import rules for the run's language" }),
         (Some(_), None) => "off: the component rules did not reach the cross-file part".to_owned(),
         (Some(_), Some(plan)) => format!("{} relations memoised per import component ({}){}", plan.memo.len(), plan.memo.keys().cloned().collect::<Vec<_>>().join(", "), if cross_mode == cross_memo::Mode::Verify { "; verifying: derived afresh and compared" } else { "" }),
     });
