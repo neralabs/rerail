@@ -2866,6 +2866,10 @@
         "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
+        "sha256": "b87f2c38cd0579e4770682714ee9cc76a9b3017a9cf00554d3d1dd10d85ab52b"
+      },
+      {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
         "sha256": "1813e8ba92a6701ead8954d57edabf7c9327ba12a91eb1d958cb6515eab0618d"
       },

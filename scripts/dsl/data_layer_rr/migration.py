@@ -30,6 +30,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/front.rs',
     'native/src/code_rule_dsl/logic/native.rs',
     'native/src/code_rule_dsl/logic/native/bfs_walk.rs',
+    # Preserve all destinations of coalesced whole-input join plans.
+    'native/src/code_rule_dsl/logic/native/setfix.rs',
     'native/src/code_rule_dsl/logic/program_facts.rs',
     'native/src/code_rule_dsl/logic/rr/lower.rs',
     'native/src/code_rule_dsl/logic/rr/print.rs',

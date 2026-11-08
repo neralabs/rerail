@@ -521,7 +521,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             }
         }
         // Join probes, natively; seed joins in the first wave only.
-        let mut wholes_run: Vec<&str> = Vec::new();
+        let mut wholes_run: Vec<(usize, &str)> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
@@ -529,8 +529,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
             let j = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
-                    if wholes_run.contains(&k.as_str()) { skips += 1; continue; }
-                    wholes_run.push(k);
+                    // Equal bodies may feed different relations. Sharing the
+                    // computation must never discard a destination's rows.
+                    let destination = (p.head, k.as_str());
+                    if wholes_run.contains(&destination) { skips += 1; continue; }
+                    wholes_run.push(destination);
                     w
                 }
                 _ => j,
