@@ -268,4 +268,73 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         stop();
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
+    /// importers counted, up and down to none, give a full run's findings.
+    #[test]
+    fn a_session_maintains_a_cross_file_aggregate() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("hub.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-hub" revision 1
+.description "An import of a module two files import, and an import of a module that imports nothing."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl fan(b: number, n: number)
+fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
+.decl leaf(b: number)
+leaf(b) :- doc(b, _, _), count : { dep(b, _) } = 0.
+.violation HUB(at: node) code "HUB" "An import of a module two or more files import."
+HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, n), n >= 2.
+.violation LEAF(at: node) code "LEAF" "An import of a module that imports nothing."
+LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from c import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert!(findings().iter().any(|r| r.contains("HUB")) && findings().iter().any(|r| r.contains("LEAF")), "{:?}", findings());
+        let edits: [(&str, &str); 4] = [
+            ("b.py", "x = 2\n"),
+            ("d.py", "from a import w\n"),
+            ("b.py", "from c import y\nfrom d import q\n"),
+            ("d.py", "x = 1\n"),
+        ];
+        let mut maintained = 0;
+        for (path, text) in edits {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            let got = findings();
+            assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
+            eprintln!("{path}: {:?} strata run, {:?} maintained (recursive, derived again); {} findings", report.cross_strata, report.cross_maintained, got.len());
+            assert_eq!(report.cross_maintained.2, 0, "no stratum is derived again");
+            maintained += report.cross_maintained.0;
+        }
+        assert!(maintained > 0);
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

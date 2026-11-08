@@ -731,7 +731,7 @@ impl CoreRows {
     /// earlier pattern's group captured (`SpanIn`). The source is scanned once per pattern (decision 0042 §3). A
     /// line's, node's or capture's text is scanned once per distinct text in the batch (0042 §2, `rx_memo`), and its
     /// matches placed at each span holding it: nodes of one kind seldom nest, and a capture lies inside its text.
-    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], ends: &[Option<Vec<u64>>], string: &mut dyn FnMut(&str) -> usize) {
         use crate::code_rule_dsl::logic::front::SpanIn;
         let facts = std::sync::Arc::clone(&p.facts);
         let src = facts.source.as_str();
@@ -785,8 +785,13 @@ impl CoreRows {
                     SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
                 };
                 let names: Vec<Option<&str>> = re.capture_names().enumerate().map(|(g, n)| if g == 0 { Some("") } else { n }).collect();
-                // The bytes a match can end after (decision 0081 §3): a source or line where none can is not scanned.
-                let ends = prefilter.as_ref().map(|f| f.ends(src.as_bytes()));
+                // The bytes a match can end after (decision 0081 §3), from the batch's run of the block programs: a
+                // source or line where none can is not scanned.
+                let ends = match (&ends[i], prefilter) {
+                    (Some(e), _) => Some(std::borrow::Cow::Borrowed(e.as_slice())),
+                    (None, Some(f)) => Some(std::borrow::Cow::Owned(f.ends(src.as_bytes()))),
+                    (None, None) => None,
+                };
                 for ([a, b], c) in containers {
                     if let Some(ends) = &ends
                         && !crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::any_in(ends, a as usize, b as usize)

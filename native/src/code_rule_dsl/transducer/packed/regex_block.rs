@@ -36,6 +36,35 @@ const MAX_OPS: usize = 2048;
 /// before a line's `\r`).
 pub(in crate::code_rule_dsl) struct SpanPrefilter {
     program: BlockProgram,
+    /// The program as the native executors take it (Cranelift's and Metal's IR).
+    native: super::native_ir::BlockNative,
+}
+
+/// Where a batch's span programs ran (`ends_batch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum RanOn {
+    Metal,
+    Cpu,
+}
+
+/// Every (file, program) pair's marks in one batch (decision 0066's shape): on Metal when `metal` and a device takes
+/// it, each lane a chunk of a file; otherwise the CPU interpreter, one pass per operation over every file's blocks.
+/// `files` are (bytes, the program's index in `filters`); the result is in `files`' order.
+pub(in crate::code_rule_dsl) fn ends_batch(filters: &[&SpanPrefilter], files: &[(&[u8], usize)], metal: bool) -> (Vec<Vec<u64>>, RanOn) {
+    use super::block::BatchFile;
+    let batch: Vec<BatchFile<'_>> = files.iter().map(|&(bytes, program)| BatchFile { bytes, program }).collect();
+    #[cfg(target_os = "macos")]
+    if metal && !batch.is_empty() {
+        use super::metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+        let natives: Vec<&super::native_ir::BlockNative> = filters.iter().map(|f| &f.native).collect();
+        if let Ok(run) = run_split(&natives, &batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64) {
+            return (run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Metal);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal;
+    let programs: Vec<&BlockProgram> = filters.iter().map(|f| &f.program).collect();
+    (super::block::run_batch(&programs, &batch).into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Cpu)
 }
 
 impl SpanPrefilter {
@@ -57,7 +86,8 @@ impl SpanPrefilter {
         }
         let program = BlockProgram { tables: b.tables, ops: b.ops, outputs: vec![end], delay: 1, ..BlockProgram::default() };
         program.verify().ok()?;
-        Some(SpanPrefilter { program })
+        let native = super::native_ir::BlockNative::lower(&program);
+        Some(SpanPrefilter { program, native })
     }
 
     /// Bit `i` of the words: a match can end after byte `i` of `bytes`.
@@ -449,6 +479,28 @@ mod tests {
                 for (name, got) in runs {
                     assert_eq!(got[0], want, "{re} on {name} over {text:?}");
                 }
+            }
+        }
+    }
+
+    /// The batch (`ends_batch`) gives each (file, program) the marks the program gives that file alone, on the
+    /// device and on the CPU.
+    #[test]
+    fn a_batch_of_span_programs_marks_each_file_as_it_alone_would() {
+        let filters: Vec<SpanPrefilter> = ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"].iter().map(|re| SpanPrefilter::compile(re, false).unwrap()).collect();
+        let refs: Vec<&SpanPrefilter> = filters.iter().collect();
+        let long = "x = 1  # SEC12\nclass Foo:\n    pass\n".repeat(500);
+        let mut files: Vec<(&[u8], usize)> = Vec::new();
+        for text in TEXTS.iter().copied().chain([long.as_str()]) {
+            for f in 0..filters.len() {
+                files.push((text.as_bytes(), f));
+            }
+        }
+        for metal in [false, true] {
+            let (got, ran) = ends_batch(&refs, &files, metal);
+            assert!(metal == (ran == RanOn::Metal) || !cfg!(target_os = "macos"), "{ran:?}");
+            for ((bytes, f), got) in files.iter().zip(&got) {
+                assert_eq!(*got, filters[*f].ends(bytes), "program {f} on {ran:?}");
             }
         }
     }
