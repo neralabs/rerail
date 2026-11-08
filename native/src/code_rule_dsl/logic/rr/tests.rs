@@ -6,6 +6,28 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn host_info_answers_only_demanded_keys_without_primary_documents() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("host-info");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("host.rr");
+    std::fs::write(&rule, r#"
+.language python
+.scope dirs "__no_primary__"
+.decl wanted(key: symbol)
+wanted("cpu_count"). wanted("env:RERAIL_NONEXISTENT_HOST_TEST_5d381"). wanted("unknown").
+.decl host_info(key: symbol, value: symbol)
+.violation Host(at: span, key: symbol, value: symbol) code "HOST" "host"
+Host(@place("",0), k, v) :- wanted(k), host_info(k,v).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::json!({})).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{report}");
+    assert_eq!(rows[0]["parameters"]["key"], "cpu_count");
+    assert!(rows[0]["parameters"]["value"].as_str().unwrap().parse::<u64>().unwrap() > 0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn balanced_rows_batches_tasks_and_preserves_occurrences_and_program_facts() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("balanced-rows");
     std::fs::create_dir_all(&root).unwrap();

@@ -19,6 +19,33 @@ pub(in crate::code_rule_dsl) enum Kind {
 
 use Kind::{Number, Text};
 
+#[cfg(test)]
+mod python_integer_tests {
+    use super::*;
+
+    #[test]
+    fn python_integer_clamp_preserves_python_decimal_syntax_and_limits() {
+        for (text, low, high, digits, expected) in [
+            ("  +1_2 ",1,51,4300,Some(12)), ("-99",1,51,4300,Some(1)),
+            ("0",1,51,4300,Some(1)), ("999999999999999999999999999",1,51,4300,Some(51)),
+            ("-9223372036854775808",i64::MIN,i64::MAX,4300,Some(i64::MIN)),
+            ("9223372036854775808",i64::MIN,i64::MAX,4300,Some(i64::MAX)),
+            ("١_٢",1,51,4300,Some(12)), ("\u{85}\u{2009}９\u{3000}",1,51,4300,Some(9)),
+            ("",1,51,4300,None), ("  ",1,51,4300,None), ("_1",1,51,4300,None),
+            ("1_",1,51,4300,None), ("1__2",1,51,4300,None), ("+_1",1,51,4300,None),
+            ("1.0",1,51,4300,None), ("0x10",1,51,4300,None), ("−1",1,51,4300,None),
+            ("\u{1c}1",1,51,4300,None), ("1 2",1,51,4300,None), ("²",1,51,4300,None),
+            ("0000",1,51,3,None), ("1_2_3",1,51,3,Some(51)),
+            ("1",5,4,4300,None), ("1",1,51,-1,None),
+        ] {
+            assert_eq!(eval("python_int_clamped", &[text], &[low, high, digits]), expected.map_or(Value::Null, Value::Integer), "{text:?}");
+        }
+        assert_eq!(eval("python_int_clamped", &[&"9".repeat(4301)], &[1,51,4300]), Value::Null);
+        assert_eq!(eval("python_int_clamped", &[&"9".repeat(4301)], &[1,51,0]), Value::Integer(51));
+        assert!(signature("python_int_clamped").is_some());
+    }
+}
+
 /// Each function: its name, its arguments and its result.
 const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("qname", &[Text, Text], Text),
