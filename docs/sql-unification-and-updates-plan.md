@@ -1549,3 +1549,148 @@ Validation passes 161 selected Rust tests, including the scheduler and native st
 All 38 profiling and report tests pass. The library also compiles with `code-rule-profile` enabled.
 The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
 Task build and temporary directories are removed after evidence archival.
+
+### Cross-rule summaries and recursive storage duplication (2026-11-08)
+
+The branch first matched Final Rerail Shape at `0f0049ec7`.
+That branch advanced during implementation. Merge `b3f3c3b92` incorporates stage 1 of decision 0089 at `0ab7966c9`.
+The final comparison uses a separate control tree with both `142e775a9` and that Final Rerail Shape update.
+It therefore retains the previous cold, lookup, and native publication improvements in both builds.
+
+#### Root causes and fixes
+
+Scalar summaries were owned by individual rules. Identical bags therefore had separate group tables, value indexes, initialization scans, and update passes.
+The previous compatibility test also required identical outer lookup mappings. That condition is necessary for sharing one probe, but not one stored summary.
+
+The shared logical analysis now distinguishes lookup compatibility from bag storage compatibility.
+Storage compatibility requires the same source version, key projection, pure filters, non-null bag semantics, and value expression.
+Consumer lookup identities remain local. Count can use another reducer's value projection, but cannot bridge two different value expressions.
+Counts prefer a compatible local lookup before adopting another rule's value projection.
+Both logical planners expose the same proof model. SQL descriptors apply it to retained storage.
+
+Global candidates are partitioned by source, keys, filters, values, and effect contracts before compatibility checks.
+Each family uses a non-count witness to establish its value invariant. The analysis avoids redundant checks against every previous family member.
+Explain records the partitions and witnesses, including rejection reasons.
+A 10,000-site test bounds the common-bag case to 20,000 checks and checks the serialized report size.
+This prevents shared analysis from recreating the metadata growth that sharing is intended to remove.
+
+A checked execution creates each compatible summary and extrema index once, when its first consumer becomes ready.
+Every consumer keeps its own contexts and lookup mapping.
+Maintenance applies each source delta once per stored bag and reuses an immutable dirty-key snapshot for later consumers.
+The cache lasts for one maintenance pass. Nested passes and later batches have independent caches.
+Scratch rewinds do not invalidate those snapshots. Failed batches restore all SQL and native state before retry.
+
+Walk lowering can reveal additional rules after cold execution.
+Existing descriptors remain intact, including consumers that have not initialized yet. Newly exposed rules receive their own compatible plans.
+Splitting an existing pool during this step could otherwise apply one source delta twice.
+A regression test combines a cold consumer, a later checked consumer, shared extrema, and a retained tree walk.
+
+#### Shared SQL support transitions
+
+Pooling alone passed parity but still required 119 submissions for the two-rule acceptance session.
+Separate support updates continued to insert dirty contexts, delete contributions, evaluate replacements, and reconcile head counts through individual statements.
+The baseline session required 126 submissions. Neither session met the unchanged allowance of 100.
+
+Compatible scalar consumers now use one fenced SQL support phase per affected retained output.
+The phase computes removed and added contexts, reevaluated contributions, signed head supports, and public output deltas.
+SQL handles all rule and reducer evaluation. Native scratch roots only validate and stage its result.
+Compact SQLite publication uses unique prefix keys and row containment to omit empty inserts and unnecessary deletions.
+Scalar-only changes also leave unchanged context stores in place.
+Public output writes use the actual tuple deltas, preserving triggers that reject unrelated writes.
+Checked outer expressions, dependency barriers, registered lattice paths, and SQL size limits retain their established transition paths with reasons.
+
+The 500-step cancellation fixture became successful because the new path used less work.
+Cancellation tests now use a one-step budget so optimization cannot invalidate their failure precondition.
+Separate overflow and trigger tests cover failures after retained state changes, including failure in a later shared consumer.
+
+#### Native storage
+
+A contribution row retained a complete context and its projected head, even when the head contained only direct fields and integer constants.
+The shared storage analysis now proves when SQL can reconstruct those rows from a complete retained context key.
+Native positive phases then omit the duplicate contribution root and reconstruct its read side through SQL.
+Computed values, checked predicates, and unsupported transition paths keep their materialized results.
+Frames share immutable reconstruction SQL. Edits reuse that query text.
+
+Each persistent index node also stored a second copy of its key's 32-byte priority digest.
+Nodes now read that digest from the existing key. Canonical ordering, Merkle roots, row IDs, and snapshot behavior remain unchanged.
+These changes reduce retained storage without moving rule execution into host code.
+
+The input version remains part of a bag's identity.
+Different wave gates can observe different versions and therefore retain separate maintenance histories.
+The logical compatibility report and the applied runtime storage boundaries are both visible in explain.
+
+#### Refreshed acceptance results
+
+The control tree is `1e0116490`: previous work at `142e775a9` merged with Final Rerail Shape at `0ab7966c9`.
+Both binaries use Rust 1.95.0 and the same headless Python/RR features, without debug information or incremental compilation.
+All six final sessions pass independent cold parity, complete receipt coverage, rollback, and recovery.
+The recursive sessions retain six successful edits, two expected failures, full state checks, and unrelated-write guards.
+The scalar sessions include duplicate values with distinct supports, extrema retractions, a failed batch, and recovery.
+The cross-rule sessions use two producers with distinct tags over the same bags, preserving separate rule witnesses and support counts.
+
+| Workload | Complete-job SQL before / after | Initial VM before / after | Initial native column reads before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 scalar groups | 98 / 81 | 405,501 / 405,501 | 13,000 / 13,000 |
+| 10,000 scalar groups | 98 / 81 | 4,023,501 / 4,023,501 | 130,000 / 130,000 |
+| 1,000 cross-rule groups | 126 / 92 | 877,850 / 660,737 | 26,000 / 14,000 |
+| 10,000 cross-rule groups | 126 / 92 | 8,743,850 / 6,573,737 | 260,000 / 140,000 |
+| 1,000 recursive regions | 100 / 100 | 4,716,101 / 4,706,096 | 233,000 / 233,000 |
+| 10,000 recursive regions | 100 / 100 | 47,124,101 / 47,024,096 | 2,330,000 / 2,330,000 |
+
+The control cross-rule jobs fail the execution allowance after complete capture. The final jobs pass at 92 submissions.
+Cross-rule initialization removes two sorts and four submissions. Initial VM work decreases by 25%, and native column reads decrease by 46%.
+Cross-rule edit submissions decrease from 46 to 16, including the expected failed batch. Edit VM work decreases from 3,324 to 2,750.
+The larger recursive run returns 1,050,131 initial rows instead of 1,060,131 because it omits the duplicate seed contribution root.
+
+The single-rule transition trades more internal SQL work for fewer submissions.
+Its edit VM work increases from 1,774 to 1,831 instructions, sorts increase from four to twelve, and staging returns seven additional rows.
+Those rows remain bounded by the affected contexts. The change does not scan unrelated groups.
+The 100,000-value sparse-edit checks remain below 200 inspected rows and 50,000 VM instructions.
+The new support phase therefore provides statement headroom, rather than a universal latency improvement.
+
+The allowance remains 100 for the complete job. Recursive jobs still have no submission headroom.
+No helper, transaction, setup operation, failure, or cleanup statement is omitted from acceptance.
+Native publication is storage work over SQL-computed rows, rather than an opaque rule evaluator.
+
+#### CPU and memory
+
+The final comparison uses three alternating pairs per workload and size, with fresh processes and stores.
+Profiling callbacks are disabled. Every trial checks outputs, output deltas, unrelated-write guards, and applicable scratch reuse.
+Other builds and tests ran on the shared macOS arm64 host. These measurements do not establish isolated hardware limits.
+
+| Workload | Initial CPU before / after | Edit CPU before / after | Peak RSS before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 scalar groups | 8.15 / 6.88 ms | 2.85 / 2.21 ms | 25.83 / 26.16 MiB |
+| 10,000 scalar groups | 49.22 / 53.05 ms | 2.24 / 2.98 ms | 48.17 / 48.36 MiB |
+| 1,000 cross-rule groups | 14.63 / 11.11 ms | 3.87 / 3.31 ms | 26.22 / 26.75 MiB |
+| 10,000 cross-rule groups | 104.27 / 74.41 ms | 3.96 / 3.35 ms | 50.19 / 50.19 MiB |
+| 1,000 recursive regions | 1.101 / 1.117 s | 46.95 / 54.01 ms | 86.20 / 75.72 MiB |
+| 10,000 recursive regions | 11.585 / 11.503 s | 59.23 / 61.53 ms | 639.88 / 533.22 MiB |
+
+Large cross-rule initialization is 29% faster in this batch. Its sparse edit is 15% faster.
+The single-rule large edit is slower despite fewer submissions. Additional sorts, staging, and statement preparation are candidates for further measurement.
+The larger recursive peak decreases by 107 MiB, or 17%. Initial CPU is effectively unchanged; no recursive CPU speedup is claimed.
+Native publication timing varies between captures, so its individual profiled CPU observations are not used as a speedup claim.
+
+Possible extensions include indexed anti-joins for small support differences, stronger computed-value contracts, and more compact secondary index layouts.
+Sharing across wave gates requires matching input versions and synchronized maintenance cursors. It is not implied by source-name equality alone.
+
+#### Explain, checks, and evidence
+
+Logical explain includes bag partitions, value witnesses, compatibility failures, and contribution reconstruction proofs.
+Runtime explain adds named stores, local lookup members, consumer counts, storage boundaries, and actual reconstruction choices.
+It distinguishes a valid logical proof from a backend path that retains materialized support.
+SQL receipts attach those decisions to evaluation and helper publication scopes.
+The final reports expose logical analyses on 22 scalar entries, 30 cross-rule entries, and 15 recursive entries.
+All five scalar helper publications and all six cross-rule helper publications retain their owning logical analysis in both sizes.
+
+The expanded merged suite passes 238 tests, with three ignored tests and the separate syntax census excluded.
+It includes RR and corpus tests with SQL guests, native Python syntax verdicts, and persistent tape caching enabled.
+Validation uses a fresh cache for that feature configuration. Reusing the earlier cache produced a stale syntax verdict in one test.
+The isolated verdict test and the complete expanded suite pass with fresh, feature-specific caches.
+All 38 profiling/report tests pass. The library compiles with `code-rule-profile` enabled.
+The refreshed structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+
+Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cross-rule-storage-20261108.tar.gz`.
+It includes refreshed control and final captures, raw receipts, parity bundles, CPU trials, earlier candidates, source patches, and validation logs.
+Task build, control worktree, and temporary directories are removed after archival.
