@@ -28,6 +28,31 @@ class EngineAlignmentTests(unittest.TestCase):
                 migration.verify_engine_alignment(Path('/unused'),
                     dict(checkout='.', upstreamCommit='modern', nativeExtensions=[]))
 
+    def test_engine_audit_rejects_newer_local_final_shape_until_merged(self):
+        branch = 'refs/heads/jeremybarnes/final-rerail-shape'
+        def git(_root, *args):
+            if args == ('rev-parse', '--verify', branch):
+                return 'new-final-shape'
+            if args == ('merge-base', '--is-ancestor', 'new-final-shape', 'HEAD'):
+                raise migration.subprocess.CalledProcessError(1, 'git')
+            return ''
+        with patch.object(migration, 'git', git):
+            with self.assertRaisesRegex(ValueError, 'newer local Final shape'):
+                migration.verify_engine_alignment(Path('/unused'), dict(
+                    checkout='.', upstreamCommit='adopted', upstreamBranch=branch,
+                    nativeExtensions=[]))
+
+    def test_engine_audit_allows_an_unavailable_local_final_shape_branch(self):
+        branch = 'refs/heads/jeremybarnes/final-rerail-shape'
+        def git(_root, *args):
+            if args == ('rev-parse', '--verify', branch):
+                raise migration.subprocess.CalledProcessError(128, 'git')
+            return ''
+        with patch.object(migration, 'git', git):
+            migration.verify_engine_alignment(Path('/unused'), dict(
+                checkout='.', upstreamCommit='adopted', upstreamBranch=branch,
+                nativeExtensions=[]))
+
     def test_engine_audit_checks_ancestry_and_exact_reviewed_extensions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
