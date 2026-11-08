@@ -11,6 +11,60 @@ import migration
 
 
 class EngineAlignmentTests(unittest.TestCase):
+    def artifact(self,root):
+        binary=root/'frozen-cli';binary.write_bytes(b'compiled modern engine')
+        trees={name:'tree:'+name for name in ['native','tools/bitlex','Cargo.toml','Cargo.lock']}
+        receipt=dict(engineCommit='build',upstreamCommit='modern',sourceTrees=trees,sha256=migration.sha(binary.read_bytes()))
+        return binary,dict(upstreamCommit='modern',cliArtifact=receipt)
+
+    def artifact_git(self,root,*args):
+        if args[0]=='rev-parse':return 'tree:'+args[1].removeprefix('HEAD:')
+        return ''
+
+    def test_native_artifact_requires_a_recorded_build_for_the_adopted_final(self):
+        with self.assertRaisesRegex(ValueError,'recorded.*artifact'):
+            migration.verify_engine_artifact(Path('/unused'),dict(upstreamCommit='modern'),Path('/old-cli'))
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            source['cliArtifact']['upstreamCommit']='old'
+            with self.assertRaisesRegex(ValueError,'adopted Final'):
+                migration.verify_engine_artifact(root,source,binary)
+
+    def test_native_artifact_rejects_an_old_source_tree_or_changed_working_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            source['cliArtifact']['sourceTrees']['native']='old-tree'
+            with patch.object(migration,'git',self.artifact_git),self.assertRaisesRegex(ValueError,'source tree'):
+                migration.verify_engine_artifact(root,source,binary)
+            source['cliArtifact']['sourceTrees']['native']='tree:native'
+            def dirty(root,*args):
+                return 'native/changed.rs' if args[0]=='diff' else self.artifact_git(root,*args)
+            with patch.object(migration,'git',dirty),self.assertRaisesRegex(ValueError,'committed'):
+                migration.verify_engine_artifact(root,source,binary)
+
+    def test_native_artifact_validates_bytes_and_invalidates_its_hash_cache_on_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            with patch.object(migration,'git',self.artifact_git):
+                migration.verify_engine_artifact(root,source,binary)
+                migration.verify_engine_artifact(root,source,binary)
+                binary.write_bytes(b'compiled outdated code')
+                with self.assertRaisesRegex(ValueError,'binary.*recorded'):
+                    migration.verify_engine_artifact(root,source,binary)
+
+    def test_native_artifact_is_checked_before_either_execution_boundary(self):
+        import suite
+        for boundary in ['direct','worker']:
+            with self.subTest(boundary=boundary), \
+                 patch.object(migration,'read_json',return_value=dict(engineSource={})), \
+                 patch.object(migration,'verify_engine_alignment'), \
+                 patch.object(migration,'verify_engine_artifact',side_effect=ValueError('stale binary')), \
+                 patch.object(replay.subprocess,'run') as direct,patch.object(suite.subprocess,'Popen') as worker:
+                with self.assertRaisesRegex(ValueError,'stale binary'):
+                    if boundary=='direct':replay.execute_native(Path('/old-cli'),Path('/policy.rr'),[],{})
+                    else:suite.Suite(Path('/source'),Path('/old-cli'),[],0,1,Path('/baseline'))
+                direct.assert_not_called();worker.assert_not_called()
+
     def test_engine_audit_rejects_a_retired_checkout(self):
         with self.assertRaisesRegex(ValueError, 'repository root'):
             migration.verify_engine_alignment(Path('/unused'), dict(checkout='.rerail/engine'))
