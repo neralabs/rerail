@@ -88,7 +88,10 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **83 target drafts and 17 absent translations**. None has full acceptance yet.
+The current inventory contains **84 target drafts and 16 absent translations**. None has full acceptance yet.
+The 84th draft, `grammar_str_params`, preserves constructor prepasses, textual annotation matching, slot policy, and duplicate render events.
+All five original tests pass, including two positive file checks. Its 117 supplemental API cases include 66 positive finding lists.
+All 108 reporter cases pass, including 66 positive cases. Seventeen disabled-path controls reject missing semantic behavior.
 The 83rd draft, `grammar_render_methods`, preserves render context, exemptions, source fragments, event order, and first-event deduplication.
 All 114 unchanged original tests pass with 101 complete observations, including 22 positive file checks.
 Its 124 supplemental API cases include 58 positive finding lists and 38 canonical source comparisons.
@@ -993,3 +996,41 @@ and [Boolean printer regression](../gate/data-layer/fixtures/host/data-layer-por
 
 Final shape remains merged through `07a6b4171`; its fetched branch did not advance during this work.
 The inventory is 83 drafts and 17 absent translations. Full migration acceptance remains pending.
+
+## 2026-11-08 — Grammar string parameters and render slots
+
+The native rule preserves the source's constructor prepass before class-body traversal.
+It checks ordinary positional arguments of direct synchronous constructors.
+Positional-only, keyword-only, and variadic parameters remain excluded. Asynchronous constructors do not establish known slot state.
+A synchronous `render()` method can establish grammar status without a `Sql` base.
+Subscripted bases do not establish that status. Class and parameter allowlists remain separate.
+
+Annotation classification uses canonical text, split into bar-separated arms, as the source does.
+The supplemental cases retain the source's surprising matches inside quoted annotations. Annotation text determines eligibility.
+For a class without a synchronous constructor, every `self` slot can produce a string-conversion finding.
+For a class with a constructor and no recorded string slots, those conversions produce no findings.
+Render context carries through nested helpers. String-conversion and concatenation events retain their order and duplicates.
+
+The empty detector failed both original positive tests and passed the three negative tests.
+The implemented detector passes all five original tests with complete DTO comparisons and no skips or semantic fallback.
+The 117 supplemental API cases include 66 positive finding lists. All 108 reporter cases pass, including 66 positives.
+Five API cases retain source CLI argument and output protocol around native findings.
+They cover check mode, summary mode, duplicate counts, and shallow file discovery. Native production CLI acceptance remains open.
+
+All 17 disabled-path controls reject the corresponding missing behavior.
+They cover detector families, constructor presence, positional-only arguments, lexical annotations, grammar selection, allowlists, duplicates, ordering, async boundaries, and the reporter ratchet.
+Two initial control mutations produced invalid syntax. The control validator rejected those runs as evidence.
+The corrected controls all fail through observable parity differences with successful native execution.
+
+The port adds no engine code and requires no new engine build.
+It uses the frozen modern root CLI from `26e694e62` and merges Final shape through `07a6b4171`.
+The fetched Final shape tip remained unchanged. The generator reproduces the committed policy bytes.
+All 95 tooling tests and 95 rule/table readers pass. The preceding render-method corpus also passes all 124 API cases.
+
+The [native contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-str-params-native-contracts.json.gz) contains source oracles, native results, controls, implementation bytes, and its validator.
+The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-str-params-original-source.json.gz) and
+[empty-detector failures](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-str-params-detector-red.json.gz) retain the TDD starting point.
+
+The five original tests do not exercise every legacy helper or collector event directly.
+Full registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance remain open.
+The inventory is 84 drafts and 16 absent translations. Full migration acceptance remains pending.
