@@ -55,6 +55,8 @@ rr_cx_own(d, h) :- doc(d, p, _), tape_of(d, t), h = @sha256(cat(p, "\t", t)).
 // so the host's digest covers it, and rows about either name the other's nodes: they share a component.
 .decl rr_cx_guest(g: number, h: number)
 rr_cx_guest(g, h) :- guest(g, h, _, _).
+// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows.
+rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
 
 // d depends on e.
 .decl rr_cx_edge(d: number, e: number)

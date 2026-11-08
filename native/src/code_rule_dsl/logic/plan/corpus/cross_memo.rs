@@ -452,7 +452,12 @@ pub(super) fn record(
                     return Err(Error::Plan(format!(
                         "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0074): remove it from `.pragma \"{PRAGMA}\"`",
                         paths.get(&doc_of(row[*first])).map_or("?", String::as_str),
-                        paths.get(&doc_of(row[n])).map_or("?", String::as_str)
+                        // A guest has no path: named by its key and its component's first file.
+                        paths.get(&doc_of(row[n])).cloned().unwrap_or_else(|| format!(
+                            "document {} (component of {})",
+                            doc_of(row[n]),
+                            components.members().get(e).and_then(|(_, ds)| ds.iter().find_map(|d| paths.get(d))).map_or("no file", String::as_str)
+                        ))
                     )));
                 }
             }
