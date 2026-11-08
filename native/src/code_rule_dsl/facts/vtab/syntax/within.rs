@@ -297,7 +297,7 @@ impl Within {
             if let Mode::Axis(axis) = self.mode {
                 return self.axis_shape(axis);
             }
-            let (mut rows, mut nodes, mut sq_inner, mut sq_outer) = (0i64, 0i64, 0i64, 0i64);
+            let (mut rows, mut nodes, mut ancestors, mut sq_inner) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
                 for l in 0..p.len() as usize {
                     // Span mode counts the node itself on both sides.
@@ -305,11 +305,18 @@ impl Within {
                     let (d, s) = (i64::from(p.depth[l]) + own, i64::from(p.size[l]) + own);
                     rows += d;
                     nodes += 1;
+                    ancestors += i64::from(s > 0);
                     sq_inner += d * d;
-                    sq_outer += s * s;
                 }
             }
-            Shape { rows, ndv: [nodes, nodes], sq: [sq_inner, sq_outer] }
+            // The ancestor side is priced by its mean subtree size, as the planner prices `nearest`'s descent: the
+            // size-weighted mean (the sum of squared subtree sizes over rows) is the subtree of a pair's ancestor,
+            // which a document's root and its largest classes make about a thousand nodes, while the ancestors a
+            // rule binds (its functions, blocks, statements) hold tens. Priced so, a rule from a function's nodes
+            // scanned every containment pair rather than look up each function's subtree.
+            let ancestors = ancestors.max(1);
+            let sq_outer = rows.saturating_mul(rows) / ancestors;
+            Shape { rows, ndv: [nodes, ancestors], sq: [sq_inner, sq_outer] }
         })
     }
 
