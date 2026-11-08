@@ -7,11 +7,17 @@ sgd_workspace(".").
 .decl sgd_top(name: symbol)
 sgd_top(name) :- sgd_workspace(path), dir_entry(path, name, 1).
 .decl sgd_layer(name: symbol)
-sgd_layer(name) :- sgd_top(name), match_all("\\Al[0-9]{4}_.+", name).
+sgd_layer(name) :- sgd_top(name), match("l[0-9]{4}_.+(?s:.*)", name).
 .decl sgd_modern()
 sgd_modern() :- sgd_top("data_layer").
 sgd_modern() :- sgd_top("_internal").
 sgd_modern() :- sgd_layer(_).
+.decl sgd_public_path(path: symbol)
+sgd_public_path("impl") :- sgd_top("impl").
+sgd_public_path("data_layer") :- sgd_top("data_layer").
+sgd_public_path("_internal") :- sgd_top("_internal").
+sgd_public_path(path) :- sgd_layer(path).
+sgd_public_path("api") :- sgd_top("api"), !sgd_modern().
 .decl sgd_default(i: number, path: symbol)
 sgd_default(0, "impl") :- sgd_modern(), sgd_top("impl").
 sgd_default(1, "data_layer") :- sgd_modern(), sgd_top("data_layer").
@@ -21,8 +27,15 @@ sgd_default(0, "api") :- !sgd_modern(), sgd_top("api").
 sgd_default(1, "impl") :- !sgd_modern(), sgd_top("impl").
 
 .decl sgd_argument(i: number, path: symbol)
-sgd_argument(i, path) :- option_item("scanDirectories", i, path).
-sgd_argument(0, "public") :- !option_item("scanDirectories", _, _).
+.decl sgd_configured()
+sgd_configured() :- env(key, _), match_all("\\Adata-layer\\.scan\\.[0-9]+\\z", key).
+sgd_argument(to_number(index), path) :- env(key, path), match_all("\\Adata-layer\\.scan\\.(?<index>[0-9]+)\\z", key).
+sgd_argument(0, "public") :- !sgd_configured().
+.decl sgd_requested_path(path: symbol)
+sgd_requested_path(path) :- sgd_argument(_, path), path != "public".
+sgd_requested_path(path) :- sgd_argument(_, "public"), sgd_public_path(path).
+.decl sgd_walk_root(path: symbol)
+sgd_walk_root(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(raw, "/+", "/"), "\\A(?:\\./)+", ""), "/(?:\\./)+", "/"), "/\\.\\z", ""), "/+\\z", "")) :- sgd_requested_path(raw).
 .decl sgd_has_public()
 sgd_has_public() :- sgd_argument(_, "public").
 .decl sgd_expanded(i: number, j: number, path: symbol)
@@ -35,25 +48,25 @@ sgd_chosen(i, j, path) :- sgd_expanded(i, j, path), (!sgd_has_public() ; !sgd_ea
 .decl sgd_root(i: number, path: symbol)
 sgd_root(i, @replace_all(@replace_all(@replace_all(@replace_all(@replace_all(raw, "/+", "/"), "\\A(?:\\./)+", ""), "/(?:\\./)+", "/"), "/\\.\\z", ""), "/+\\z", "")) :- sgd_chosen(a, b, raw), i = count : { sgd_chosen(c, d, _), (c < a ; (c = a, d < b)) }.
 
-.decl sgd_probe(i: number, path: symbol, parent: symbol, name: symbol)
-sgd_probe(i, path, ".", path) :- sgd_root(i, path), path != ".", !contains("/", path).
-sgd_probe(i, path, parent, name) :- sgd_root(i, path), match_all("\\A(?<parent>.*)/(?<name>[^/]+)\\z", path).
+.decl sgd_probe(path: symbol, parent: symbol, name: symbol)
+sgd_probe(path, ".", path) :- sgd_walk_root(path), path != ".", !contains("/", path).
+sgd_probe(path, @replace_all(path, "/[^/]+\\z", ""), @replace_all(path, "(?s)\\A.*/", "")) :- sgd_walk_root(path), contains("/", path).
 .decl sgd_probe_parent(path: symbol)
-sgd_probe_parent(parent) :- sgd_probe(_, _, parent, _).
+sgd_probe_parent(parent) :- sgd_probe(_, parent, _).
 .decl sgd_blocked(path: symbol)
-sgd_blocked(path) :- sgd_root(_, path), match_all("(?:\\A|/)(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)(?:/|\\z)", path).
-.decl sgd_walk(i: number, path: symbol)
-sgd_walk(i, ".") :- sgd_root(i, ".").
-sgd_walk(i, path) :- sgd_probe_parent(parent), sgd_probe(i, path, parent, name), dir_entry(parent, name, 1), !sgd_blocked(path).
-sgd_walk(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 1), dir_metadata(path, name, _, 0, _), !match_all("\\A(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)\\z", name).
-.decl sgd_file(root: number, path: symbol)
+sgd_blocked(path) :- sgd_walk_root(path), match("(?s:.*)(?:\\A|/)(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)(?:/|\\z)(?s:.*)", path).
+.decl sgd_walk(root: symbol, path: symbol)
+sgd_walk(".", ".") :- sgd_walk_root(".").
+sgd_walk(root, root) :- sgd_probe_parent(parent), sgd_probe(root, parent, name), dir_entry(parent, name, 1), !sgd_blocked(root).
+sgd_walk(root, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(root, path), dir_entry(path, name, 1), dir_metadata(path, name, _, 0, _), !match("(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)", name).
+.decl sgd_file(root: symbol, path: symbol)
 // An explicit Python file bypasses directory and test exclusions in the source.
-sgd_file(i, path) :- sgd_probe_parent(parent), sgd_probe(i, path, parent, name), dir_metadata(parent, name, 1, _, _), suffix(".py", name), name != ".py".
-sgd_file(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 0), suffix(".py", name), name != ".py".
+sgd_file(path, path) :- sgd_probe_parent(parent), sgd_probe(path, parent, name), dir_metadata(parent, name, 1, _, _), suffix(".py", name), name != ".py".
+sgd_file(root, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(root, path), dir_entry(path, name, 0), suffix(".py", name), name != ".py".
 
 .decl sgd_key(root: number, key: symbol)
 // NUL is not a filesystem component. A NUL separator preserves Python Path's
 // component comparison, including a directory a/ before a neighbouring a.py.
-sgd_key(i, @replace_all(path, "/", "\u0000")) :- sgd_file(i, path).
+sgd_key(i, @replace_all(path, "/", "\u0000")) :- sgd_root(i, root), sgd_file(root, path).
 sgs_scan_path(@replace_all(key, "\u0000", "/"), ordinal) :- ordered_rows(_, key, ordinal, sgd_key).
 sgs_graph_path(path) :- sgd_file(_, path).

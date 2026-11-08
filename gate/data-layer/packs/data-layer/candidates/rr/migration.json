@@ -1762,7 +1762,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
-      "sha256": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
+      "sha256": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/discovery.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1773,6 +1773,11 @@
           "before": "be6f62b98f87bafd81e41cc18a8477f94f670d63c94fd7f737248391bbfbfc2b",
           "after": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
           "reason": "Implement typed batched filesystem discovery with shared directory metadata and one SQL window for scan order"
+        },
+        {
+          "before": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
+          "after": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
+          "reason": "Move global configuration and final ordering out of file-local and recursive request inputs"
         }
       ]
     }
@@ -2894,7 +2899,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "adf22d21f5a4ad012bf5e0182e976e124a69ca4a741f0de8a8e6fe958036d4f5"
+        "sha256": "515ab71b22a20fd44eb5a933a008f50c2d36f81c4e2a701bddf699dfc962f443"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2920,16 +2925,16 @@
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
     "upstreamMerge": "7a846bfcae740fd20390e1b490467d386982d2a0",
     "cliArtifact": {
-      "engineCommit": "d91117be8e894c567980a71a32f4e9af5206a053",
+      "engineCommit": "fba4ad03d793c48c19e38d90154f23f627df1c27",
       "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
       "sourceTrees": {
-        "native": "731dfa7363d77c2263e727223e9c1e583c45d55b",
+        "native": "f40b10e3908f63c3e16ca2e782efbf75df3a230c",
         "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
       },
-      "path": ".rerail/modern-engine-alignment/cli-577a9499b4465294",
-      "sha256": "577a9499b4465294175a7233a1dbcf7ee0731275385244ac99daeebe492c21fa",
+      "path": ".rerail/modern-engine-alignment/cli-e6475323e8104005",
+      "sha256": "e6475323e8104005e9e4ead4e804348ea54cba19b018c218524a1d5ae491288b",
       "command": [
         "cargo",
         "build",
@@ -2940,7 +2945,7 @@
         "--bin",
         "rerail-engine"
       ],
-      "seconds": 41.588
+      "seconds": 53.991
     }
   }
 }

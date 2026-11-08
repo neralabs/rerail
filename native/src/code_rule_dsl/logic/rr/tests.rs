@@ -68,7 +68,6 @@ fn directory_metadata_distinguishes_files_links_and_broken_links() {
 .scope dirs "__no_primary__"
 .decl roots(path: symbol)
 roots("pkg").
-.decl dir_metadata(path: symbol, name: symbol, is_file: number, is_symlink: number, bytes: number)
 .violation Metadata(at: span, name: symbol, is_file: number, is_symlink: number, bytes: number) code "META" "metadata"
 Metadata(@place("", 0), n, f, s, b) :- roots(p), dir_metadata(p, n, f, s, b).
 "#).unwrap();
@@ -86,6 +85,38 @@ Metadata(@place("", 0), n, f, s, b) :- roots(p), dir_metadata(p, n, f, s, b).
     assert_eq!(actual[1], ("broken".into(),0,1,0));
     assert_eq!((&actual[2].0,actual[2].1,actual[2].2), (&"link".to_owned(),0,1));
     assert_eq!((&actual[3].0,actual[3].1,actual[3].2), (&"target".to_owned(),0,0));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn whole_join_request_projections_keep_every_destination() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-two-request-heads");
+    for name in ["a", "b"] {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::fs::write(root.join(name).join(format!("{name}.py")), "").unwrap();
+    }
+    let rule = root.join("both.rr");
+    std::fs::write(&rule, r#"
+.language python
+.scope dirs "__no_primary__"
+.decl roots(path: symbol)
+roots("a"). roots("b").
+.decl walking(path: symbol)
+walking(path) :- roots(path).
+walking(cat(path, "/", name)) :- walking(path), dir_entry(path, name, 1), dir_metadata(path, name, _, 0, _).
+.violation Listing(at: span, directory: symbol, name: symbol) code "ENTRY" "entry"
+Listing(@place("",0), path, name) :- walking(path), dir_entry(path, name, 0).
+.violation FileMetadata(at: span, directory: symbol, name: symbol) code "META" "metadata"
+FileMetadata(@place("",0), path, name) :- walking(path), dir_metadata(path, name, 1, _, _).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({})).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (
+        r["code"].as_str().unwrap(), r["parameters"]["directory"].as_str().unwrap(),
+        r["parameters"]["name"].as_str().unwrap(),
+    )).collect();
+    actual.sort();
+    assert_eq!(actual, vec![("ENTRY","a","a.py"),("ENTRY","b","b.py"),("META","a","a.py"),("META","b","b.py")]);
     std::fs::remove_dir_all(root).unwrap();
 }
 

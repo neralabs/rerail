@@ -21,7 +21,7 @@ class SurveyDiscoveryContractTests(unittest.TestCase):
     def test_guards_require_links_duplicates_component_order_and_findings(self):
         original=self.recording();contract.check_positives(original['cases'])
         for label in ['nested-directory-link-pruned','explicit-directory-link-root','explicit-repeated-root',
-                      'public-expansion-deduplicates','facade-resource-outside-scan','component-path-order']:
+                      'public-expansion-deduplicates','facade-resource-outside-scan','component-path-order','dot-root-prunes']:
             with self.subTest(label=label):
                 value=copy.deepcopy(original)
                 item=next(c for c in value['cases'] if c['id']==label)

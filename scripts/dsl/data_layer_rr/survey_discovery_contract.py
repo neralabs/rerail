@@ -44,6 +44,7 @@ CASES=[
          file('data_layer/api.py','from impl.a import exported\ndef facade_only(): pass\n')],['impl']),
     case('directory-cycle-pruned',[file('pkg/kept.py'),link('pkg/back','..')],['pkg']),
     case('normalized-relative-root',[file('impl/a.py')],['./impl//']),
+    case('dot-root-prunes',[file('pkg/kept.py'),file('tmp/ignored.py'),file('.venv/ignored.py'),file('tests/ignored.py')],['.']),
 ]
 FORMAT='rerail.survey-production-discovery/v1'
 
@@ -75,7 +76,8 @@ DiscoveredPath(@place("", 0), i, path) :- sgs_scan_path(path, i).
 def native_case(engine,rule,item):
     from replay import execute_workspace
     options=dict(entryPoint='analyze_dead_code')
-    if item['directories'] is not None:options['scanDirectories']=item['directories']
+    if item['directories'] is not None:
+        options['env']=[f'data-layer.scan.{i}={path}' for i,path in enumerate(item['directories'])]
     native=execute_workspace(engine,rule,item['files'],options)
     discovered=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='DISCOVERED_PATH'),key=lambda r:r['ordinal'])
     result=dict(paths=[r['path'] for r in discovered],analysis=native_result([r for r in native['diagnostics'] if r['code']!='DISCOVERED_PATH']))
@@ -91,6 +93,7 @@ def check_positives(cases):
     scoped=by_id['facade-resource-outside-scan']
     if scoped['paths']!=['impl/a.py'] or scoped['analysis']['unused_functions']!=['impl.a::dead']:raise ValueError('Missing export negative or unreachable positive')
     if by_id['component-path-order']['paths']!=['impl/a/z.py','impl/a-/x.py','impl/a.py','impl/a_/y.py']:raise ValueError('Path component order lost')
+    if by_id['dot-root-prunes']['paths']!=['pkg/kept.py']:raise ValueError('Dot root must prune excluded trees')
 
 
 def main():
