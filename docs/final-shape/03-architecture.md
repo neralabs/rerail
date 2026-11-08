@@ -255,7 +255,7 @@ These are the Typing branch's resolutions, adopted.
 - Inference is approximate and progressive: language-specific inference programs over the AST, aiming at 80/20. Their results are facts, invalidated like any other fact. No full type checker is ever embedded.
 - **R0 runs per file.** It is a lattice fixpoint inside the GPU dispatch (§7).
 - **R1..Rk run across files** over interface summaries from the previous round, with an early cutoff on interface digests. These are bounded rounds, k = 2 *(adopted)*, not a global fixpoint.
-  - *Under revision (decision 0060, draft):* the cross-file part runs as one fixpoint over every loaded document. A library's cross-file rows are recorded by the store per import-closed group of documents (§14), and types are interned terms. The rounds go.
+  - *Under revision (decision 0060, draft):* the cross-file part runs as one fixpoint over every loaded document. Every cross-file fact is a stored derivation (§14), read while the files it read are unchanged, the same for every file. Types are interned terms. The rounds go.
 
 **Type terms.**
 - All terms live in one space of interned terms. A term is one of:
@@ -273,6 +273,7 @@ These are the Typing branch's resolutions, adopted.
 - Instantiation is local, in this order: receiver, then explicit type arguments, then one-way matching (no full unification), then a single callback step, then unbound variables fall back to their bound.
 - Bounds are must-traits.
 - Variance is declared for library types and unknown for user types, so a check gives unknown rather than a wrong false.
+  - *Under revision (decision 0060, draft):* variance is what a type's source declares (`TypeVar(..., covariant=True)`), and unknown where it declares none, whichever file the type is in.
 
 **Rule predicates.**
 - `proven: X` means X is true; `possible: X` means X is not false. Both combine with `not`.
@@ -289,6 +290,7 @@ These are the Typing branch's resolutions, adopted.
 - `cast`/`as` narrow only the expression itself *(adopted)*.
 
 **Dependency universe** (installed packages, stubs, typeshed; orders of magnitude more files).
+- *Under revision (decision 0060, draft):* a dependency's file is a document like any other, with a tape. Its facts are stored by content and reused like any file's, so there is no summary, no separate cache, no lockfile identity and no pending state. Findings are reported for the files a run is asked to check. The bullets below are the adopted text it revises.
 - Dependencies produce **interface summaries only**: no findings and no tapes.
 - Summaries are cached content-addressed per (package version, module file), machine-wide.
 - They are read on demand from resolved imports, with re-exports chased and a budget per package. The demand is the magic-set relation of the type program: `demand module(M2) :- module(M), reexport(M, _, M2).`
