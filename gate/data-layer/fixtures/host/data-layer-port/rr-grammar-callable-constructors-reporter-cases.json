@@ -1,0 +1,1630 @@
+{
+  "cases": [
+    {
+      "id": "annotation-0",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-1",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: typing.Callable[[int], str]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-2",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: list[Callable]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-3",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable | None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-4",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: \"Callable\"):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-5",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: \"left|Callable|right\"):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-6",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Any):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-7",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: typing.Any):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-8",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Any[int]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-9",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Any()):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-10",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Any | None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-11",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: int):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-12",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-13",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: factory(Callable)):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-14",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: factory(Callable=int)):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-15",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Literal[\"Callable\"]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-16",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Annotated[int, Callable]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "untyped",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-posonly",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable, /):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-kwonly",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, *, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-vararg",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, *callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-kwarg",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, **callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-self-skipped",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self: Callable, callback: int):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-direct",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-unrelated-value",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-constant-value",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = 42\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-attribute-value",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = object.callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-annotated-assignment",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn: Callable = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-chain",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = self._other = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-duplicates-two-fields",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._a = callback\n        self._b = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-tuple-target",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn, self._other = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-other-receiver",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        other._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-last-shallow-write",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n        self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-bfs-deep-before-shallow",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        if condition:\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-bfs-shallow-before-deep",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n        if condition:\n            self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-bfs-nested-function",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        def nested():\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "field-bfs-nested-class",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        class Nested:\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-not-called",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn\n"
+        }
+      ]
+    },
+    {
+      "id": "render-deep-field",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn.render()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-other-receiver",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return other._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-parentheses",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return (self)._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-nested-helper",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        def helper():\n            return self._fn()\n        return helper()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-nested-class",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        class Nested:\n            def run(self):\n                return self._fn()\n        return Nested()\n"
+        }
+      ]
+    },
+    {
+      "id": "render-return-call",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()()\n"
+        }
+      ]
+    },
+    {
+      "id": "async-init",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    async def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "async-render",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    async def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "first-init-wins",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: int): self._fn = callback\n    def __init__(self, callback: Callable): self._fn = callback\n    def render(self): return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "first-render-wins",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable): self._fn = callback\n    def render(self): return self._fn\n    def render(self): return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-renderable-class",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "def outer():\n    class G:\n        def __init__(self, callback: Callable):\n            self._fn = callback\n        def render(self):\n            return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-lambda",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-function",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-duplicate-function",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(callback, callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-keyword",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(value=callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-kwstar-name",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(**callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-kwstar-lambda",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(**(lambda: 1))\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-star-name",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(*callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-attribute-value",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(module.callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-literal",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(42)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-dotted-class",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\npkg.G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-subscript-class",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG[int](callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "constructor-call-as-callee",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG()(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-module-function",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-parameter-shadow",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer(callback):\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-assignment-shadow",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback = 42\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-assignment-after-use",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    value = G(callback)\n    callback = 42\n    return value\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-annotated-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback: object\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-augmented-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback += other\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-loop-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    for callback in values: pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-async-loop-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    async for callback in values: pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-tuple-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback, other = values\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-starred-binding-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    other, *callback = values\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-nested-direct-function",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def callback(): pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-nested-function-beats-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def callback(): pass\n    callback = 42\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-nested-body-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def helper():\n        callback = 42\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-nested-parameter-does-not-leak",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def helper(callback): pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-class-body-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    class Nested:\n        callback = 42\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-class-method-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    class Nested:\n        def method(self):\n            callback = 42\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-import-not-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    from elsewhere import callback\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-walrus-not-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    (callback := other)\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-sync-with-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    with manager() as callback: pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-async-with-not-binding",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    async with manager() as callback: pass\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-lambda-no-scope",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    return lambda callback: G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-function-no-scope",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nasync def outer(callback):\n    return G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-module-function-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\nasync def callback(): pass\nG(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "module-assignment-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ncallback = 42\nG(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "conditional-def-not-module-name",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def render(self): return 1\nif condition:\n    def callback(): pass\nG(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-class-not-global-registry",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "def outer():\n    class Local:\n        def render(self): return 1\n    return Local(lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-bare",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(render=lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-attribute",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "types.SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-generic",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace[int](render=1)\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-keyword-unicode",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(\uff52\uff45\uff4e\uff44\uff45\uff52=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-kwstar-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(**{\"render\": lambda: 1})\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-alias-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SN(render=lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-assign",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render = value\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-annotated",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render: object\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-annotated-value",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render: object = value\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-chain",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "left.render = right.render = value\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-tuple-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render, other = values\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-augmented-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render += value\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-unrelated-ignored",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.run = value\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-unicode",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.\uff52\uff45\uff4e\uff44\uff45\uff52 = value\n"
+        }
+      ]
+    },
+    {
+      "id": "cross-file-registry",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/b.py",
+          "source": "def callback(): pass\nG(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "cross-file-function-not-visible",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/b.py",
+          "source": "G(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-tests/case.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-test/case.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/test/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-fragments.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/fragments.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-nested/fragments.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/nested/fragments.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-test_case.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/test_case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-.venv/case.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/.venv/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "file-tmp/case.py",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/tmp/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "excluded-registry",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/a.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "fragment-registry-excluded",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/fragments.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "syntax-error-registry",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "class G:\n    def render(self): return 1\ninvalid(\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b: Callable):\n        self._fn = \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "missing-marker",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    }
+  ]
+}

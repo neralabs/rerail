@@ -111,6 +111,8 @@ def run(args):
                 native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['parameters']['exit_order'],-r['parameters']['entry_order']))
             if case['check']=='regex_sql_parsing':
                 native_rows=sorted(native_rows,key=lambda r:'regex_sql_parsing:'+r['code']+':'+r['path']+':'+str(r['line'])+':'+r['message'])
+            if case['check']=='grammar_callable_constructors':
+                native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['code'],r['message']))
             if case['check']=='grammar_str_params':
                 native_rows=sorted(native_rows,key=lambda r:(r['path'],r['parameters'].get('ordinal',0),r['parameters'].get('first',0),r['parameters'].get('second',0)))
             if case['check']=='grammar_render_methods':
@@ -179,7 +181,7 @@ def run(args):
                         finding['message'] = finding['message'].replace(str(root)+'/', '')
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
-        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches','render_fstrings','render_raw_strings','regex_sql_parsing','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params'}:
+        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches','render_fstrings','render_raw_strings','regex_sql_parsing','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors'}:
             last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code', 'async_sync_boundary': 'code', 'plan_scope_ownership':'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)

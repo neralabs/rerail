@@ -1,0 +1,1848 @@
+{
+  "cases": [
+    {
+      "id": "annotation-0",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-1",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: typing.Callable[[int], str]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-2",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: list[Callable]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-3",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable | None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-4",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: \"Callable\"):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-5",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: \"left|Callable|right\"):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-6",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Any):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-7",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: typing.Any):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-8",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Any[int]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-9",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Any()):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-10",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Any | None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-11",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: int):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-12",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: None):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-13",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: factory(Callable)):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-14",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: factory(Callable=int)):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-15",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Literal[\"Callable\"]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-16",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Annotated[int, Callable]):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "untyped",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "parameter-posonly",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable, /):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "parameter-kwonly",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, *, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "parameter-vararg",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, *callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "parameter-kwarg",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, **callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "parameter-self-skipped",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self: Callable, callback: int):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-direct",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-unrelated-value",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-constant-value",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = 42\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-attribute-value",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = object.callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-annotated-assignment",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn: Callable = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-chain",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = self._other = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-duplicates-two-fields",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._a = callback\n        self._b = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-tuple-target",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn, self._other = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-other-receiver",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        other._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-last-shallow-write",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n        self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-bfs-deep-before-shallow",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        if condition:\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-bfs-shallow-before-deep",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n        if condition:\n            self._fn = other\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-bfs-nested-function",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        def nested():\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "field-bfs-nested-class",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        class Nested:\n            self._fn = other\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-not-called",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-deep-field",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn.render()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-other-receiver",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return other._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-parentheses",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return (self)._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-nested-helper",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        def helper():\n            return self._fn()\n        return helper()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-nested-class",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        class Nested:\n            def run(self):\n                return self._fn()\n        return Nested()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "render-return-call",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "async-init",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    async def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "async-render",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    async def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "first-init-wins",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: int): self._fn = callback\n    def __init__(self, callback: Callable): self._fn = callback\n    def render(self): return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "first-render-wins",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable): self._fn = callback\n    def render(self): return self._fn\n    def render(self): return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "nested-renderable-class",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def outer():\n    class G:\n        def __init__(self, callback: Callable):\n            self._fn = callback\n        def render(self):\n            return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-lambda",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-function",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-duplicate-function",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(callback, callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-keyword",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(value=callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-kwstar-name",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(**callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-kwstar-lambda",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(**(lambda: 1))\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-star-name",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(*callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-attribute-value",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(module.callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-literal",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG(42)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-dotted-class",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\npkg.G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-subscript-class",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG[int](callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "constructor-call-as-callee",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nG()(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-module-function",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-parameter-shadow",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer(callback):\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-assignment-shadow",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback = 42\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-assignment-after-use",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    value = G(callback)\n    callback = 42\n    return value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-annotated-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback: object\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-augmented-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback += other\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-loop-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    for callback in values: pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-async-loop-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    async for callback in values: pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-tuple-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    callback, other = values\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-starred-binding-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    other, *callback = values\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-nested-direct-function",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def callback(): pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-nested-function-beats-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def callback(): pass\n    callback = 42\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-nested-body-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def helper():\n        callback = 42\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-nested-parameter-does-not-leak",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    def helper(callback): pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-class-body-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    class Nested:\n        callback = 42\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-class-method-binding-leaks",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    class Nested:\n        def method(self):\n            callback = 42\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-import-not-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    from elsewhere import callback\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-walrus-not-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    (callback := other)\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-sync-with-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    with manager() as callback: pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-async-with-not-binding",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    async with manager() as callback: pass\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "scope-lambda-no-scope",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ndef outer():\n    return lambda callback: G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "async-function-no-scope",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\nasync def outer(callback):\n    return G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "async-module-function-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\nasync def callback(): pass\nG(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "module-assignment-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\ncallback = 42\nG(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "conditional-def-not-module-name",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def render(self): return 1\nif condition:\n    def callback(): pass\nG(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "nested-class-not-global-registry",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def outer():\n    class Local:\n        def render(self): return 1\n    return Local(lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-bare",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "SimpleNamespace(render=lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-attribute",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "types.SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-generic",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "SimpleNamespace[int](render=1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-keyword-unicode",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "SimpleNamespace(\uff52\uff45\uff4e\uff44\uff45\uff52=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-kwstar-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "SimpleNamespace(**{\"render\": lambda: 1})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "namespace-alias-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "SN(render=lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-assign",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.render = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-annotated",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.render: object\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-annotated-value",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.render: object = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-chain",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "left.render = right.render = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-tuple-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.render, other = values\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-augmented-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.render += value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-unrelated-ignored",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.run = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "dynamic-unicode",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.\uff52\uff45\uff4e\uff44\uff45\uff52 = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "cross-file-registry",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "b.py",
+          "source": "def callback(): pass\nG(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "cross-file-function-not-visible",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "class G:\n    def render(self): return 1\ndef callback(): pass\n"
+        },
+        {
+          "path": "b.py",
+          "source": "G(callback)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-tests/case.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "tests/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-test/case.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "test/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-fragments.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "fragments.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-nested/fragments.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "nested/fragments.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-test_case.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "test_case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-.venv/case.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": ".venv/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "file-tmp/case.py",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "tmp/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "excluded-registry",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "tests/a.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fragment-registry-excluded",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "fragments.py",
+          "source": "class G:\n    def render(self): return 1\n"
+        },
+        {
+          "path": "b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "syntax-error-registry",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "class G:\n    def render(self): return 1\ninvalid(\n"
+        },
+        {
+          "path": "b.py",
+          "source": "G(lambda: 1)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "unicode",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b: Callable):\n        self._fn = \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    }
+  ]
+}
