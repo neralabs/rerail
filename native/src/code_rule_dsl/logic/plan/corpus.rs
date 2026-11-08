@@ -1074,6 +1074,22 @@ pub(crate) fn run_with_options(
     // a file's rows of them too (`memo::Entry::base`), but a run read from them derived other rows than the evaluated
     // run (O109): such a run is not memoised, as before 0063, until it does.
     let memoised = memoised && stored.is_empty();
+    // The base relations a chunk keeps only for the nodes its exports hold (`file_local::semijoin_bases`): read by
+    // the cross part only as lookups of those nodes.
+    let semijoin: BTreeSet<String> = if memoised {
+        BTreeSet::new()
+    } else {
+        crate::code_rule_dsl::typing::file_local::semijoin_bases(&cross.program, &split.base).unwrap_or_default().into_iter().filter(|r| stored.iter().any(|(s, _)| s == r)).collect()
+    };
+    if !stored.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("semi-join of the held base relations", || {
+            if semijoin.is_empty() {
+                "none: a cross-file rule reads a base relation other than as a lookup of a node a cross-file relation holds".to_owned()
+            } else {
+                format!("{:?}: each chunk keeps the rows of the nodes its exports hold, not every node's", semijoin)
+            }
+        });
+    }
     if !stored.is_empty() && memo.is_some() && t.is_none() {
         crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated (O109)", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
@@ -1426,6 +1442,15 @@ pub(crate) fn run_with_options(
         // document's by its first location column (a base relation's: its first column).
         let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
         let mut attributable = memoised;
+        // The semi-join's relations, taken after the run (`semijoin`), and the values the chunk's exports hold.
+        let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<usize>)> = Vec::new();
+        let mut mentioned: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mention = |mentioned: &mut std::collections::HashSet<i64>, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| {
+            let width = rows.columns().len();
+            for r in 0..rows.len() {
+                mentioned.extend((0..width).map(|c| rows.value(r, c)));
+            }
+        };
         for (rel, source) in sources {
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
@@ -1438,9 +1463,16 @@ pub(crate) fn run_with_options(
                 let have = source.columns();
                 let held = base_rows.entry(rel.clone()).or_insert_with(|| (have.clone(), vec![None; have.len()]));
                 let columns: Vec<usize> = names.iter().map(|name| have.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))).collect::<Result<_>>()?;
-                for &c in &columns {
-                    let col = held.1[c].get_or_insert_with(Vec::new);
-                    col.extend((0..source.len()).map(|r| source.value(r, c)));
+                if semijoin.contains(&rel) {
+                    for &c in &columns {
+                        held.1[c].get_or_insert_with(Vec::new);
+                    }
+                    deferred.push((rel.clone(), Arc::clone(&source), columns.clone()));
+                } else {
+                    for &c in &columns {
+                        let col = held.1[c].get_or_insert_with(Vec::new);
+                        col.extend((0..source.len()).map(|r| source.value(r, c)));
+                    }
                 }
                 if attributable {
                     // Each row is its file's by its first column. A guest's or a value document's row names no file of
@@ -1491,6 +1523,9 @@ pub(crate) fn run_with_options(
                 let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
+                if !deferred.is_empty() {
+                    mention(&mut mentioned, rows.as_ref());
+                }
                 Ok(())
             };
             super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), ..Default::default() })?
@@ -1560,14 +1595,30 @@ pub(crate) fn run_with_options(
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 attribute(rel, rows.as_ref());
+                if !deferred.is_empty() {
+                    mention(&mut mentioned, rows.as_ref());
+                }
             } else {
                 let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
                 let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 totals.add_rows(rel, inserted, &rows, &types);
                 attribute(rel, &rows);
+                if !deferred.is_empty() {
+                    mention(&mut mentioned, &rows);
+                }
             }
         }
         db.execute_batch("COMMIT")?;
+        // The semi-join: of each deferred base relation, the rows whose node an export row holds.
+        for (rel, source, columns) in std::mem::take(&mut deferred) {
+            let have = source.columns();
+            let key = have.iter().position(|h| h == "n").ok_or_else(|| Error::Plan(format!("{rel} has no node column")))?;
+            let keep: Vec<usize> = (0..source.len()).filter(|&r| mentioned.contains(&source.value(r, key))).collect();
+            let held = base_rows.get_mut(&rel).expect("deferred relations are held");
+            for &c in &columns {
+                held.1[c].get_or_insert_with(Vec::new).extend(keep.iter().map(|&r| source.value(r, c)));
+            }
+        }
         // The chunk's native relations are written to `x`: none is read again.
         crate::code_rule_dsl::logic::native::component::forget_derived(&db);
         if memoised && attributable {

@@ -300,3 +300,42 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
     assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
 }
+
+#[test]
+fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let source = |extra: &str| format!(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.input node, child, text, line
+.decl names(x: symbol)
+names(x) :- node(_, n, "string", _, _), text(n, x).
+.decl ident(n: node, x: symbol)
+ident(n, x) :- node(_, n, "identifier", _, _), text(n, x).
+.decl pick(n: node)
+pick(n) :- ident(n, x), names(x).
+.decl hit(n: node, l: number)
+hit(n, l) :- pick(n), line(n, l).
+{extra}
+.output hit
+"#);
+    // As the corpus run splits: after the file-local joins are pushed into the chunks.
+    let split = |text: &str| {
+        let mut program = parse(text).unwrap();
+        push_local_joins(&mut program);
+        programs(&program)
+    };
+    let parts = split(&source(""));
+    assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
+    let held = semijoin_bases(&parts.cross, &parts.base).expect("every lookup is of a node an export holds");
+    assert!(held.contains("line"), "{held:?}");
+    // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
+    // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
+    let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
+    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
+    assert_eq!(semijoin_bases(&parts.cross, &parts.base), None);
+    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap());
+    assert_eq!(semijoin_bases(&parts.cross, &parts.base), None);
+}

@@ -611,7 +611,12 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     };
     let projected: BTreeSet<String> = cross_reads.iter().filter(|r| is_local(r) && projection(r)).cloned().collect();
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
-    let cross_reads = read(&mut prog.rules.iter().filter(|r| in_cross(&r.head.rel)));
+    // A relation made natively (`dfs_first`) is cross-file, and reads its inputs there: they are exported too.
+    let native_reads = |mut reads: BTreeSet<String>| {
+        reads.extend(prog.natives.values().flat_map(|n| n.reads()).map(str::to_owned));
+        reads
+    };
+    let cross_reads = native_reads(read(&mut prog.rules.iter().filter(|r| in_cross(&r.head.rel))));
     let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r) && !projected.contains(*r)).cloned().collect();
     let base_read: Vec<String> = prog.inputs.iter().filter(|i| cross_reads.contains(*i)).cloned().collect();
     let mut base = base_read.clone();
@@ -645,8 +650,8 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// whole: every chunk's `within`, `node`, `child` rows are kept for the cross part, memory that grows with the
 /// corpus and with the rules run at once. With it, the chunk joins them and exports the few rows that pass.
 ///
-/// A component that is one atom of only variables filters nothing and is left; so is one that reads no base
-/// relation. A made relation the split does not find file-local is undone. Returns the relations made.
+/// A component that is one atom of only variables filters nothing and is left; so is one atom of a file-local
+/// relation alone. A made relation the split does not find file-local is undone. Returns the relations made.
 ///
 /// A component that narrows no node, only lookups of a node's attributes (`docof(n, d), doc(d, p, _), line(n, l)`,
 /// a finding's location) or relations of documents (`p9_path_module(d, m)`), is a row per node of the chunk: on 200
@@ -661,6 +666,82 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
         return push_with(prog, true);
     }
     made
+}
+
+/// The base relations the cross-file part can take as a semi-join: of each, a chunk keeps only the rows of the nodes
+/// its exports' rows hold, not every node's. Sound when every node the cross part reads comes from an export: it
+/// reads no base relation but node attributes (`docof`, `line`, `text`, `node`: a node `n` and no other node), and
+/// each such read looks up a node that a positive read of another relation in the same body binds. A node of a
+/// cross-file relation then traces back to an export's row (by induction over its rules); a finding's decoding
+/// reads the nodes of the findings, which are such nodes too. `None` where a cross rule reads them otherwise
+/// (`node(d, n, ...)` enumerating a document's nodes, `child(p, c)` reaching nodes no export holds): every row is
+/// kept.
+///
+/// On the full data-layer tree, `lazy-architecture`'s cross part held 673 MB of these for about ten thousand
+/// lookups.
+pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use std::collections::{BTreeMap, BTreeSet};
+    // Each attribute relation's node column: the base ones, and a view the cross part derives from one
+    // (`kind($n, $k) :- node(_, $n, $k, _, _)`), keyed where the node lands in its head.
+    // A base attribute is a relation of a node `n` and values that are no nodes (`line`, `text`, `node` itself),
+    // which a chunk filters by its `n` column.
+    let mut key: BTreeMap<String, usize> = BTreeMap::new();
+    for rel in base {
+        let (Some(columns), Some(types)) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel), cross.decls.get(rel)) else { continue };
+        let Some(k) = columns.iter().position(|c| *c == "n") else { continue };
+        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && matches!(t.as_str(), "node" | "loc" | "span"));
+        if !others_nodes && columns.len() == types.len() {
+            key.insert(rel.clone(), k);
+        }
+    }
+    let mut views: BTreeSet<String> = BTreeSet::new();
+    for rule in &cross.rules {
+        let [Literal::Atom(a)] = rule.body.as_slice() else { continue };
+        let Some(Term::Var(n)) = key.get(&a.rel).and_then(|&k| a.args.get(k)).filter(|_| !a.neg) else { continue };
+        let Some(at) = rule.head.args.iter().position(|t| matches!(t, Term::Var(v) if v == n)) else { continue };
+        let sole = cross.rules.iter().filter(|r| r.head.rel == rule.head.rel).count() == 1;
+        if sole && !key.contains_key(&rule.head.rel) {
+            key.insert(rule.head.rel.clone(), at);
+            views.insert(rule.head.rel.clone());
+        }
+    }
+    // A base relation without a node column (`doc`, a repository file's) reaches no node.
+    let reaches_nodes = |rel: &str| cross.decls.get(rel).is_none_or(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")));
+    // A native step (`dfs_first`) over a base relation's nodes reaches nodes no export holds.
+    if cross.natives.values().flat_map(|n| n.reads()).any(|r| base.iter().any(|b| b == r) && reaches_nodes(r)) {
+        return None;
+    }
+    let mut held = BTreeSet::new();
+    for rule in cross.rules.iter().filter(|r| !views.contains(&r.head.rel)) {
+        // The variables a positive read of a relation not a node attribute binds.
+        let bound: BTreeSet<&String> = rule
+            .body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) if !a.neg && !key.contains_key(&a.rel) => Some(a),
+                _ => None,
+            })
+            .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
+            .collect();
+        for l in &rule.body {
+            let a = match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
+                _ => continue,
+            };
+            let attribute = key.get(&a.rel);
+            if attribute.is_none() && (!base.iter().any(|b| *b == a.rel) || !reaches_nodes(&a.rel)) {
+                continue;
+            }
+            let k = *attribute?;
+            match a.args.get(k) {
+                Some(Term::Var(v)) if bound.contains(v) => {}
+                _ => return None,
+            }
+        }
+    }
+    held.extend(key.into_keys().filter(|r| !views.contains(r)));
+    Some(held)
 }
 
 /// Whether a rule outside the chunks reads a base relation.
@@ -760,7 +841,9 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             let mut replaced: Vec<(usize, Literal)> = Vec::new();
             for (mut lits, vars) in comps {
                 let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
-                if !atoms.iter().any(|a| base(&a.rel)) {
+                // A join of file-local relations alone is pushed too: exported, each would be held whole by the
+                // cross part (`la_leaf_target`, a row per node, for the 311 rows its join with `la_target` makes).
+                if !atoms.iter().any(|a| base(&a.rel)) && atoms.len() < 2 {
                     continue;
                 }
                 if independent_node_groups(&atoms) > 1 {
