@@ -72,7 +72,7 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
 /// `<phase>__<x>` that no rule of `prog` makes, where `<phase>` is a phase program.
-fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
+pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let made: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
     let own = declared(prog).map(|d| d.name);
@@ -157,6 +157,25 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // The phase's run: its own program, its own scratch, its exports written as its outputs.
         let out = scratch.join(format!("phase-{name}"));
         let text = format!("{src}\n.output {}\n", declared.exports.join(", "));
+        let key = run_key(&text, root, options);
+        // Unchanged since its last run (everything it consulted as it was): its exports are the last run's, kept.
+        let checking = super::thread_usage();
+        if let Some(rows) = reuse(&name, &key, &text, root, typing, options, &declared.exports)? {
+            let now = super::thread_usage();
+            let mut report = Report::default();
+            report.phases.push(("unchanged: consulted inputs checked, exports kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
+            report.files = rows.1;
+            let rows = rows.0;
+            let granules: BTreeSet<&str> = rows.iter().filter(|(rel, _)| rel.as_str() != UNITS && !declared.positions.contains(rel)).flat_map(|(_, rs)| rs.iter().map(|r| r[0].as_str())).collect();
+            let (exports, units, granules) = (
+                rows.iter().map(|(rel, rs)| (rel.clone(), rs.len(), 0, 0)).collect(),
+                (rows.get(UNITS).map_or(0, Vec::len), 0, 0),
+                (granules.len(), 0, 0, 0),
+            );
+            hand_on(&name, &program, &reads, &rows, &mut facts)?;
+            runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: 0.0 });
+            continue;
+        }
         let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
         let began = thread_cpu();
         let mut rows: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
@@ -174,21 +193,97 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let _ = std::fs::remove_dir_all(&out);
         let producer: [u8; 32] = Sha256::digest(src.as_bytes()).into();
         let (exports, units, granules) = keep(&name, &rows, &declared.positions, producer)?;
-        for (rel, export) in &reads {
-            let types: Vec<&str> = program.decls[export].iter().map(|(_, t)| t.as_str()).collect();
-            let held = facts.entry(rel.clone()).or_default();
-            for r in &rows[export] {
-                let row = r
-                    .iter()
-                    .zip(&types)
-                    .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
-                    .collect::<Result<Vec<_>>>()?;
-                held.push(row);
-            }
-        }
+        // Once its exports are kept: what it consulted, so an unchanged next run takes them as they are.
+        record(&name, &key, &report.consulted)?;
+        hand_on(&name, &program, &reads, &rows, &mut facts)?;
         runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began });
     }
     Ok((facts, runs))
+}
+
+/// The exports `reads` names, as the reader's facts.
+fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<String>>>, facts: &mut Facts) -> Result<()> {
+    for (rel, export) in reads {
+        let types: Vec<&str> = program.decls[export].iter().map(|(_, t)| t.as_str()).collect();
+        let held = facts.entry(rel.clone()).or_default();
+        for r in rows.get(export).into_iter().flatten() {
+            let row = r
+                .iter()
+                .zip(&types)
+                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
+                .collect::<Result<Vec<_>>>()?;
+            held.push(row);
+        }
+    }
+    Ok(())
+}
+
+/// What a phase's run is keyed by, beside what it consults: its program, the run's options, the root, the engine and
+/// the node-id scheme.
+fn run_key(text: &str, root: &Path, options: &serde_json::Value) -> String {
+    let mut h = Sha256::new();
+    h.update(b"rerail.phase-run/v1\0");
+    h.update(text.as_bytes());
+    h.update([0]);
+    h.update(options.to_string().as_bytes());
+    h.update([0]);
+    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn records(db: &Connection) -> Result<()> {
+    db.execute_batch("CREATE TABLE IF NOT EXISTS phase_record(phase TEXT PRIMARY KEY, key TEXT, consulted TEXT) WITHOUT ROWID;")?;
+    Ok(())
+}
+
+/// Records what a phase's run consulted, under its key (`reuse` checks it). A run that consulted nothing it can name
+/// (no workspace files read) is not recorded.
+fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Result<()> {
+    let Some(path) = store_path() else { return Ok(()) };
+    let db = Connection::open(&path)?;
+    records(&db)?;
+    if consulted.is_empty() {
+        db.execute("DELETE FROM phase_record WHERE phase=?1", [phase])?;
+        return Ok(());
+    }
+    let text = consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n");
+    db.execute("INSERT OR REPLACE INTO phase_record VALUES (?1, ?2, ?3)", params![phase, key, text])?;
+    Ok(())
+}
+
+/// The last run's exports, by export, and the documents it read, when the phase is unchanged since: the same key,
+/// and everything it consulted as it was (`corpus::unchanged`). Its freshness then has nothing to record.
+#[allow(clippy::too_many_arguments)]
+fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value, exports: &[String]) -> Result<Option<(BTreeMap<String, Vec<Vec<String>>>, usize)>> {
+    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
+    let db = Connection::open(&path)?;
+    records(&db)?;
+    let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
+    if last != key {
+        return Ok(None);
+    }
+    let consulted: Vec<(String, String, String)> = consulted
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
+        })
+        .collect();
+    if !super::unchanged(&[text], root, typing, options, &consulted)? {
+        return Ok(None);
+    }
+    let mut rows: BTreeMap<String, Vec<Vec<String>>> = exports.iter().map(|e| (e.clone(), Vec::new())).collect();
+    let mut read = db.prepare("SELECT rel, row FROM export_rows WHERE phase=?1")?;
+    for got in read.query_map([phase], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+        let (rel, row) = got?;
+        if let Some(rs) = rows.get_mut(&rel) {
+            rs.push(row.split('\t').map(str::to_owned).collect());
+        }
+    }
+    let documents = consulted.iter().filter(|c| c.0 == "doc" || c.0 == "load").count();
+    Ok(Some((rows, documents)))
 }
 
 type Kept = (Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, usize, usize, usize));
@@ -362,6 +457,10 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
             let p = &r.phase_runs[0];
             (p.units.1, p.units.2, p.granules.1, p.granules.3)
         };
+        // Unchanged: everything the phase consulted is as it was, so it is not run; its exports are the kept ones.
+        let again = run(&text).unwrap();
+        assert!(again.phase_runs[0].report.phases.iter().any(|p| p.0.starts_with("unchanged")), "an unchanged phase is not run again");
+        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "m\nm.f\nm.g\n");
         assert_eq!(fresh(&text), (0, 0, 0, 0), "unchanged: nothing");
         write("a.py", "# note\ndef f():\n    return 1\n\n\ndef g():  # g\n    return 2\n");
         assert_eq!(fresh(&text), (0, 0, 0, 0), "a comment: no definition changed");
