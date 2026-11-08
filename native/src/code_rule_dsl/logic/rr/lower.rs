@@ -1448,9 +1448,13 @@ impl Lowerer {
         let s = self.fresh("stop");
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
         let nearest = Literal::Nearest { n: nv.clone(), a: s.clone(), kindset: set };
+        // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids need not follow preorder,
+        // decision 0083 §3).
+        let above = Literal::Atom(Atom { rel: within.to_owned(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
         Ok(vec![
             below.iter().cloned().chain([none]).collect(),
-            below.into_iter().chain([nearest, cmp(&Term::Var(s), "<=", &a)]).collect(),
+            below.iter().cloned().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
+            below.into_iter().chain([nearest, above]).collect(),
         ])
     }
 
