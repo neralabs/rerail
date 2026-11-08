@@ -1467,10 +1467,11 @@ fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
 }
 
 /// Whether `t` calls a function that can have no value (`strings::functions`' NULL, as `to_number("a")`; a regex
-/// group of a string the regex does not match, `rx_group`; `x / 0`): a row that binds or derives its value needs
-/// it not NULL, or a negation over it would hold (`NOT EXISTS (… = NULL)`).
+/// group of a string the regex does not match, `rx_group`): a row that binds or derives its value needs it not NULL,
+/// or a negation over it would hold (`NOT EXISTS (… = NULL)`). `x / 0` is SQL's NULL, a value the row keeps (the
+/// executor's walks carry it as a nullable seed, `sql_executor::walks::nullable`).
 fn partial(t: &Term) -> bool {
-    matches!(t, Term::Call(f, args) if super::strings::functions::signature(f).is_some() || matches!(f.as_str(), "rx_group" | "div") || args.iter().any(partial))
+    matches!(t, Term::Call(f, args) if super::strings::functions::signature(f).is_some() || f == "rx_group" || args.iter().any(partial))
 }
 
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
@@ -1584,7 +1585,7 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 (f, items) if let Some((f, kinds, ret)) = super::strings::functions::signature(f) && kinds.len() == items.len() => {
                     use super::strings::functions::Kind;
                     let items = items.iter().zip(kinds).map(|(e, k)| if *k == Kind::Text { text_of(atoms, e) } else { e.clone() }).collect();
-                    let value = call(super::strings::functions::sql_name(f), items);
+                    let value = call(f, items);
                     if ret == Kind::Text { symbol_of(atoms, value) } else { value }
                 }
                 _ => return Err(Error::Plan(format!("no SQL for {t}"))),
