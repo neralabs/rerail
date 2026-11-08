@@ -103,7 +103,7 @@ legacy_execution_graphs_fdef("function_definition").
 .decl rr_agg1(a: node, s: number, xs: number)
 .decl rr_agg3(b: number, f: node, t: number)
 .decl rr_agg4(b: number, f: node, s: number, t: number)
-.decl rr_ctx2(xs: number)
+.decl rr_ctx2(a: node, xs: number)
 .decl syntax_error(d: number)
 .decl t30(s: symbol)
 .decl t51(s: symbol)
@@ -112,6 +112,7 @@ legacy_execution_graphs_fdef("function_definition").
 .decl t71(s: symbol)
 .decl t77(s: symbol)
 .decl t83(s: symbol)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -176,6 +177,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 t7(s) :- doc(_, s, _), (s = "api/impl/common/l7245_versioned_backends/generic_sparse.py" ; s = "api/l2050_transaction/legacy_wrappers.py" ; s = "api/l2050_transaction/transaction.py" ; s = "api/l7200_versioned_transactions/versioned_transactions.py" ; s = "impl/common/l7245_versioned_backends/generic_sparse.py" ; s = "l2050_transaction/legacy_wrappers.py" ; s = "l2050_transaction/transaction.py" ; s = "l7200_versioned_transactions/versioned_transactions.py").
 t7(s) :- doc(_, _, s), (s = "api/impl/common/l7245_versioned_backends/generic_sparse.py" ; s = "api/l2050_transaction/legacy_wrappers.py" ; s = "api/l2050_transaction/transaction.py" ; s = "api/l7200_versioned_transactions/versioned_transactions.py" ; s = "impl/common/l7245_versioned_backends/generic_sparse.py" ; s = "l2050_transaction/legacy_wrappers.py" ; s = "l2050_transaction/transaction.py" ; s = "l7200_versioned_transactions/versioned_transactions.py").
 violation("data-layer-legacy-execution-surfaces", "delegate-definition", "LEG-020", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "function_definition", _, _), field(n, "name", v3), node(_, v3, "identifier", _, _), text(v3, v4), v4 = "_legacy_delegate_stub", node(v5, n, _, _, _), doc(v5, v6, _), !t7(v6), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
@@ -213,8 +215,8 @@ les_walk(r, c) :- les_root(r), child(r, c, _).
 les_walk(r, c2) :- les_walk(r, c), les_open(c), child(c, c2, _).
 les_cast_args(c, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"), field(c, "arguments", a).
 les_cast_comment(a, s) :- les_cast_args(_, a), token(a, _, t, s, _), prefix("#", t).
-rr_ctx2(xs) :- les_cast_args(c, a), child(a, x, j), node(_, x, _, xs, _), j <= 1.
-rr_agg1(a, s, xs) :- rr_ctx2(xs), les_cast_comment(a, s), s < xs.
+rr_ctx2(a, xs) :- child(a, x, j), node(_, x, _, xs, _), j <= 1.
+rr_agg1(a, s, xs) :- rr_ctx2(a, xs), les_cast_comment(a, s), s < xs.
 les_cast_arg(c, x) :- les_cast_args(c, a), child(a, x, j), j <= 1, node(_, x, _, xs, _), k = count : { rr_agg1(a, _, xs) }, @add(j, k) = 1.
 raw_cursor_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "execute" ; s = "fetchall" ; s = "fetchone"), field(f, "object", o).
 raw_cursor_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)cursor|^(?:db|conn|connection|raw_conn|raw_connection)$)(?s:.*)", s).
@@ -224,7 +226,7 @@ raw_cursor_cast(c) :- les_cast_arg(c, x), raw_cursor_leaf(x).
 raw_cursor_recv(o) :- raw_cursor_target(_, o), raw_cursor_leaf(o).
 raw_cursor_recv(o) :- raw_cursor_target(_, o), raw_cursor_cast(o).
 raw_cursor_recv(o) :- raw_cursor_target(_, o), les_walk(o, c), raw_cursor_cast(c).
-raw_cursor_hit(d, p, l) :- les_entry(0), raw_cursor_target(n, o), raw_cursor_recv(o), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+raw_cursor_hit(d, p, l) :- les_entry(0), raw_cursor_target(n, o), raw_cursor_recv(o), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/mariadb/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l), match("(?s:.*)(?:^(?:api/)?impl/mariadb/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/mariadb/fts/fts_manager\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/postgres/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l), match("(?s:.*)(?:^(?:api/)?impl/postgres/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/postgres/fts/fts_manager\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/sqlite/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l), match("(?s:.*)(?:^(?:api/)?impl/sqlite/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/sqlite/fts/fts_manager\\.py)$)(?s:.*)", p).
@@ -261,7 +263,7 @@ eager_txn_cast(c) :- les_cast_arg(c, x), eager_txn_leaf(x).
 eager_txn_recv(o) :- eager_target(_, o), eager_txn_leaf(o).
 eager_txn_recv(o) :- eager_target(_, o), eager_txn_cast(o).
 eager_txn_recv(o) :- eager_target(_, o), les_walk(o, c), eager_txn_cast(c).
-eager_site(n, o, p, l) :- les_entry(0), eager_target(n, o), !eager_in_legacy(n), node(d, n, _, _, _), les_module_hit(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), match("(?s:.*)(?:^(?:api/)?(?:impl/|data_layer/|l[0-9]))(?s:.*)", p), !match("(?s:.*)(?:(?:^|/)tests/|^(?:api/)?(?:l2050_transaction/execution_boundary\\.py|l2050_transaction/legacy_wrappers\\.py)$)(?s:.*)", p), line(n, l).
+eager_site(n, o, p, l) :- les_entry(0), eager_target(n, o), !eager_in_legacy(n), node(d, n, _, _, _), les_module_hit(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), match("(?s:.*)(?:^(?:api/)?(?:impl/|data_layer/|l[0-9]))(?s:.*)", p), !match("(?s:.*)(?:(?:^|/)tests/|^(?:api/)?(?:l2050_transaction/execution_boundary\\.py|l2050_transaction/legacy_wrappers\\.py)$)(?s:.*)", p), line(n, l).
 violation("data-layer-legacy-execution-surfaces", "eager-plan", "LEG-081", p, l) :- eager_site(_, o, p, l), eager_plan_recv(o).
 violation("data-layer-legacy-execution-surfaces", "eager-txn", "LEG-080", p, l) :- eager_site(_, o, p, l), !eager_plan_recv(o), eager_txn_recv(o).
 graph_fallback_none_operand(t, x) :- node(_, t, "comparison_operator", _, _), child(t, x, _), !node(_, x, "none", _, _).
@@ -274,8 +276,8 @@ graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback
 graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback_none_cast(x).
 graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), les_walk(x, c), graph_fallback_none_cast(c).
 graph_fallback_none_test(t) :- graph_fallback_none_operand(t, x), graph_fallback_none_recv(x), node_text(t, s), match("(?s:.*)(?:\\bis\\s+None$)(?s:.*)", s).
-violation("data-layer-legacy-execution-surfaces", "graph-fallback-none", "LEG-060", p, l) :- les_entry(0), node(d, n, k, _, _), graph_fallback_none_kind(k), field(n, "condition", t), graph_fallback_none_test(t), les_module_hit(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), match("(?s:.*)(?:^(?:api/)?impl/common/l9700_sql_graph_query(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/common/l9700_sql_graph_query/sql_graph_query\\.py)$)(?s:.*)", p), line(n, l).
-legacy_execution_graphs_file(d) :- les_entry(0), les_module_hit(d), in_scope(d), !syntax_error(d), !out_scope(d).
+violation("data-layer-legacy-execution-surfaces", "graph-fallback-none", "LEG-060", p, l) :- les_entry(0), node(d, n, k, _, _), graph_fallback_none_kind(k), field(n, "condition", t), graph_fallback_none_test(t), les_module_hit(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), match("(?s:.*)(?:^(?:api/)?impl/common/l9700_sql_graph_query(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/common/l9700_sql_graph_query/sql_graph_query\\.py)$)(?s:.*)", p), line(n, l).
+legacy_execution_graphs_file(d) :- les_entry(0), les_module_hit(d), in_scope(d), !tape_syntax_error(d), !out_scope(d).
 legacy_execution_graphs_path(d, q) :- legacy_execution_graphs_file(d), doc(d, p, _), prefix("api/", p), q = @substr(p, 4, @sub(@strlen(p), 4)).
 legacy_execution_graphs_path(d, p) :- legacy_execution_graphs_file(d), doc(d, p, _), !prefix("api/", p).
 legacy_execution_graphs_fn(d, f, s) :- node(d, f, "function_definition", _, _), legacy_execution_graphs_file(d), field(f, "name", x), node_text(x, s).

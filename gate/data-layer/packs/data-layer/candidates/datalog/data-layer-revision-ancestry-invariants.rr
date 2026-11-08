@@ -10,7 +10,7 @@
 .decl revision_ancestry_file(d: number, p: symbol, sp: node)
 .decl source(d: number, sp: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, source, line
+.input doc, line, source
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/domain/versioning/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**/*.py", p).

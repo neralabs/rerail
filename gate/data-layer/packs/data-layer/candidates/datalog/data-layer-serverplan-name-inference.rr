@@ -16,7 +16,7 @@
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, tape_line, text, op_at, node_text, field, child, token
+.input doc, node, field, child, text, line, tape_line, node_text, op_at, token
 .output violation
 in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).

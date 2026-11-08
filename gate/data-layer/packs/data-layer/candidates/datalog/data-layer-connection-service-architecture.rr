@@ -129,14 +129,15 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl schema_first_method(d: number, cn: symbol, m: node, mn: symbol)
 .decl schema_legacy_ok(d: number)
 .decl schema_pure_lazy_ok(d: number)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl visit_index(n: node, i: number)
-.input doc, node, line, syntax_error, visit_index, field, child, text, op, value_type_of, strprefix, value, name
+.input doc, node, line, syntax_error, field, child, text, op, value, strprefix, name, value_type_of, visit_index
 .output violation
 connection_analysis_path("impl/sqlite/connection.py").
 connection_analysis_path("impl/postgres/connection.py").
@@ -217,9 +218,10 @@ in_scope(d) :- doc(d, p, _), glob("impl/common/l5150_fts_polyfill/manager.py", p
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/*_test.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 violation("data-layer-connection-service-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 connection_entry(e) :- option_value("entryPoint", e).
-connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 connection_analysis_path(p) :- connection_doc(_, p), prefix("l2000_connection/", p).
 connection_analysis_path(p) :- connection_doc(_, p), prefix("impl/common/l2200_sql_dialect/", p).
 connection_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).

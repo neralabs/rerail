@@ -272,13 +272,14 @@ lazy_fnset("function_definition").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(f: node, r: number, r2: number)
-.decl rr_ctx2(r: number)
+.decl rr_ctx2(f: node, r: number)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, child, node_text, field, value, op, line, tape_line, text
+.input doc, syntax_error, node, field, child, text, op, line, value, tape_line, node_text
 .output violation
 deleted_surface("deleted-cold-0", "BootstrapEngineRunMode.COLD").
 deleted_surface("deleted-cold-1", "BootstrapMode.COLD").
@@ -573,7 +574,8 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-lazy_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+lazy_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 lazy_n(d, n, k, s, e) :- lazy_doc(d, _), node(d, n, k, s, e), !lazy_excluded(k).
 lazy_kind(n, k) :- lazy_n(_, n, k, _, _).
 lazy_nd(n, d) :- lazy_n(d, n, _, _, _).
@@ -908,8 +910,8 @@ lazy_edge(f, c, t) :- lazy_oc(f, c), lazy_target(f, c, s), lazy_symfn(s, t), t !
 lazy_reach(r, r) :- lazy_af(r).
 lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
 lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
-rr_ctx2(r) :- lazy_foenc(f, r).
-rr_agg1(f, r, r2) :- rr_ctx2(r), lazy_foenc(f, r2), r2 < r.
+rr_ctx2(f, r) :- lazy_foenc(f, r).
+rr_agg1(f, r, r2) :- rr_ctx2(f, r), lazy_foenc(f, r2), r2 < r.
 lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { rr_agg1(f, r, _) }.
 lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
 lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.

@@ -43,9 +43,10 @@ swe_stop_target("class_definition"). swe_stop_target("function_definition"). swe
 .decl swe_uses(e: node)
 .decl swe_with_call(w: node, c: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, child, node, field, text, line, node_text
+.input doc, syntax_error, node, field, child, text, line, node_text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
@@ -59,7 +60,8 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-swe_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+swe_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 swe_second(p) :- child(p, _, i), child(p, _, j), i < j.
 swe_attr(n, o, a) :- node(_, n, "attribute", _, _), field(n, "object", x), node(_, x, "identifier", _, _), text(x, o), field(n, "attribute", y), node(_, y, "identifier", _, _), text(y, a).
 swe_protocol(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "KeyError" ; s = "StopAsyncIteration" ; s = "StopIteration").

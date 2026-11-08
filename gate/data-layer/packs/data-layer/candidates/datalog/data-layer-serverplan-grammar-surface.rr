@@ -9,7 +9,7 @@ k1("import_from_statement").
 .decl line(n: node, l: number)
 .decl m11(n: node)
 .decl m21(n: node)
-.decl m29(n: node)
+.decl m30(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
@@ -42,6 +42,6 @@ m21(n) :- field(v18, "name", n), node(_, v18, "default_parameter", _, _).
 m21(n) :- field(v19, "name", n), node(_, v19, "typed_default_parameter", _, _).
 m21(n) :- child(v20, n, _), node(_, v20, "typed_parameter", _, _).
 violation("data-layer-serverplan-grammar-surface", "ddl-escapes", "SPG-ddl_escape", p, l) :- node(_, n, "identifier", _, _), text(n, v9), (v9 = "SqlPreRenderedDdlFragment" ; v9 = "SqlPrerenderedDdl"), !m21(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m29(n) :- inside(n, v23, k1), field(v23, "module_name", v24), node(_, n, _, v25, v26), node(_, v24, _, v27, v28), v27 <= v25, v26 <= v28, node(_, v23, "import_from_statement", _, _).
-violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", p, l) :- node(_, n, "dotted_name", _, _), text(n, v22), (v22 = "SqlPreRenderedDdlFragment" ; v22 = "SqlPrerenderedDdl"), !m29(n), inside(n, v30, k1), node(_, v30, "import_from_statement", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m30(n) :- inside(n, v23, k1), field(v23, "module_name", v24), node(v25, n, _, v26, v27), node(v25, v24, _, v28, v29), v28 <= v26, v27 <= v29, node(_, v23, "import_from_statement", _, _).
+violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", p, l) :- node(_, n, "dotted_name", _, _), text(n, v22), (v22 = "SqlPreRenderedDdlFragment" ; v22 = "SqlPrerenderedDdl"), !m30(n), inside(n, v31, k1), node(_, v31, "import_from_statement", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-serverplan-grammar-surface", "syntax", "SPG-SYNTAX", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).

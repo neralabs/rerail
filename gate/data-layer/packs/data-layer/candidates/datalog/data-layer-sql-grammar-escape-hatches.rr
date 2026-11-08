@@ -23,9 +23,10 @@
 .decl out_scope(d: number)
 .decl prev_token(n: node, s: symbol)
 .decl report_when_gt(k: number)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl unsafe_alias_edge(f: symbol, t: symbol)
 .decl unsafe_alias_from(a: node, f: symbol)
@@ -111,7 +112,7 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, node_text, syntax_error, tape_line, text, field, line, child, op, strprefix, value_type_of, value, prev_token, end_line
+.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, value_type_of, tape_line, end_line, node_text, prev_token
 .output violation
 esc_forbidden("SqlAdminQuery").
 esc_forbidden("SqlBuiltQuery").
@@ -375,6 +376,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlRenderable", s).
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlClause", s).
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlFragment", s).
@@ -387,7 +389,7 @@ esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlUnsafe"
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlLegacy", s).
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("_SqlPrebuilt", s).
 esc_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
-esc_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), esc_gate(d).
+esc_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), esc_gate(d).
 forbidden_class_line_ok(d, l) :- tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
 forbidden_class_hit(d, n) :- node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s), esc_forbidden(s), line(n, l), !forbidden_class_line_ok(d, l).
 unsafe_seed(s) :- option_item("grammar_class_names", _, s).

@@ -46,9 +46,10 @@ inspection_kinds_function("function_definition").
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, token, node, field, child, syntax_error, line
+.input doc, syntax_error, node, field, child, line, node_text, token
 .output violation
 inspection_equality_op("==").
 inspection_equality_op("!=").
@@ -85,6 +86,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, "f").
 inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, s), match("(?s:.*)(?:(?i:field_info|_info$))(?s:.*)", s).
 inspection_object(o) :- node(_, o, "subscript", _, _), field(o, "value", v), node(_, v, "attribute", _, _), field(v, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "model_fields").
@@ -136,4 +138,4 @@ inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_ki
 inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(y, i, b, _, _), !inspection_tisnode(y, i), !match("[#\\\\](?s:.*)", b), inspection_tnode(x, i, cx), inspection_kids(cx).
 inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, n).
 inspection_fallback(n) :- inspection_seed(n, m), !inspection_neq(n, m).
-violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
+violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).

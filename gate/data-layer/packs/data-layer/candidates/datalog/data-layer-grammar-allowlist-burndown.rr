@@ -17,12 +17,13 @@
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, strprefix, value_type_of, op, line, syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, strprefix, value_type_of
 .output violation
 allowlist_names("allowlist-allowlisted_static_classes", "ALLOWLISTED_STATIC_CLASSES").
 allowlist_names("allowlist-legacy_allowlisted_classes", "LEGACY_ALLOWLISTED_CLASSES").
@@ -37,6 +38,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 allowlist_f_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _), strprefix(s, x), contains("f", x).
 allowlist_member(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x), value_type_of(n, "str").
 allowlist_member(n) :- node(_, n, "concatenated_string", _, _), !allowlist_f_concat(n), value_type_of(n, "str").
@@ -48,7 +50,7 @@ allowlist_arg_at(g, i) :- allowlist_args(g), child(g, c, i), !node(_, c, "commen
 allowlist_first_arg(g, c) :- allowlist_args(g), child(g, c, i), !node(_, c, "comment", _, _), i = min j : { allowlist_arg_at(g, j) }.
 allowlist_value(r) :- allowlist_set_string(r).
 allowlist_value(r) :- node(_, r, "call", _, _), field(r, "arguments", g), allowlist_first_arg(g, c), allowlist_set_string(c).
-allowlist_row(c, d) :- allowlist_names(c, x), node(d, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), allowlist_value(r), in_scope(d), !out_scope(d), !syntax_error(d).
+allowlist_row(c, d) :- allowlist_names(c, x), node(d, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), allowlist_value(r), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 allowlist_first_doc(c, d) :- allowlist_row(c, _), d = min e : { allowlist_row(c, e) }.
 allowlist_at(c, p, l) :- allowlist_first_doc(c, d), doc(d, p, _), node(d, m, "module", _, _), line(m, l).
 violation("data-layer-grammar-allowlist-burndown", "allowlist-allowlisted_static_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-allowlisted_static_classes", p, l).

@@ -61,9 +61,10 @@ cs_fdef("function_definition").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, syntax_error, line_count, child, field, text, line
+.input doc, syntax_error, node, field, child, text, line, line_count
 .output violation
 cs_assign_kind("assignment").
 cs_assign_kind("augmented_assignment").
@@ -185,8 +186,9 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 cs_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d).
-cs_valid(d, p) :- cs_doc(d, p), node(d, _, "module", _, _), !syntax_error(d).
+cs_valid(d, p) :- cs_doc(d, p), node(d, _, "module", _, _), !tape_syntax_error(d).
 cs_entry(e) :- option_value("entryPoint", e).
 cs_class_mode("first") :- cs_entry(e), (e = "_connection_file_violations" ; e = "_sql_connection_violations").
 cs_class_mode("every") :- cs_entry("_lifecycle_violations").

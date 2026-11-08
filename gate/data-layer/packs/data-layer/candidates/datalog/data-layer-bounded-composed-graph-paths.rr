@@ -53,6 +53,7 @@
 .decl text_contract_nb_next(p: symbol, j: number, j2: number)
 .decl text_contract_ne_next(p: symbol, j: number, j2: number)
 .decl text_contract_next(p: symbol, l: number, j: number)
+.decl text_contract_nonword(c: symbol)
 .decl text_contract_paren(p: symbol, j: number, j2: number)
 .decl text_contract_present(p: symbol)
 .decl text_contract_span(p: symbol, l: number, sp: node)
@@ -62,7 +63,7 @@
 .decl text_contract_word_first(k: symbol, p: symbol, l: number)
 .decl text_contract_wordspec(k: symbol, p: symbol, name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, source, text, tape_line
+.input doc, text, source, tape_line
 .output violation
 text_contract_anchor("text-contract-0").
 text_contract_anchor("text-contract-7").
@@ -155,6 +156,7 @@ text_contract_fspec("text-contract-64", "impl/common/l9700_sql_graph_query/steps
 text_contract_fspec("text-contract-65", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", "graph_type").
 text_contract_mspec("text-contract-46", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", "_build_execute_paths_relation_plan").
 text_contract_mspec("text-contract-47", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", "_build_execute_paths_grammar").
+text_contract_nonword("[^0-9A-Z_a-zª²-³µ¹-º¼-¾À-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶ-ͷͺ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-Ֆՙՠ-ֈא-תׯ-ײؠ-ي٠-٩ٮ-ٯٱ-ۓەۥ-ۦۮ-ۼۿܐܒ-ܯݍ-ޥޱ߀-ߪߴ-ߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࡠ-ࡪࡰ-ࢇࢉ-ࢎࢠ-ࣉऄ-हऽॐक़-ॡ०-९ॱ-ঀঅ-ঌএ-ঐও-নপ-রলশ-হঽৎড়-ঢ়য়-ৡ০-ৱ৴-৹ৼਅ-ਊਏ-ਐਓ-ਨਪ-ਰਲ-ਲ਼ਵ-ਸ਼ਸ-ਹਖ਼-ੜਫ਼੦-੯ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલ-ળવ-હઽૐૠ-ૡ૦-૯ૹଅ-ଌଏ-ଐଓ-ନପ-ରଲ-ଳଵ-ହଽଡ଼-ଢ଼ୟ-ୡ୦-୯ୱ-୷ஃஅ-ஊஎ-ஐஒ-கங-சஜஞ-டண-தந-பம-ஹௐ௦-௲అ-ఌఎ-ఐఒ-నప-హఽౘ-ౚౝౠ-ౡ౦-౯౸-౾ಀಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೝ-ೞೠ-ೡ೦-೯ೱ-ೲഄ-ഌഎ-ഐഒ-ഺഽൎൔ-ൖ൘-ൡ൦-൸ൺ-ൿඅ-ඖක-නඳ-රලව-ෆ෦-෯ก-ะา-ำเ-ๆ๐-๙ກ-ຂຄຆ-ຊຌ-ຣລວ-ະາ-ຳຽເ-ໄໆ໐-໙ໜ-ໟༀ༠-༳ཀ-ཇཉ-ཬྈ-ྌက-ဪဿ-၉ၐ-ၕၚ-ၝၡၥ-ၦၮ-ၰၵ-ႁႎ႐-႙Ⴀ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚ፩-፼ᎀ-ᎏᎠ-Ᏽᏸ-ᏽᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛸᜀ-ᜑᜟ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜ០-៩៰-៹᠐-᠙ᠠ-ᡸᢀ-ᢄᢇ-ᢨᢪᢰ-ᣵᤀ-ᤞ᥆-ᥭᥰ-ᥴᦀ-ᦫᦰ-ᧉ᧐-᧚ᨀ-ᨖᨠ-ᩔ᪀-᪉᪐-᪙ᪧᬅ-ᬳᭅ-ᭌ᭐-᭙ᮃ-ᮠᮮ-ᯥᰀ-ᰣ᱀-᱉ᱍ-ᱽᲀ-ᲈᲐ-ᲺᲽ-Ჿᳩ-ᳬᳮ-ᳳᳵ-ᳶᳺᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼ⁰-ⁱ⁴-⁹ⁿ-₉ₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎ⅐-↉①-⒛⓪-⓿❶-➓Ⰰ-ⳤⳫ-ⳮⳲ-ⳳ⳽ⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄯㄱ-ㆎ㆒-㆕ㆠ-ㆿㇰ-ㇿ㈠-㈩㉈-㉏㉑-㉟㊀-㊉㊱-㊿㐀-䶿一-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘫꙀ-ꙮꙿ-ꚝꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꟊꟐ-ꟑꟓꟕ-ꟙꟲ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢ꠰-꠵ꡀ-ꡳꢂ-ꢳ꣐-꣙ꣲ-ꣷꣻꣽ-ꣾ꤀-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏ-꧙ꧠ-ꧤꧦ-ꧾꨀ-ꨨꩀ-ꩂꩄ-ꩋ꩐-꩙ꩠ-ꩶꩺꩾ-ꪯꪱꪵ-ꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꬰ-ꭚꭜ-ꭩꭰ-ꯢ꯰-꯹가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼ０-９Ａ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ𐀀-𐀋𐀍-𐀦𐀨-𐀺𐀼-𐀽𐀿-𐁍𐁐-𐁝𐂀-𐃺𐄇-𐄳𐅀-𐅸𐆊-𐆋𐊀-𐊜𐊠-𐋐𐋡-𐋻𐌀-𐌣𐌭-𐍊𐍐-𐍵𐎀-𐎝𐎠-𐏃𐏈-𐏏𐏑-𐏕𐐀-𐒝𐒠-𐒩𐒰-𐓓𐓘-𐓻𐔀-𐔧𐔰-𐕣𐕰-𐕺𐕼-𐖊𐖌-𐖒𐖔-𐖕𐖗-𐖡𐖣-𐖱𐖳-𐖹𐖻-𐖼𐘀-𐜶𐝀-𐝕𐝠-𐝧𐞀-𐞅𐞇-𐞰𐞲-𐞺𐠀-𐠅𐠈𐠊-𐠵𐠷-𐠸𐠼𐠿-𐡕𐡘-𐡶𐡹-𐢞𐢧-𐢯𐣠-𐣲𐣴-𐣵𐣻-𐤛𐤠-𐤹𐦀-𐦷𐦼-𐧏𐧒-𐨀𐨐-𐨓𐨕-𐨗𐨙-𐨵𐩀-𐩈𐩠-𐩾𐪀-𐪟𐫀-𐫇𐫉-𐫤𐫫-𐫯𐬀-𐬵𐭀-𐭕𐭘-𐭲𐭸-𐮑𐮩-𐮯𐰀-𐱈𐲀-𐲲𐳀-𐳲𐳺-𐴣𐴰-𐴹𐹠-𐹾𐺀-𐺩𐺰-𐺱𐼀-𐼧𐼰-𐽅𐽑-𐽔𐽰-𐾁𐾰-𐿋𐿠-𐿶𑀃-𑀷𑁒-𑁯𑁱-𑁲𑁵𑂃-𑂯𑃐-𑃨𑃰-𑃹𑄃-𑄦𑄶-𑄿𑅄𑅇𑅐-𑅲𑅶𑆃-𑆲𑇁-𑇄𑇐-𑇚𑇜𑇡-𑇴𑈀-𑈑𑈓-𑈫𑈿-𑉀𑊀-𑊆𑊈𑊊-𑊍𑊏-𑊝𑊟-𑊨𑊰-𑋞𑋰-𑋹𑌅-𑌌𑌏-𑌐𑌓-𑌨𑌪-𑌰𑌲-𑌳𑌵-𑌹𑌽𑍐𑍝-𑍡𑐀-𑐴𑑇-𑑊𑑐-𑑙𑑟-𑑡𑒀-𑒯𑓄-𑓅𑓇𑓐-𑓙𑖀-𑖮𑗘-𑗛𑘀-𑘯𑙄𑙐-𑙙𑚀-𑚪𑚸𑛀-𑛉𑜀-𑜚𑜰-𑜻𑝀-𑝆𑠀-𑠫𑢠-𑣲𑣿-𑤆𑤉𑤌-𑤓𑤕-𑤖𑤘-𑤯𑤿𑥁𑥐-𑥙𑦠-𑦧𑦪-𑧐𑧡𑧣𑨀𑨋-𑨲𑨺𑩐𑩜-𑪉𑪝𑪰-𑫸𑰀-𑰈𑰊-𑰮𑱀𑱐-𑱬𑱲-𑲏𑴀-𑴆𑴈-𑴉𑴋-𑴰𑵆𑵐-𑵙𑵠-𑵥𑵧-𑵨𑵪-𑶉𑶘𑶠-𑶩𑻠-𑻲𑼂𑼄-𑼐𑼒-𑼳𑽐-𑽙𑾰𑿀-𑿔𒀀-𒎙𒐀-𒑮𒒀-𒕃𒾐-𒿰𓀀-𓐯𓑁-𓑆𔐀-𔙆𖠀-𖨸𖩀-𖩞𖩠-𖩩𖩰-𖪾𖫀-𖫉𖫐-𖫭𖬀-𖬯𖭀-𖭃𖭐-𖭙𖭛-𖭡𖭣-𖭷𖭽-𖮏𖹀-𖺖𖼀-𖽊𖽐𖾓-𖾟𖿠-𖿡𖿣𗀀-𘟷𘠀-𘳕𘴀-𘴈𚿰-𚿳𚿵-𚿻𚿽-𚿾𛀀-𛄢𛄲𛅐-𛅒𛅕𛅤-𛅧𛅰-𛋻𛰀-𛱪𛱰-𛱼𛲀-𛲈𛲐-𛲙𝋀-𝋓𝋠-𝋳𝍠-𝍸𝐀-𝑔𝑖-𝒜𝒞-𝒟𝒢𝒥-𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓃𝓅-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝚥𝚨-𝛀𝛂-𝛚𝛜-𝛺𝛼-𝜔𝜖-𝜴𝜶-𝝎𝝐-𝝮𝝰-𝞈𝞊-𝞨𝞪-𝟂𝟄-𝟋𝟎-𝟿𝼀-𝼞𝼥-𝼪𞀰-𞁭𞄀-𞄬𞄷-𞄽𞅀-𞅉𞅎𞊐-𞊭𞋀-𞋫𞋰-𞋹𞓐-𞓫𞓰-𞓹𞟠-𞟦𞟨-𞟫𞟭-𞟮𞟰-𞟾𞠀-𞣄𞣇-𞣏𞤀-𞥃𞥋𞥐-𞥙𞱱-𞲫𞲭-𞲯𞲱-𞲴𞴁-𞴭𞴯-𞴽𞸀-𞸃𞸅-𞸟𞸡-𞸢𞸤𞸧𞸩-𞸲𞸴-𞸷𞸹𞸻𞹂𞹇𞹉𞹋𞹍-𞹏𞹑-𞹒𞹔𞹗𞹙𞹛𞹝𞹟𞹡-𞹢𞹤𞹧-𞹪𞹬-𞹲𞹴-𞹷𞹹-𞹼𞹾𞺀-𞺉𞺋-𞺛𞺡-𞺣𞺥-𞺩𞺫-𞺻🄀-🄌🯰-🯹𠀀-𪛟𪜀-𫜹𫝀-𫠝𫠠-𬺡𬺰-𮯠𮯰-𮹝丽-𪘀𰀀-𱍊𱍐-𲎯]").
 text_contract_wordspec("text-contract-67", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", "_try_build_sparse_union_recursive_bindings_grammar").
 text_contract_wordspec("text-contract-68", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", "_try_build_sparse_recursive_bindings_grammar").
 text_contract_wordspec("text-contract-69", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", "_SqlSparseUnionRecursiveBindingGrammar").
@@ -184,19 +186,19 @@ text_contract_src(p, t) :- doc(d, p, _), in_scope(d), source(d, sp), text(sp, t)
 text_contract_span(p, l, sp) :- doc(d, p, _), in_scope(d), tape_line(d, l, sp).
 text_contract_line(p, l, u) :- text_contract_span(p, l, sp), text(sp, u).
 text_contract_next(p, l, j) :- text_contract_line(p, l, _), j = @add(l, 1), text_contract_line(p, j, _).
-text_contract_blank(p, l) :- text_contract_line(p, l, u), match("\\s*", u).
+text_contract_blank(p, l) :- text_contract_line(p, l, u), match("[\\s\\x1c-\\x1f]*", u).
 text_contract_empty(p, l) :- text_contract_line(p, l, "").
 text_contract_nb_next(p, j, j1) :- text_contract_next(p, j, j1), !text_contract_blank(p, j1).
 text_contract_nb_next(p, j, j2) :- text_contract_next(p, j, j1), text_contract_blank(p, j1), text_contract_nb_next(p, j1, j2).
 text_contract_ne_next(p, j, j1) :- text_contract_next(p, j, j1), !text_contract_empty(p, j1).
 text_contract_ne_next(p, j, j2) :- text_contract_next(p, j, j1), text_contract_empty(p, j1), text_contract_ne_next(p, j1, j2).
-text_contract_paren(p, j, j2) :- text_contract_nb_next(p, j, j2), text_contract_line(p, j2, u), match("\\s*\\(.*", u).
-text_contract_def(k, p, l) :- text_contract_defspec(k, p, nm), text_contract_line(p, l, u), x = @concat("\\s*(?:async )?def ", @concat(nm, "\\s*\\(.*")), match(x, u).
-text_contract_def(k, p, l) :- text_contract_defspec(k, p, nm), text_contract_line(p, l, u), x = @concat("\\s*(?:async )?def ", @concat(nm, "\\s*")), match(x, u), text_contract_paren(p, l, _).
+text_contract_paren(p, j, j2) :- text_contract_nb_next(p, j, j2), text_contract_line(p, j2, u), match("[\\s\\x1c-\\x1f]*\\(.*", u).
+text_contract_def(k, p, l) :- text_contract_defspec(k, p, nm), text_contract_line(p, l, u), x = @concat("[\\s\\x1c-\\x1f]*(?:async )?def ", @concat(nm, "[\\s\\x1c-\\x1f]*\\(.*")), match(x, u).
+text_contract_def(k, p, l) :- text_contract_defspec(k, p, nm), text_contract_line(p, l, u), x = @concat("[\\s\\x1c-\\x1f]*(?:async )?def ", @concat(nm, "[\\s\\x1c-\\x1f]*")), match(x, u), text_contract_paren(p, l, _).
 text_contract_def_back(k, p, l) :- text_contract_def(k, p, l).
 text_contract_def_back(k, p, j) :- text_contract_def_back(k, p, l), text_contract_next(p, j, l), text_contract_blank(p, j).
 text_contract_def_first(k, p, l) :- text_contract_def_back(k, p, _), l = min x : { text_contract_def_back(k, p, x) }.
-text_contract_word(k, p, l) :- text_contract_wordspec(k, p, nm), text_contract_line(p, l, u), x = @concat(".*\\b", @concat(nm, "\\b.*")), match(x, u).
+text_contract_word(k, p, l) :- text_contract_wordspec(k, p, nm), text_contract_nonword(c), text_contract_line(p, l, u), x = @concat(".*(?:\\A|", @concat(c, @concat(")", @concat(nm, @concat("(?:\\z|", @concat(c, ").*")))))), match(x, u).
 text_contract_word_first(k, p, l) :- text_contract_word(k, p, _), l = min x : { text_contract_word(k, p, x) }.
 text_contract_hdr(p, c, l) :- text_contract_clsspec(p, c), text_contract_line(p, l, u), x = @concat("class ", @concat(c, "(?:\\[.*\\])?(?:\\(.*\\))?:.*")), match(x, u).
 text_contract_cls(p, c, l) :- text_contract_hdr(p, c, _), l = min x : { text_contract_hdr(p, c, x) }.
@@ -208,34 +210,34 @@ text_contract_cend(p, c, e) :- text_contract_cafter(p, c, _), e = min x : { text
 text_contract_cended(p, c) :- text_contract_cend(p, c, _).
 text_contract_cin(p, c, l, u) :- text_contract_cls(p, c, l0), !text_contract_cquirk(p, c), text_contract_line(p, l, u), l > l0, text_contract_cend(p, c, e), l < e.
 text_contract_cin(p, c, l, u) :- text_contract_cls(p, c, l0), !text_contract_cquirk(p, c), text_contract_line(p, l, u), l > l0, !text_contract_cended(p, c).
-text_contract_cdef(k, l) :- text_contract_cmspec(k, p, c, nm), text_contract_cin(p, c, l, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?\\s*\\(.*")), match(x, u).
-text_contract_cdef(k, l) :- text_contract_cmspec(k, p, c, nm), text_contract_cin(p, c, l, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?\\s*")), match(x, u), text_contract_paren(p, l, j), text_contract_cin(p, c, j, _).
+text_contract_cdef(k, l) :- text_contract_cmspec(k, p, c, nm), text_contract_cin(p, c, l, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?[\\s\\x1c-\\x1f]*\\(.*")), match(x, u).
+text_contract_cdef(k, l) :- text_contract_cmspec(k, p, c, nm), text_contract_cin(p, c, l, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?[\\s\\x1c-\\x1f]*")), match(x, u), text_contract_paren(p, l, j), text_contract_cin(p, c, j, _).
 text_contract_cmok(k) :- text_contract_cdef(k, _).
 text_contract_deco(k, l) :- text_contract_decospec(k, dc), text_contract_cmspec(k, p, c, _), text_contract_cin(p, c, l, u), x = @concat("    @", @concat(dc, "(?:\\(.*\\))?")), match(x, u).
 text_contract_dchain(k, j) :- text_contract_deco(k, l), text_contract_cmspec(k, p, c, _), text_contract_next(p, l, j), text_contract_cin(p, c, j, _).
 text_contract_dchain(k, j) :- text_contract_dchain(k, l), text_contract_cmspec(k, p, c, _), text_contract_cin(p, c, l, u), match("    @.+", u), text_contract_next(p, l, j), text_contract_cin(p, c, j, _).
 text_contract_dok(k) :- text_contract_dchain(k, l), text_contract_cdef(k, l).
-text_contract_fcolon(k, a, a, x) :- text_contract_fspec(k, p, c, f), text_contract_cin(p, c, a, u), x = @concat("    ", @concat(f, "\\s*:")), y = @concat(x, ".*"), match(y, u).
-text_contract_fcolon(k, a, j, "\\s*:") :- text_contract_fspec(k, p, c, f), text_contract_cin(p, c, a, u), x = @concat("    ", @concat(f, "\\s*")), match(x, u), text_contract_nb_next(p, a, j), text_contract_cin(p, c, j, w), match("\\s*:.*", w).
+text_contract_fcolon(k, a, a, x) :- text_contract_fspec(k, p, c, f), text_contract_cin(p, c, a, u), x = @concat("    ", @concat(f, "[\\s\\x1c-\\x1f]*:")), y = @concat(x, ".*"), match(y, u).
+text_contract_fcolon(k, a, j, "[\\s\\x1c-\\x1f]*:") :- text_contract_fspec(k, p, c, f), text_contract_cin(p, c, a, u), x = @concat("    ", @concat(f, "[\\s\\x1c-\\x1f]*")), match(x, u), text_contract_nb_next(p, a, j), text_contract_cin(p, c, j, w), match("[\\s\\x1c-\\x1f]*:.*", w).
 text_contract_fok(k, a) :- text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), x = @concat(pre, "[^=].*"), match(x, u).
 text_contract_fok(k, a) :- text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), match(pre, u), text_contract_ne_next(p, b, j), text_contract_cin(p, c, j, w), match("[^=].*", w).
 text_contract_fld(k) :- text_contract_fok(k, _).
 text_contract_ffirst(k, a) :- text_contract_fok(k, _), a = min x : { text_contract_fok(k, x) }.
-text_contract_fx(k, b, x) :- text_contract_ffirst(k, a), text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), x = @concat(pre, "\\s*"), y = @concat(x, "\\S.*"), match(y, u).
-text_contract_fx(k, j, "\\s*") :- text_contract_ffirst(k, a), text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), x = @concat(pre, "\\s*"), match(x, u), text_contract_nb_next(p, b, j), text_contract_cin(p, c, j, _).
+text_contract_fx(k, b, x) :- text_contract_ffirst(k, a), text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), x = @concat(pre, "[\\s\\x1c-\\x1f]*"), y = @concat(x, "[^\\s\\x1c-\\x1f].*"), match(y, u).
+text_contract_fx(k, j, "[\\s\\x1c-\\x1f]*") :- text_contract_ffirst(k, a), text_contract_fcolon(k, a, b, pre), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, b, u), x = @concat(pre, "[\\s\\x1c-\\x1f]*"), match(x, u), text_contract_nb_next(p, b, j), text_contract_cin(p, c, j, _).
 text_contract_g1none(k) :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "[^=]*None.*"), match(x, u).
-text_contract_fq(k, j, x) :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "[^=\\s][^=]*="), y = @concat(x, ".*"), match(y, u).
-text_contract_fq(k, j3, "\\s*=") :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "[^=\\s][^=]*"), match(x, u), text_contract_nb_next(p, j, j3), text_contract_cin(p, c, j3, w), match("\\s*=.*", w).
+text_contract_fq(k, j, x) :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "[^=\\s\\x1c-\\x1f][^=]*="), y = @concat(x, ".*"), match(y, u).
+text_contract_fq(k, j3, "[\\s\\x1c-\\x1f]*=") :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "[^=\\s\\x1c-\\x1f][^=]*"), match(x, u), text_contract_nb_next(p, j, j3), text_contract_cin(p, c, j3, w), match("[\\s\\x1c-\\x1f]*=.*", w).
 text_contract_fq(k, j, x) :- text_contract_fx(k, j, xp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(xp, "="), y = @concat(x, ".*"), match(y, u).
 text_contract_g2none(k) :- text_contract_fq(k, j, qp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(qp, "[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*"), match(x, u).
-text_contract_g2none(k) :- text_contract_fq(k, j, qp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(qp, "\\s*"), match(x, u), text_contract_nb_next(p, j, j2), text_contract_cin(p, c, j2, w), match("[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", w).
-text_contract_mcross(k, a, j) :- text_contract_mspec(k, p, nm), text_contract_line(p, a, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?\\s*")), match(x, u), text_contract_paren(p, a, j).
-text_contract_mhdr(k, a) :- text_contract_mspec(k, p, nm), text_contract_line(p, a, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?\\s*\\(.*")), match(x, u).
+text_contract_g2none(k) :- text_contract_fq(k, j, qp), text_contract_fspec(k, p, c, _), text_contract_cin(p, c, j, u), x = @concat(qp, "[\\s\\x1c-\\x1f]*"), match(x, u), text_contract_nb_next(p, j, j2), text_contract_cin(p, c, j2, w), match("[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", w).
+text_contract_mcross(k, a, j) :- text_contract_mspec(k, p, nm), text_contract_line(p, a, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?[\\s\\x1c-\\x1f]*")), match(x, u), text_contract_paren(p, a, j).
+text_contract_mhdr(k, a) :- text_contract_mspec(k, p, nm), text_contract_line(p, a, u), x = @concat("    (?:async )?def ", @concat(nm, "(?:\\[.*\\])?[\\s\\x1c-\\x1f]*\\(.*")), match(x, u).
 text_contract_mhdr(k, a) :- text_contract_mcross(k, a, _).
 text_contract_has_m(k) :- text_contract_mhdr(k, _).
 text_contract_m0(k, a) :- text_contract_mhdr(k, _), a = min x : { text_contract_mhdr(k, x) }.
-text_contract_mquirk(k) :- text_contract_m0(k, a), text_contract_mcross(k, a, j), text_contract_mspec(k, p, _), text_contract_line(p, j, u), match("\\s*\\((?:    @|    (?:async )?def ).*", u).
-text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?\\s*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
+text_contract_mquirk(k) :- text_contract_m0(k, a), text_contract_mcross(k, a, j), text_contract_mspec(k, p, _), text_contract_line(p, j, u), match("[\\s\\x1c-\\x1f]*\\((?:    @|    (?:async )?def ).*", u).
+text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
 text_contract_mtop(p, l) :- text_contract_line(p, l, u), match("    (?:@|(?:async )?def ).*", u).
 text_contract_mafter(k, t) :- text_contract_m0(k, l0), text_contract_mspec(k, p, _), text_contract_mtop(p, t), t > l0.
 text_contract_mend(k, e) :- text_contract_mafter(k, _), e = min x : { text_contract_mafter(k, x) }.
@@ -243,7 +245,7 @@ text_contract_mended(k) :- text_contract_mend(k, _).
 text_contract_min(k, l, u) :- text_contract_m0(k, l0), !text_contract_mquirk(k), text_contract_mspec(k, p, _), text_contract_line(p, l, u), l >= l0, text_contract_mend(k, e), l < e.
 text_contract_min(k, l, u) :- text_contract_m0(k, l0), !text_contract_mquirk(k), text_contract_mspec(k, p, _), text_contract_line(p, l, u), l >= l0, !text_contract_mended(k).
 text_contract_mhead(k, u) :- text_contract_mquirk(k), text_contract_m0(k, a), text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_line(p, a, u).
-text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?\\s*\\()(?P<rest>.*)\\z", sp, m, "head", gh), text(gh, h).
+text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "head", gh), text(gh, h).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-0", "BCGP001", "l7200_versioned_transactions/versioned_lazy_mixin.py", 1) :- text_contract_anchor("text-contract-0"), !text_contract_present("l7200_versioned_transactions/versioned_lazy_mixin.py").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-1", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-1", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-2", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-2", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
@@ -264,15 +266,15 @@ violation("data-layer-bounded-composed-graph-paths", "text-contract-16", "BCGP00
 violation("data-layer-bounded-composed-graph-paths", "text-contract-17", "BCGP003", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-17"), !text_contract_dok("text-contract-17").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-18", "BCGP003", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-18"), !text_contract_dok("text-contract-18").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-19", "BCGP001", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_anchor("text-contract-19"), !text_contract_present("l9700_graph_query/graph_pattern.py").
-violation("data-layer-bounded-composed-graph-paths", "text-contract-20", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+GraphPathEvidenceRow(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-21", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathChoice(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-22", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-23", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathMode(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-24", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathPattern(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-25", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathSearch(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-26", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-27", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathStep(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-28", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+QuantifiedPath(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-20", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+GraphPathEvidenceRow(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-21", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathChoice(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-22", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-23", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathMode(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-24", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathPattern(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-25", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathSearch(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-26", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-27", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+PathStep(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-28", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+QuantifiedPath(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-29", "BCGP005", "l9700_graph_query/graph_pattern.py", l) :- text_contract_cls("l9700_graph_query/graph_pattern.py", "PathPattern", l), !text_contract_fld("text-contract-29").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-30", "BCGP005", "l9700_graph_query/graph_pattern.py", l) :- text_contract_cls("l9700_graph_query/graph_pattern.py", "PathPattern", l), text_contract_fld("text-contract-30").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-31", "BCGP001", "l9700_graph_query/query_builder.py", 1) :- text_contract_anchor("text-contract-31"), !text_contract_present("l9700_graph_query/query_builder.py").
@@ -325,11 +327,11 @@ violation("data-layer-bounded-composed-graph-paths", "text-contract-70", "BCGP01
 violation("data-layer-bounded-composed-graph-paths", "text-contract-71", "BCGP001", "l9720_sparql/executor.py", 1) :- text_contract_anchor("text-contract-71"), !text_contract_present("l9720_sparql/executor.py").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-72", "BCGP010", "l9720_sparql/executor.py", 1) :- text_contract_src("l9720_sparql/executor.py", t), contains("graph_query_builder", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-73", "BCGP001", "l9720_sparql/ast.py", 1) :- text_contract_anchor("text-contract-73"), !text_contract_present("l9720_sparql/ast.py").
-violation("data-layer-bounded-composed-graph-paths", "text-contract-74", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathAlternative(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-75", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-76", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathInverse(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-77", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathQuantifier(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
-violation("data-layer-bounded-composed-graph-paths", "text-contract-78", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-74", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+SparqlPathAlternative(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-75", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+SparqlPathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-76", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+SparqlPathInverse(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-77", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+SparqlPathQuantifier(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-78", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)[\\s\\x1c-\\x1f]+SparqlPathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-79", "BCGP001", "l9720_sparql/compiler.py", 1) :- text_contract_anchor("text-contract-79"), !text_contract_present("l9720_sparql/compiler.py").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-80", "BCGP010", "l9720_sparql/compiler.py", 1) :- text_contract_src("l9720_sparql/compiler.py", t), !contains("PathExpression", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-81", "BCGP011", "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst", 1) :- text_contract_anchor("text-contract-81"), !text_contract_present("docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst").
@@ -342,6 +344,6 @@ violation("data-layer-bounded-composed-graph-paths", "text-contract-87", "BCGP01
 violation("data-layer-bounded-composed-graph-paths", "text-contract-88", "BCGP001", "docs/l9720_sparql.rst", 1) :- text_contract_anchor("text-contract-88"), !text_contract_present("docs/l9720_sparql.rst").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-89", "BCGP011", "docs/l9720_sparql.rst", 1) :- text_contract_src("docs/l9720_sparql.rst", t), contains("graph_query_builder(", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-90", "BCGP001", "scripts/lint_all.py", 1) :- text_contract_anchor("text-contract-90"), !text_contract_present("scripts/lint_all.py").
-text_contract_all("text-contract-91") :- text_contract_src("scripts/lint_all.py", t), match("(?s:.*)(?:name\\s*=\\s*['\"]bounded_composed_graph_paths['\"])(?s:.*)", t), match("(?s:.*)(?:script\\s*=\\s*['\"]lint_bounded_composed_graph_paths\\.py['\"])(?s:.*)", t), match("(?s:.*)(?:enforcement\\s*=\\s*['\"]hard-fail['\"])(?s:.*)", t), match("(?s:.*)(?:in_ci\\s*=\\s*True)(?s:.*)", t).
+text_contract_all("text-contract-91") :- text_contract_src("scripts/lint_all.py", t), match("(?s:.*)(?:name[\\s\\x1c-\\x1f]*=[\\s\\x1c-\\x1f]*['\"]bounded_composed_graph_paths['\"])(?s:.*)", t), match("(?s:.*)(?:script[\\s\\x1c-\\x1f]*=[\\s\\x1c-\\x1f]*['\"]lint_bounded_composed_graph_paths\\.py['\"])(?s:.*)", t), match("(?s:.*)(?:enforcement[\\s\\x1c-\\x1f]*=[\\s\\x1c-\\x1f]*['\"]hard-fail['\"])(?s:.*)", t), match("(?s:.*)(?:in_ci[\\s\\x1c-\\x1f]*=[\\s\\x1c-\\x1f]*True)(?s:.*)", t).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-91", "BCGP012", "scripts/lint_all.py", 1) :- text_contract_anchor("text-contract-91"), !text_contract_all("text-contract-91").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-92", "BCGP013", "conform/l9700_graph_query/test_bounded_composed_paths.py", 1) :- text_contract_anchor("text-contract-92"), !text_contract_present("conform/l9700_graph_query/test_bounded_composed_paths.py").

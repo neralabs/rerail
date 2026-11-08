@@ -8,9 +8,10 @@ union_classes("class_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
 .decl separate_both(ps: node)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl str(n: node, v: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl union_conn(n: node)
 .decl union_conn_names(s: symbol)
@@ -26,7 +27,7 @@ union_classes("class_definition").
 .decl union_txn_names(s: symbol)
 .decl union_typed(ps: node, p: node, t: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, str, strprefix, line, syntax_error
+.input doc, syntax_error, node, field, child, text, line, str, strprefix
 .output violation
 union_conn_names("Connection").
 union_conn_names("DoltDbConnection").
@@ -185,6 +186,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 union_conn(n) :- node(_, n, "identifier", _, _), text(n, s), union_conn_names(s).
 union_conn(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), union_conn_names(s).
 union_conn(n) :- node(_, n, "string", _, _), strprefix(n, p), union_prefixes(p), str(n, s), union_conn_names(s).
@@ -198,6 +200,6 @@ union_self(p) :- child(p, c, _), node(_, c, "identifier", _, _), text(c, "self")
 union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_names(s).
 union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_methods(s, c), nearest(f, k, union_classes), field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, c).
 union_function(f, ps) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), !union_exempt(f).
-violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :- union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t), node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :- union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
 separate_both(ps) :- union_typed(ps, _, t), union_conn(t), union_txn(t).
-violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :- union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps), node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :- union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).

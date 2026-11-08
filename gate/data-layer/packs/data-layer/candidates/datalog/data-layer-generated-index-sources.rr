@@ -9,6 +9,7 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl generated_doc(d: number)
 .decl generated_factory(f: node)
 .decl generated_first_kw(c: node, at: number)
+.decl generated_first_source(f: node, p: node)
 .decl generated_fn(n: node, f: node)
 .decl generated_fn_at(x: node)
 .decl generated_forwards(c: node)
@@ -19,10 +20,13 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl generated_index_alias(d: number, x: symbol, at: number)
 .decl generated_index_call(c: node)
 .decl generated_issue(n: node)
+.decl generated_kwonly_source_at(f: node, p: node, i: number)
+.decl generated_last_kwonly_source(f: node, p: node)
 .decl generated_param(f: node, p: node, x: symbol, kind: symbol)
 .decl generated_param_name(p: node, x: symbol)
 .decl generated_schema_alias(d: number, x: symbol, at: number)
 .decl generated_schema_module(m: node)
+.decl generated_source_at(f: node, p: node, i: number)
 .decl generated_source_kw(c: node, k: node, at: number)
 .decl generated_source_param(f: node, p: node)
 .decl generated_star(p: node)
@@ -34,10 +38,11 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl visit_index(n: node, i: number)
-.input doc, syntax_error, node, node_text, child, text, field, visit_index, op, line
+.input doc, syntax_error, node, field, child, text, op, line, node_text, visit_index
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/generic_sparse.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
@@ -47,7 +52,8 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s), (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
+tape_syntax_error(d) :- syntax_error(d).
+generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s), (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
 generated_unparen(e, e) :- node(d, e, k, _, _), generated_doc(d), k != "parenthesized_expression".
 generated_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), generated_doc(d), child(e, i, 0), generated_unparen(i, m).
 generated_schema_module(m) :- node(d, m, "dotted_name", _, _), generated_doc(d), child(m, a, 0), text(a, "l1000_schema"), child(m, b, 1), text(b, "schema_def"), !child(m, _, 2).
@@ -81,6 +87,10 @@ generated_after_star(ps, i) :- generated_factory(f), field(f, "parameters", ps),
 generated_before_slash(ps, i) :- generated_factory(f), field(f, "parameters", ps), child(ps, _, i), child(ps, s, j), j > i, node(_, s, "positional_separator", _, _).
 generated_source_param(f, p) :- generated_param(f, p, "source", _).
 generated_has_source(f) :- generated_source_param(f, _).
+generated_source_at(f, p, i) :- generated_source_param(f, p), field(f, "parameters", ps), child(ps, p, i).
+generated_first_source(f, p) :- generated_source_at(f, p, i), i = min j : { generated_source_at(f, _, j) }.
+generated_kwonly_source_at(f, p, i) :- generated_param(f, p, "source", "kwonlyargs"), field(f, "parameters", ps), child(ps, p, i).
+generated_last_kwonly_source(f, p) :- generated_kwonly_source_at(f, p, i), i = max j : { generated_kwonly_source_at(f, _, j) }.
 generated_annotated(p) :- field(p, "type", t), child(t, e0, 0), generated_unparen(e0, e), node(_, e, "identifier", _, _), text(e, "IndexSource").
 generated_source_kw(c, k, s) :- generated_index_call(c), field(c, "arguments", a), child(a, k, _), node(_, k, "keyword_argument", s, _), field(k, "name", n), text(n, "source").
 generated_first_kw(c, s) :- generated_source_kw(c, _, _), s = min t : { generated_source_kw(c, _, t) }.
@@ -88,7 +98,7 @@ generated_forwards(c) :- generated_first_kw(c, s), generated_source_kw(c, k, s),
 generated_issue(n) :- generated_index_call(n), !generated_in_factory(n).
 generated_issue(n) :- generated_index_call(n), generated_in_factory(n), !generated_forwards(n).
 generated_issue(f) :- generated_factory(f), !generated_has_source(f).
-generated_issue(f) :- generated_source_param(f, p), !generated_annotated(p).
-generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
-generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
+generated_issue(f) :- generated_first_source(f, p), !generated_annotated(p).
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
 violation("data-layer-generated-index-sources", "generated-index-source", "missing_source", p, l) :- generated_issue(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).

@@ -25,7 +25,7 @@
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, text, line, node_text, field, end_line, tape_line
+.input doc, node, field, text, line, tape_line, end_line, node_text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("rust/nera_compiler_sql/src/**/*.rs", p).
 pattern_0_ident(n, s) :- node(_, n, "identifier", _, _), text(n, s).

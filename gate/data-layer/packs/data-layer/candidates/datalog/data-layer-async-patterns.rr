@@ -36,6 +36,7 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl session_receiver_value_need(v: node, at: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl transaction_receiver_annotation(t: node)
 .decl transaction_receiver_annotation_wrapper(t: node)
@@ -64,7 +65,7 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, op, line, syntax_error, tape_line, value, value_type_of
+.input doc, node, child, field, text, op, line, syntax_error, value, value_type_of, tape_line
 .output violation
 async_patterns_method("to-thread", "to_thread").
 async_patterns_method("executor", "run_in_executor").
@@ -193,7 +194,8 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
-async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 async_patterns_plugin(d, p) :- async_patterns_doc(d, p), !option_on("oracleAnalyzer").
 async_patterns_call(fam, d, c, o) :- async_patterns_method(fam, m), text(a, m), node(_, a, "identifier", _, _), field(f, "attribute", a), node(_, f, "attribute", _, _), field(c, "function", f), node(d, c, "call", _, _), field(f, "object", o), async_patterns_doc(d, _).
 async_patterns_in_async(c) :- async_patterns_call(fam, _, c, _), fam != "to-thread", fam != "executor", nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async").

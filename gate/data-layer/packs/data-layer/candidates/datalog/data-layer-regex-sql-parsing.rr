@@ -37,13 +37,14 @@
 .decl rsp_str(x: node, v: symbol)
 .decl rsp_tested(v: symbol)
 .decl rsp_text(x: node, v: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, strprefix, child, value, value_type_of, fstring_template, field, text, node_text, syntax_error, line
+.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_template, node_text
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -57,6 +58,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 rsp_fstr(x) :- node(_, x, "string", _, _), strprefix(x, p), contains("f", p).
 rsp_part(x) :- child(c, x, _), node(_, c, "concatenated_string", _, _).
 rsp_fparts(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), rsp_fstr(s).
@@ -98,7 +100,7 @@ rsp_first(a, z) :- rsp_call(_, _, a), child(a, z, i), !rsp_later(a, i).
 rsp_hit(c, m, k) :- rsp_call(c, m, a), rsp_first(a, z), rsp_str(z, v), rsp_cat(k, v).
 rsp_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 rsp_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE)(?s:.*)", s).
-rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
+rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
 violation("data-layer-regex-sql-parsing", "category-0", "ERROR_MSG_PARSE", p, l) :- rsp_found(_, _, 0, p, l).
 violation("data-layer-regex-sql-parsing", "category-1", "SQL_COMMENT_STRIP", p, l) :- rsp_found(_, _, 1, p, l).
 violation("data-layer-regex-sql-parsing", "category-2", "SQL_PARAM_NORMALIZE", p, l) :- rsp_found(_, _, 2, p, l).

@@ -5,7 +5,7 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl rr_agg1(d: number, j: number, l: number, m: node)
-.decl rr_ctx2(l: number)
+.decl rr_ctx2(d: number, l: number)
 .decl src_line(d: number, l: number, sp: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, src_line
@@ -23,8 +23,8 @@ admin_async_quote(d, l, m) :- src_line(d, l, sp), match_all("\"\"\"|'''", sp, m)
 admin_async_hit(d, l, "pattern-0") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\basyncio\\.to_thread\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
 admin_async_hit(d, l, "pattern-1") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\brun_in_executor\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
 admin_async_hit(d, l, "pattern-2") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\bdisable_sync_in_async_check\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
-rr_ctx2(l) :- admin_async_hit(d, l, _).
-rr_agg1(d, j, l, m) :- rr_ctx2(l), admin_async_quote(d, j, m), j < l.
+rr_ctx2(d, l) :- admin_async_hit(d, l, _).
+rr_agg1(d, j, l, m) :- rr_ctx2(d, l), admin_async_quote(d, j, m), j < l.
 admin_async_code(d, l) :- admin_async_hit(d, l, _), k = count : { rr_agg1(d, _, l, _) }, @sub(k, @mul(2, @div(k, 2))) = 0.
 violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-0"), admin_async_code(d, l), doc(d, p, _).
 violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-1"), admin_async_code(d, l), doc(d, p, _).

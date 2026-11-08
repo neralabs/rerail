@@ -144,10 +144,11 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl out_scope(d: number)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, node_text, op, child, value, line, source, text, end_line, syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, value, source, end_line, node_text
 .output violation
 eager_approved_pattern("*.resolve()").
 eager_approved_pattern("*.resolve_async()").
@@ -288,6 +289,7 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 eager_modname(d, m) :- doc(d, p, m), !suffix("/__init__.py", p).
 eager_modname(d, x) :- doc(d, p, m), suffix("/__init__.py", p), x = @concat(m, ".__init__").
 eager_serverplan(d) :- doc(d, p, _), (prefix("impl/common/l2070_server_plan/", p) ; prefix("impl/common/l7300_sql_versioned_transactions/", p) ; prefix("l2050_transaction/", p) ; prefix("l2055_lazy_result/", p) ; prefix("l2070_batching/", p) ; prefix("l5100_fts/", p) ; prefix("l5200_vector_index/", p) ; prefix("l7200_versioned_transactions/", p)).
@@ -525,4 +527,4 @@ eager_finding(d, l, i) :- eager_external(d, l, i), option_value("entryPoint", "_
 eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
 eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
 eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
-violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

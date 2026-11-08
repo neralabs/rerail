@@ -43,14 +43,15 @@ removed_surface_imports("import_statement"). removed_surface_imports("import_fro
 .decl removed_surface_hit(n: node)
 .decl removed_surface_name(s: symbol)
 .decl rr_agg1(p: node, s: number, t: symbol, xs: number)
-.decl rr_ctx2(xs: number)
-.decl strprefix(n: node, s: symbol)
+.decl rr_ctx2(p: node, xs: number)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, syntax_error, node_text, strprefix, op_at, token, value_type_of
+.input doc, node, child, field, text, line, syntax_error, node_text, strprefix, value_type_of, op_at, token
 .output violation
 domain_helper_allowed("_materialize_assertion_from_row").
 domain_helper_allowed("_materialize_by_post_op_behavior").
@@ -89,12 +90,13 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), node_text(m, s), match("(?s:.*)(?:ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op)(?s:.*)", s).
+tape_syntax_error(d) :- syntax_error(d).
+pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node_text(m, s), match("(?s:.*)(?:ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op)(?s:.*)", s).
 pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2), op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
 pod_nth_parent(c) :- pod_binary_cmp(c, _).
 pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
-rr_ctx2(xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).
-rr_agg1(p, s, t, xs) :- rr_ctx2(xs), token(p, _, t, s, _), prefix("#", t), s < xs.
+rr_ctx2(p, xs) :- child(p, x, i), node(_, x, _, xs, _).
+rr_agg1(p, s, t, xs) :- rr_ctx2(p, xs), token(p, _, t, s, _), prefix("#", t), s < xs.
 pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _), j = count : { rr_agg1(p, _, _, xs) }, k = @add(@add(i, 1), j).
 pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, e), pod_enum_name(e), field(a, "attribute", x), text(x, m).
 pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).

@@ -31,6 +31,7 @@ lv_if("if_statement").
 .decl path_part(d: number, s: symbol)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, child, field, text, line, syntax_error, node_text, path_part, source
@@ -53,7 +54,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
-lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("import ", s).
 lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("from ", s).
 lv_gate(d) :- lv_doc(d, _), !option_on("sourceGate"), node(d, _, "module", _, _).

@@ -38,9 +38,10 @@ lazy_sql_region_kind("with_statement").
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, node, syntax_error, field, text, child, op, line
+.input doc, syntax_error, node, field, child, text, op, line, node_text
 .output violation
 lazy_sql_allowed("impl/common/l2070_server_plan/base_server_plan.py").
 lazy_sql_allowed("impl/common/l2070_server_plan/plan_helpers.py").
@@ -86,7 +87,8 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-lazy_sql_file(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("LazyResult", s) ; contains("SyncSqlConnection", s) ; contains("compile", s) ; contains("execute", s) ; contains("explicit_execution_authority", s) ; contains("grammar_lazy", s) ; contains("legacy_async", s) ; contains("legacy_sync", s)), doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !syntax_error(d), in_scope(d), !out_scope(d).
+tape_syntax_error(d) :- syntax_error(d).
+lazy_sql_file(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("LazyResult", s) ; contains("SyncSqlConnection", s) ; contains("compile", s) ; contains("execute", s) ; contains("explicit_execution_authority", s) ; contains("grammar_lazy", s) ; contains("legacy_async", s) ; contains("legacy_sync", s)), doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !tape_syntax_error(d), in_scope(d), !out_scope(d).
 lazy_sql_attr(a, s, o) :- node(_, a, "attribute", _, _), field(a, "attribute", i), text(i, s), field(a, "object", o).
 lazy_sql_call(c, s, r) :- node(_, c, "call", _, _), field(c, "function", f), lazy_sql_attr(f, s, r).
 lazy_sql_root(r) :- lazy_sql_call(_, s, r), (s = "execute" ; s = "execute_async").

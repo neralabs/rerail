@@ -212,13 +212,14 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl primitive_install_valid(d: number, p: symbol)
 .decl rr_agg1(c: node, dn: node)
 .decl src_line_lf(d: number, l: number, sp: node)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, src_line_lf, node, line, field, child, text, strprefix, value_type_of, value, fstring_piece, op, syntax_error, cpython_syntax_error, path_part
+.input doc, syntax_error, path_part, node, field, child, text, op, line, value, strprefix, value_type_of, fstring_piece, src_line_lf, node_text, cpython_syntax_error
 .output violation
 bootstrap_invariants_backend5("collection_names").
 bootstrap_invariants_backend5("execute_cypher").
@@ -644,6 +645,7 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 bootstrap_invariants_entry(v) :- option_value("entryPoint", v).
 bootstrap_invariants_params(j) :- option_value("parameters", j).
 bootstrap_invariants_has_engine_key(1) :- bootstrap_invariants_params(j), match("(?s:.*)\"enginePaths\"[ \\t\\n\\r]*:[ \\t\\n\\r]*\\[(?s:.*)", j).
@@ -827,7 +829,7 @@ bootstrap_invariants_base(d, b) :- doc(d, p, _), b = @rx_replace(p, "^.*/", "").
 bootstrap_invariants_base_bootstrap(d) :- bootstrap_invariants_base(d, b), contains("bootstrap", b).
 bootstrap_invariants_engine(d) :- bootstrap_invariants_engine_path(d).
 bootstrap_invariants_engine(d) :- bootstrap_invariants_bootstrap_path(d).
-bootstrap_invariants_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e), e != "_collect_primitive_install_coverage_violations".
+bootstrap_invariants_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), bootstrap_invariants_entry(e), e != "_collect_primitive_install_coverage_violations".
 bootstrap_invariants_valid(d, p) :- bootstrap_invariants_gate(d, p), !cpython_syntax_error(d, _, _).
 bootstrap_invariants_source(d, s) :- bootstrap_invariants_valid(d, _), bootstrap_invariants_raw(d, s).
 bootstrap_invariants_source(d, s) :- bootstrap_invariants_valid(d, _), !bootstrap_invariants_raw(d, _), node(d, m, "module", _, _), node_text(m, s).
@@ -992,13 +994,13 @@ bootstrap_invariants_row(d, "BEI042", l) :- bootstrap_invariants_enode_named(d, 
 bootstrap_invariants_row(d, "BEI042", l) :- bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_scaffold7(x), bootstrap_invariants_base(d, "bootstrap_coordinator.py"), line(n, l).
 bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_fnode(d, f, x), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), bootstrap_invariants_hash_names(x), line(f, l).
 bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), node(d, t, "boolean_operator", _, _), bootstrap_invariants_or_value(t, v), bootstrap_invariants_named(v, x), (x = "request" ; x = "proof_hashes" ; x = "seed_hashes"), line(t, l).
-bootstrap_invariants_coverage_error(p) :- bootstrap_invariants_entry("all"), doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), (p = "l3200_metadata/bootstrap_coordinator.py" ; p = "l3200_metadata/bootstrap_data_plan.py").
+bootstrap_invariants_coverage_error(p) :- bootstrap_invariants_entry("all"), doc(d, p, _), in_scope(d), !out_scope(d), tape_syntax_error(d), (p = "l3200_metadata/bootstrap_coordinator.py" ; p = "l3200_metadata/bootstrap_data_plan.py").
 bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error("l3200_metadata/bootstrap_coordinator.py").
 bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error(_), bootstrap_invariants_gate(_, "l3200_metadata/bootstrap_coordinator.py").
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p, l) :- bootstrap_invariants_entry("all"), !bootstrap_invariants_quiet(1), bootstrap_invariants_row(d, i, l), doc(d, p, _).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", "BEI007", p, l) :- bootstrap_invariants_entry("_collect_fake_executor_violations"), bootstrap_invariants_row(d, "BEI007", l), doc(d, p, _).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p, l) :- bootstrap_invariants_entry(e), e != "all", e != "_collect_fake_executor_violations", bootstrap_invariants_row(d, i, l), doc(d, p, _).
-primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), bootstrap_invariants_entry(e), (e = "_collect_primitive_install_coverage_violations" ; e = "all").
+primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), bootstrap_invariants_entry(e), (e = "_collect_primitive_install_coverage_violations" ; e = "all").
 bootstrap_invariants_depth_need(f) :- primitive_install_valid(d, "l3200_metadata/bootstrap_coordinator.py"), bootstrap_invariants_def(d, f, x), primitive_install_install_name(x).
 primitive_install_fn(d, f, x, k, s) :- primitive_install_valid(d, "l3200_metadata/bootstrap_coordinator.py"), bootstrap_invariants_def(d, f, x), primitive_install_install_name(x), bootstrap_invariants_depth(f, k), node(d, f, _, s, _).
 primitive_install_later(f) :- primitive_install_fn(d, f, x, k, _), primitive_install_fn(d, _, x, k2, _), k2 > k.
@@ -1010,7 +1012,7 @@ primitive_install_not_first(c) :- primitive_install_class(d, c, k, _), primitive
 primitive_install_not_first(c) :- primitive_install_class(d, c, k, s), primitive_install_class(d, _, k, s2), s2 < s.
 primitive_install_declared(x) :- primitive_install_class(_, c, _, _), !primitive_install_not_first(c), field(c, "body", b), child(b, st, _), node(_, st, "expression_statement", _, _), child(st, a, 0), bootstrap_invariants_assign_target(a, t), node(_, t, "identifier", _, _), text(t, x).
 violation("data-layer-bootstrap-engine-invariants", "primitive-install-coverage", "BEI038", "l3200_metadata/bootstrap_coordinator.py", 1) :- primitive_install_valid(_, "l3200_metadata/bootstrap_coordinator.py"), primitive_install_declared(x), !primitive_install_installed(x).
-bootstrap_source_syntax_doc(d, p) :- bootstrap_invariants_entry(e), e != "all", doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d).
+bootstrap_source_syntax_doc(d, p) :- bootstrap_invariants_entry(e), e != "all", doc(d, p, _), in_scope(d), !out_scope(d), tape_syntax_error(d).
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), bootstrap_invariants_entry("_collect_fake_executor_violations").
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), bootstrap_invariants_bootstrap_path(d).
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, p), match("(.*/)?(schema_transaction|sql_connection|bootstrap_interrogation)\\.py", p).

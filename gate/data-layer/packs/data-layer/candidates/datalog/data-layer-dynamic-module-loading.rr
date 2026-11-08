@@ -18,7 +18,7 @@ pattern_block("block").
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, node_text, child, op, tape_line
+.input doc, node, field, text, line, child, op, tape_line, node_text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).

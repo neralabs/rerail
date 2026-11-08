@@ -31,6 +31,7 @@ tc_lam("lambda").
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl tc_argbefore(g: node, c: node, b: node)
 .decl tc_argok(g: node, c: node, i: number)
 .decl tc_argx(k: symbol)
@@ -68,7 +69,7 @@ tc_lam("lambda").
 .decl tc_txmeth(s: symbol)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, node_text, syntax_error, text, field, child, line
+.input doc, syntax_error, node, field, child, text, line, node_text
 .output violation
 option_on("sourceGate").
 tc_argx("keyword_argument").
@@ -119,9 +120,10 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 tc_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, t), (contains(".read(", t) ; contains(".read_version(", t) ; contains(".versioned_read(", t) ; contains(".versioned_write(", t) ; contains(".write(", t) ; contains(".write_version(", t)).
 tc_gate(d) :- doc(d, _, _), !option_on("sourceGate").
-tc_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), tc_gate(d).
+tc_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), tc_gate(d).
 tc_ident(n, s) :- node(_, n, "identifier", _, _), text(n, s).
 tc_callmut(d, m, x) :- tc_doc(d, _), node(d, m, "call", _, _), field(m, "function", a), node(_, a, "attribute", _, _), field(a, "object", o), tc_ident(o, x), field(a, "attribute", y), tc_ident(y, meth), tc_mutmeth(meth).
 tc_subcand(n) :- tc_doc(d, _), node(d, n, "subscript", _, _).

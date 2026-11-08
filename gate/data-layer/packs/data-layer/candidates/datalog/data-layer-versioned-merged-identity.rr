@@ -40,8 +40,9 @@
 .decl option_item(name: symbol, i: number, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, line, node_text, file_name, syntax_error, node, field, child
+.input doc, syntax_error, file_name, node, field, child, line, node_text
 .output violation
 constructors_catname("_get_versioned_table_projection_info").
 constructors_catname("catalog_versioned_merged_projection").
@@ -75,7 +76,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-constructors_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+constructors_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 constructors_frame(d, f, ws, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, _, e), constructors_doc(d, _), field(f, "name", n), node_text(n, nm), child(w, f, _), node(d, w, "decorated_definition", ws, _).
 constructors_frame(d, f, s, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, s, e), constructors_doc(d, _), field(f, "name", n), node_text(n, nm), !constructors_wrapped(f).
 constructors_wrapped(f) :- node(d, w, "decorated_definition", _, _), child(w, f, _), node(d, f, k, _, _), constructors_frame_kind(k, _).

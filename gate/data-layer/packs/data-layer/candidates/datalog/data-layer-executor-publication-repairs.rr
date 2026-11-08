@@ -5,7 +5,7 @@
 .decl src_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, src_line, text
+.input doc, text, src_line
 .output violation
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/executor.py", p).
 publication_line(d, l, s) :- doc(d, _, _), in_scope(d), !out_scope(d), src_line(d, l, sp), text(sp, s).

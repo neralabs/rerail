@@ -62,7 +62,7 @@ wrapper_shape_argk("argument_list").
 .decl op(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl sync_delegation_awaits(f: node)
 .decl sync_delegation_blk_ok(b: node)
 .decl sync_delegation_blk_upto(b: node, x: node)
@@ -94,6 +94,7 @@ wrapper_shape_argk("argument_list").
 .decl sync_delegation_toggle_other(b: node)
 .decl sync_delegation_unsupported(s: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -130,7 +131,7 @@ wrapper_shape_argk("argument_list").
 .decl wrapper_shape_tx(f: node, c: node, s: node)
 .decl wrapper_shape_txn(f: node)
 .decl wrapper_shape_unsupported(f: node)
-.input doc, node, field, line, syntax_error, node_text, text, value_type_of, child, op, strprefix
+.input doc, node, field, text, line, syntax_error, node_text, child, op, strprefix, value_type_of
 .output violation
 legacy_variant("legacy_sync", "legacy_async", "_sync", "_async").
 legacy_variant("legacy_async", "legacy_sync", "_async", "").
@@ -236,9 +237,10 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 asd_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ; contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ; contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ; contains("pure_lazy", s) ; contains("resolve_async", s)).
 asd_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
-asd_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), asd_gate(d).
+asd_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), asd_gate(d).
 asd_test_path(p) :- doc(_, p, _), prefix("tests/", p).
 asd_test_path(p) :- doc(_, p, _), prefix("conform/", p).
 asd_test_path(p) :- doc(_, p, _), prefix("impl/browser/", p).
@@ -346,8 +348,8 @@ sync_delegation_safe_call(c) :- sync_delegation_lazy_call(c).
 sync_delegation_safe_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "JSONResponse").
 sync_delegation_safe_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "_attach_auto_api_hook_registry").
 sync_delegation_safe_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "cast").
-sync_delegation_lazy_only(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), sync_delegation_lazy_call(c), !sync_delegation_eager(f).
-sync_delegation_eager(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _), !sync_delegation_safe_call(c).
+sync_delegation_lazy_only(f) :- sync_delegation_fn(f, _, _), has(f, c, asd_fdef), sync_delegation_lazy_call(c), !sync_delegation_eager(f).
+sync_delegation_eager(f) :- sync_delegation_fn(f, _, _), has(f, c, asd_fdef), node(_, c, "call", _, _), !sync_delegation_safe_call(c).
 sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/tests/", p).
 sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("tests/", p).
 sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/conform/", p).
@@ -580,7 +582,7 @@ wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "identifier", _, _
 wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "identifier", _, _), text(x, "write_txn").
 wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "typed_parameter", _, _), field(x, "type", t), node_text(t, s), contains("Transaction", s).
 wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "typed_default_parameter", _, _), field(x, "type", t), node_text(t, s), contains("Transaction", s).
-wrapper_shape_unsupported(f) :- node(_, f, "function_definition", _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), node(_, a, "identifier", _, _), text(a, "_raise_async_not_supported").
+wrapper_shape_unsupported(f) :- node(_, f, "function_definition", _, _), has(f, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), node(_, a, "identifier", _, _), text(a, "_raise_async_not_supported").
 wrapper_shape_cb(f, s) :- wrapper_shape_pair(f, "public", _, s), wrapper_shape_doc(f, _), !asd_stub(f), !asd_stub(s), wrapper_shape_callback(f), !asd_deco(f, "legacy_async"), !asd_deco(s, "legacy_sync"), !wrapper_shape_unsupported(f), !wrapper_shape_unsupported(s).
 wrapper_shape_cb(f, s) :- wrapper_shape_pair(f, "public", _, s), wrapper_shape_doc(f, _), !asd_stub(f), !asd_stub(s), wrapper_shape_callback(s), !asd_deco(f, "legacy_async"), !asd_deco(s, "legacy_sync"), !wrapper_shape_unsupported(f), !wrapper_shape_unsupported(s).
 wrapper_shape_shape(f, s) :- wrapper_shape_pair(f, "dunder", _, s), wrapper_shape_doc(f, _).
@@ -597,10 +599,10 @@ wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), asd_deco(g
 wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), asd_deco(g, "pure_lazy"), !field(g, "return_type", _).
 wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), asd_deco(g, "lazy"), field(g, "return_type", t), node_text(t, x), (contains("LazyResult", x) ; contains("LazySeq", x) ; contains("ServerPlan", x)).
 wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), asd_deco(g, "pure_lazy"), field(g, "return_type", t), node_text(t, x), (contains("LazyResult", x) ; contains("LazySeq", x) ; contains("ServerPlan", x)).
-wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_effect_lazy").
-wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_row_lazy").
-wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_rows_lazy").
-wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_value_lazy").
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), has(g, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_effect_lazy").
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), has(g, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_row_lazy").
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), has(g, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_rows_lazy").
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t), node_text(t, x), contains("LazyResult", x), has(g, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", h), node(_, h, "identifier", _, _), text(h, "grammar_value_lazy").
 wrapper_shape_lazy_fn(c, z) :- node(_, c, "call", _, _), field(c, "function", z), node(_, z, "identifier", _, _), text(z, s), suffix("_lazy", s).
 wrapper_shape_lazy_fn(c, z) :- node(_, c, "call", _, _), field(c, "function", z), node(_, z, "attribute", _, _), field(z, "attribute", a), text(a, s), suffix("_lazy", s).
 wrapper_shape_resolve_attr(r, m, z) :- node(_, r, "attribute", _, _), field(r, "attribute", a), node(_, a, "identifier", _, _), text(a, m), (m = "resolve" ; m = "resolve_async"), field(r, "object", o), wrapper_shape_lazy_fn(o, z).
@@ -609,8 +611,8 @@ wrapper_shape_resolves("async", x, z) :- node(_, x, "call", _, _), field(x, "fun
 wrapper_shape_resolves("sync", x, z) :- wrapper_shape_named_call(x, "run_in_legacy_execution_boundary", args), child(args, r, _), wrapper_shape_resolve_attr(r, "resolve", z).
 wrapper_shape_resolves("async", x, z) :- wrapper_shape_named_call(x, "run_in_legacy_execution_boundary_async", args), child(args, r, _), wrapper_shape_resolve_attr(r, "resolve_async", z).
 wrapper_shape_resolves(mode, x, z) :- wrapper_shape_legacy_lambda(mode, x, st, z), st = min t : { wrapper_shape_legacy_lambda(mode, x, t, _) }.
-wrapper_shape_legacy_lambda("sync", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_sync", args), inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
-wrapper_shape_legacy_lambda("async", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_async", args), inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+wrapper_shape_legacy_lambda("sync", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_sync", args), has(args, lam, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+wrapper_shape_legacy_lambda("async", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_async", args), has(args, lam, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
 wrapper_shape_named_call(x, fnm, args) :- node(_, x, "call", _, _), field(x, "function", g), node(_, g, "identifier", _, _), text(g, fnm), field(x, "arguments", args).
 wrapper_shape_resolving("sync", s, z) :- wrapper_shape_stmt(s), child(s, x, _), wrapper_shape_resolves("sync", x, z).
 wrapper_shape_resolving("async", s, z) :- wrapper_shape_stmt(s), child(s, w, _), node(_, w, "await", _, _), child(w, x, _), wrapper_shape_resolves("async", x, z).
@@ -647,7 +649,7 @@ legacy_valid(o, nm) :- legacy_lazydef(o, nm), !legacy_rebound(o, nm).
 legacy_valid(o, nm) :- legacy_lazydef(o, nm), legacy_last_rebind(o, nm, nm).
 legacy_valid(o, nm) :- legacy_last_rebind(o, nm, x), x != nm, legacy_valid(o, x).
 legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(d, o, "module", _, _), node(d, i, "identifier", _, _), text(i, nm).
-legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(_, o, "class_definition", _, _), inside(i, o, asd_class), node(_, i, "identifier", _, _), text(i, nm).
+legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(_, o, "class_definition", _, _), has(o, i, asd_class), node(_, i, "identifier", _, _), text(i, nm).
 legacy_missing_lazy(f, dv) :- legacy_fn(f, dv, b), legacy_top(f, m), nm = @concat(b, "_lazy"), !legacy_lazy_ok(m, nm).
 legacy_missing_lazy(f, dv) :- legacy_method(f, dv, b, c), field(c, "name", cn), text(cn, s), (suffix("Connection", s) ; suffix("SessionHandle", s) ; suffix("VersionHandle", s)), nm = @concat(b, "_lazy"), !legacy_lazy_ok(c, nm).
 legacy_has_counterpart(o, cv, nm) :- legacy_scope(o, ob), child(ob, x, _), node(_, x, "decorated_definition", _, _), field(x, "definition", g), asd_fname(g, nm), asd_deco(g, cv).

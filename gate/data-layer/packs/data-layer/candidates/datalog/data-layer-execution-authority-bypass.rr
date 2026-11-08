@@ -40,11 +40,12 @@ authority_wrapper_kind("decorated_definition").
 .decl out_scope(d: number)
 .decl rr_agg1(r: node, t: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, node_text, field, text, child, value, value_type_of, line
+.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text
 .output violation
 authority_bare_private("_caller_token").
 authority_bare_private("_explicit_authority_var").
@@ -85,7 +86,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
-authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_legacy_boundary_var", s).
 authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_explicit_authority_var", s).
 authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("explicit_execution_authority", s).

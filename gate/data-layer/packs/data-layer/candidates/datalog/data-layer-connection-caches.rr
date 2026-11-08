@@ -29,7 +29,7 @@
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, node_text, tape_line, text, line, field, child, token, col
+.input doc, node, field, child, text, line, tape_line, col, node_text, token
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).

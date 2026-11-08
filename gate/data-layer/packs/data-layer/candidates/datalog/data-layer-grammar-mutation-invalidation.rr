@@ -24,9 +24,10 @@ mutation_fdef("function_definition").
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, line, syntax_error
+.input doc, syntax_error, node, field, child, text, line, node_text
 .output violation
 mutation_class_name("SqlBinaryOp").
 mutation_class_name("SqlColumnRef").
@@ -65,11 +66,12 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 mutation_memo_decorator(x) :- node(_, x, "decorator", _, _), node_text(x, s), suffix("memoize_in_read_only_scope", s).
 mutation_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, s), mutation_class_name(s).
 mutation_class(c) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), child(dd, x, _), mutation_memo_decorator(x).
-mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), field(c, "body", b), node(_, b, "block", _, _), child(b, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
-mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), field(c, "body", b), node(_, b, "block", _, _), child(b, dd, _), node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b), node(_, b, "block", _, _), child(b, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b), node(_, b, "block", _, _), child(b, dd, _), node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
 mutation_private(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), prefix("_", s), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "self").
 mutation_private(n) :- node(_, n, "subscript", _, _), field(n, "value", v), mutation_private(v).
 mutation_rewrite(m) :- node(_, m, "named_expression", _, _), field(m, "name", t), mutation_private(t).

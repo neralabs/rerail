@@ -405,6 +405,7 @@ spt_type_kind("type").
 .decl spt_tests_path(d: number)
 .decl spt_typed_param_kind(kind: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl value(n: node, v: symbol)
@@ -1003,10 +1004,11 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 spt_project(d) :- node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result)(?s:.*)", s).
 spt_admitted(d) :- spt_project(d).
 spt_admitted(d) :- doc(d, _, _), option_on("oracleAnalyzer").
-spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
+spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
 spt_tests_path(d) :- doc(d, p, _), contains("/tests/", p).
 spt_named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
 spt_named(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
@@ -1303,11 +1305,11 @@ spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, "pending_pipeline_effects").
 spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), match("(?s:.*)(?:^apply_.*_effect$)(?s:.*)", x).
 spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, x, _), spt_flow_pure_lazy_ref(x).
 spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), suffix("sql_builder", x).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params), node(_, x, "identifier", _, _), text(x, "runtime_refs").
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params), node_text(x, s), contains("RuntimeBuilderSpec", s).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params), node(_, x, "identifier", _, _), text(x, "runtime_refs").
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params), node_text(x, s), contains("RuntimeBuilderSpec", s).
 spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), node(_, ps, "parameters", _, _), token(ps, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params), token(x, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), inside(c, f, spt_flow_k_fdef), spt_flow_compiledstep_call(c).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params), token(x, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), has(f, c, spt_flow_k_fdef), spt_flow_compiledstep_call(c).
 spt_flow_flsrc(d) :- doc(d, p, _), match("(?s:.*)(?:(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\\.py$))(?s:.*)", p).
 spt_flow_flsrc(d) :- spt_flow_flsrc_fn(f), node(d, f, _, _, _).
 spt_flow_a1(d) :- doc(d, _, _), spt_flow_sps(1).
@@ -1317,7 +1319,7 @@ spt_flow_a2(d) :- doc(d, _, _), spt_flow_sps(1).
 spt_flow_a2(d) :- spt_flow_flsrc(d).
 spt_flow_a3(d) :- doc(d, _, _), spt_flow_opt("oracleAnalyzer", "true").
 spt_flow_a3(d) :- spt_project(d).
-spt_flow_adoc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_flow_ep_ok(1), spt_flow_a1(d), spt_flow_a2(d), spt_flow_a3(d).
+spt_flow_adoc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), spt_flow_ep_ok(1), spt_flow_a1(d), spt_flow_a2(d), spt_flow_a3(d).
 spt_flow_pmode(1) :- spt_flow_sps(1), spt_flow_adoc(_).
 spt_flow_nested(f) :- node(d, f, "function_definition", _, _), spt_flow_adoc(d), inside(f, _, spt_flow_k_fdef).
 spt_flow_top(n, t) :- node(d, n, _, _, _), spt_flow_adoc(d), inside(n, t, spt_flow_k_fdef), !spt_flow_nested(t).

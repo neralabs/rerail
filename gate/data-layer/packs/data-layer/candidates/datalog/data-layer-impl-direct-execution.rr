@@ -16,9 +16,10 @@
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, node_text, syntax_error
+.input doc, syntax_error, node, field, text, line, node_text
 .output violation
 direct_execution_method("_execute_direct_internal").
 direct_execution_method("_execute_direct_internal_async").
@@ -130,6 +131,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 direct_execution_attr(a, id, m) :- node(_, a, "attribute", _, _), field(a, "attribute", id), text(id, m), direct_execution_method(m).
 direct_execution_row(d, l, m) :- direct_execution_attr(a, _, m), field(c, "function", a), node(d, c, "call", _, _), line(c, l).
 direct_execution_row(d, l, m) :- direct_execution_attr(a, id, m), node_text(a, s), (suffix("._execute_direct_internal", s) ; suffix("._execute_direct_internal_async", s) ; suffix("._fetchall", s) ; suffix("._fetchone", s) ; suffix(".execute_grammar_fetchall", s) ; suffix(".execute_grammar_fetchone", s) ; suffix(".fetchall", s) ; suffix(".fetchone", s)), node(d, a, _, _, e), field(c, "function", a), field(c, "arguments", g), node(_, g, _, e, _), line(id, l).
@@ -141,4 +143,4 @@ direct_execution_code("direct_execution") :- direct_execution_entry(_), !option_
 direct_execution_kept(d, l) :- direct_execution_entry(e), e != "scan_fts_manager_source", e != "scan_fts_manager_direct_execution", direct_execution_row(d, l, _), !direct_execution_allowed(d).
 direct_execution_kept(d, l) :- direct_execution_row(d, l, "_execute_direct_internal"), direct_execution_fts(d).
 direct_execution_kept(d, l) :- direct_execution_row(d, l, "_execute_direct_internal_async"), direct_execution_fts(d).
-violation("data-layer-impl-direct-execution", "direct-execution-lines", c, p, l) :- direct_execution_kept(d, l), direct_execution_code(c), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+violation("data-layer-impl-direct-execution", "direct-execution-lines", c, p, l) :- direct_execution_kept(d, l), direct_execution_code(c), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _).

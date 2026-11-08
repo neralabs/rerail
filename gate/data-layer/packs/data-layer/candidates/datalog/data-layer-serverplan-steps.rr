@@ -2,8 +2,6 @@
 k0("function_definition").
 .decl k1(kind: symbol)
 k1("class_definition"). k1("function_definition"). k1("lambda").
-.decl k2(kind: symbol)
-k2("aliased_import"). k2("argument_list"). k2("as_pattern"). k2("as_pattern_target"). k2("assert_statement"). k2("assignment"). k2("attribute"). k2("augmented_assignment"). k2("await"). k2("binary_operator"). k2("block"). k2("boolean_operator"). k2("break_statement"). k2("call"). k2("case_clause"). k2("case_pattern"). k2("chevron"). k2("class_definition"). k2("class_pattern"). k2("comparison_operator"). k2("complex_pattern"). k2("concatenated_string"). k2("conditional_expression"). k2("constrained_type"). k2("continue_statement"). k2("decorated_definition"). k2("decorator"). k2("default_parameter"). k2("delete_statement"). k2("dict_pattern"). k2("dictionary"). k2("dictionary_comprehension"). k2("dictionary_splat"). k2("dictionary_splat_pattern"). k2("dotted_name"). k2("elif_clause"). k2("ellipsis"). k2("else_clause"). k2("escape_interpolation"). k2("escape_sequence"). k2("except_clause"). k2("exec_statement"). k2("expression_list"). k2("expression_statement"). k2("false"). k2("finally_clause"). k2("float"). k2("for_in_clause"). k2("for_statement"). k2("format_expression"). k2("format_specifier"). k2("function_definition"). k2("future_import_statement"). k2("generator_expression"). k2("generic_type"). k2("global_statement"). k2("identifier"). k2("if_clause"). k2("if_statement"). k2("import_from_statement"). k2("import_prefix"). k2("import_statement"). k2("integer"). k2("interpolation"). k2("keyword_argument"). k2("keyword_pattern"). k2("keyword_separator"). k2("lambda"). k2("lambda_parameters"). k2("line_continuation"). k2("list"). k2("list_comprehension"). k2("list_pattern"). k2("list_splat"). k2("list_splat_pattern"). k2("match_statement"). k2("member_type"). k2("module"). k2("named_expression"). k2("none"). k2("nonlocal_statement"). k2("not_operator"). k2("pair"). k2("parameters"). k2("parenthesized_expression"). k2("parenthesized_list_splat"). k2("pass_statement"). k2("pattern_list"). k2("positional_separator"). k2("print_statement"). k2("raise_statement"). k2("relative_import"). k2("return_statement"). k2("set"). k2("set_comprehension"). k2("slice"). k2("splat_pattern"). k2("splat_type"). k2("string"). k2("string_content"). k2("string_end"). k2("string_start"). k2("subscript"). k2("true"). k2("try_statement"). k2("tuple"). k2("tuple_pattern"). k2("type"). k2("type_alias_statement"). k2("type_conversion"). k2("type_default"). k2("type_parameter"). k2("typed_default_parameter"). k2("typed_parameter"). k2("unary_operator"). k2("union_pattern"). k2("union_type"). k2("while_statement"). k2("wildcard_import"). k2("with_clause"). k2("with_item"). k2("with_statement"). k2("yield").
 .decl k3(kind: symbol)
 k3("class_definition").
 .decl k4(kind: symbol)
@@ -60,39 +58,37 @@ sc6_k_fn("function_definition").
 sc6_k_module("module").
 .decl side_effect_block(kind: symbol)
 side_effect_block("block").
-.decl blocked10(low: node, high: node)
 .decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
-.decl m102(n: node)
+.decl m100(n: node)
+.decl m101(n: node)
 .decl m103(n: node)
-.decl m105(n: node)
-.decl m115(n: node)
-.decl m133(n: node)
-.decl m174(n: node)
-.decl m175(n: node)
-.decl m191(n: node)
-.decl m198(n: node)
-.decl m208(n: node)
-.decl m218(n: node)
-.decl m228(n: node)
-.decl m238(n: node)
-.decl m244(n: node)
-.decl m25(n: node)
-.decl m26(n: node)
+.decl m113(n: node)
+.decl m131(n: node)
+.decl m172(n: node)
+.decl m173(n: node)
+.decl m189(n: node)
+.decl m196(n: node)
+.decl m206(n: node)
+.decl m216(n: node)
+.decl m226(n: node)
+.decl m23(n: node)
+.decl m236(n: node)
+.decl m24(n: node)
+.decl m242(n: node)
+.decl m38(n: node)
+.decl m39(n: node)
 .decl m40(n: node)
-.decl m41(n: node)
-.decl m42(n: node)
-.decl m59(n: node)
-.decl m60(n: node)
+.decl m57(n: node)
+.decl m58(n: node)
 .decl m7(n: node)
+.decl m72(n: node)
+.decl m73(n: node)
 .decl m74(n: node)
-.decl m75(n: node)
 .decl m76(n: node)
-.decl m78(n: node)
-.decl m9(n: node)
 .decl name(n: node, s: symbol)
 .decl never(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -101,7 +97,7 @@ side_effect_block("block").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(p: node, s: number, t: number)
-.decl rr_ctx2(s: number)
+.decl rr_ctx2(p: node, s: number)
 .decl rrs_bindings(b: node, name: symbol, v: node)
 .decl rrs_calls(c: node)
 .decl rrs_calls_callee(c: node, callee: symbol)
@@ -521,12 +517,14 @@ side_effect_block("block").
 .decl sps_step_method(f: node)
 .decl sps_text(n: node, s: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, node_text, value, value_type_of, token
+.decl within(n: node, a: node)
+.input doc, node, child, field, text, name, line, syntax_error, within, value, value_type_of, node_text, token
 .output violation
 option_on("strictModulesOnly").
 option_value("entryPoint", "all").
@@ -707,76 +705,73 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 m7(n) :- node(_, n, "identifier", _, _), text(n, v4), (v4 = "copy" ; v4 = "deepcopy" ; v4 = "dict" ; v4 = "model_copy" ; v4 = "model_dump" ; v4 = "model_dump_json").
 m7(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v5), node(_, v5, "identifier", _, _), text(v5, v6), (v6 = "copy" ; v6 = "deepcopy" ; v6 = "dict" ; v6 = "model_copy" ; v6 = "model_dump" ; v6 = "model_dump_json").
-m9(n) :- node(_, n, "function_definition", _, _).
-m9(n) :- node(_, n, "class_definition", _, _).
-m9(n) :- node(_, n, "lambda", _, _).
-blocked10(low, high) :- inside(low, s, k1), m9(s), inside(s, high, k0).
-m25(n) :- node(_, n, "identifier", _, _), text(n, v22), v22 = "ServerPlanStep".
-m25(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v23), node(_, v23, "identifier", _, _), text(v23, v24), v24 = "ServerPlanStep".
-m26(n) :- node(_, n, "identifier", _, _), text(n, v18), v18 = "ServerPlanStep".
-m26(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v19), node(_, v19, "identifier", _, _), text(v19, v20), v20 = "ServerPlanStep".
-m26(n) :- node(_, n, "subscript", _, _), field(n, "value", v21), m25(v21).
-m40(n) :- node(_, n, "identifier", _, _), text(n, v37), v37 = "ServerPlanStep".
-m40(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v38), node(_, v38, "identifier", _, _), text(v38, v39), v39 = "ServerPlanStep".
-m41(n) :- node(_, n, "identifier", _, _), text(n, v33), v33 = "ServerPlanStep".
-m41(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v34), node(_, v34, "identifier", _, _), text(v34, v35), v35 = "ServerPlanStep".
-m41(n) :- node(_, n, "subscript", _, _), field(n, "value", v36), m40(v36).
-m42(n) :- child(v13, n, _), node(_, v13, "block", _, _), child(v14, v13, _), node(_, v14, "class_definition", _, _), field(v14, "name", v15), field(v14, "superclasses", v16), child(v16, v17, _), m26(v17).
-m42(n) :- child(v27, n, _), node(_, v27, "decorated_definition", _, _), child(v28, v27, _), node(_, v28, "block", _, _), child(v29, v28, _), node(_, v29, "class_definition", _, _), field(v29, "name", v30), field(v29, "superclasses", v31), child(v31, v32, _), m41(v32).
-violation("data-layer-serverplan-steps", "compile-object-manipulation", "STEP-017", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "call", _, _), field(n, "function", v3), m7(v3), inside(n, v8, k0), !blocked10(n, v8), node(_, v8, "function_definition", _, _), field(v8, "name", v11), node(_, v11, "identifier", _, _), text(v11, v12), v12 = "compile", m42(v8), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m59(n) :- node(_, n, "identifier", _, _), text(n, v56), v56 = "ServerPlanStep".
-m59(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v57), node(_, v57, "identifier", _, _), text(v57, v58), v58 = "ServerPlanStep".
-m60(n) :- node(_, n, "identifier", _, _), text(n, v52), v52 = "ServerPlanStep".
-m60(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v53), node(_, v53, "identifier", _, _), text(v53, v54), v54 = "ServerPlanStep".
-m60(n) :- node(_, n, "subscript", _, _), field(n, "value", v55), m59(v55).
-m74(n) :- node(_, n, "identifier", _, _), text(n, v71), v71 = "ServerPlanStep".
-m74(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v72), node(_, v72, "identifier", _, _), text(v72, v73), v73 = "ServerPlanStep".
-m75(n) :- node(_, n, "identifier", _, _), text(n, v67), v67 = "ServerPlanStep".
-m75(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v68), node(_, v68, "identifier", _, _), text(v68, v69), v69 = "ServerPlanStep".
-m75(n) :- node(_, n, "subscript", _, _), field(n, "value", v70), m74(v70).
-m76(n) :- child(v47, n, _), node(_, v47, "block", _, _), child(v48, v47, _), node(_, v48, "class_definition", _, _), field(v48, "name", v49), field(v48, "superclasses", v50), child(v50, v51, _), m60(v51).
-m76(n) :- child(v61, n, _), node(_, v61, "decorated_definition", _, _), child(v62, v61, _), node(_, v62, "block", _, _), child(v63, v62, _), node(_, v63, "class_definition", _, _), field(v63, "name", v64), field(v63, "superclasses", v65), child(v65, v66, _), m75(v66).
-m78(n) :- field(n, "name", v77), node(_, v77, "identifier", _, _), never(v77).
-violation("data-layer-serverplan-steps", "cannot-batch", "STEP-020", p, l) :- node(v43, n, _, _, _), doc(v43, v44, _), node(_, n, "function_definition", _, _), field(n, "name", v45), node(_, v45, "identifier", _, _), text(v45, v46), v46 = "can_batch", m76(n), !m78(n), field(n, "body", v79), inside(v80, v79, k2), node(_, v80, "return_statement", _, _), child(v80, v81, _), node(_, v81, "false", _, _), child(v82, v80, _), node(_, v82, "block", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m102(n) :- node(_, n, "identifier", _, _), text(n, v99), v99 = "ServerPlanStep".
-m102(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v100), node(_, v100, "identifier", _, _), text(v100, v101), v101 = "ServerPlanStep".
-m103(n) :- node(_, n, "identifier", _, _), text(n, v95), v95 = "ServerPlanStep".
-m103(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v96), node(_, v96, "identifier", _, _), text(v96, v97), v97 = "ServerPlanStep".
-m103(n) :- node(_, n, "subscript", _, _), field(n, "value", v98), m102(v98).
-m105(n) :- field(n, "name", v104), node(_, v104, "identifier", _, _), never(v104).
-violation("data-layer-serverplan-steps", "runtime-state", "STEP-021", p, l) :- node(v83, n, _, _, _), doc(v83, v84, _), node(_, n, "attribute", _, _), field(n, "object", v85), node(_, v85, "identifier", _, _), text(v85, v86), v86 = "self", field(n, "attribute", v87), node(_, v87, "identifier", _, _), text(v87, v88), (v88 = "_conn" ; v88 = "_txn" ; v88 = "conn" ; v88 = "txn"), child(v89, n, _), node(_, v89, "assignment", _, _), field(v89, "left", v90), inside(n, v91, k3), node(_, v91, "class_definition", _, _), field(v91, "name", v92), field(v91, "superclasses", v93), child(v93, v94, _), m103(v94), !m105(v91), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-serverplan-steps", "misc-runtime-member", "STEP-030", p, l) :- node(v106, n, _, _, _), doc(v106, v107, _), node(_, n, "attribute", _, _), field(n, "object", v108), node(_, v108, "identifier", _, _), text(v108, v109), v109 = "RuntimeBuilderKind", field(n, "attribute", v110), node(_, v110, "identifier", _, _), text(v110, v111), v111 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m115(n) :- field(n, "type", v114).
-violation("data-layer-serverplan-steps", "misc-runtime-definition", "STEP-030", p, l) :- node(v112, n, _, _, _), doc(v112, v113, _), node(_, n, "assignment", _, _), !m115(n), field(n, "left", v116), node(_, v116, "identifier", _, _), text(v116, v117), v117 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m133(n) :- field(n, "arguments", v128), child(v128, v129, _), node(_, v129, "keyword_argument", _, _), field(v129, "name", v130), node(_, v130, "identifier", _, _), text(v130, v131), v131 = "grammar", field(v129, "value", v132), !node(_, v132, "none", _, _).
-violation("data-layer-serverplan-steps", "closed-migration-refs", "STEP-027", p, l) :- node(v118, n, _, _, _), doc(v118, v119, _), node(_, n, "call", _, _), field(n, "function", v120), node(_, v120, "identifier", _, _), text(v120, v121), v121 = "CompiledStep", inside(n, v122, k4), node(_, v122, "module", _, _), child(v122, v123, _), node(_, v123, "expression_statement", _, _), child(v123, v124, _), node(_, v124, "assignment", _, _), field(v124, "left", v125), node(_, v125, "identifier", _, _), text(v125, v126), v126 = "CLOSED_POST_OP_STRICT", field(v124, "right", v127), node(_, v127, "true", _, _), !m133(n), field(n, "arguments", v134), child(v134, v135, _), node(_, v135, "keyword_argument", _, _), field(v135, "name", v136), node(_, v136, "identifier", _, _), text(v136, v137), v137 = "runtime_ref_ids", field(v135, "value", v138), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v138, l).
-violation("data-layer-serverplan-steps", "closed-migration-with-refs", "STEP-027", p, l) :- node(v139, n, _, _, _), doc(v139, v140, _), node(_, n, "call", _, _), field(n, "function", v141), node(_, v141, "identifier", _, _), text(v141, v142), v142 = "CompiledStep", inside(n, v143, k4), node(_, v143, "module", _, _), child(v143, v144, _), node(_, v144, "expression_statement", _, _), child(v144, v145, _), node(_, v145, "assignment", _, _), field(v145, "left", v146), node(_, v146, "identifier", _, _), text(v146, v147), v147 = "CLOSED_POST_OP_STRICT", field(v145, "right", v148), node(_, v148, "true", _, _), field(n, "arguments", v149), child(v149, v150, _), node(_, v150, "keyword_argument", _, _), field(v150, "name", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "post_op_with_refs", field(v150, "value", v153), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v153, l).
-m174(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v170), name(v170, v172), (glob("*_post_op", v172) ; glob("assert_result", v172) ; glob("materialize", v172)).
-m174(n) :- node(_, n, "identifier", _, _), text(n, v173), suffix("_post_op", v173).
-m175(n) :- node(_, n, "call", _, _), field(n, "function", v169), m174(v169).
-violation("data-layer-serverplan-steps", "closed-migration-postop", "STEP-027", p, l) :- node(v154, n, _, _, _), doc(v154, v155, _), node(_, n, "call", _, _), field(n, "function", v156), node(_, v156, "identifier", _, _), text(v156, v157), v157 = "CompiledStep", inside(n, v158, k4), node(_, v158, "module", _, _), child(v158, v159, _), node(_, v159, "expression_statement", _, _), child(v159, v160, _), node(_, v160, "assignment", _, _), field(v160, "left", v161), node(_, v161, "identifier", _, _), text(v161, v162), v162 = "CLOSED_POST_OP_STRICT", field(v160, "right", v163), node(_, v163, "true", _, _), field(n, "arguments", v164), child(v164, v165, _), node(_, v165, "keyword_argument", _, _), field(v165, "name", v166), node(_, v166, "identifier", _, _), text(v166, v167), v167 = "post_op", field(v165, "value", v168), !m175(v168), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v168, l).
-violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v176, n, _, _, _), doc(v176, v177, _), node(_, n, "comparison_operator", _, _), node(v178, n, _, _, _), doc(v178, v179, _), glob("**/terminal_projection_builders.py", v179), child(n, v180, _), node(_, v180, "identifier", _, _), text(v180, v181), v181 = "projection_kind", inside(n, v182, k0), node(_, v182, "function_definition", _, _), field(v182, "name", v183), node(_, v183, "identifier", _, _), text(v183, v184), v184 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m191(n) :- field(n, "arguments", v189), child(v189, v190, _).
-violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v185, n, _, _, _), doc(v185, v186, _), node(_, n, "call", _, _), field(n, "function", v187), node(_, v187, "identifier", _, _), text(v187, v188), v188 = "ResultAssertionSpec", !m191(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m198(n) :- node(_, n, "identifier", _, _), text(n, v195), v195 = "ResultMaterializationSpec".
-m198(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v196), node(_, v196, "identifier", _, _), text(v196, v197), v197 = "ResultMaterializationSpec".
-m208(n) :- node(_, n, "identifier", _, _), text(n, v205), v205 = "ResultMaterializationSpec".
-m208(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v206), node(_, v206, "identifier", _, _), text(v206, v207), v207 = "ResultMaterializationSpec".
-m218(n) :- node(_, n, "identifier", _, _), text(n, v215), v215 = "ResultMaterializationSpec".
-m218(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v216), node(_, v216, "identifier", _, _), text(v216, v217), v217 = "ResultMaterializationSpec".
-m228(n) :- node(_, n, "identifier", _, _), text(n, v225), v225 = "runtime_refs_post_op".
-m228(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v226), node(_, v226, "identifier", _, _), text(v226, v227), v227 = "runtime_refs_post_op".
-m238(n) :- node(_, n, "identifier", _, _), text(n, v235), (v235 = "BatchChildResultSpec" ; v235 = "CompiledStep").
-m238(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v236), node(_, v236, "identifier", _, _), text(v236, v237), (v237 = "BatchChildResultSpec" ; v237 = "CompiledStep").
-m244(n) :- node(_, n, "call", _, _), field(n, "function", v194), m198(v194), field(n, "arguments", v199), child(v199, v200, _), node(_, v200, "keyword_argument", _, _), field(v200, "name", v201), node(_, v201, "identifier", _, _), text(v201, v202), v202 = "source_refs", field(v200, "value", v203).
-m244(n) :- node(_, n, "call", _, _), field(n, "function", v204), m208(v204), field(n, "arguments", v209), child(v209, v210, _), node(_, v210, "keyword_argument", _, _), field(v210, "name", v211), node(_, v211, "identifier", _, _), text(v211, v212), v212 = "source_names", field(v210, "value", v213).
-m244(n) :- node(_, n, "call", _, _), field(n, "function", v214), m218(v214), field(n, "arguments", v219), child(v219, v220, _), node(_, v220, "keyword_argument", _, _), field(v220, "name", v221), node(_, v221, "identifier", _, _), text(v221, v222), v222 = "source_materializer", field(v220, "value", v223).
-m244(n) :- node(_, n, "call", _, _), field(n, "function", v224), m228(v224), field(n, "arguments", v229), child(v229, v230, _), node(_, v230, "keyword_argument", _, _), field(v230, "name", v231), node(_, v231, "identifier", _, _), text(v231, v232), v232 = "source_refs", field(v230, "value", v233).
-m244(n) :- node(_, n, "call", _, _), field(n, "function", v234), m238(v234), field(n, "arguments", v239), child(v239, v240, _), node(_, v240, "keyword_argument", _, _), field(v240, "name", v241), node(_, v241, "identifier", _, _), text(v241, v242), v242 = "raw_payload_ref_id", field(v240, "value", v243).
-violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v192, n, _, _, _), doc(v192, v193, _), m244(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v245, n, _, _, _), doc(v245, v246, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+m23(n) :- node(_, n, "identifier", _, _), text(n, v20), v20 = "ServerPlanStep".
+m23(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v21), node(_, v21, "identifier", _, _), text(v21, v22), v22 = "ServerPlanStep".
+m24(n) :- node(_, n, "identifier", _, _), text(n, v16), v16 = "ServerPlanStep".
+m24(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v17), node(_, v17, "identifier", _, _), text(v17, v18), v18 = "ServerPlanStep".
+m24(n) :- node(_, n, "subscript", _, _), field(n, "value", v19), m23(v19).
+m38(n) :- node(_, n, "identifier", _, _), text(n, v35), v35 = "ServerPlanStep".
+m38(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v36), node(_, v36, "identifier", _, _), text(v36, v37), v37 = "ServerPlanStep".
+m39(n) :- node(_, n, "identifier", _, _), text(n, v31), v31 = "ServerPlanStep".
+m39(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v32), node(_, v32, "identifier", _, _), text(v32, v33), v33 = "ServerPlanStep".
+m39(n) :- node(_, n, "subscript", _, _), field(n, "value", v34), m38(v34).
+m40(n) :- child(v11, n, _), node(_, v11, "block", _, _), child(v12, v11, _), node(_, v12, "class_definition", _, _), field(v12, "name", v13), field(v12, "superclasses", v14), child(v14, v15, _), m24(v15).
+m40(n) :- child(v25, n, _), node(_, v25, "decorated_definition", _, _), child(v26, v25, _), node(_, v26, "block", _, _), child(v27, v26, _), node(_, v27, "class_definition", _, _), field(v27, "name", v28), field(v27, "superclasses", v29), child(v29, v30, _), m39(v30).
+violation("data-layer-serverplan-steps", "compile-object-manipulation", "STEP-017", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "call", _, _), field(n, "function", v3), m7(v3), nearest(n, v8, k1), node(_, v8, "function_definition", _, _), field(v8, "name", v9), node(_, v9, "identifier", _, _), text(v9, v10), v10 = "compile", m40(v8), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m57(n) :- node(_, n, "identifier", _, _), text(n, v54), v54 = "ServerPlanStep".
+m57(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v55), node(_, v55, "identifier", _, _), text(v55, v56), v56 = "ServerPlanStep".
+m58(n) :- node(_, n, "identifier", _, _), text(n, v50), v50 = "ServerPlanStep".
+m58(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v51), node(_, v51, "identifier", _, _), text(v51, v52), v52 = "ServerPlanStep".
+m58(n) :- node(_, n, "subscript", _, _), field(n, "value", v53), m57(v53).
+m72(n) :- node(_, n, "identifier", _, _), text(n, v69), v69 = "ServerPlanStep".
+m72(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v70), node(_, v70, "identifier", _, _), text(v70, v71), v71 = "ServerPlanStep".
+m73(n) :- node(_, n, "identifier", _, _), text(n, v65), v65 = "ServerPlanStep".
+m73(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v66), node(_, v66, "identifier", _, _), text(v66, v67), v67 = "ServerPlanStep".
+m73(n) :- node(_, n, "subscript", _, _), field(n, "value", v68), m72(v68).
+m74(n) :- child(v45, n, _), node(_, v45, "block", _, _), child(v46, v45, _), node(_, v46, "class_definition", _, _), field(v46, "name", v47), field(v46, "superclasses", v48), child(v48, v49, _), m58(v49).
+m74(n) :- child(v59, n, _), node(_, v59, "decorated_definition", _, _), child(v60, v59, _), node(_, v60, "block", _, _), child(v61, v60, _), node(_, v61, "class_definition", _, _), field(v61, "name", v62), field(v61, "superclasses", v63), child(v63, v64, _), m73(v64).
+m76(n) :- field(n, "name", v75), node(_, v75, "identifier", _, _), never(v75).
+violation("data-layer-serverplan-steps", "cannot-batch", "STEP-020", p, l) :- node(v41, n, _, _, _), doc(v41, v42, _), node(_, n, "function_definition", _, _), field(n, "name", v43), node(_, v43, "identifier", _, _), text(v43, v44), v44 = "can_batch", m74(n), !m76(n), field(n, "body", v77), within(v78, v77), node(_, v78, "return_statement", _, _), child(v78, v79, _), node(_, v79, "false", _, _), child(v80, v78, _), node(_, v80, "block", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m100(n) :- node(_, n, "identifier", _, _), text(n, v97), v97 = "ServerPlanStep".
+m100(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v98), node(_, v98, "identifier", _, _), text(v98, v99), v99 = "ServerPlanStep".
+m101(n) :- node(_, n, "identifier", _, _), text(n, v93), v93 = "ServerPlanStep".
+m101(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v94), node(_, v94, "identifier", _, _), text(v94, v95), v95 = "ServerPlanStep".
+m101(n) :- node(_, n, "subscript", _, _), field(n, "value", v96), m100(v96).
+m103(n) :- field(n, "name", v102), node(_, v102, "identifier", _, _), never(v102).
+violation("data-layer-serverplan-steps", "runtime-state", "STEP-021", p, l) :- node(v81, n, _, _, _), doc(v81, v82, _), node(_, n, "attribute", _, _), field(n, "object", v83), node(_, v83, "identifier", _, _), text(v83, v84), v84 = "self", field(n, "attribute", v85), node(_, v85, "identifier", _, _), text(v85, v86), (v86 = "_conn" ; v86 = "_txn" ; v86 = "conn" ; v86 = "txn"), child(v87, n, _), node(_, v87, "assignment", _, _), field(v87, "left", v88), inside(n, v89, k3), node(_, v89, "class_definition", _, _), field(v89, "name", v90), field(v89, "superclasses", v91), child(v91, v92, _), m101(v92), !m103(v89), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "misc-runtime-member", "STEP-030", p, l) :- node(v104, n, _, _, _), doc(v104, v105, _), node(_, n, "attribute", _, _), field(n, "object", v106), node(_, v106, "identifier", _, _), text(v106, v107), v107 = "RuntimeBuilderKind", field(n, "attribute", v108), node(_, v108, "identifier", _, _), text(v108, v109), v109 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m113(n) :- field(n, "type", v112).
+violation("data-layer-serverplan-steps", "misc-runtime-definition", "STEP-030", p, l) :- node(v110, n, _, _, _), doc(v110, v111, _), node(_, n, "assignment", _, _), !m113(n), field(n, "left", v114), node(_, v114, "identifier", _, _), text(v114, v115), v115 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m131(n) :- field(n, "arguments", v126), child(v126, v127, _), node(_, v127, "keyword_argument", _, _), field(v127, "name", v128), node(_, v128, "identifier", _, _), text(v128, v129), v129 = "grammar", field(v127, "value", v130), !node(_, v130, "none", _, _).
+violation("data-layer-serverplan-steps", "closed-migration-refs", "STEP-027", p, l) :- node(v116, n, _, _, _), doc(v116, v117, _), node(_, n, "call", _, _), field(n, "function", v118), node(_, v118, "identifier", _, _), text(v118, v119), v119 = "CompiledStep", inside(n, v120, k4), node(_, v120, "module", _, _), child(v120, v121, _), node(_, v121, "expression_statement", _, _), child(v121, v122, _), node(_, v122, "assignment", _, _), field(v122, "left", v123), node(_, v123, "identifier", _, _), text(v123, v124), v124 = "CLOSED_POST_OP_STRICT", field(v122, "right", v125), node(_, v125, "true", _, _), !m131(n), field(n, "arguments", v132), child(v132, v133, _), node(_, v133, "keyword_argument", _, _), field(v133, "name", v134), node(_, v134, "identifier", _, _), text(v134, v135), v135 = "runtime_ref_ids", field(v133, "value", v136), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v136, l).
+violation("data-layer-serverplan-steps", "closed-migration-with-refs", "STEP-027", p, l) :- node(v137, n, _, _, _), doc(v137, v138, _), node(_, n, "call", _, _), field(n, "function", v139), node(_, v139, "identifier", _, _), text(v139, v140), v140 = "CompiledStep", inside(n, v141, k4), node(_, v141, "module", _, _), child(v141, v142, _), node(_, v142, "expression_statement", _, _), child(v142, v143, _), node(_, v143, "assignment", _, _), field(v143, "left", v144), node(_, v144, "identifier", _, _), text(v144, v145), v145 = "CLOSED_POST_OP_STRICT", field(v143, "right", v146), node(_, v146, "true", _, _), field(n, "arguments", v147), child(v147, v148, _), node(_, v148, "keyword_argument", _, _), field(v148, "name", v149), node(_, v149, "identifier", _, _), text(v149, v150), v150 = "post_op_with_refs", field(v148, "value", v151), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v151, l).
+m172(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v168), name(v168, v170), (glob("*_post_op", v170) ; glob("assert_result", v170) ; glob("materialize", v170)).
+m172(n) :- node(_, n, "identifier", _, _), text(n, v171), suffix("_post_op", v171).
+m173(n) :- node(_, n, "call", _, _), field(n, "function", v167), m172(v167).
+violation("data-layer-serverplan-steps", "closed-migration-postop", "STEP-027", p, l) :- node(v152, n, _, _, _), doc(v152, v153, _), node(_, n, "call", _, _), field(n, "function", v154), node(_, v154, "identifier", _, _), text(v154, v155), v155 = "CompiledStep", inside(n, v156, k4), node(_, v156, "module", _, _), child(v156, v157, _), node(_, v157, "expression_statement", _, _), child(v157, v158, _), node(_, v158, "assignment", _, _), field(v158, "left", v159), node(_, v159, "identifier", _, _), text(v159, v160), v160 = "CLOSED_POST_OP_STRICT", field(v158, "right", v161), node(_, v161, "true", _, _), field(n, "arguments", v162), child(v162, v163, _), node(_, v163, "keyword_argument", _, _), field(v163, "name", v164), node(_, v164, "identifier", _, _), text(v164, v165), v165 = "post_op", field(v163, "value", v166), !m173(v166), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v166, l).
+violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v174, n, _, _, _), doc(v174, v175, _), node(_, n, "comparison_operator", _, _), node(v176, n, _, _, _), doc(v176, v177, _), glob("**/terminal_projection_builders.py", v177), child(n, v178, _), node(_, v178, "identifier", _, _), text(v178, v179), v179 = "projection_kind", inside(n, v180, k0), node(_, v180, "function_definition", _, _), field(v180, "name", v181), node(_, v181, "identifier", _, _), text(v181, v182), v182 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m189(n) :- field(n, "arguments", v187), child(v187, v188, _).
+violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v183, n, _, _, _), doc(v183, v184, _), node(_, n, "call", _, _), field(n, "function", v185), node(_, v185, "identifier", _, _), text(v185, v186), v186 = "ResultAssertionSpec", !m189(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m196(n) :- node(_, n, "identifier", _, _), text(n, v193), v193 = "ResultMaterializationSpec".
+m196(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v194), node(_, v194, "identifier", _, _), text(v194, v195), v195 = "ResultMaterializationSpec".
+m206(n) :- node(_, n, "identifier", _, _), text(n, v203), v203 = "ResultMaterializationSpec".
+m206(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v204), node(_, v204, "identifier", _, _), text(v204, v205), v205 = "ResultMaterializationSpec".
+m216(n) :- node(_, n, "identifier", _, _), text(n, v213), v213 = "ResultMaterializationSpec".
+m216(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v214), node(_, v214, "identifier", _, _), text(v214, v215), v215 = "ResultMaterializationSpec".
+m226(n) :- node(_, n, "identifier", _, _), text(n, v223), v223 = "runtime_refs_post_op".
+m226(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v224), node(_, v224, "identifier", _, _), text(v224, v225), v225 = "runtime_refs_post_op".
+m236(n) :- node(_, n, "identifier", _, _), text(n, v233), (v233 = "BatchChildResultSpec" ; v233 = "CompiledStep").
+m236(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v234), node(_, v234, "identifier", _, _), text(v234, v235), (v235 = "BatchChildResultSpec" ; v235 = "CompiledStep").
+m242(n) :- node(_, n, "call", _, _), field(n, "function", v192), m196(v192), field(n, "arguments", v197), child(v197, v198, _), node(_, v198, "keyword_argument", _, _), field(v198, "name", v199), node(_, v199, "identifier", _, _), text(v199, v200), v200 = "source_refs", field(v198, "value", v201).
+m242(n) :- node(_, n, "call", _, _), field(n, "function", v202), m206(v202), field(n, "arguments", v207), child(v207, v208, _), node(_, v208, "keyword_argument", _, _), field(v208, "name", v209), node(_, v209, "identifier", _, _), text(v209, v210), v210 = "source_names", field(v208, "value", v211).
+m242(n) :- node(_, n, "call", _, _), field(n, "function", v212), m216(v212), field(n, "arguments", v217), child(v217, v218, _), node(_, v218, "keyword_argument", _, _), field(v218, "name", v219), node(_, v219, "identifier", _, _), text(v219, v220), v220 = "source_materializer", field(v218, "value", v221).
+m242(n) :- node(_, n, "call", _, _), field(n, "function", v222), m226(v222), field(n, "arguments", v227), child(v227, v228, _), node(_, v228, "keyword_argument", _, _), field(v228, "name", v229), node(_, v229, "identifier", _, _), text(v229, v230), v230 = "source_refs", field(v228, "value", v231).
+m242(n) :- node(_, n, "call", _, _), field(n, "function", v232), m236(v232), field(n, "arguments", v237), child(v237, v238, _), node(_, v238, "keyword_argument", _, _), field(v238, "name", v239), node(_, v239, "identifier", _, _), text(v239, v240), v240 = "raw_payload_ref_id", field(v238, "value", v241).
+violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v190, n, _, _, _), doc(v190, v191, _), m242(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v243, n, _, _, _), doc(v243, v244, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
 sps_on(e) :- sps_entry(e), option_value("entryPoint", v), (v = "all" ; v = "_scan_source" ; v = "_scan_file").
 sps_on(e) :- sps_entry(e), option_value("entryPoint", e).
 sps_text(n, s) :- node_text(n, s).
@@ -788,7 +783,7 @@ sps_step_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", _), 
 sps_step_method(f) :- node(_, f, "function_definition", _, _), child(b, f, _), node(_, b, "block", _, _), child(c, b, _), sps_step_class(c).
 sps_step_method(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(b, dd, _), node(_, b, "block", _, _), child(c, b, _), sps_step_class(c).
 side_effect_value(n) :- node(_, n, k, _, _), side_effect_kind(k), value(n, "side_effect"), value_type_of(n, "str").
-violation("data-layer-serverplan-steps", "side-effect-tags", "STEP-022", p, l) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "step_tags"), sps_step_method(n), field(n, "body", b), inside(s, b, side_effect_block), side_effect_value(s), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
+violation("data-layer-serverplan-steps", "side-effect-tags", "STEP-022", p, l) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "step_tags"), sps_step_method(n), field(n, "body", b), inside(s, b, side_effect_block), side_effect_value(s), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
 runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
 runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
 runtime_builder_string(v) :- node(_, v, "string", _, _).
@@ -798,8 +793,8 @@ runtime_builder_second(c) :- field(c, "arguments", a), child(a, _, 1).
 runtime_builder_value(v) :- runtime_builder_callee(c, "runtime_builder_post_op"), field(c, "arguments", a), child(a, v, 1), runtime_builder_string(v).
 runtime_builder_value(v) :- runtime_builder_callee(c, "runtime_builder_post_op"), !runtime_builder_second(c), runtime_builder_keyword(c, v).
 runtime_builder_value(v) :- runtime_builder_callee(c, "RuntimeBuilderSpec"), runtime_builder_keyword(c, v).
-violation("data-layer-serverplan-steps", "runtime-builder-string-name", "STEP-031", p, l) :- runtime_builder_value(v), node(d, v, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v, l), sps_on("check_runtime_builder_names_are_enum_members").
-rrs_valid(d) :- doc(d, _, _), !syntax_error(d).
+violation("data-layer-serverplan-steps", "runtime-builder-string-name", "STEP-031", p, l) :- runtime_builder_value(v), node(d, v, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(v, l), sps_on("check_runtime_builder_names_are_enum_members").
+rrs_valid(d) :- doc(d, _, _), !tape_syntax_error(d).
 rrs_functions(f, s) :- node(d, f, "function_definition", _, _), rrs_valid(d), field(f, "name", x), text(x, s).
 rrs_interpolated(c) :- node(_, i, "interpolation", _, _), inside(i, c, rrs_k_concat).
 rrs_empty_str(n) :- node(_, n, "string", _, _), sps_text(n, s), match("(?i:[ru]*[\"'])(?s:.*)", s).
@@ -863,7 +858,7 @@ rrs_finding(v, "STEP-033") :- rrs_postop_consumed(v, c2), rrs_calls_runtime_refs
 rrs_finding(v, "STEP-035") :- rrs_postop_consumed(v, c2), !rrs_calls_runtime_refs(c2), sps_on("check_helper_anchored_runtime_ref_post_op_guardrail").
 rrs_refless_return(s, d) :- rrs_functions(a, s), node(d, a, _, _, _), rrs_returns(_, v, a), rrs_refless(a, v).
 rrs_finding(f, "STEP-034") :- rrs_functions(f, s), node(d, f, _, _, _), rrs_refless_return(s, d), sps_on("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
-violation("data-layer-serverplan-steps", "runtime-reference-summaries", code, p, l) :- rrs_finding(n, code), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "runtime-reference-summaries", code, p, l) :- rrs_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 sc5_m324(n) :- child(v321, n, _), node(_, v321, "module", _, _).
 sc5_m324(n) :- child(v322, n, _), node(_, v322, "block", _, _), child(v323, v322, _), node(_, v323, "class_definition", _, _).
 sc5_m328(n) :- node(_, n, "module", _, _).
@@ -967,7 +962,7 @@ sc5_row(d, n) :- sc5_nodes(d, n), node(d, n, "raise_statement", _, _), nearest(n
 sc5_closed_post_op_value(d, v) :- sc5_keyword(d, c, "closed_post_op", v), sc5_compiled(c), nearest(c, f, sc5_k0), sc5_materialization_function(f).
 sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_seed(n).
 sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_callee(n, e), sc5_static_exception_function(d, e).
-violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :- sc5_row(d, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compiled_result_builders_do_not_fail_closed").
+violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :- sc5_row(d, n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compiled_result_builders_do_not_fail_closed").
 sc2_m176(n) :- child(v173, n, _), node(_, v173, "module", _, _).
 sc2_m176(n) :- child(v174, n, _), node(_, v174, "block", _, _), child(v175, v174, _), node(_, v175, "class_definition", _, _).
 sc2_m180(n) :- node(_, n, "module", _, _).
@@ -1063,11 +1058,11 @@ sc2_postop_nodes(m, n) :- sc2_postop_callbacks(m, f), inside(n, f, sc2_k_fn), sc
 sc2_bad_span(k, n, s, e) :- sc2_bad_callback_nodes(k, n), node(_, n, _, s, e).
 sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, _), sc2_bad_span(k, _, s2, _), s2 < s.
 sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, e), sc2_bad_span(k, _, s, e2), e2 > e.
-violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-026", p, l) :- sc2_bad_callback_nodes(k, n), !sc2_bad_shadowed(k, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compile_callbacks_no_runtime_authority").
+violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-026", p, l) :- sc2_bad_callback_nodes(k, n), !sc2_bad_shadowed(k, n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compile_callbacks_no_runtime_authority").
 sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_assignments(n, t), sc2_attributes(t, _, o), sc2_compile_aliases(m, o).
 sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ci), sc2_calls_callee(n, x), sc2_model_mutator(x), sc2_attributes(ci, _, o), sc2_compile_aliases(m, o).
 sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ce), node(_, ce, "attribute", _, _), sc2_calls_callee(n, "__setattr__"), sc2_arguments(n, a, 0), node(_, a, "identifier", _, _), text(a, x), sc2_compile_aliases(m, x).
-violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :- sc2_step019(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_postop_no_resolved_data_manipulation").
+violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :- sc2_step019(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_postop_no_resolved_data_manipulation").
 sc1_m4(n) :- child(v1, n, _), node(_, v1, "module", _, _).
 sc1_m4(n) :- child(v2, n, _), node(_, v2, "block", _, _), child(v3, v2, _), node(_, v3, "class_definition", _, _).
 sc1_m8(n) :- node(_, n, "module", _, _).
@@ -1276,7 +1271,7 @@ sc1_row("STEP-040", n) :- sps_on("check_cte_type_hints_not_inferred_from_column_
 sc1_row("STEP-033", n) :- sps_on("check_runtime_refs_without_sql_grammar_guardrail"), sc1_grammarless(c), sc1_nonempty_kw(c, "runtime_ref_ids", n), !sc1_has_postop(c).
 sc1_row("STEP-045", n) :- sps_on("check_step_role_contract_guardrails"), sc1_table_problems(c, "tables_read", n), sc1_role(c, "VIRTUAL").
 sc1_row("STEP-045", n) :- sps_on("check_step_role_contract_guardrails"), sc1_table_problems(c, _, n), sc1_role(c, "VIRTUAL"), !sc1_has_read_problem(c).
-violation("data-layer-serverplan-steps", "step-contracts-1", code, p, l) :- sc1_row(code, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "step-contracts-1", code, p, l) :- sc1_row(code, n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 sc3_m_stmt(n) :- child(p, n, _), node(_, p, "module", _, _).
 sc3_m_stmt(n) :- child(b, n, _), node(_, b, "block", _, _), child(c, b, _), node(_, c, "class_definition", _, _).
 sc3_m_region(n) :- node(_, n, "module", _, _).
@@ -1330,8 +1325,8 @@ sc3_payload(x) :- sc3_payload(n), sc3_sel(n), node(_, n, k, _, _), sc3_k_contain
 sc3_payload(x) :- sc3_payload(n), sc3_kw(n, _, x).
 sc3_payload(x) :- sc3_payload(n), sc3_arg(n, x).
 sc3_payload(x) :- sc3_payload(n), sc3_sel(n), node(_, n, "pair", _, _), field(n, "value", x).
-violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_kw(_, "row_materializer", n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_row_materializer_raw_row_shaping_guardrail").
-violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_payload(n), sc3_sel(n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_literal_payload_materializer_dispatch_guardrail").
+violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_kw(_, "row_materializer", n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_row_materializer_raw_row_shaping_guardrail").
+violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_payload(n), sc3_sel(n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_literal_payload_materializer_dispatch_guardrail").
 sc4_m277(n) :- child(v274, n, _), node(_, v274, "module", _, _).
 sc4_m277(n) :- child(v275, n, _), node(_, v275, "block", _, _), child(v276, v275, _), node(_, v276, "class_definition", _, _).
 sc4_m281(n) :- node(_, n, "module", _, _).
@@ -1368,8 +1363,8 @@ sc4_sel_start(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
 sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
 sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
-rr_ctx2(s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
-rr_agg1(p, s, t) :- rr_ctx2(s), sc4_sel_start(p, t), t < s.
+rr_ctx2(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
+rr_agg1(p, s, t) :- rr_ctx2(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { rr_agg1(p, s, _) }.
 sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 sc4_class(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s).
@@ -1438,7 +1433,7 @@ sc4_hit(n) :- sc4_literal_kwargs(n), sc4_user_callable(n).
 sc4_hit(n) :- sc4_literal_pair(n, _, x), sc4_direct_callable(x).
 sc4_hit(n) :- sc4_literal_kwargs(n), sc4_direct_callable(n).
 sc4_hit(n) :- sc4_literal_kwargs(n), sc4_mutable(n).
-violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :- sc4_hit(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
+violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :- sc4_hit(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
 sc6_m430(n) :- child(v427, n, _), node(_, v427, "module", _, _).
 sc6_m430(n) :- child(v428, n, _), node(_, v428, "block", _, _), child(v429, v428, _), node(_, v429, "class_definition", _, _).
 sc6_m434(n) :- node(_, n, "module", _, _).
@@ -1533,7 +1528,7 @@ sc6_callable_edge(c, n) :- sc6_sel(n), node(_, n, k, _, _), sc6_k_callable_wrap(
 sc6_user_callable(n) :- sc6_sel(n), node(_, n, "lambda", _, _).
 sc6_user_callable(n) :- sc6_sel(n), node(_, n, "identifier", _, _), text(n, s), match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[dD][eE][cC][oO][dD][eE][rR]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[mM][aA][pP][pP][eE][rR]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
 sc6_user_callable(t) :- sc6_user_callable(s), sc6_callable_edge(s, t).
-sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !syntax_error(d).
+sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !tape_syntax_error(d).
 sc6_opt_in(d) :- sc6_sel(a), node(d, a, "assignment", _, _), field(a, "left", l), sc6_sel(l), sps_text(l, "CLOSED_POST_OP_STRICT"), field(a, "right", r), sc6_sel(r), node(_, r, "true", _, _), !field(a, "type", _), child(p, a, _), sc6_sel(p), child(m, p, _), sc6_sel(m), node(_, m, "module", _, _).
 sc6_postop(s, v) :- sc6_kw(c, s, v), (s = "post_op" ; s = "post_op_with_refs"), sc6_call_full(c, "CompiledStep"), node(d, c, _, _, _), sc6_opt_in(d).
 sc6_fn_newer(f) :- sc6_fn_name(f, s), node(d, f, _, sf, _), sc6_fn_name(g, s), node(d, g, _, sg, _), sg > sf.
@@ -1542,4 +1537,4 @@ sc6_hit(n) :- sc6_postop(_, n), sc6_call_full(n, "partial"), sc6_user_callable(n
 sc6_hit(n) :- sc6_postop("post_op_with_refs", n), sc6_call_full(n, t), t != "partial".
 sc6_hit(n) :- sc6_postop(_, n), !node(_, n, "call", _, _), sc6_user_callable(n).
 sc6_hit(n) :- sc6_callback_fn(f), inside(n, f, sc6_k_fn), sc6_call(n, _), sc6_user_callable(n).
-violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").
+violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").

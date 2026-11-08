@@ -1,7 +1,6 @@
-905/908 clauses converted or authored (264 converted, 88 of them for the default options only; 641 authored)
+909/909 clauses converted or authored (264 converted, 88 of them for the default options only; 645 authored)
 
 gaps (clauses):
-      3  relational (SQL stages)
 
 approximations (rules):
       1  a metavariable twice: equal names
@@ -89,10 +88,7 @@ per rule:
   data-layer-bootstrap-engine-invariants: 3/3 (authored 3)
   data-layer-bootstrap-lazy-sql: 2/2 (authored 1)
   data-layer-bounded-composed-graph-paths: 93/93 (authored 93)
-  data-layer-cached-pure-lazy-allowlist: 0/3 (authored 0)
-      cached-policy: relational (SQL stages)
-      memoized-policy: relational (SQL stages)
-      cached-runtime-contract: relational (SQL stages)
+  data-layer-cached-pure-lazy-allowlist: 3/3 (authored 3)
   data-layer-classvar-check: 1/1 (authored 1)
   data-layer-conditional-architecture: 5/5 (authored 5)
   data-layer-conn-or-txn-union: 2/2 (authored 2)
@@ -184,7 +180,7 @@ per rule:
   data-layer-rust-sql-grammar-boundary: 8/8 (authored 8)
   data-layer-schema-architecture: 4/4 (authored 4)
   data-layer-schema-bootstrap-contracts: 2/2 (authored 1)
-  data-layer-schema-introspection-data-paths: 1/1 (authored 1)
+  data-layer-schema-introspection-data-paths: 2/2 (authored 2)
   data-layer-serverplan-bypass: 3/3 (authored 3)
   data-layer-serverplan-dispatch-architecture: 9/9 (authored 7)
   data-layer-serverplan-grammar-surface: 7/7 (authored 0)

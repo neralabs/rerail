@@ -7,6 +7,7 @@
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl t2(s: symbol)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, field, text, line, syntax_error
@@ -115,8 +116,9 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 t2(s) :- doc(_, s, _), (s = "scripts/lint_impl_direct_execution.py" ; s = "scripts/lint_no_blanket_grammar_bypass.py" ; s = "scripts/tests/test_lint_no_blanket_grammar_bypass.py").
 t2(s) :- doc(_, _, s), (s = "scripts/lint_impl_direct_execution.py" ; s = "scripts/lint_no_blanket_grammar_bypass.py" ; s = "scripts/tests/test_lint_no_blanket_grammar_bypass.py").
 violation("data-layer-no-blanket-grammar-bypass", "constant", "NGB001", p, l) :- node(_, n, "identifier", _, _), text(n, v1), contains("_ALLOW_DIRECT_EXECUTION", v1), doc(d, p, m), !t2(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-no-blanket-grammar-bypass", "public-methods", "NGB001", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v3), node(_, v3, "identifier", _, _), text(v3, v4), (v4 = "execute_grammar" ; v4 = "execute_grammar_async" ; v4 = "execute_grammar_direct" ; v4 = "execute_grammar_direct_async" ; v4 = "execute_grammar_direct_lazy" ; v4 = "execute_grammar_fetchall" ; v4 = "execute_grammar_fetchall_async" ; v4 = "execute_grammar_fetchall_direct" ; v4 = "execute_grammar_fetchall_direct_async" ; v4 = "execute_grammar_fetchall_direct_lazy" ; v4 = "execute_grammar_fetchall_raw" ; v4 = "execute_grammar_fetchall_raw_async" ; v4 = "execute_grammar_fetchall_with_params" ; v4 = "execute_grammar_fetchall_with_params_async" ; v4 = "execute_grammar_fetchall_with_params_direct" ; v4 = "execute_grammar_fetchall_with_params_direct_async" ; v4 = "execute_grammar_fetchall_with_params_direct_lazy" ; v4 = "execute_grammar_fetchone" ; v4 = "execute_grammar_fetchone_async" ; v4 = "execute_grammar_fetchone_direct" ; v4 = "execute_grammar_fetchone_direct_async" ; v4 = "execute_grammar_fetchone_direct_lazy" ; v4 = "execute_grammar_fetchone_raw" ; v4 = "execute_grammar_fetchone_raw_async" ; v4 = "execute_grammar_fetchone_with_params" ; v4 = "execute_grammar_fetchone_with_params_async" ; v4 = "execute_grammar_fetchone_with_params_direct" ; v4 = "execute_grammar_fetchone_with_params_direct_async" ; v4 = "execute_grammar_fetchone_with_params_direct_lazy" ; v4 = "execute_grammar_with_params" ; v4 = "execute_grammar_with_params_async" ; v4 = "execute_grammar_with_params_direct" ; v4 = "execute_grammar_with_params_direct_async" ; v4 = "execute_grammar_with_params_direct_lazy"), doc(d, p, m), p = "impl/common/l2200_sql_dialect/sql_connection.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-no-blanket-grammar-bypass", "keyword", "NGB001", p, l) :- node(d, n, "identifier", _, _), text(n, s), contains("allow_direct_execution", s), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), !keyword_exempt_path(p), line(n, l).
+violation("data-layer-no-blanket-grammar-bypass", "keyword", "NGB001", p, l) :- node(d, n, "identifier", _, _), text(n, s), contains("allow_direct_execution", s), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), !keyword_exempt_path(p), line(n, l).

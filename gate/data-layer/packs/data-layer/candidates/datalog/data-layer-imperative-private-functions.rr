@@ -61,9 +61,10 @@ eager_signature_types("type").
 .decl out_scope(d: number)
 .decl reference_edge(src: node, dst: node, via: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, child, syntax_error, line, node_text, reference_edge
+.input doc, syntax_error, node, field, child, text, line, node_text, reference_edge
 .output violation
 direct_execution_case_group("case_pattern").
 direct_execution_case_group("union_pattern").
@@ -190,6 +191,7 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 direct_execution_bind(s, x, n) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
 direct_execution_bind(s, x, n) :- node(_, f, "class_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
 direct_execution_target(t) :- node(_, a, "assignment", _, _), field(a, "left", t).
@@ -251,7 +253,7 @@ direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("execute_
 direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("grammar_fetch", x).
 direct_execution_direct(f) :- direct_execution_top(f, _), field(f, "body", b), direct_execution_exec_call(c), inside(c, b, direct_execution_block).
 direct_execution_imperative(f) :- direct_execution_symbol(f), direct_execution_direct(f).
-violation("data-layer-imperative-private-functions", "direct-execution", "direct_execution", p, l) :- direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+violation("data-layer-imperative-private-functions", "direct-execution", "direct_execution", p, l) :- direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
 eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), prefix("_", x).
 eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), direct_execution_owner(f, _, cx), prefix("_", cx).
 eager_signature_decorator(f, e) :- child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e, _).
@@ -283,9 +285,9 @@ eager_signature_context(f) :- direct_execution_top(f, _), field(f, "return_type"
 eager_signature_context(f) :- eager_signature_param_any(f, p), field(p, "type", t), eager_signature_type_name(t).
 eager_signature_type_name(t) :- node(_, t, "type", _, _), node(_, i, "identifier", _, _), inside(i, t, eager_signature_types), text(i, x), match("(?i)(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)", x).
 eager_signature_eager(f) :- eager_signature_private(f), !eager_signature_lazy(f), !eager_signature_exempt(f), eager_signature_context(f).
-violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
 caller_seed(f) :- direct_execution_imperative(f).
 caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
 caller_reaches(g) :- caller_seed(g), node(_, g, "function_definition", _, _).
 caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, h, _), caller_reaches(h).
-violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f), reference_edge(f, g, _), caller_reaches(g), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f), reference_edge(f, g, _), caller_reaches(g), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).

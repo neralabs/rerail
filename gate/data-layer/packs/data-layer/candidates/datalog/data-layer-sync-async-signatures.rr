@@ -32,11 +32,12 @@
 .decl sas_sync_key(d: number, k: symbol)
 .decl sas_txn_name(s: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, text, child, field, value, value_type_of, syntax_error, node_text, line
+.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text
 .output violation
 sas_conn_name("Connection").
 sas_conn_name("SyncDatabaseConnection").
@@ -148,6 +149,7 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 sas_named_param(q) :- node(_, q, "identifier", _, _), text(q, s), s != "self".
 sas_named_param(q) :- node(_, q, "typed_parameter", _, _), child(q, x, _), node(_, x, "identifier", _, _), text(x, s), s != "self".
 sas_named_param(q) :- node(_, q, "default_parameter", _, _), field(q, "name", x), node(_, x, "identifier", _, _), text(x, s), s != "self".
@@ -197,4 +199,4 @@ sas_def(d, f, t, s, e) :- node(d, f, "function_definition", s, e), sas_has_param
 sas_superseded(f) :- sas_def(d, f, t, _, e), sas_def(d, _, t, s2, _), s2 >= e.
 sas_last(d, f, t) :- sas_def(d, f, t, _, _), !sas_superseded(f).
 sas_sync_key(d, k) :- sas_last(d, f, b), sas_first_param(f, q), field(q, "type", t), sas_ann_txn(t), k = @concat(b, "_async").
-violation("data-layer-sync-async-signatures", "transaction-connection", "sync_async_signature_mismatch", p, l) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k), field(f, "name", nm), node_text(nm, s), match(".*_async", s), sas_first_param(f, q), field(q, "type", t), sas_ann_conn(t), line(f, l).
+violation("data-layer-sync-async-signatures", "transaction-connection", "sync_async_signature_mismatch", p, l) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k), field(f, "name", nm), node_text(nm, s), match(".*_async", s), sas_first_param(f, q), field(q, "type", t), sas_ann_conn(t), line(f, l).

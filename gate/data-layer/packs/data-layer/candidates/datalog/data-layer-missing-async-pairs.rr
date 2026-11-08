@@ -45,9 +45,10 @@ pair_fdef("function_definition").
 .decl pair_splat_kind(kind: symbol)
 .decl pair_star(q: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, op, line, syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, node_text
 .output violation
 option_on("sourceGate").
 pair_excluded("__aenter__").
@@ -362,8 +363,9 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-pair_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
-pair_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
+tape_syntax_error(d) :- syntax_error(d).
+pair_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
+pair_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
 pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), !prefix("_", x).
 pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), suffix("_async", x).
 pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), (contains("commit", x) ; contains("commit_branch", x) ; contains("count", x) ; contains("create_branch", x) ; contains("delete_by_id", x) ; contains("delete_many", x) ; contains("execute", x) ; contains("execute_one", x) ; contains("find_object_branches", x) ; contains("find_object_revisions", x) ; contains("first", x) ; contains("get_history", x) ; contains("insert", x) ; contains("insert_many", x) ; contains("insert_many_raw", x) ; contains("rollback", x) ; contains("select_at_revision", x) ; contains("select_many", x) ; contains("select_one", x) ; contains("update", x) ; contains("update_many", x) ; contains("upsert", x) ; contains("upsert_many", x)).

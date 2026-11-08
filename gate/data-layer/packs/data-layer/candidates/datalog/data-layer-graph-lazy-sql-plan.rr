@@ -50,12 +50,13 @@ graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("
 .decl graph_plan_contracts_unparen(e: node, m: node)
 .decl graph_plan_contracts_wanted(x: symbol)
 .decl in_scope(d: number)
+.decl kind(n: node, k: symbol)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl rr_core_unset(x: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl tparam_item(l: node, i: number, p: node, dflt: node)
@@ -63,7 +64,7 @@ graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("
 .decl tparam_shape(p: node, nm: node, k: symbol, b: node)
 .decl type_param(o: node, p: node, nm: node, i: number, kind: symbol, bound: node, dflt: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, op, child, node, field, text, syntax_error, cpython_syntax_error, line, token
+.input doc, syntax_error, node, field, child, text, op, line, token, cpython_syntax_error
 .output violation
 .pragma "magic-transform" "reaches, unparen"
 graph_plan_contracts_alias("legacy", "_legacy_delegate_stub").
@@ -145,7 +146,6 @@ graph_plan_contracts_wanted("_binding_edge_alias").
 graph_plan_contracts_wanted("uuid_columns").
 graph_plan_contracts_wanted("text_columns").
 graph_plan_contracts_wanted("integer_columns").
-rr_core_unset(-1).
 in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_lazy_mixin.py", p).
 in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_transactions.py", p).
 in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/graph_lazy_sql.py", p).
@@ -157,18 +157,20 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-tparam_list(o, l) :- node(_, o, "function_definition", _, _), field(o, "type_parameters", l).
-tparam_list(o, l) :- node(_, o, "class_definition", _, _), field(o, "type_parameters", l).
-tparam_list(o, l) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "generic_type", _, _), g = t, child(g, l, _), node(_, l, "type_parameter", _, _).
-tparam_list(o, l) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, g, 0), node(_, g, "generic_type", _, _), child(g, l, _), node(_, l, "type_parameter", _, _).
-tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, p, i), node(_, p, "type", _, _), rr_core_unset(d).
-tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, e, i), node(_, e, "type_default", _, _), field(e, "name", p), field(e, "value", d).
-tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, nm, 0), node(_, nm, "identifier", _, _), rr_core_unset(b).
-tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, c, 0), node(_, c, "constrained_type", _, _), child(c, t, 0), child(t, nm, 0), node(_, nm, "identifier", _, _), child(c, b, 1).
-tparam_shape(p, nm, "typevartuple", b) :- tparam_item(_, _, p, _), child(p, s, 0), node(_, s, "splat_type", _, _), op(s, "*"), child(s, nm, 0), rr_core_unset(b).
-tparam_shape(p, nm, "paramspec", b) :- tparam_item(_, _, p, _), child(p, s, 0), node(_, s, "splat_type", _, _), op(s, "**"), child(s, nm, 0), rr_core_unset(b).
+tape_syntax_error(d) :- syntax_error(d).
+kind(n, k) :- node(_, n, k, _, _).
+tparam_list(o, l) :- kind(o, "function_definition"), field(o, "type_parameters", l).
+tparam_list(o, l) :- kind(o, "class_definition"), field(o, "type_parameters", l).
+tparam_list(o, l) :- kind(o, "type_alias_statement"), field(o, "left", t), kind(t, "generic_type"), g = t, child(g, l, _), kind(l, "type_parameter").
+tparam_list(o, l) :- kind(o, "type_alias_statement"), field(o, "left", t), kind(t, "type"), child(t, g, 0), kind(g, "generic_type"), child(g, l, _), kind(l, "type_parameter").
+tparam_item(l, i, p, -1) :- tparam_list(_, l), child(l, p, i), kind(p, "type").
+tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, e, i), kind(e, "type_default"), field(e, "name", p), field(e, "value", d).
+tparam_shape(p, nm, "typevar", -1) :- tparam_item(_, _, p, _), child(p, nm, 0), kind(nm, "identifier").
+tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, c, 0), kind(c, "constrained_type"), child(c, t, 0), child(t, nm, 0), kind(nm, "identifier"), child(c, b, 1).
+tparam_shape(p, nm, "typevartuple", -1) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"), op(s, "*"), child(s, nm, 0).
+tparam_shape(p, nm, "paramspec", -1) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"), op(s, "**"), child(s, nm, 0).
 type_param(o, p, nm, i, k, b, d) :- tparam_list(o, l), tparam_item(l, i, p, d), tparam_shape(p, nm, k, b).
-graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
 graph_plan_contracts_nested(n) :- inside(n, _, graph_plan_contracts_defs).
 graph_plan_contracts_in_fn(n) :- inside(n, _, graph_plan_contracts_fdef).
 graph_plan_contracts_tclass(d, x, c, s) :- node(d, c, "class_definition", s, _), !graph_plan_contracts_nested(c), field(c, "name", nm), text(nm, x).

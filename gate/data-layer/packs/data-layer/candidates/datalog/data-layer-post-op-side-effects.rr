@@ -79,12 +79,13 @@ ss_import_k("import_statement"). ss_import_k("import_from_statement").
 .decl ss_verifier_first(d: number, s: number, l: number)
 .decl ss_verify_in(d: number, s: number, l: number)
 .decl ss_verify_name(x: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, child, node, field, text, op, strprefix, value, line
+.input doc, syntax_error, node, field, child, text, op, line, value, strprefix
 .output violation
 option_json("fateOverrides", "/0", "PostOpBehavior.EXCEPTION_ONLY=exception_only").
 option_json("fateOverrides", "/1", "PostOpBehavior.TERMINAL_ARRAY=keep_terminal").
@@ -152,7 +153,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-ss_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+tape_syntax_error(d) :- syntax_error(d).
+ss_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 ss_top(n) :- child(m, n, _), node(_, m, "module", _, _).
 ss_top(n) :- child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
 ss_top_assign(a) :- node(_, a, "assignment", _, _), child(es, a, _), node(_, es, "expression_statement", _, _), child(m, es, _), node(_, m, "module", _, _).

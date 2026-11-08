@@ -14,9 +14,10 @@
 .decl raise_module_name(m: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, line, tape_line, syntax_error
+.input doc, syntax_error, node, field, child, text, line, tape_line, node_text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
@@ -28,6 +29,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 raise_builtin(d, r, s) :- node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1), node(_, x, "identifier", _, _), text(x, "PermissionError").
 raise_builtin(d, r, s) :- node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1), node(_, x, "call", _, _), child(x, f, 0), node(_, f, "identifier", _, _), text(f, "PermissionError"), child(x, a, 1), node(_, a, "argument_list", _, _), !child(x, _, 2).
 raise_module_name(m) :- field(i, "module_name", m), node(_, i, "import_from_statement", _, _), node_text(m, s), contains("l1100_exceptions", s).
@@ -37,4 +39,4 @@ raise_import(d, e) :- node(d, i, "import_from_statement", _, e), field(i, "modul
 raise_imported(r) :- raise_builtin(d, r, s), raise_import(d, e), e <= s.
 raise_allowed(r) :- raise_builtin(d, r, _), line(r, l), tape_line(d, l, sp), text(sp, t), contains("lint: allow-builtin-permission-error", t).
 raise_allowed(r) :- raise_builtin(d, r, _), line(r, l), k = @sub(l, 1), tape_line(d, k, sp), text(sp, t), contains("lint: allow-builtin-permission-error", t).
-violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :- raise_builtin(d, r, _), in_scope(d), !out_scope(d), !syntax_error(d), !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).
+violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :- raise_builtin(d, r, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).

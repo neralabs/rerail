@@ -43,9 +43,10 @@
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, syntax_error
+.input doc, syntax_error, node, field, child, text, line
 .output violation
 helpers_allow("impl.common.l2070_server_plan.plan_helpers", "", "ddl_via_plan").
 helpers_allow("impl.common.l2070_server_plan.plan_helpers", "", "ddl_via_plan_async").
@@ -114,8 +115,9 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-helpers_doc(d) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _), option_value("entryPoint", "scan_repo"), suffix(".py", p), !match("(?s:.*)(?:(?:^|/)\\.py$)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_)(?s:.*)", p), !match("(?s:.*)(?:(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$))(?s:.*)", p).
-helpers_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _), option_value("entryPoint", e), e != "scan_repo".
+tape_syntax_error(d) :- syntax_error(d).
+helpers_doc(d) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, _, "module", _, _), option_value("entryPoint", "scan_repo"), suffix(".py", p), !match("(?s:.*)(?:(?:^|/)\\.py$)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_)(?s:.*)", p), !match("(?s:.*)(?:(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$))(?s:.*)", p).
+helpers_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, _, "module", _, _), option_value("entryPoint", e), e != "scan_repo".
 helpers_known(x) :- helpers_name(x, _, _, _).
 helpers_dotted(d, dd) :- helpers_doc(d), doc(d, p, _), s1 = @rx_replace(p, "[/\\\\]+", "/"), s2 = @rx_replace(s1, "^/|/$", ""), s3 = @rx_replace(s2, "\\.py$", ""), dd = @rx_replace(s3, "/", ".").
 helpers_module(d, m) :- helpers_dotted(d, dd), match("(?s)(?:.*\\.)?impl(?:\\..*)?", dd), m = @rx_replace(dd, "(?s)^.*?(?:^|\\.)(impl(?:\\..*)?)$", "${1}").

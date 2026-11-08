@@ -1,11 +1,9 @@
-.decl k0(kind: symbol)
-k0("aliased_import"). k0("argument_list"). k0("as_pattern"). k0("as_pattern_target"). k0("assert_statement"). k0("assignment"). k0("attribute"). k0("augmented_assignment"). k0("await"). k0("binary_operator"). k0("block"). k0("boolean_operator"). k0("break_statement"). k0("call"). k0("case_clause"). k0("case_pattern"). k0("chevron"). k0("class_definition"). k0("class_pattern"). k0("comparison_operator"). k0("complex_pattern"). k0("concatenated_string"). k0("conditional_expression"). k0("constrained_type"). k0("continue_statement"). k0("decorated_definition"). k0("decorator"). k0("default_parameter"). k0("delete_statement"). k0("dict_pattern"). k0("dictionary"). k0("dictionary_comprehension"). k0("dictionary_splat"). k0("dictionary_splat_pattern"). k0("dotted_name"). k0("elif_clause"). k0("ellipsis"). k0("else_clause"). k0("escape_interpolation"). k0("escape_sequence"). k0("except_clause"). k0("exec_statement"). k0("expression_list"). k0("expression_statement"). k0("false"). k0("finally_clause"). k0("float"). k0("for_in_clause"). k0("for_statement"). k0("format_expression"). k0("format_specifier"). k0("function_definition"). k0("future_import_statement"). k0("generator_expression"). k0("generic_type"). k0("global_statement"). k0("identifier"). k0("if_clause"). k0("if_statement"). k0("import_from_statement"). k0("import_prefix"). k0("import_statement"). k0("integer"). k0("interpolation"). k0("keyword_argument"). k0("keyword_pattern"). k0("keyword_separator"). k0("lambda"). k0("lambda_parameters"). k0("line_continuation"). k0("list"). k0("list_comprehension"). k0("list_pattern"). k0("list_splat"). k0("list_splat_pattern"). k0("match_statement"). k0("member_type"). k0("module"). k0("named_expression"). k0("none"). k0("nonlocal_statement"). k0("not_operator"). k0("pair"). k0("parameters"). k0("parenthesized_expression"). k0("parenthesized_list_splat"). k0("pass_statement"). k0("pattern_list"). k0("positional_separator"). k0("print_statement"). k0("raise_statement"). k0("relative_import"). k0("return_statement"). k0("set"). k0("set_comprehension"). k0("slice"). k0("splat_pattern"). k0("splat_type"). k0("string"). k0("string_content"). k0("string_end"). k0("string_start"). k0("subscript"). k0("true"). k0("try_statement"). k0("tuple"). k0("tuple_pattern"). k0("type"). k0("type_alias_statement"). k0("type_conversion"). k0("type_default"). k0("type_parameter"). k0("typed_default_parameter"). k0("typed_parameter"). k0("unary_operator"). k0("union_pattern"). k0("union_type"). k0("while_statement"). k0("wildcard_import"). k0("with_clause"). k0("with_item"). k0("with_statement"). k0("yield").
-.decl k1(kind: symbol)
-k1("match_statement").
-.decl k2(kind: symbol)
-k2("case_clause").
 .decl k3(kind: symbol)
-k3("if_clause").
+k3("case_clause").
+.decl k4(kind: symbol)
+k4("match_statement").
+.decl k5(kind: symbol)
+k5("if_clause").
 .decl spta_rc_args(kind: symbol)
 spta_rc_args("argument_list").
 .decl spta_rc_assign(kind: symbol)
@@ -108,11 +106,13 @@ spta_rc_type("type").
 .decl spta_si_type(y: node)
 .decl syntax_error(d: number)
 .decl t10(s: symbol)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, node_text, value, value_type_of
+.decl within(n: node, a: node)
+.input doc, node, child, field, text, name, line, syntax_error, within, value, value_type_of, node_text
 .output violation
 option_on("requiredShape").
 option_value("entryPoint", "all").
@@ -234,6 +234,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 violation("data-layer-serverplan-target-architecture", "legacy-symbols", "SPTA004", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "class_definition", _, _), field(n, "name", v3), node(_, v3, "identifier", _, _), text(v3, v4), (v4 = "BatchedStep" ; v4 = "BatchingStrategy" ; v4 = "CompoundSequenceStrategy" ; v4 = "DependentReadCteStrategy" ; v4 = "HomogeneousCteStrategy" ; v4 = "JsonAggregationStrategy" ; v4 = "SqliteReadSiblingBatchStrategy"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m7(n) :- node(_, n, "class_definition", _, _).
 m7(n) :- node(_, n, "function_definition", _, _).
@@ -250,8 +251,8 @@ m28(n) :- field(v27, "name", n), node(_, v27, "keyword_argument", _, _).
 m32(n) :- field(v31, "attribute", n), node(_, v31, "attribute", _, _).
 m34(n) :- field(v33, "name", n), node(_, v33, "keyword_argument", _, _).
 m36(n) :- node(_, n, "identifier", _, _), !m26(n), !m28(n), text(n, v29), v29 = "ServerPlanStep".
-m36(n) :- inside(v30, n, k0), node(_, v30, "identifier", _, _), !m32(v30), !m34(v30), text(v30, v35), v35 = "ServerPlanStep".
-violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :- node(v14, n, _, _, _), doc(v14, v15, _), node(_, n, "function_definition", _, _), node(v16, n, _, _, _), doc(v16, v17, _), v17 = "l2070_batching/executor.py", field(n, "parameters", v18), inside(v19, v18, k0), m20(v19), !m23(v19), field(v19, "type", v24), m36(v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m36(n) :- within(v30, n), node(_, v30, "identifier", _, _), !m32(v30), !m34(v30), text(v30, v35), v35 = "ServerPlanStep".
+violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :- node(v14, n, _, _, _), doc(v14, v15, _), node(_, n, "function_definition", _, _), node(v16, n, _, _, _), doc(v16, v17, _), v17 = "l2070_batching/executor.py", field(n, "parameters", v18), within(v19, v18), m20(v19), !m23(v19), field(v19, "type", v24), m36(v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m39(n) :- node(_, n, "if_statement", _, _).
 m39(n) :- node(_, n, "elif_clause", _, _).
 m39(n) :- node(_, n, "conditional_expression", _, _).
@@ -260,22 +261,22 @@ m45(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v43), node(_, v43
 m51(n) :- node(_, n, "identifier", _, _), text(n, v48), v48 = "step_tags".
 m51(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v49), node(_, v49, "identifier", _, _), text(v49, v50), v50 = "step_tags".
 m52(n) :- node(_, n, "call", _, _), field(n, "function", v41), m45(v41).
-m52(n) :- inside(v46, n, k0), node(_, v46, "call", _, _), field(v46, "function", v47), m51(v47).
+m52(n) :- within(v46, n), node(_, v46, "call", _, _), field(v46, "function", v47), m51(v47).
 violation("data-layer-serverplan-target-architecture", "tag-conditions", "SPTA007", p, l) :- node(v37, n, _, _, _), doc(v37, v38, _), m39(n), field(n, "condition", v40), m52(v40), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m60(n) :- node(_, n, "identifier", _, _), text(n, v57), v57 = "step_tags".
 m60(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v58), node(_, v58, "identifier", _, _), text(v58, v59), v59 = "step_tags".
 m66(n) :- node(_, n, "identifier", _, _), text(n, v63), v63 = "step_tags".
 m66(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v64), node(_, v64, "identifier", _, _), text(v64, v65), v65 = "step_tags".
 m67(n) :- node(_, n, "call", _, _), field(n, "function", v56), m60(v56).
-m67(n) :- inside(v61, n, k0), node(_, v61, "call", _, _), field(v61, "function", v62), m66(v62).
+m67(n) :- within(v61, n), node(_, v61, "call", _, _), field(v61, "function", v62), m66(v62).
 m74(n) :- node(_, n, "identifier", _, _), text(n, v71), v71 = "step_tags".
 m74(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v72), node(_, v72, "identifier", _, _), text(v72, v73), v73 = "step_tags".
 m80(n) :- node(_, n, "identifier", _, _), text(n, v77), v77 = "step_tags".
 m80(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v78), node(_, v78, "identifier", _, _), text(v78, v79), v79 = "step_tags".
 m81(n) :- node(_, n, "call", _, _), field(n, "function", v70), m74(v70).
-m81(n) :- inside(v75, n, k3), node(_, v75, "call", _, _), field(v75, "function", v76), m80(v76).
+m81(n) :- inside(v75, n, k5), node(_, v75, "call", _, _), field(v75, "function", v76), m80(v76).
 m82(n) :- field(n, "subject", v55), m67(v55).
-m82(n) :- inside(v68, n, k1), node(_, v68, "case_clause", _, _), inside(v69, v68, k2), node(_, v69, "if_clause", _, _), m81(v69).
+m82(n) :- inside(v68, n, k4), node(_, v68, "case_clause", _, _), inside(v69, v68, k3), node(_, v69, "if_clause", _, _), m81(v69).
 violation("data-layer-serverplan-target-architecture", "tag-matches", "SPTA007", p, l) :- node(v53, n, _, _, _), doc(v53, v54, _), node(_, n, "match_statement", _, _), m82(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-physical_program.py-from", "SPTA012", p, l) :- node(v83, n, _, _, _), doc(v83, v84, _), node(_, n, "import_from_statement", _, _), node(v85, n, _, _, _), doc(v85, v86, _), v86 = "l2070_batching/physical_program.py", field(n, "module_name", v87), name(v87, v89), (prefix("impl.mariadb", v89) ; prefix("impl.postgres", v89) ; prefix("impl.sqlite", v89) ; prefix("l2000_connection", v89) ; prefix("l2050_transaction", v89)), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m99(n) :- node(_, n, "dotted_name", _, _), text(n, v95), (prefix("impl.mariadb", v95) ; prefix("impl.postgres", v95) ; prefix("impl.sqlite", v95) ; prefix("l2000_connection", v95) ; prefix("l2050_transaction", v95)).
@@ -300,7 +301,7 @@ m153(n) :- node(_, n, "attribute", _, _), field(n, "object", v151), node(_, v151
 violation("data-layer-serverplan-target-architecture", "receipt-accounting", "SPTA010", p, l) :- node(v140, n, _, _, _), doc(v140, v141, _), m142(n), node(v143, n, _, _, _), doc(v143, v144, _), prefix("l9900_auto_api/", v144), field(n, "left", v145), m149(v145), field(n, "right", v150), !m153(v150), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 spta_entry_point(1) :- option_value("entryPoint", v), (v = "all" ; v = "scan_sources").
 spta_required_shape(1) :- option_on("requiredShape").
-spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 spta_before(p, c, b) :- child(p, c, i), child(p, b, j), j < i.
 spta_second(p, c) :- child(p, c, _), k = count : { spta_before(p, c, _) }, k = 1.
 spta_ref(x, s) :- node(_, x, "identifier", _, _), text(x, s), !spta_attr_name(x), !spta_kw_name(x).

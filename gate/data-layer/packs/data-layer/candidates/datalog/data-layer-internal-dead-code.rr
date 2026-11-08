@@ -31,10 +31,11 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl reference_edge(src: node, dst: node, via: symbol)
 .decl rr_agg1(c: symbol, o: symbol, x: node, y: node)
 .decl rr_agg3(j: number, n: symbol, o: symbol)
-.decl rr_ctx2(x: node)
+.decl rr_ctx2(o: symbol, x: node)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl unreachable_abs_base(i: node, b: symbol)
 .decl unreachable_abstract(id: symbol)
@@ -169,7 +170,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl unreachable_word_ok(w: node)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, text, tape_line, col, child, line, name, node_text, value, source, reference_edge
+.input doc, syntax_error, node, field, child, text, line, value, name, source, tape_line, col, node_text, reference_edge
 .output violation
 option_on("sourceGate").
 unreachable_base_k("identifier").
@@ -296,7 +297,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
+tape_syntax_error(d) :- syntax_error(d).
+unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
 unreachable_fn(f, d, x) :- node(d, f, "function_definition", _, _), unreachable_doc(d, _, _), !inside(f, _, unreachable_fdef), field(f, "name", n), text(n, x).
 unreachable_fn_class(f, c, cx) :- unreachable_fn(f, _, _), nearest(f, c, unreachable_cdef), field(c, "name", n), text(n, cx).
 unreachable_cls(c, d, x) :- node(d, c, "class_definition", _, _), unreachable_doc(d, _, _), field(c, "name", n), text(n, x).
@@ -352,7 +354,7 @@ unreachable_join(p, rest, o, t) :- unreachable_rel_base(i, _, rest), unreachable
 unreachable_join(p, rest, o, t) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p != "", rest = "", t = @concat(p, @concat(".", o)).
 unreachable_join(p, rest, o, o) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p = "", rest = "".
 unreachable_first(o, o) :- unreachable_item(_, _, o, _), !contains(".", o).
-unreachable_first(o, n) :- unreachable_item(_, _, o, _), o = @dot(n, r), !contains(".", n).
+unreachable_first(o, n) :- unreachable_item(_, _, o, _), o = @dot(n, r), !contains(".", r), !contains(".", n).
 unreachable_imp_s(m, n, k, s) :- unreachable_imp_c(i, _, m, n, _, k), node(_, i, _, s, _).
 unreachable_imp_last(m, n, k, s) :- unreachable_imp_s(m, n, k, _), s = max t : { unreachable_imp_s(m, n, k, t) }.
 unreachable_import(i, d, m, n, t, k) :- unreachable_imp_c(i, d, m, n, t, k), node(_, i, _, s, _), unreachable_imp_last(m, n, k, s).
@@ -372,8 +374,8 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), !unreachable
 unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable_has_bi(id, bn), !unreachable_has_bm(id, bn), unreachable_unique_class(bn, b).
 unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
-rr_ctx2(x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
-rr_agg1(c, o, x, y) :- rr_ctx2(x), unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x.
+rr_ctx2(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
+rr_agg1(c, o, x, y) :- rr_ctx2(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x.
 unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg1(_, o, x, _) }.
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = @add(i, 1).
@@ -467,9 +469,9 @@ unreachable_w_fn_ok(w) :- unreachable_word(w, _, _), !unreachable_w_fn(w, _).
 unreachable_w_fn_ok(w) :- unreachable_w_fn(w, f), unreachable_w_default(w), unreachable_header_method(f).
 unreachable_module_names(m, x) :- unreachable_word_ok(w), unreachable_w_keep(w), unreachable_word(w, d, x), unreachable_doc(d, _, m).
 unreachable_imported_module(t) :- unreachable_import(_, _, _, _, t, "module").
-unreachable_imported_module(p) :- unreachable_import(_, _, _, _, t, "symbol"), t = @dot(p, x), !contains(".", x).
+unreachable_imported_module(p) :- unreachable_import(_, _, _, _, t, "symbol"), t = @dot(p, x), !contains(".", x), !contains(".", x).
 unreachable_imported_modules(m) :- unreachable_imported_module(m), m != "".
-unreachable_imported_modules(q) :- unreachable_imported_module(m), m = @dot(q, rest), rest != "", q != "".
+unreachable_imported_modules(q) :- unreachable_imported_module(m), m = @dot(q, rest), !contains(".", rest), rest != "", q != "".
 unreachable_root(s) :- unreachable_exported(s).
 unreachable_root(s) :- unreachable_public(o, _, s), unreachable_exported(o).
 unreachable_root(s) :- unreachable_imported_modules(m), s = @concat("@module:", m).

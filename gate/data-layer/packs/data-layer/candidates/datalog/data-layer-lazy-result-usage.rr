@@ -29,9 +29,10 @@ lazy_result_def_kind("function_definition").
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, node, text, field, child, syntax_error, line
+.input doc, syntax_error, node, field, child, text, line, node_text
 .output violation
 lazy_result_deco("abstractmethod").
 lazy_result_deco("legacy_async").
@@ -68,6 +69,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 lazy_result_base(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "ABC" ; s = "Protocol").
 lazy_result_base(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "ABC" ; s = "Protocol").
 lazy_result_base(n) :- node(_, n, "subscript", _, _), child(n, c, _), lazy_result_base(c).
@@ -89,7 +91,7 @@ lazy_result_deco_name(x) :- node(_, x, "call", _, _), field(x, "function", g), l
 lazy_result_exempt_decorator(f) :- lazy_result_def(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), lazy_result_deco_name(x).
 lazy_result_uses_lazy(f, m) :- lazy_result_def(f, m), inside(i, f, lazy_result_def_kind), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
 lazy_result_skip(p) :- doc(_, p, _), (contains("tests/", p) ; contains("test_", p) ; contains("__pycache__", p) ; contains("l2055_lazy_result/", p) ; contains("l2070_batching/", p)).
-lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f), !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !syntax_error(d).
+lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f), !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !tape_syntax_error(d).
 violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
 violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
 violation("data-layer-lazy-result-usage", "one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).

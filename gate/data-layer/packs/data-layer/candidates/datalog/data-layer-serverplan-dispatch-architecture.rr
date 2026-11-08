@@ -95,11 +95,12 @@ executor_matchk("match_statement").
 .decl step_name_compare_type(o: node)
 .decl step_type(n: node)
 .decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, node_text, value, value_type_of
+.input doc, node, child, field, text, name, line, syntax_error, value, value_type_of, node_text
 .output violation
 executor_role("name").
 executor_role("left").
@@ -129,6 +130,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 m5(n) :- node(v3, n, _, _, _), doc(v3, v4, _), (v4 = "impl/common/l2070_server_plan/backend_profiles.py" ; v4 = "impl/common/l2070_server_plan/backend_traits.py").
 m10(n) :- node(v8, n, _, _, _), doc(v8, v9, _), v9 = "impl/common/l2070_server_plan/base_server_plan.py".
 violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), !m5(n), node(_, n, "attribute", _, _), field(n, "attribute", v6), node(_, v6, "identifier", _, _), text(v6, v7), (v7 = "is_document_backend" ; v7 = "is_graph_backend" ; v7 = "is_mysql_family" ; v7 = "is_sql_backend"), !m10(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
@@ -150,8 +152,8 @@ step_type(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), text(a,
 step_type(n) :- node(_, n, "tuple", _, _), child(n, c, _), step_type(c).
 step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "left", c), step_type(c).
 step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "right", c), step_type(c).
-violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :- node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"), field(n, "arguments", g), child(g, c, 1), step_type(c), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
-violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "SPD002", p, l) :- node(d, n, "comparison_operator", _, _), child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"), child(n, x, _), step_type(x), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :- node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"), field(n, "arguments", g), child(g, c, 1), step_type(c), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "SPD002", p, l) :- node(d, n, "comparison_operator", _, _), child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"), child(n, x, _), step_type(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 backend_identity_source(n) :- node(_, n, "identifier", _, _), text(n, "backend_type").
 backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "backend_type").
 backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "object", o), backend_identity_source(o).
@@ -160,16 +162,16 @@ backend_identity_strnode(n) :- node(_, n, "string", _, _).
 backend_identity_strnode(n) :- node(_, n, "concatenated_string", _, _).
 backend_identity_literal(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "BackendType").
 backend_identity_literal(n) :- backend_identity_strnode(n), value(n, v), value_type_of(n, "str"), match("(?i)^(?:doltdb|mariadb|mongodb|mysql|neo4j|postgres|postgresql|sqlite)$", v).
-violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :- node(d, n, "comparison_operator", _, _), backend_identity_source(x), inside(x, n, backend_identity_cmp), backend_identity_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :- node(d, n, "comparison_operator", _, _), backend_identity_source(x), inside(x, n, backend_identity_cmp), backend_identity_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 step_name_compare_type(o) :- node(_, o, "call", _, _), field(o, "function", f), backend_identity_callee(f, "type").
 step_name_compare_type(o) :- node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, "__class__").
 step_name_compare_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "__name__"), field(n, "object", o), step_name_compare_type(o).
 step_name_compare_literal(n) :- backend_identity_strnode(n), value(n, v), value_type_of(n, "str"), match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\\w*(?:Intent|Step|Strategy))$", v).
-violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), step_name_compare_name(x), step_name_compare_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), step_name_compare_name(x), step_name_compare_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 dialect_truth_ref(n) :- node(_, n, "identifier", _, _), text(n, "dialect").
 dialect_truth_ref(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "dialect").
 dialect_truth_ref(n) :- node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "getattr"), field(n, "arguments", g), child(g, s, 1), node(_, s, "string", _, _), value(s, "dialect"), value_type_of(s, "str").
-violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 dialect_truth(n) :- dialect_truth_ref(n).
 dialect_truth(n) :- node(_, n, "not_operator", _, _), child(n, c, _), dialect_truth_ref(c).
 dialect_truth(n) :- node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "bool"), field(n, "arguments", g), child(g, c, 0), dialect_truth_ref(c), !child(g, _, 1).
@@ -180,8 +182,8 @@ dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "conditional_express
 dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "while_statement", _, _).
 dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
 dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
-violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :- dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
-executor_doc(d) :- doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !syntax_error(d), node(d, r, "module", _, _), node_text(r, t), match("(?s:.*)class BaseServerPlan\\b(?s:.*)", t).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :- dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+executor_doc(d) :- doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !tape_syntax_error(d), node(d, r, "module", _, _), node_text(r, t), match("(?s:.*)class BaseServerPlan\\b(?s:.*)", t).
 executor_part(n) :- node(_, n, "string_start", _, _).
 executor_part(n) :- node(_, n, "string_content", _, _).
 executor_part(n) :- node(_, n, "string_end", _, _).
@@ -324,4 +326,4 @@ executor_finding(n, "SPD005") :- executor_row(_, n), node(_, n, "comparison_oper
 executor_scope_arg(c) :- executor_arg(a, c, 1), node_text(a, t), match("['\"]*(?:async_pipeline_execution_scope|get_lowering_context|native_pipeline_execution_receipt|pipeline_execution_scope)['\"]*", t).
 executor_finding(n, "SPD005") :- executor_call(n, ce), (ce = "delattr" ; ce = "getattr" ; ce = "getattr_static" ; ce = "hasattr" ; ce = "setattr" ; ce = "vars" ; ce = "__getattribute__"), executor_arg(a, n, 0), executor_owner(a), !executor_scope_arg(n).
 executor_finding(n, "SPD005") :- executor_call(n, ce), executor_call_plain(n), ce != "PlanExecutor", ce != "attrgetter", ce != "cast", ce != "delattr", ce != "getattr", ce != "getattr_static", ce != "hasattr", ce != "run_executable_pipeline", ce != "run_executable_pipeline_async", ce != "setattr", ce != "vars", executor_arg(a, n, _), executor_owner(a).
-violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :- executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :- executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

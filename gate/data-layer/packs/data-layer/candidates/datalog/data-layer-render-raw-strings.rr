@@ -59,18 +59,19 @@ literal_raise("raise_statement"). literal_raise("assert_statement").
 .decl out_scope(d: number)
 .decl rr_agg1(b: number, b2: number, n: node)
 .decl rr_agg3(i: number, i2: number, n: node)
-.decl rr_ctx2(b: number)
-.decl rr_ctx4(i: number)
-.decl strprefix(n: node, s: symbol)
+.decl rr_ctx2(b: number, n: node)
+.decl rr_ctx4(i: number, n: node)
+.decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
 .decl template_call(c: node, f: node)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, child, strprefix, node_text, value_type_of, value, syntax_error, line, fstring_piece, end_line, tape_line, token
+.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_piece, tape_line, end_line, node_text, token
 .output violation
 literal_allowed_name("SqlAliasName").
 literal_allowed_name("SqlColumnName").
@@ -96,6 +97,7 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 literal_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, "render").
 literal_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), prefix("render_", s).
 literal_in_render(n) :- inside(n, f, literal_fdef), literal_render(f).
@@ -127,18 +129,18 @@ literal_allowed_fn(f) :- node(_, f, "identifier", _, _), text(f, s), literal_all
 literal_allowed_fn(f) :- node(_, f, "attribute", _, _), field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, s), literal_allowed_name(s).
 literal_allowed(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), literal_allowed_fn(f).
 literal_special_arg(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), literal_special_fn(f), literal_first_pos(al, n).
-violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :- literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
+violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :- literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
 fstring_literal_host(n) :- node(_, n, "string", _, _), literal_fpart(n), !literal_in_concat(n).
 fstring_literal_host(n) :- literal_fhas(n), !literal_in_concat(n).
 fstring_literal_host(n) :- node(_, n, "format_specifier", _, _).
 fstring_literal_parsed(n) :- fstring_literal_host(n), fstring_piece(n, _, _, _), literal_in_render(n), !literal_in_raise(n).
 fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), literal_part(n, s), child(s, f, _), node(_, f, "interpolation", b, e).
 fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), child(n, f, _), node(_, f, "format_expression", b, e).
-rr_ctx2(b) :- fstring_literal_field(n, _, b, _).
-rr_agg1(b, b2, n) :- rr_ctx2(b), fstring_literal_field(n, _, b2, _), b2 < b.
+rr_ctx2(b, n) :- fstring_literal_field(n, _, b, _).
+rr_agg1(b, b2, n) :- rr_ctx2(b, n), fstring_literal_field(n, _, b2, _), b2 < b.
 fstring_literal_ford(n, b, j) :- fstring_literal_field(n, _, b, _), j = count : { rr_agg1(b, _, n) }.
-rr_ctx4(i) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _).
-rr_agg3(i, i2, n) :- rr_ctx4(i), fstring_piece(n, i2, "interpolation", _), i2 < i.
+rr_ctx4(i, n) :- fstring_piece(n, i, "interpolation", _).
+rr_agg3(i, i2, n) :- rr_ctx4(i, n), fstring_piece(n, i2, "interpolation", _), i2 < i.
 fstring_literal_pord(n, i, j) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _), j = count : { rr_agg3(i, _, n) }.
 fstring_literal_later_piece(n, i) :- fstring_literal_parsed(n), fstring_piece(n, i, _, _), fstring_piece(n, i2, _, _), i2 > i.
 fstring_literal_long(n, b) :- fstring_literal_ford(n, b, j), fstring_literal_pord(n, i, j), fstring_piece(n, h, "literal", v), i = @add(h, 1), match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
@@ -164,7 +166,7 @@ fstring_literal_item(n, k, o, l) :- fstring_literal_item0(n, o, l), fstring_lite
 fstring_literal_item(n, e, o, l) :- fstring_literal_item0(n, o, l), !fstring_literal_after(n, o, _), node(_, n, _, _, e).
 fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _), fstring_literal_item(n, k, o2, _), o2 < o.
 fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, l), !fstring_literal_not_first(n, k, o).
-violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :- fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
+violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :- fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
 template_call(c, f) :- node(_, c, "call", _, _), field(c, "function", f), field(c, "arguments", al), literal_first_pos(al, a), literal_str(a), literal_in_render(c).
-violation("data-layer-render-raw-strings", "template", "template_call", p, l) :- template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
-violation("data-layer-render-raw-strings", "static", "static_call", p, l) :- template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+violation("data-layer-render-raw-strings", "template", "template_call", p, l) :- template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+violation("data-layer-render-raw-strings", "static", "static_call", p, l) :- template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
