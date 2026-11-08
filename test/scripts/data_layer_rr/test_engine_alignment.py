@@ -11,6 +11,23 @@ import migration
 
 
 class EngineAlignmentTests(unittest.TestCase):
+    def setUp(self):
+        getattr(migration,'_SOURCE_COHORTS',set()).clear()
+
+    def test_final_tip_is_a_process_snapshot_while_artifact_checks_remain_per_execution(self):
+        source=dict(checkout='.',upstreamCommit='adopted')
+        with patch.object(migration,'verify_engine_alignment') as audit:
+            migration.verify_source_cohort(Path('/fixture'),source)
+            audit.side_effect=ValueError('Final advanced')
+            migration.verify_source_cohort(Path('/fixture'),source)
+            self.assertEqual(audit.call_count,1)
+            with self.assertRaisesRegex(ValueError,'Final advanced'):
+                migration.verify_source_cohort(Path('/fixture'),dict(source,upstreamCommit='next'))
+        migration._SOURCE_COHORTS.clear()
+        with patch.object(migration,'verify_engine_alignment',side_effect=ValueError('Final advanced')):
+            with self.assertRaisesRegex(ValueError,'Final advanced'):
+                migration.verify_source_cohort(Path('/fixture'),source)
+
     def artifact(self,root):
         binary=root/'frozen-cli';binary.write_bytes(b'compiled modern engine')
         trees={name:'tree:'+name for name in ['native','tools/bitlex','Cargo.toml','Cargo.lock']}
