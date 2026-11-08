@@ -1621,6 +1621,44 @@ All 107 tooling tests, 34 subtests, 100 typed policy readers, and seven focused 
 The native diff now has 27 reviewed extension files. The six added paths implement this generic capability through Final's current architecture.
 No Linear issue was created.
 
+### 2026-11-08 — Size-balanced discovery and persistent updates
+
+The mandatory fifty-two-file case now matches the pinned Python scanner.
+Discovery and loading use unordered membership. Assembly uses discovery order through fifty occurrences and size-balanced chunks for larger selections.
+The shared `balanced_rows` operator preserves repeated occurrences, weight ties, and per-task bin order.
+All forty-six actual partitioner cases pass in one native demand batch.
+
+Host metadata uses Final's existing request-and-answer mechanism.
+The rule reads CPU count and process worker settings once per run.
+The bounded decimal function preserves Python 3.13 syntax, Unicode 15.1 digits, signs, underscores, whitespace, and digit limits.
+All four hundred recorded decimal cases pass in one native batch.
+The rule starts no Python process. Python supplies offline oracles and test transport only.
+
+Thirty workspace cases compare complete discovery order, assembly order, graph membership, and dead-code categories.
+Eight additional steps reuse one workspace across worker changes, resizing, deletion, restoration, source edits, and an unchanged repeat.
+All cases pass. The update sequence crosses the fifty-file threshold in both directions.
+
+World loading no longer submits `SELECT sym_text` for each file and request argument.
+It decodes each request batch directly from the shared atom arena.
+A traced native test requires zero SQL statements for one thousand decodes.
+The CLI and unit builds use committed root source `b97b623c6`, including Final `0f0049ec7`.
+
+The initial frontend run exposed a test that redeclared the new core relation.
+Removing that declaration repairs the test without changing production behavior.
+The decimal harness also exposed two transport constraints: signed minimum literals and the unsupported short form-feed escape.
+The harness now derives the minimum bound arithmetically and uses an explicit Unicode escape.
+All original oracle values remain unchanged.
+
+One alternate recursive walker still exposes a planner defect: removing its metadata join produces `no such table: main.sgd_walk`.
+The symlink control now relaxes only the metadata predicate and retains the same request dependencies.
+The receipt retains both the failing alternate program and the successful mutation results.
+
+The [scanner acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-weighted-discovery-acceptance.json.gz)
+contains the source recordings, full native results, mutation controls, native logs, builds, program inputs, and harness snapshots.
+It does not certify the whole migration.
+Rule 89 still needs reporting, CLI, registry, and remaining default-entry contracts.
+The inventory remains eighty-nine drafts and eleven absent translations.
+
 ### Native discovery checkpoint and remaining scanner-order failure
 
 The native library now selects legacy roots, modern base roots, and sorted layer roots.

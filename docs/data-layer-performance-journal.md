@@ -9119,3 +9119,19 @@ Shared registry/scope assertions, production registration, CLI/enforcement, and 
 The direct original suite does not exercise every legacy helper entry point; the receipt does not claim exhaustive source-domain coverage.
 
 Evidence: [Grammar escape-hatch source/native contracts and validator](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-escape-hatches-native-contracts.json.gz).
+
+### 2026-11-08 — Batch decoding during exact scanner migration
+
+World loading previously submitted one `SELECT sym_text` for every requested directory, file, and load argument.
+The native atom arena already holds those values.
+Loading now decodes each request batch directly from that arena and interns loaded paths as one batch.
+A traced native test decodes one thousand atoms and requires zero SQL statements.
+
+The scanner also uses one weighted partition batch over typed task, occurrence, path-key, and byte-size rows.
+Forty-six recorded partitioner cases and thirty complete discovery cases pass.
+Eight repeated runs in one workspace preserve exact results across worker changes, file changes, and threshold changes.
+The [acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-weighted-discovery-acceptance.json.gz) retains the individual phase measurements.
+
+The final CLI build took 13.450 seconds. The final unit build took 25.007 seconds.
+These compile times remain separate from execution measurements.
+No full repository cold run occurred, and these fixture results do not establish a repository performance improvement.

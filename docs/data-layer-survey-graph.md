@@ -2,10 +2,11 @@
 
 `internal_dead_code` and `imperative_private_functions` use the same upstream symbol graph.
 The native contract lives in `docs/rule-syntax/lib/data-layer/survey-graph.rr`.
-The consumer currently takes a supplied graph argument.
+The consumer takes a supplied graph argument or the tested native source producer.
 The source producer has tested inventory, body references, dictionary assembly, base resolution, reexports, and reference targets.
 It also emits calls, class uses, inverse callers, and legacy synthetic edges for the tested target shapes.
-It does not yet construct a complete graph from repository source.
+Production directory discovery now feeds that producer in the acceptance harness.
+The production rule still refuses its default entry point until the remaining contracts pass.
 This document does not certify either rule as complete.
 
 ## Implemented consumer
@@ -35,9 +36,9 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
 1. Retain the explicit raw mixin ambiguity for consumers that observe individual calls. Dead-code analysis uses a separate equivalence proof.
-2. Connect the tested facade export producer and literal dynamic-import helper to the discovered file scopes.
-   Include facade files outside a caller's graph scan without adding their definitions to that graph.
-3. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
+2. Complete reporting, CLI, registry, and remaining source contracts over the tested producer and consumer.
+   The discovery harness already loads facade resources outside the scan without adding their definitions to the graph.
+3. Resolve the remaining default-entry requirements before replacing the draft's missing-producer diagnostic.
 
 Reuse the modern engine's implementations where their meanings match.
 A more precise call resolver can still differ from the source linter. Preserve demonstrated source behavior or record the unresolved difference.
@@ -46,6 +47,27 @@ Do not invoke Python, restore an older runtime, or add a second Rust graph engin
 Share a producer only when both consumers request the same source scope.
 Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
+
+### Scanner assembly order
+
+Discovery order and assembly order are separate relations.
+At most fifty selected occurrences retain discovery order.
+Larger selections use the source scanner's size-balanced chunks, including repeated paths and files that fail to parse.
+Each occurrence retains its identity through the shared `balanced_rows` operator.
+
+The rule reads online CPU count and worker settings through demanded `host_info` rows.
+Python decimal syntax follows Unicode 15.1, with the configured digit limit.
+The native rule never starts Python.
+Offline Python recordings supply the comparison oracle.
+
+Thirty discovery cases compare complete paths, assembly order, and dead-code categories.
+Eight further steps reuse one workspace across worker changes, resizing, deletion, restoration, source edits, and an unchanged repeat.
+These cases prove the recorded update sequence. They do not prove every persistent update or full repository execution.
+
+One separate planner defect remains reproducible after removing the metadata join from the recursive walker.
+That valid program fails with `no such table: main.sgd_walk`.
+The symlink mutation retains the join and relaxes its predicate, so successful execution proves the intended behavior difference.
+The acceptance receipt retains the failing alternate program separately.
 
 The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
 Sixty-nine source fixtures compare producer fields with the pinned `_ModuleVisitor` and graph builder.
