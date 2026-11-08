@@ -37,8 +37,8 @@
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
-.decl load(path: symbol, module: symbol, grammar: symbol, role: symbol)
-.decl loaded(path: symbol, module: symbol, grammar: symbol, role: symbol)
+.decl load(path: symbol, module: symbol, grammar: symbol)
+.decl loaded(path: symbol, module: symbol, grammar: symbol)
 #include "python/modules.rr"
 #include "python/conditions.rr"
 

@@ -5,10 +5,10 @@
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
 //!
-//! and ask for documents with `load(path, module, grammar, role)`: the file at `path`, parsed in `grammar`, as
-//! module `module` (its resolution's answer, which names the document as a file of the corpus is named by its path),
-//! in `role` (`library`). A loaded document's path is the file's canonical path, and `loaded(path, module, grammar,
-//! role)` says which documents were loaded, by that path.
+//! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
+//! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
+//! loaded document's path is the file's canonical path, and `loaded(path, module, grammar)` says which documents
+//! were loaded, by that path. A loaded document is evaluated like any other.
 //!
 //! Reading `dir_entry` or `file_line` asks for it: `rr::lower` derives `rr_dir_req(dir)` and `rr_file_req(path)` from
 //! the literals that bind the key, as `parsed` asks for a guest (decision 0055). The runner answers in rounds
@@ -52,7 +52,6 @@ pub(super) struct Loaded {
     pub(super) path: String,
     pub(super) module: String,
     pub(super) grammar: String,
-    pub(super) role: String,
 }
 
 #[derive(Default)]
@@ -132,8 +131,8 @@ impl World {
             self.files.insert(asked, text.split_terminator('\n').map(str::to_owned).collect());
         }
         for row in lines(LOAD)? {
-            let c: Vec<&str> = row.splitn(4, '\t').collect();
-            let [asked, module, g, role] = c.as_slice() else { continue };
+            let c: Vec<&str> = row.splitn(3, '\t').collect();
+            let [asked, module, g] = c.as_slice() else { continue };
             if corpus.contains(*asked) || self.refused.contains(*asked) {
                 continue;
             }
@@ -153,7 +152,7 @@ impl World {
                 continue;
             }
             grew = true;
-            self.loads.insert(path.clone(), Loaded { path, module: (*module).to_owned(), grammar: (*g).to_owned(), role: (*role).to_owned() });
+            self.loads.insert(path.clone(), Loaded { path, module: (*module).to_owned(), grammar: (*g).to_owned() });
         }
         Ok(grew)
     }
@@ -172,7 +171,7 @@ impl World {
             out.insert("file_line".into(), rows.into());
         }
         if prog.decls.contains_key(LOADED) {
-            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar, l.role])).collect::<Vec<_>>().into());
+            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar])).collect::<Vec<_>>().into());
         }
         serde_json::Value::Object(out)
     }

@@ -532,8 +532,8 @@ fn imports_resolve_into_a_library_and_load_its_stubs() {
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
-.decl load(path: symbol, module: symbol, grammar: symbol, role: symbol)
-.decl loaded(path: symbol, module: symbol, grammar: symbol, role: symbol)
+.decl load(path: symbol, module: symbol, grammar: symbol)
+.decl loaded(path: symbol, module: symbol, grammar: symbol)
 .decl imp(n: node, q: symbol)
 imp(n, q) :- kind(n, "import_statement"), field(n, "name", m), kind(m, "dotted_name"), text(m, q).
 .decl want(q: symbol)
@@ -546,9 +546,9 @@ version(m, v) :- env("lib", r), f = cat(r, "/VERSIONS"), file_line(f, _, l), mat
 .decl resolves(q: symbol, f: symbol)
 resolves(q, f) :- modpath(q, p), env("lib", r), d = cat(r, "/", p), dir_entry(d, "__init__.pyi", 0), f = cat(d, "/__init__.pyi").
 resolves(q, f) :- want(q), split_dot(q, m, x), modpath(m, pm), env("lib", r), d = cat(r, "/", pm), dir_entry(d, n, 0), n = cat(x, ".pyi"), f = cat(d, "/", n).
-load(f, q, "python", "library") :- resolves(q, f), version(@head(q), _).
-.decl got(m: symbol, p: symbol, role: symbol)
-got(m, p, r) :- doc(d, path, m), pkg(d, p), loaded(path, _, _, r).
+load(f, q, "python") :- resolves(q, f), version(@head(q), _).
+.decl got(m: symbol, p: symbol)
+got(m, p) :- doc(d, path, m), pkg(d, p), loaded(path, _, _).
 .decl own(c: node)
 own(n) :- imp(n, _).
 .output got, own
@@ -556,7 +556,7 @@ own(n) :- imp(n, _).
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world");
     corpus::run(rule, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("got"), "collections\tcollections\tlibrary\nos\tos\tlibrary\nos.path\tos\tlibrary\n");
+    assert_eq!(read("got"), "collections\tcollections\nos\tos\nos.path\tos\n");
     // The loaded documents' rows are not the corpus's: main.py's three imports only.
     assert_eq!(read("own").lines().count(), 3, "{}", read("own"));
     let _ = std::fs::remove_dir_all(&out);
