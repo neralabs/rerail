@@ -24,13 +24,13 @@ environment: the interpreter's version, the virtual environment and its site dir
 
 This note specifies how rerail reads them. The principle is that **library code is code**:
 - a stub is a Python document, parsed like any other;
-- the typing program that reads the workspace reads the libraries too;
-- a library's "summary" is that program's rows for the library's documents.
+- the typing program that reads the workspace reads the libraries too, in the same run and the same way;
+- a library has no summary: its facts are that program's rows for its documents, stored and reused as any file's
+  are, because its files are unchanged.
 
 What is Python-specific is written in `.rr`. That covers where the libraries are, which file a module name
 resolves to, and what a stub's conditions and re-exports mean. The engine gets a few generic abilities, none of
-which knows Python: list a directory, read a small file's lines, load a file as a document on demand, and
-cache a library run.
+which knows Python: list a directory, read a small file's lines, load a file as a document on demand.
 
 ## 1. Where things stand
 
@@ -47,7 +47,7 @@ cache a library run.
 - That first figure was mostly the program's own fault, not the stubs'. Two declared-type rules multiplied out:
   14M of the 28M join rows. With them fixed, the closure takes 12M join rows (`88cda9248`). The timings are from
   an unoptimised build of the engine itself, so its Rust loops run several times slower than shipped.
-- Whatever it costs, it is paid once. The library's facts are made by the existing memo and derivations (§2.5).
+- Whatever it costs, it is paid once: a stub's facts are stored like any file's (§2.5).
 - The corpus reader skips `.pyi` files today. The measurement above copied the stubs as `.py`.
 
 **Built earlier, not reached in production** (the CLI and `corpus::run` pass `Typing::default()`):
@@ -76,9 +76,11 @@ There are five layers. The engine owns two of them, the generic ones. Each langu
 |---|---|---|---|
 | environment | the search roots and their order, the interpreter version, the platform | `python/env.rr` | `env`, `dir_entry`, `file_line` facts (E1, E4) |
 | resolution | which file a module name means | `python/modules.rr` | — |
-| loading | which files become documents | `python/modules.rr` asks | `load` requests, the library role (E2, E3) |
+| loading | which files become documents | `python/modules.rr` asks | `load` requests (E2, E3) |
 | stub meaning | conditions, re-exports, overloads, `...` | `python/stubs.rr` | — |
-| summaries | rows a workspace run reuses | the program's own rows | the per-file memo and the derivation store (E5) |
+
+Nothing in these layers says how a library is evaluated. Once loaded, its files are documents like the workspace's,
+and their facts are stored like any file's (§2.5).
 
 ### 2.1 Environment (`python/env.rr`)
 
@@ -122,31 +124,32 @@ order:
 | none | `ext`: unknown, as today |
 
 `modname(m, q)` is the relation `calls.rr` reads for "document is module q" today. It is derived from
-`resolves` instead of from the path. Then `ext_import`, `isqmod` and the cross-file rounds work unchanged
-across the workspace/library boundary. Namespace packages (a directory with no `__init__`) are one rule.
+`resolves` instead of from the path. Then `ext_import`, `isqmod` and the cross-file rules work unchanged
+whichever root a file is under. Namespace packages (a directory with no `__init__`) are one rule.
 
 ### 2.3 Loading
 
-Only the files a resolution reaches are read. A rule asks for a file with `load(path, module, grammar, role)`. The
+Only the files a resolution reaches are read. A rule asks for a file with `load(path, module, grammar)`. The
 module is the resolution's answer. The engine names the document by it (its `doc` row's module and its `pkg`), as it
 names a workspace file by its path, so `modname` and relative imports work in a stub unchanged:
 
 ```text
 // An import the workspace makes, resolved into a library: read that stub, and later what it imports.
-load(p, q, "python", "library") :- want(q), resolves(q, p, layer), layer != "workspace".
+load(p, q, "python") :- want(q), resolves(q, p, layer), layer != "workspace".
 // Every module reads builtins implicitly.
-load(p, "builtins", "python", "library") :- resolves("builtins", p, _).
+load(p, "builtins", "python") :- resolves("builtins", p, _).
 ```
 
 The engine reads each requested file as a document, named by its canonical path, so its key and memo entries are
-the same in every workspace. `loaded(path, module, grammar, role)` lists the documents loaded. The engine then runs
-the requesting rules again over the new documents, until no new request appears or a budget is spent (E2), and
-writes no output rows for loaded documents. This is 03 §13's `demand module(M2) :- module(M), reexport(M, _, M2)`,
+the same in every workspace. `loaded(path, module, grammar)` lists the documents loaded. The engine then runs
+the requesting rules again over the new documents, until no new request appears or a budget is spent (E2). A
+loaded document is evaluated like every other; findings are reported for the files the run was asked to check. This is 03 §13's `demand module(M2) :- module(M), reexport(M, _, M2)`,
 written as a rule.
 
 Built (`corpus/world.rs`): a round runs the program cut to its requests (`load`, and the `rr_dir_req` and
 `rr_file_req` that reading `dir_entry` and `file_line` derive), answers them, and runs again. The run proper then
-reads the answers as facts. A recursion that makes values is refused (O11), so a module's path is
+reads the answers as facts. Built with a fourth column, `role` (`"library"`), that no rule or engine path
+reads; it goes. A recursion that makes values is refused (O11), so a module's path is
 `@replace_all(q, "\\.", "/")` and its prefixes are `@pkg_up(q, 1)`, not a walk.
 
 ### 2.4 Stub meaning (`python/stubs.rr`)
@@ -158,7 +161,7 @@ A stub is Python with a few conventions. The rules that give them meaning are Py
   undecided one, it is a possible binding, as `calls.rr` treats any `if` today.
 - **Re-exports.** In a stub, `import x as x`, `from m import y as y`, a star import and the names in `__all__`
   are exported; a plain `import x` is not. This is `stub_export(d, name)`, and the program's module attribute
-  lookup reads it for library documents.
+  lookup reads it for stub documents, whichever root they are under.
 - **Bodies.** `...` bodies carry no flow. Types come only from annotations, which `calls.rr`'s declared-type
   section already reads (`rann`, `pann`, `adeclared`).
 - **Overloads.** `@overload` defs give one declared return per overload. Until arguments select among them, their
@@ -166,38 +169,33 @@ A stub is Python with a few conventions. The rules that give them meaning are Py
 - **Accelerators.** `try: from _x import f` followed by `except ImportError: def f(...)`: both bindings are
   possible. This explains 130 of the Jedi divergences in t20 gap 6.
 
-### 2.5 Summaries: the existing derivation store, no new cache
+### 2.5 Stored facts: the same as any file's
 
-A library file's facts are made once, by the mechanisms that already make a workspace file's facts once:
+A stub's facts are made and kept by the mechanisms that make and keep every file's. Nothing here knows which files
+are libraries.
 
 - **File-local rows**: the per-file memo (decision 0052) keys a document's rows by its content, its path and the
-  plan. A stub is a document, so its rows are replayed from the memo after the first run that reads it, in any
-  workspace on the machine.
-- **Cross-file rows**: these are the rows the cross-file fixpoint makes, such as a library class's inherited
-  attributes or a re-export's target. Here the derivation graph (03 §14, `content_store::derivation`) is the
-  mechanism (decision 0065).
-  - Library documents are ordinary documents. The normal fixpoint derives their rows with the workspace's.
-    There is no separate library run.
-  - A library never imports the workspace, so the rows about a set of library documents closed under their
-    imports are a derivation. Its inputs are those files' digests, the settings the rules read (`env`) and the
-    program. The store records them from the run that first derives them.
-  - Later runs read the recorded rows in place, and the fixpoint derives only what is new. A changed stub rebinds
-    its name and invalidates the derivation, as any changed file does.
-  - For this to hold, no row about a library node may depend on the workspace. Demand (0048) applies to
-    workspace rows only, and relations such as a library class's subclasses are derived from the workspace side.
+  plan. A stub's rows are therefore replayed from the memo after the first run that reads it, in any workspace on
+  the machine.
+- **Cross-file rows**, such as a class's inherited attributes or a re-export's target: every one is a derivation
+  (03 §14, decision 0065). It is valid while the files it read are unchanged, and a run reads the valid ones and
+  derives only what is missing or invalid. A stub's file does not change, so its facts stay valid. What a new
+  workspace adds are new facts, such as the instantiations of a generic with that workspace's types, not
+  rewritten ones. A changed stub invalidates what read it, as any changed file does.
 
 ## 3. Engine changes (generic, minimal)
 
 | # | change | why generic |
 |---|---|---|
 | E1 | `dir_entry(dir, name, is_dir)` and `file_line(path, i, text)`: read-only, computed only for a bound `dir` or `path` (demand, 0048), and never for paths outside the configured roots | any language's lookup is a directory walk; config files are lines |
-| E2 | `load(path, module, grammar, role)` requests: the engine parses each requested file as a document with `doc_role(d, role)`, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
+| E2 | `load(path, module, grammar)` requests: the engine parses each requested file as a document, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
 | E3 | file extensions per language in the registry (`languages/python.json`: `.py`, `.pyi`), so the corpus reader and E2 take `.pyi` | data, not code |
 | E4 | `env(key, value)` facts from `--env k=v` and a project config file | settings as facts, read by rules |
-| E5 | the cross-file rows about an import-closed set of library documents, made by the normal fixpoint, recorded as a derivation in the existing store (03 §14) and read in place by later runs; no findings for non-primary documents (0065) | the derivation graph at one more granularity, not a new cache |
+| E5 | cross-file facts stored as derivations and read while valid, for every file alike (0065) | the derivation graph of 03 §14, not a new cache |
 | E6 | *withdrawn:* a per-document cutoff in the rounds. The rounds go instead: the cross-file part is one fixpoint (0065) | — |
 
 E1–E4 are small. E5 reuses the store's derivations and the per-file memo, which already make a file's facts once.
+None of them names libraries.
 
 No Rust in this list knows Python. The Python-specific Rust that exists (`deps.rs`, `declare.rs`,
 `corpus/typing.rs::facts`) is retired once step 3 is in. `RECORD` and lockfiles are not needed to resolve a
@@ -241,10 +239,9 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
 1. **E3, E1, E4, E2; `env.rr` and `modules.rr` for typeshed's stdlib and `builtins` only.** No cache yet.
    This finds out how many of the 1,571 calls become decided. The ceiling is about 760 (the categories above),
    less what needs §5.1.
-2. **E5: library cross-file rows as a derivation.** The goal is a warm workspace run that costs at most 10% more
-   than today. *A first form (0059) ran the library as a separate stage and replayed its rows into each round. It
-   cost more than it saved, and its code is removed. The form now planned is 0065's: one fixpoint, with library
-   rows recorded by the store and read in place.*
+2. **E5: cross-file facts stored, as every fact is (0065).** The goal is that a run whose stubs are unchanged
+   costs at most 10% more than today's run without them. *A first form (0059) ran the libraries as a separate stage and
+   replayed their rows into each round. It cost more than it saved, and its code is removed.*
 3. **Site directories, stub packages, `py.typed`, `.pth`, user declarations as `.pyi`.** Retire `deps.rs`,
    `declare.rs` and the `declared_ret` facts. *Built: `python/modules.rr`'s layers in §2.2's order, the venv's site
    directory and `.pth` lines (`python/env.rr`); fixtures `world_site` and `world_decl`. `calls.rr` reads no
@@ -286,7 +283,7 @@ What it says:
   for this corpus.
 - **Cost is the rounds over library documents.** 263 documents take 7.5× the CPU of 84, almost all of it in the
   final run's local and cross parts (discovery is about 6 s). The rounds rerun the whole cross-file part per file
-  crossing. 0065 replaces them with one fixpoint over recorded library rows.
+  crossing. 0065 replaces them with one fixpoint, whose facts are stored like any others.
 
 Next, in that order: literal values as instances of `builtins` classes (`"".join`, `[].append`), the per-call
 difference between the two converged runs (which calls the stubs decide, which they un-decide, and why), then
@@ -346,8 +343,8 @@ bound.
 
 ## 7. Open questions
 
-- **Rounds over library documents.** *Answered by 0065:* there are no rounds. The library's rows come from the
-  same fixpoint as the workspace's, and the store records them.
+- **Rounds over library documents.** *Answered by 0065:* there are no rounds, and nothing is particular to
+  libraries. Their files' facts come from the same fixpoint as every file's and are stored the same way.
 - **Kinds across grammars.** A `.pyi` is the Python grammar, so no new kinds are needed. TypeScript's `.d.ts` is
   likewise its own grammar.
 - **Where typeshed comes from by default.** Options: a pinned pack fetched by tooling, or one found inside an

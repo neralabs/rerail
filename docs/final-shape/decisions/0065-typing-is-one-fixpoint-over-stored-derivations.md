@@ -1,7 +1,7 @@
 # 0065: Typing's cross-file facts are one fixpoint, recorded by the store, keyed by type terms
 
 Status: draft for review (2026-11-07). Reverses parts of 03 §13 (an adopted Typing-branch resolution), I10, I11,
-0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0059 and 0064.
+I18, 0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0059 and 0064.
 
 ## Intro
 
@@ -32,9 +32,9 @@ Three costs follow, each measured this week:
 - **Depth costs a full run per crossing.** On that probe, rounds 1 to 7 each derive 112k to 191k hop rows again
   to add a few thousand. Cutting each round down to what changed (0064, measured and withdrawn) would still
   re-derive 12% to 84% of them, and tracking what changed cost a further 60%.
-- **A frozen library is derived again in every run.** builtins.pyi's cross-file rows change in almost every
-  round. That is not because the file changes. Its own closure takes rounds to settle, and the workspace's demand
-  grows round by round.
+- **Nothing across files is kept between runs.** An unchanged file's cross-file rows are derived again in every
+  run. builtins.pyi's change in almost every round of a run, not because the file changes but because the rounds
+  take that long to settle.
 
 The rounds come from the Typing branch's summary model, in which each file is typed alone from its imports'
 summaries. That model fits files that are not loaded together. Here the cross-file part runs in one process over
@@ -57,29 +57,19 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
 - Unknown stays what it means elsewhere: a value no rule decides (an untyped parameter, a dynamic attribute).
 - `typing::cross_rounds` stays in the engine for a program that declares rounds. None of ours will.
 
-### 2. Library documents are ordinary documents, and the store records their rows
+### 2. Every cross-file fact is a stored derivation, like every other fact
 
-- **No separate library run.** Library roots are settings (`python.typeshed`, the site directories). Imports
-  resolve to files under them (`modules.rr`), and each file becomes a document, its tape and per-file rows
-  memoised like any source file's (0052). The one fixpoint (1) derives the rows about library documents along with
-  the workspace's.
-- **The store records them.** A library never imports the workspace, so the rows about a set of library documents
-  closed under their imports are a function of those files' contents. They are a derivation (03 §14):
-  - inputs: each document's path bound to its content digest, and the settings the program reads;
-  - producer: the cross-file part as lowered, and the engine build;
-  - output: the rows about those documents.
-
-  The run that first derives them records them. A later run, in any workspace, reads them in place: they are the
-  component's rows from the start, read by index as rules probe them. The fixpoint then derives only what is new.
-- **Discovery joins the fixpoint.** Today the runner re-runs the program, cut to its file requests, until no new
-  import appears (12 runs, 11 s CPU on the 84 files). Instead an import's resolved file joins the run when the
-  fixpoint reaches it, and its per-file rows come from the memo or a parse.
-- **No workspace facts in library rows.** Otherwise the recorded rows would hold for one workspace only.
-  - Demand (0048) applies to workspace rows only. A library's rows are the same whoever asks.
-  - A relation that names a workspace node in a row about a library node is derived from the workspace side. For
-    example, a library class's subclasses are found from each workspace class's bases.
-  - Measured in step 2: how many rows a library closure has with no demand. If the whole closure is too large,
-    the derivation is recorded per class (the rows one class's lookups need), not per closure.
+- A cross-file fact is a derivation (03 §14), as a per-file fact is (0052). Its inputs are the facts it read, and
+  through them the contents of the files they come from. It is valid while those files are unchanged.
+- A run reads every valid stored fact and derives only the facts that are missing or invalid. Semi-naive
+  evaluation takes the valid ones in as facts it already has, so the deep waves join only what is new.
+- Nothing marks a file as a library, and nothing is recorded per library. A stub under typeshed is a document like
+  any workspace file. Its facts are reused because its content is unchanged.
+- A new workspace adds new facts, not rewritten ones. For example, the instantiations of `list` with that
+  workspace's types are new keys (3); `list.__iter__`'s signature is an existing fact.
+- Demand (0048) decides which facts a run derives, not whether a stored one holds. A fact derived under one run's
+  demand is valid in any run that reads it.
+- A fact derived through negation records what it negated over, as 03 §14 requires of every derivation.
 
 ### 3. Types are terms, and instantiation is a fact about a signature
 
@@ -100,55 +90,74 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
   // A call reads it by its receiver's term; every call on a list[V] shares the one row.
   ```
 
-  Its inputs are f's signature, in the library derivation, and the argument terms. They name classes by
-  qualified name and read nothing of V's body. So a row holds in any workspace that asks for it, and it is stored
-  with the workspace's derivation.
+  It reads f's signature and the argument terms. They name classes by qualified name and read nothing of V's
+  body, so the row is valid in any run whose files define them unchanged. A new binding of the variables is a new
+  key; no existing row changes.
 - **Widening keeps the fixpoint finite.** A term deeper than 4, or a union past its member limit, widens
   (03 §13). Without that, recursive generics would derive ever-deeper terms.
 - What this replaces: `ghcls`, `garg`, `gpar`, `gbind`, `gcls` and `wbind`, which bind at call nodes and
   annotation nodes.
-
-### 4. The workspace's cross-file facts are a derivation too
-
-- Inputs: the workspace documents' contents, and the hashes of the library derivations it read.
-- A run whose inputs are unchanged reads its rows. A run with an edited file derives the fixpoint again, over the
-  stored library rows and the memoised per-file rows. Per-document reuse within the workspace is not decided
-  here (below).
 
 ## Order of work
 
 Each step is measured on the 84-file corpus (Jedi agreement, CPU, RSS) and on the 9,010-file data layer before the
 next step.
 
-1. **One fixpoint.** Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
+1. **One fixpoint** (done, measured above). Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
    chains no longer cut (`next(iter(xs))` decided), and the cost of one deep fixpoint compared with four rounds.
-2. **Library rows recorded and read in place, and discovery in the fixpoint.** This includes the demand split and
-   moving `sub` to the workspace side. Measured warm and cold, with the rows recorded per closure and per class.
-   Two engine questions are answered here: how the native fixpoint takes in a document that arrives mid-run, and
-   how it starts from recorded rows.
+2. **Stored cross-file facts.** The store keeps them as derivations, and a run reads the valid ones. The typing
+   runs' per-file memo is turned on (0052 turns it off when a run uses typing). Measured: a second run of the same
+   workspace, a run after one file is edited, and a second workspace that imports the same modules. The engine
+   question answered here is how the native fixpoint takes in stored facts as facts it already has.
 3. **Type terms.** First interned terms from annotations (per file). Then `inst_ret` in place of the call-site
    bindings, with widening.
-4. **The workspace derivation,** and the typing runs' per-file memo turned on (0052 turns it off when a run uses
-   typing).
 
-Steps 1 and 3 change `calls.rr` throughout. Step 2 changes `logic/plan/corpus.rs`, `corpus/world.rs`, the native
-fixpoint (`setfix`) and the store. The wolfeel session owns the final shape, so each step lands on a sibling `final-rerail-shape-*` branch.
+Steps 1 and 3 change `calls.rr` throughout. Step 2 changes `logic/plan/corpus.rs`, the native fixpoint (`setfix`)
+and the store. The wolfeel session owns the final shape, so each step lands on a sibling `final-rerail-shape-*` branch.
+
+## Measured
+
+**Step 1** (2026-11-07, debug build). Every typing program dropped the pragma; `calls.rr` dropped the pending round
+(`unconverged`, and `extq`/`extn`, which only it read). The program stratifies as it is: no rule needed rewriting.
+
+```text
+// one-file probe (contextlib, iter, next, sorted; 64 typeshed documents), load about 46
+                 cross-file CPU   peak RSS   calls open   call targets
+k = 4 rounds     18.3 s           342 MB     3            21
+one fixpoint      3.1 s           241 MB     0            22      next(iter(vs)).run() is V.run
+
+// 84 files of the data layer with typeshed (267 documents), against Jedi 0.19.2, load about 19
+                          agree   unknown, Jedi decided   no edge, Jedi a definition   CPU, RSS
+k = 1 and pending         6,198   825                     412                          45.4 s, 674 MB
+k = 4 (before the ffit fix)                                                            202.6 s, 5.5 GB
+one fixpoint              6,299   722                     414                          29.7 s, 582 MB
+```
+
+Per call, against k = 1: 924 unknown calls are decided and agree, 63 that agreed are unknown (the fixpoint
+finds more open values), and 2 unknown calls get no edge: `_active_batch_context.get().queue_single(...)` in
+`lazy_reads.py`, whose `ContextVar[BatchContext | None]` is also given `default=None`. The pending round had hidden
+that gap; it is not yet diagnosed.
 
 ## What it reverses
 
 - **03 §13, I10, I11:** "R1..Rk … bounded rounds, k = 2, not a global fixpoint". The cross-file part is a global
   fixpoint, over stored derivations.
+- **03 §13's dependency universe, I18:** dependencies produce "interface summaries only: no findings and no
+  tapes", cached "per (package version, module file)", identity "from lockfiles and `RECORD`", and "pending".
+  A dependency's file is a document like any other: it has a tape, its facts are stored by content like any
+  file's, and there is no summary, no separate cache and no pending state. Findings are reported for the files a
+  run is asked to check, whichever files it reads.
 - **0035, 0047:** k, the hop rules, the pending round and `unconverged`, for the typing programs.
 - **0056:** the typing programs no longer declare rounds. The declaration stays as a mechanism.
-- **0059:** withdrawn and its code removed. A library is not a separate stage, and its rows are not replayed into
-  rounds.
+- **0059:** withdrawn and its code removed. There is no library stage and no replay.
 - **0064:** withdrawn and its code removed. Its measurements are the evidence above.
 
 ## Prior work consulted
 
 - **03 §14:** every fact family is a derivation with recorded inputs and early cutoff. This decision gives the
   cross-file part that form instead of rounds.
-- **03 §13:** type terms, generic interface summaries, local instantiation, widening. Kept. Only the rounds go.
+- **03 §13:** type terms, generic signatures, local instantiation, widening. Kept. The rounds go, and so do the
+  dependency universe's summaries.
 - **t10 §2g** (corpus profile): "run the cross-file part as one fixpoint and drop the rounds … the incremental
   case is then the memo's job".
 - **ast-index-spike:** design index §17 scopes cross-file facts out, so it offers no prior form. The ledger's
@@ -158,8 +167,9 @@ fixpoint (`setfix`) and the store. The wolfeel session owns the final shape, so 
 
 ## Not decided here
 
-- Reuse within the workspace's fixpoint after an edit: re-deriving only what the edit reaches. It needs the
-  derivation's inputs at a finer grain than the workspace. It is not needed until step 4 is measured.
+- The grain at which the store records a derivation's inputs (a fact, a relation per document, …). Step 2
+  measures it; it is the same grain for every file.
+- Loading a resolved file during the fixpoint, instead of in the request loop before it (`world::discover`).
 - Whether rounds are wanted anywhere. The case would be typing over files that are not loaded together (a
   package's summaries alone). None exists yet.
 - The term encoding: interned symbols built by `cat`, or a term constructor in the engine.
