@@ -14,7 +14,7 @@ class EngineAlignmentTests(unittest.TestCase):
     def setUp(self):
         getattr(migration,'_SOURCE_COHORTS',set()).clear()
 
-    def test_final_tip_is_a_process_snapshot_while_artifact_checks_remain_per_execution(self):
+    def test_live_tip_audit_repeats_at_new_process_or_adoption_boundaries(self):
         source=dict(checkout='.',upstreamCommit='adopted')
         with patch.object(migration,'verify_engine_alignment') as audit:
             migration.verify_source_cohort(Path('/fixture'),source)

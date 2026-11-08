@@ -75,7 +75,7 @@ class NativeRegexMatch:
 class Suite:
     def __init__(self, source, engine, checks, part, parts, baseline, rule_root=None):
         manifest = migration.read_json(ROOT / migration.MANIFEST)
-        migration.verify_engine_alignment(ROOT, manifest['engineSource'])
+        migration.verify_source_cohort(ROOT, manifest['engineSource'])
         for retired in ('.rerail/rr-migration-20261106/engine',
                         '.rerail/data-layer-batch-seven/engine-source'):
             if engine.resolve().is_relative_to((ROOT / retired).resolve()):

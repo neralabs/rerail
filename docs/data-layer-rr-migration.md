@@ -61,9 +61,9 @@ Boolean operand formatting also follows CPython: each operand increases the requ
 The manifest records all 27 extension files, including the dependency lock, typed shard-column mapping, and generic BFS operator, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
-The audit checks both the local Final shape branch and its fetched remote tip.
-If either tip advances, acceptance requires its commits in this branch.
-Native assertion suites run that audit before they start an execution worker.
+At process start, the audit checks both the local Final shape branch and its fetched remote tip.
+A new acceptance cohort requires those commits in this branch. A running cohort retains its adopted snapshot when another worktree advances.
+Native assertion suites run that audit before they start an execution worker. Source-tree and binary checks continue on every execution.
 They also reject binaries inside either retired engine checkout.
 New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
@@ -1763,3 +1763,21 @@ The full tooling suite passes all 118 tests and sixty-four subtests after implem
 The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-final-artifact-guard.json.gz) retains the compiler log, source equality, and TDD evidence.
 Native acceptance will resume after a current Final build succeeds and its artifact is registered.
 The 130 source comparisons remain historical evidence for the earlier engine. The migration remains incomplete.
+
+### 2026-11-08 — Committed Final fixes and stable acceptance cohorts
+
+Final `4e409af94` supplies committed fixes for the nineteen compilation errors.
+The root CLI then builds in 60.297 seconds. Its frozen hash starts with `74ae1fa8ea435bc2`.
+Its registered receipt binds the binary to root source `81b2ac5a0` and the adopted Final commit.
+The standard native test executable also builds in 101.716 seconds, with hash prefix `3eb46445732e7636`.
+
+Final advances again to `79fabb23d` before the original/helper regressions start and during source comparisons.
+The live-tip guard rejects those runs. The 4e build and policy readers are verified; its full rule acceptance is not established.
+The sibling's new commit does not alter the immutable source or executable that a running cohort tests.
+
+Commit `23b04dc2f` records the required boundary behavior before implementation.
+The harness now audits live sibling tips once per process and adopted source identity.
+A new process or changed adoption performs the strict audit again.
+Every execution still checks committed source trees, binary ancestry, and executable bytes.
+Thus a running cohort can finish without accepting an older binary for a newer source tree.
+This change introduces no execution mode or production configuration flag.

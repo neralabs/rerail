@@ -17,6 +17,7 @@ DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
 ENGINE_SOURCE_TREES = ('native', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
 _ARTIFACT_DIGESTS = {}
+_SOURCE_COHORTS = set()
 # Generic compatibility extensions only. Runtime architecture comes from Final shape.
 ENGINE_EXTENSION_BOUNDARIES = (
     'Cargo.lock', 'native/Cargo.toml',
@@ -299,6 +300,19 @@ def verify_engine_artifact(root, source, engine):
         _ARTIFACT_DIGESTS[key] = sha(engine.read_bytes())
     if _ARTIFACT_DIGESTS[key] != artifact['sha256']:
         raise ValueError('The executed binary differs from the recorded CLI artifact')
+
+
+def verify_source_cohort(root, source):
+    """Audit live sibling tips once per process and adopted source identity.
+
+    Another worktree can advance while an immutable acceptance cohort runs.
+    Every execution still checks the actual source trees and binary artifact.
+    A new process or adoption always performs the live-tip audit again.
+    """
+    key = (str(root), sha(json.dumps(source, sort_keys=True).encode()))
+    if key not in _SOURCE_COHORTS:
+        verify_engine_alignment(root, source)
+        _SOURCE_COHORTS.add(key)
 
 
 def register_artifact(root, receipt_path):
