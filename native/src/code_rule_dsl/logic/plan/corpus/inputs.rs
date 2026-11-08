@@ -217,6 +217,25 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
 #[cfg(test)]
 mod tests {
     #[test]
+    fn json_type_and_transport_projections_share_one_read_and_keep_large_numbers() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl kind(value: symbol)
+.input kind(IO=json, filename="baseline.json", projection="type")
+.decl category_kind(value: symbol)
+.input category_kind(IO=json, filename="baseline.json", path="/categories", projection="type")
+.decl raw(value: symbol)
+.input raw(IO=json, filename="baseline.json", projection="json")
+"#).unwrap();
+        let source = r#"{"categories":{"Z":["f"],"A":[]},"number":18446744073709551617}"#;
+        let mut reads = 0;
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }).unwrap();
+        assert_eq!(reads, 1);
+        assert_eq!(program.facts["kind"], vec![vec![Value::Str("object".into())]]);
+        assert_eq!(program.facts["category_kind"], vec![vec![Value::Str("object".into())]]);
+        assert_eq!(program.facts["raw"], vec![vec![Value::Str(source.into())]]);
+    }
+
+    #[test]
     fn successful_file_reads_publish_a_known_empty_error_relation() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
 .decl sample(n: number)
