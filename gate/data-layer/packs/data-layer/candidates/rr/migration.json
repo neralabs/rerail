@@ -2473,8 +2473,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "f0571b1e78d2cb6922084136743441c34bf7cf68",
-    "status": "Root Final shape engine through f0571b1e7; matcher automata cached in the store, definite guest handling, single collection holds; reviewed generic compatibility extensions",
+    "upstreamCommit": "044449ca72c33030424ae8758f6c458f40cf386d",
+    "status": "Root Final shape engine through 044449ca7; combined-rule and cycle-analysis resolutions; reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2558,7 +2558,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "a14cfee68314b94a790442046e8d0f70fd4df0be5252cc92461576ebc33d96a4"
+        "sha256": "ba4f6cce2c631a4ef5c526a3b3972290798ab76547265a4244a3aa5dcbb1e7ea"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2566,7 +2566,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "a3ee5521ae63cdb8b18f209542157ab88336103a661b56fffde91cd763e66cd3"
+        "sha256": "75bda356f1afb9db573551e115b597fddccb5e61f32b419fe139d93890b09930"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",

@@ -6,33 +6,7 @@ def render_fstrings(source, target, header):
     text=header('render_fstrings',target)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',text,flags=re.M)
     return text+r'''
-.decl rf_graph()
-rf_graph() :- option_item("astKinds", 0, _).
-.decl rf_edge(p: node, field: symbol, c: node)
-rf_edge(p, "", c) :- !rf_graph(), ast_parent(c, p).
-rf_edge(to_number(p), field, c) :- option_item("astParents", c, p), p != "-1", option_item("astFields", c, field).
-.decl rf_ancestor(n: node, a: node)
-rf_ancestor(n, a) :- rf_edge(a, _, n).
-rf_ancestor(n, a) :- rf_edge(p, _, n), rf_ancestor(p, a).
-.decl rf_function(f: node, name: symbol)
-rf_function(f, @nfkc(name)) :- !rf_graph(), kind(f, "function_definition"), def_name(f, name).
-rf_function(f, name) :- option_item("astKinds", f, k), (k = "FunctionDef" ; k = "AsyncFunctionDef"), option_item("astNames", f, name).
-.decl rf_class(c: node, name: symbol)
-rf_class(c, @nfkc(name)) :- !rf_graph(), kind(c, "class_definition"), def_name(c, name).
-rf_class(c, name) :- option_item("astKinds", c, "ClassDef"), option_item("astNames", c, name).
-.decl rf_render_name(name: symbol)
-rf_render_name(name) :- rf_function(_, name), (name = "render" ; prefix("render_", name)).
-rf_render_name(name) :- option("nameProbe", name), (name = "render" ; prefix("render_", name)).
-.decl rf_shadowed(f: node)
-rf_shadowed(f) :- rf_function(f, _), rf_ancestor(f, a), rf_function(a, name), rf_render_name(name).
-.decl rf_render(f: node, name: symbol)
-rf_render(f, name) :- rf_function(f, name), rf_render_name(name), !rf_shadowed(f).
-.decl rf_current_class(f: node, c: node)
-rf_current_class(f, c) :- rf_render(f, _), rf_ancestor(f, _), c = max a : { rf_ancestor(f, a), rf_class(a, _) }.
-.decl rf_context(f: node, cls: symbol, has_class: number)
-rf_context(f, cls, 1) :- rf_current_class(f, c), rf_class(c, cls).
-rf_context(f, "", 0) :- rf_render(f, _), !rf_current_class(f, _).
-.decl rf_concat_piece(n: node)
+'''+render_context()+r'''.decl rf_concat_piece(n: node)
 rf_concat_piece(n) :- child(p, n, _), kind(p, "concatenated_string").
 .decl rf_joined(n: node)
 rf_joined(n) :- !rf_graph(), fstring(n), !rf_concat_piece(n).
@@ -55,18 +29,7 @@ rf_item(n, to_number(i), 1, "{...}") :- rf_joined(n), rf_edge(n, "values", c), o
 .decl rf_preview(n: node, value: symbol)
 rf_preview(n, cat("f\"", value, "\"")) :- rf_joined(n), raw = join piece by (at, rank) sep "" : { rf_item(n, at, rank, piece) }, @slice(raw, 50, 51) = "", value = raw.
 rf_preview(n, cat("f\"", @slice(raw, 0, 47), "...\"")) :- rf_joined(n), raw = join piece by (at, rank) sep "" : { rf_item(n, at, rank, piece) }, @slice(raw, 50, 51) != "".
-.decl rf_position(n: node, d: number, l: number, i: number)
-rf_position(n, d, l, i) :- !rf_graph(), docof(n, d), line(n, l), visit_index(n, i).
-rf_position(n, 0, to_number(l), n) :- option_item("astKinds", n, _), option_item("astLines", n, l).
-.decl rf_path(d: number, path: symbol)
-rf_path(d, original) :- !rf_graph(), doc(d, path, _), doc_role(d, "primary"), option_item("documentPaths", i, path), option_item("originalPaths", i, original).
-rf_path(d, path) :- !rf_graph(), doc(d, path, _), doc_role(d, "primary"), !option_item("documentPaths", _, path).
-rf_path(0, path) :- rf_graph(), option("originalPath", path).
-.decl rf_hidden(d: number)
-rf_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
-.decl rf_collect_skip(d: number)
-rf_collect_skip(d) :- option("entryPoint", "collect_reports"), rf_path(d, path), contains("__pycache__", path).
-.decl rf_selected(d: number)
+'''+render_positions()+r'''.decl rf_selected(d: number)
 rf_selected(d) :- rf_path(d, _), !rf_graph(), !rf_collect_skip(d), !syntax_error(d, _, _), option("entryPoint", _), file_name(d, file), suffix(".py", file), source(d, sp), text(sp, source), (contains("render", source) ; contains("f\"", source) ; contains("f'", source)).
 rf_selected(0) :- rf_graph().
 rf_selected(d) :- rf_path(d, path), !option("entryPoint", _), prefix("impl/common/l2100_sql_grammar/", path), suffix(".py", path), !rf_hidden(d), !syntax_error(d, _, _), source(d, sp), text(sp, source), (contains("render", source) ; contains("f\"", source) ; contains("f'", source)).
@@ -146,3 +109,48 @@ RFFormatted(@place("", 0), "detailed", cat(DETAIL, "No f-strings found in render
 RFFormatted(@place("", 0), "detailed", cat(DETAIL, "Total violations: ", to_string(count), "\n\n", files)) :- !rf_fmt_error("detailed", _), rf_fmt_totals(_, _, count, _), count > 0,
  files = join value by (path, r) sep "\n" : { rf_fmt_file(r, path, value) }.
 '''.replace('TITLE',q(title)).replace('FILEBAR',q('-'*60)).replace('SHORTBAR',q('-'*40)).replace('DETAIL',q(detail))
+
+
+def render_context():
+    return r'''.decl rf_graph()
+rf_graph() :- option_item("astKinds", 0, _).
+.decl rf_edge(p: node, field: symbol, c: node)
+rf_edge(p, "", c) :- !rf_graph(), ast_parent(c, p).
+rf_edge(to_number(p), field, c) :- option_item("astParents", c, p), p != "-1", option_item("astFields", c, field).
+.decl rf_ancestor(n: node, a: node)
+rf_ancestor(n, a) :- rf_edge(a, _, n).
+rf_ancestor(n, a) :- rf_edge(p, _, n), rf_ancestor(p, a).
+.decl rf_function(f: node, name: symbol)
+rf_function(f, @nfkc(name)) :- !rf_graph(), kind(f, "function_definition"), def_name(f, name).
+rf_function(f, name) :- option_item("astKinds", f, k), (k = "FunctionDef" ; k = "AsyncFunctionDef"), option_item("astNames", f, name).
+.decl rf_class(c: node, name: symbol)
+rf_class(c, @nfkc(name)) :- !rf_graph(), kind(c, "class_definition"), def_name(c, name).
+rf_class(c, name) :- option_item("astKinds", c, "ClassDef"), option_item("astNames", c, name).
+.decl rf_render_name(name: symbol)
+rf_render_name(name) :- rf_function(_, name), (name = "render" ; prefix("render_", name)).
+rf_render_name(name) :- option("nameProbe", name), (name = "render" ; prefix("render_", name)).
+.decl rf_shadowed(f: node)
+rf_shadowed(f) :- rf_function(f, _), rf_ancestor(f, a), rf_function(a, name), rf_render_name(name).
+.decl rf_render(f: node, name: symbol)
+rf_render(f, name) :- rf_function(f, name), rf_render_name(name), !rf_shadowed(f).
+.decl rf_current_class(f: node, c: node)
+rf_current_class(f, c) :- rf_render(f, _), rf_ancestor(f, _), c = max a : { rf_ancestor(f, a), rf_class(a, _) }.
+.decl rf_context(f: node, cls: symbol, has_class: number)
+rf_context(f, cls, 1) :- rf_current_class(f, c), rf_class(c, cls).
+rf_context(f, "", 0) :- rf_render(f, _), !rf_current_class(f, _).
+'''
+
+
+def render_positions():
+    return r'''.decl rf_position(n: node, d: number, l: number, i: number)
+rf_position(n, d, l, i) :- !rf_graph(), docof(n, d), line(n, l), visit_index(n, i).
+rf_position(n, 0, to_number(l), n) :- option_item("astKinds", n, _), option_item("astLines", n, l).
+.decl rf_path(d: number, path: symbol)
+rf_path(d, original) :- !rf_graph(), doc(d, path, _), doc_role(d, "primary"), option_item("documentPaths", i, path), option_item("originalPaths", i, original).
+rf_path(d, path) :- !rf_graph(), doc(d, path, _), doc_role(d, "primary"), !option_item("documentPaths", _, path).
+rf_path(0, path) :- rf_graph(), option("originalPath", path).
+.decl rf_hidden(d: number)
+rf_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
+.decl rf_collect_skip(d: number)
+rf_collect_skip(d) :- option("entryPoint", "collect_reports"), rf_path(d, path), contains("__pycache__", path).
+'''
