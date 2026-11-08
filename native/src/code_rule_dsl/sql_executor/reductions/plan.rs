@@ -287,11 +287,6 @@ impl Rule {
         query
     }
     pub fn index(&self, db: &rusqlite::Connection, columns: &[usize]) -> Result<()> {
-        if super::super::super::facts::vtab::bound_source(db, &self.contexts)
-            .is_some_and(|s| s.writable())
-        {
-            return Ok(());
-        }
         let columns: Vec<_> = columns
             .iter()
             .copied()
@@ -299,6 +294,12 @@ impl Rule {
             .into_iter()
             .collect();
         if columns.is_empty() || columns.iter().copied().eq(0..columns.len()) {
+            return Ok(());
+        }
+        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts)
+            .filter(|s| s.writable())
+        {
+            source.prepare_index(&columns);
             return Ok(());
         }
         let suffix = columns

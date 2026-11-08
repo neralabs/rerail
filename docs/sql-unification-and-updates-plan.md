@@ -751,3 +751,82 @@ The 50,000-edge measurements show the resulting CPU and memory cost; sparse edit
    Skipping frames without that accounting would leave stale scalar indexes.
 
 These follow-ups are distinct from first-edit migration. Preparation, registered joins, string reductions, correlations, and scratch reuse now meet the stated checks.
+
+### Shared profiling and initial recursive preparation
+
+SQL extension sessions now use the existing query catalog, trace, EXPLAIN reporter, and logic CPU spans.
+Headless builds support this capture without the workspace profiling feature.
+The benchmark reuses the installed callback, so its counters cannot replace the shared trace.
+Compiler search records describe SQL emission. Runtime records separately identify cold rules, retained frames, support initialization, and merge operations.
+API error records retain the failure reason. Teardown explains the final atom writes before the connection closes.
+Temporary old-input bindings receive plans before release. Diagnostic EXPLAIN does not consume the execution instruction allowance.
+
+The initial capture attributed most recorded CPU to retained rule caches and merge/widen writes.
+The cold SQL kernel was a much smaller cost on the disconnected-path example.
+Native versions maintained a secondary tree for every column, including a redundant leading-column tree.
+Wide context and contribution tables copied those trees during each insert, delete, and frame transition.
+These native costs occurred inside SQL callbacks, so unchanged VM counts concealed their size.
+
+The implementation now makes these changes:
+
+- Leading-column probes use the complete-row tree and retain exact distinct counts.
+- Known retained operator and support tables keep the secondary indexes their consumers require.
+- Checked query predicates select recursive input indexes separately for each alias, including scalar subqueries.
+- Context, correlation, and contribution access paths are prepared before the first edit.
+- Secondary index construction sorts entries, then builds the canonical tree in one pass.
+- Compound-key `IN` probes descend through existing prefixes and avoid a Cartesian product of candidate keys.
+- SQLite rechecks tuple correlation and other predicates. Native candidate inspections appear in the shared counters.
+- Forks, frozen readers, empty versions, and native rollback preserve the selected index configuration.
+
+The compound-key path is necessary for sparse deletes after index pruning.
+Choosing only the leading group column would otherwise scan a large group when the remaining key fields use `IN`.
+A 20,000-row regression checks mixed affinity, nulls, tuple correlation, rollback, and bounded native candidate work.
+Another regression compares bulk tree shape, hashes, and subsequent edits with individual canonical insertions.
+
+Measurements use the optimized `profiling` build on macOS arm64.
+Each cell is the median of three fresh processes with identical request JSON.
+Shared profiling was disabled; the benchmark retained its lightweight SQLite counter callback.
+Other compiler jobs ran concurrently, so CPU and RSS are more useful here than wall time.
+
+| Independent regions / weighted edges | Initial CPU before | Initial CPU after | Peak RSS before | Peak RSS after |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 / 5,000 | 0.511 s | 0.321 s | 125 MiB | 87 MiB |
+| 10,000 / 50,000 | 5.128 s | 3.750 s | 1,128 MiB | 706 MiB |
+
+The larger case uses 27% less initial CPU and 37% less peak memory.
+Initial SQL instructions remain exactly 10,579,437 and 104,701,629 at the two sizes.
+Each six-edit sequence retains the same 9,754–17,397 instruction range.
+The larger case takes 2.03–4.32 ms CPU per edit after the change.
+Both sizes validate initial answers, every output delta, unaffected components, and repeated scratch reuse.
+
+Separate final captures cover 4,494 and 4,518 SQL executions from session start through teardown.
+Both have complete receipts, no running statements, no unexpected explanation failures, and no incomplete native operations.
+Deferred CREATE explanations still report expected schema errors after their tables exist.
+The diagnostic reporter preserves the complete-job 100-execution allowance and reports these jobs as over budget.
+It does not import the benchmark's answer checks as a framework parity oracle or grant acceptance.
+
+Requests, binaries, counters, and reports are under `/tmp/rerail-sql-evaluation/`:
+
+- `sql-recursive-before-repeat` and `sql-recursive-after-repeat` contain the repeated measurements and validated answers.
+- `sql-recursive-after-profile/job-23091/report/profile.html` contains the larger shared capture.
+- The frozen baseline binary is `sql-profile-before-bench`, SHA-256 `b8a032c8e5dd373532bc5170d6e49f093a295e688b92e506fbd043be29a11fe0`.
+- The final measured binary is `sql-recursive-final-bench`, SHA-256 `557a2e649dce57bf787045162dbe327e7d11d34342abc99d6d5e1767c40938f2`.
+
+The baseline contains the profiling integration before index changes, based on `f36d9460d`.
+The measured final binary also contains the teardown explanation fix.
+
+Validation passed: 185 tests in the broad Rust selection, plus the separately run recursive count and 100,000-edge regressions.
+The final isolated profiling test also checks native candidate work and complete teardown explanations.
+All 15 report tests pass, and the library compiles with the workspace profiling feature.
+The structure gate retains its 10 passing metrics and 15 existing failures, with no new findings.
+
+The next performance changes remain substantial:
+
+1. Capture retained state during cold execution and remove the second complete trace evaluation.
+   Preserve wave gates, seeds, frontiers, widening counters, and failure behavior before removing the cold comparison.
+2. Extend bulk construction to complete-row and row-id roots during initial loads and dense transitions.
+   These paths still use individual persistent writes.
+3. Reduce repeated helper statements across operators and frames.
+   CPU improvements alone do not meet the shared complete-job execution allowance.
+4. Add a SQL-session parity adapter to the existing acceptance report.
+   Keep diagnostic reports distinct from accepted benchmark evidence until that adapter verifies complete outputs and failures.

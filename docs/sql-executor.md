@@ -424,3 +424,34 @@ Aggregate bodies with joins lower to retained helper relations. `split_dot` reta
 Arbitrary checked CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
 Initial preparation builds and checks a separate trace, so its CPU and memory costs still need improvement.
 See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.
+
+## Explain and profiling
+
+SQL sessions use the shared query profiler, including the standalone headless engine.
+Set `RERAIL_SQL_PROFILE_DIR` before the process opens a session:
+
+```sh
+RERAIL_SQL_PROFILE_DIR=/tmp/sql-profile/raw rerail-engine sql store.sqlite request.json
+node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-profile/raw /tmp/sql-profile/report
+```
+
+The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions, and native table counters.
+Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
+Native version differences have separate operator records. Failed operations and rollback remain in the trace.
+Retained support initialization records its native CPU separately from child SQL.
+Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
+The benchmark probe reuses this profiler when capture is active, preserving SQLite's single callback.
+
+The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
+The existing complete-job execution allowance and missing-parity checks remain visible in the report.
+
+`RERAIL_PROFILE=/tmp/logic-profile` also records compiler search, CPU spans, and the logical rule plans.
+The SQL request tool writes the standard logic reports and places shared SQL traces in the `sql` subdirectory.
+SQL EXPLAIN runs outside callbacks. Temporary old-input views receive plans before cleanup releases them.
+
+Retained operator tables now keep the secondary indexes required by their checked queries.
+Leading prefixes use the complete-row tree. Required secondary indexes use bulk construction during preparation.
+Compound-key `IN` filters descend through existing prefixes without constructing the lists' Cartesian product.
+SQLite rechecks tuple correlation, affinity, and remaining predicates.
+Frozen cursors and transaction rollback preserve the previous rows and index configuration.
+This reduces initial CPU and memory. Initial execution still builds and verifies a separate retained trace.

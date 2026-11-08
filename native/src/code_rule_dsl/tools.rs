@@ -14,6 +14,21 @@ pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Re
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
 pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
+    let profiling = super::logic::profile::on();
+    let _run = profiling.then(super::logic::profile::one_run);
+    if profiling { super::logic::profile::reset(); }
+    let span = super::logic::profile::span(||"SQL extension request".into());
+    let result = sql_request(store,request);
+    drop(span);
+    if profiling {
+        if let Some(directory) = super::logic::profile::directory() {
+            super::logic::profile::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
+        }
+    }
+    result
+}
+
+fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Query {

@@ -3,6 +3,77 @@ use super::super::logic::sql::select::{Join, Query, Relation, Select};
 use super::super::logic::sql::sql_ast::{SqlBinaryOperator, SqlExpression};
 use super::*;
 
+/// Native tables already serve contiguous leading prefixes from their complete-row tree.
+/// Keep requirements separate for each alias: two uses of one relation can probe different fields.
+pub(super) fn native<'a>(
+    queries: impl IntoIterator<Item = &'a Query>,
+) -> BTreeMap<String, Vec<usize>> {
+    fn block(select: &Select, wanted: &mut BTreeMap<String, BTreeSet<usize>>) {
+        let mut aliases = BTreeMap::<String, BTreeSet<usize>>::new();
+        let ons = select.from.iter().flat_map(|item| match &item.join {
+            Join::On(on) => on.iter().collect::<Vec<_>>(),
+            _ => vec![],
+        });
+        let expressions = select
+            .columns
+            .iter()
+            .map(|(e, _)| e)
+            .chain(&select.predicates)
+            .chain(ons)
+            .collect::<Vec<_>>();
+        for e in expressions {
+            e.visit(&mut |e| {
+                if let SqlExpression::Binary {
+                    operator: SqlBinaryOperator::Equal,
+                    left,
+                    right,
+                } = e
+                {
+                    for side in [left.as_ref(), right.as_ref()] {
+                        if let SqlExpression::Qualified { alias, column } = side
+                            && let Some(c) = column
+                                .strip_prefix('c')
+                                .and_then(|s| s.parse::<usize>().ok())
+                        {
+                            aliases.entry(alias.clone()).or_default().insert(c);
+                        }
+                    }
+                }
+                if let SqlExpression::Exists { query, .. } | SqlExpression::Scalar(query) = e {
+                    block(query, wanted);
+                }
+            });
+        }
+        for (alias, columns) in aliases {
+            if columns.iter().copied().eq(0..columns.len()) {
+                continue;
+            }
+            if let Some(item) = select.from.iter().find(|item| item.alias == alias) {
+                let name = match &item.relation {
+                    Relation::Derived { rel, delta: true } => Some(format!("delta_{rel}")),
+                    r => r.program_relation().map(str::to_owned),
+                };
+                if let Some(name) = name {
+                    wanted
+                        .entry(name)
+                        .or_default()
+                        .extend(columns.into_iter().filter(|&c| c > 0));
+                }
+            }
+        }
+    }
+    let mut wanted = BTreeMap::new();
+    for q in queries {
+        for select in q.ctes.iter().flat_map(|c| &c.arms).chain([&q.body]) {
+            block(select, &mut wanted);
+        }
+    }
+    wanted
+        .into_iter()
+        .map(|(r, c)| (r, c.into_iter().collect()))
+        .collect()
+}
+
 pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32>)> {
     let tables: BTreeSet<_> = emitted
         .program

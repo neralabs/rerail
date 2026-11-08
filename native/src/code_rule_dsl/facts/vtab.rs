@@ -33,6 +33,7 @@ pub(in crate::code_rule_dsl) mod syntax;
 /// `idx_num` of a filter on several `=` columns, listed in `idx_str`.
 const MULTI: c_int = 1 << 22;
 const ORDERED: c_int = 1 << 23;
+const PRIMARY_BATCH: c_int = 1 << 24;
 
 fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
@@ -42,6 +43,9 @@ fn failure(message: &str) -> rusqlite::Error {
 /// A mutable owner must close every reader before changing rows, then refresh its binding
 /// and planner estimates. Most producers expose immutable snapshots.
 pub(crate) trait Source: Send + Sync {
+    fn prepare_index(&self, _columns:&[usize]) {}
+    fn primary_key_len(&self)->Option<usize> {None}
+    fn lookup_primary_batch(&self, _values:&[Vec<i64>])->Option<Vec<usize>> {None}
     /// Pin a stable version before a SQL cursor starts. Immutable sources need no copy.
     fn frozen(&self) -> Option<Arc<dyn Source>> { None }
     fn cell(&self,row:usize,column:usize)->Value { Value::Integer(self.value(row,column)) }
@@ -382,6 +386,22 @@ unsafe impl<'a> VTab<'a> for Table {
             info.set_estimated_rows(rows as i64);info.set_estimated_cost(rows.max(1) as f64);
             return Ok(true);
         }
+        // Batch every primary-key field together. SQLite rechecks tuple-IN correlation.
+        if let Some(keys)=source.primary_key_len().filter(|&n|n>=2) {
+            let chosen=(0..keys).map(|c|equal.iter().filter(|(_,col)|*col==c).min_by_key(|(i,_)|info.is_in_constraint(*i).unwrap_or(false)).copied()).collect::<Option<Vec<_>>>();
+            if let Some(chosen)=chosen && chosen.iter().any(|(i,_)|info.is_in_constraint(*i).unwrap_or(false)) {
+                let mut tags=String::new();
+                for (arg,(i,_)) in chosen.into_iter().enumerate() {
+                    let batch=info.is_in_constraint(i)?;
+                    if batch {info.set_in_constraint(i,true)?;}
+                    tags.push(if batch {'b'} else {'s'});
+                    info.constraint_usage(i).set_argv_index(arg as c_int+1);
+                }
+                info.set_idx_num(PRIMARY_BATCH);info.set_idx_str(&tags);
+                info.set_estimated_rows(8);info.set_estimated_cost(8.0);
+                return Ok(true);
+            }
+        }
         // The document bound by an `EQ`, where the source can keep a lookup to it (`lookup_in`).
         let doc = source.doc_column().filter(|&d| {
             info.constraints().enumerate().any(|(j, c)| {
@@ -570,6 +590,7 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
         self.binding.current().write(Some(arg.as_i64()?),None,None,false,false).map(|_|())
     }
     fn insert(&mut self,args:&rusqlite::vtab::Inserts<'_>)->Result<i64> {
+        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Insert,1);
         use rusqlite::vtab::ConflictMode;
         let conflict=unsafe {args.on_conflict(self.connection)};
         let values=(2..args.len()).map(|i|args.get::<Option<i64>>(i)).collect::<Result<Vec<_>>>()?;
@@ -585,6 +606,8 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, list: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        use crate::code_rule_dsl::sql_profile::{frame,FrameEvent};
+        frame(if index==0 {FrameEvent::Scan} else {FrameEvent::Lookup},1);
         let stats = &self.binding.stats;
         stats.scans.fetch_add(1, Ordering::Relaxed);
         self.source = self.binding.current();
@@ -607,7 +630,19 @@ unsafe impl VTabCursor for Cursor {
             if !self.range.is_empty(){stats.candidates.fetch_add(1,Ordering::Relaxed);}
             return Ok(());
         }
-        if index == MULTI {
+        if index == PRIMARY_BATCH {
+            let mut columns=Vec::new();
+            for (arg,tag) in list.ok_or_else(||failure("missing primary batch columns"))?.chars().enumerate() {
+                let mut values=Vec::new();
+                if tag=='b' {
+                    stats.batches.fetch_add(1,Ordering::Relaxed);
+                    let mut iter=args.in_values(arg)?;
+                    while let Some(value)=iter.next()? {values.extend(integer(&Value::try_from(value).map_err(|e|failure(&e.to_string()))?));}
+                } else {values.extend(integer(&args.get::<Value>(arg)?));}
+                values.sort_unstable();values.dedup();columns.push(values);
+            }
+            self.selected=Some(self.source.lookup_primary_batch(&columns).ok_or_else(||failure("primary batch source lost its index"))?);
+        } else if index == MULTI {
             let list = list.ok_or_else(|| failure("missing index columns"))?;
             let (tag, list) = list.split_at(1);
             let columns: Vec<usize> = list.split(',').map(|c| c.parse().map_err(|_| failure("bad index columns"))).collect::<Result<_>>()?;
@@ -691,6 +726,7 @@ unsafe impl VTabCursor for Cursor {
         Ok(())
     }
     fn next(&mut self) -> Result<()> {
+        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Next,1);
         if self.selected.is_some() {
             self.position += 1;
         } else {
@@ -703,6 +739,7 @@ unsafe impl VTabCursor for Cursor {
         self.selected.as_ref().map_or(self.range.is_empty(), |r| self.position >= r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
+        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Column,1);
         self.binding.stats.columns.fetch_add(1, Ordering::Relaxed);
         ctx.set_result(&self.source.cell(self.row(), col as usize))
     }

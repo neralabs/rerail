@@ -130,6 +130,7 @@ impl CodeRuleSqlExecutor {
         let mut executions = self.executions.clone();
         let mut work = Work::new(&self.db, &self.scratch);
         work.versions = Some(&self.versions);
+        work.profiler = self.db.profiler();
         let mut touched = Vec::new();
         let limits = self.limits.clone();
         self.db

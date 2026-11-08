@@ -1,4 +1,98 @@
 use super::*;
+#[test]
+fn selective_indexes_keep_compound_batches_sparse_and_transactional() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    store
+        .create(&db, "batch_rows", Schema::integers(3, 2))
+        .unwrap();
+    store.restrict_indexes("batch_rows", &[]).unwrap();
+    db.execute_batch("WITH RECURSIVE n(i) AS(VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO batch_rows SELECT 1,i,i%7 FROM n").unwrap();
+    let before = store.version("batch_rows");
+    assert!(!before.indexed(1));
+    assert!(before.indexed(0));
+    let reads = store.columns_read();
+    let n: i64 = db
+        .query_row(
+            "SELECT count(*) FROM batch_rows WHERE c0='1' AND c1 IN(17,811,NULL,17,'wrong')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 2);
+    assert!(store.columns_read() - reads < 100);
+    let plan: String = db
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT * FROM batch_rows WHERE c0=1 AND c1 IN(17,811)",
+            [],
+            |r| r.get(3),
+        )
+        .unwrap();
+    assert!(plan.contains("16777216"), "{plan}");
+    db.execute_batch("CREATE TEMP TABLE changed(a,b);INSERT INTO changed VALUES(1,17),(2,811)")
+        .unwrap();
+    let tx = store.transaction(&db).unwrap();
+    let reads = store.columns_read();
+    assert_eq!(
+        db.execute(
+            "DELETE FROM batch_rows WHERE (c0,c1) IN(SELECT a,b FROM changed)",
+            []
+        )
+        .unwrap(),
+        1
+    );
+    assert!(store.columns_read() - reads < 100);
+    assert_eq!(before.len(), 20000);
+    assert_eq!(store.version("batch_rows").len(), 19999);
+    super::super::super::facts::vtab::bound_source(&db, "batch_rows")
+        .unwrap()
+        .prepare_index(&[2]);
+    assert!(store.version("batch_rows").indexed(2));
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM batch_rows WHERE c2=3", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2857 - 1
+    );
+    drop(tx);
+    assert!(before.same(&store.version("batch_rows")));
+    assert!(!store.version("batch_rows").indexed(2));
+    assert!(!store.version("batch_rows").empty_like().indexed(1));
+}
+
+#[test]
+fn bulk_indexes_have_the_canonical_shape_and_allow_edits() {
+    let entries = (0..4096).map(|i| (key([Some(i)]), i)).collect::<Vec<_>>();
+    for hashed in [false, true] {
+        let bulk = Node::bulk(entries.clone(), hashed);
+        let mut incremental = None;
+        for (key, value) in entries.iter().rev() {
+            incremental = if hashed {
+                Node::set(&incremental, key.clone(), Some(*value))
+            } else {
+                Node::set_index(&incremental, key.clone(), Some(*value))
+            };
+        }
+        fn shape(n: &Link<i64>, out: &mut Vec<(Vec<Option<i64>>, usize, [u8; 32])>) {
+            if let Some(n) = n {
+                out.push((n.key.to_vec(), n.size, n.digest));
+                shape(&n.left, out);
+                shape(&n.right, out);
+            }
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        shape(&bulk, &mut a);
+        shape(&incremental, &mut b);
+        assert_eq!(a, b);
+        let changed = if hashed {
+            Node::set(&bulk, key([Some(17)]), None)
+        } else {
+            Node::set_index(&bulk, key([Some(17)]), None)
+        };
+        assert_eq!(tree::size(&changed), 4095);
+        assert!(Node::get(&changed, &[Some(17)]).is_none());
+    }
+}
 pub(super) fn data(db: &rusqlite::Connection, name: &str) -> Vec<Vec<Option<i64>>> {
     let mut stmt = db
         .prepare(&format!("SELECT * FROM {name} ORDER BY 1,2"))

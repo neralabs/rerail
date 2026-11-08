@@ -11,6 +11,7 @@ const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
 #[derive(Clone)]
 struct Relation {
+    indexes: Vec<usize>,
     width: usize,
     keys: usize,
     lattice: bool,
@@ -68,6 +69,18 @@ fn read(r: &Rel) -> Option<String> {
     }
 }
 fn delta(w: &mut Work<'_>, old: &versions::Version, new: &versions::Version) -> Result<Delta> {
+    let operation = w.profiler.map(|p| {
+        p.operation(
+            "native version difference",
+            ("sql-extension", 0),
+            0,
+            vec![
+                ("old".into(), old.len() as i64),
+                ("new".into(), new.len() as i64),
+            ],
+        )
+    });
+    let _cpu = super::super::logic::profile::span(|| "native version difference".into());
     let (plus, minus, visited) = old.difference(new);
     w.version_nodes += visited;
     let convert = |rows: Vec<Vec<Option<i64>>>| -> Result<Vec<Vec<i64>>> {
@@ -81,6 +94,9 @@ fn delta(w: &mut Work<'_>, old: &versions::Version, new: &versions::Version) -> 
     };
     let plus = convert(plus)?;
     let minus = convert(minus)?;
+    if let Some(operation) = operation {
+        operation.finish(plus.len() + minus.len());
+    }
     Ok(Delta {
         plus: w.rows(old.columns().len(), &plus)?,
         minus: w.rows(old.columns().len(), &minus)?,
@@ -132,6 +148,8 @@ impl Trace {
         // a large, obsolete frontier from the preceding active wave.
         let mut needs_close = false;
         while at < self.frames.len() || !pending.is_empty() || needs_close {
+            let _context = w.profile_scope(||json!({"stage":if preparing {"recursive initialization"} else {"recursive update"},"component":self.prefix,"frame":at}));
+            let _cpu = super::super::logic::profile::span(|| "recursive iteration".into());
             if !pending.is_empty() {
                 if waves >= limit {
                     return Err(error(format!(
@@ -299,6 +317,7 @@ pub(super) fn prepare(
         if !recursive || !nonmonotone {
             continue;
         }
+        let probes = indexes::native(steps.iter().map(|(_, q)| q));
         let relations = e
             .program
             .relations
@@ -309,6 +328,15 @@ pub(super) fn prepare(
                 (
                     r.clone(),
                     Relation {
+                        indexes: probes
+                            .get(r)
+                            .into_iter()
+                            .flatten()
+                            .chain(probes.get(&format!("delta_{r}")).into_iter().flatten())
+                            .copied()
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect(),
                         width: *width,
                         keys: lattice.map_or(*width, |(_, k, _)| *k),
                         lattice: lattice.is_some(),

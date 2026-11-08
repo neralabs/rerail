@@ -307,7 +307,20 @@ impl Reducer {
             return Ok(());
         }
         if storage.is_some() {
-            return Ok(());
+            let mut columns = BTreeSet::new();
+            for e in &expressions {
+                e.visit(&mut |e| {
+                    if let E::Qualified { alias, column } = e
+                        && alias == "rr_context"
+                        && let Some(c) = column
+                            .strip_prefix('c')
+                            .and_then(|s| s.parse::<usize>().ok())
+                    {
+                        columns.insert(c);
+                    }
+                });
+            }
+            return rule.index(db, &columns.into_iter().collect::<Vec<_>>());
         }
         let columns = expressions
             .into_iter()

@@ -64,6 +64,7 @@ impl Frame {
                     &table,
                     versions::Schema::integers(spec.width, spec.keys),
                 )?;
+                store.restrict_indexes(&table, &spec.indexes)?;
                 inputs.insert(key, table);
             }
             let table = format!("{prefix}_r{id}");
@@ -72,6 +73,7 @@ impl Frame {
                 &table,
                 versions::Schema::integers(spec.width, spec.keys),
             )?;
+            store.restrict_indexes(&table, &spec.indexes)?;
             published.insert(r.clone(), table);
             let table = format!("{prefix}_f{id}");
             store.create(
@@ -79,6 +81,7 @@ impl Frame {
                 &table,
                 versions::Schema::integers(spec.width, spec.keys),
             )?;
+            store.restrict_indexes(&table, &spec.indexes)?;
             frontiers.insert(r.clone(), table);
             if spec.widening() {
                 let table = format!("{prefix}_q{id}");
@@ -87,6 +90,7 @@ impl Frame {
                     &table,
                     versions::Schema::integers(spec.keys + 1, spec.keys),
                 )?;
+                store.restrict_indexes(&table, &[])?;
                 input_counters.insert(r.clone(), table);
                 let table = format!("{prefix}_c{id}");
                 store.create(
@@ -94,6 +98,7 @@ impl Frame {
                     &table,
                     versions::Schema::integers(spec.keys + 1, spec.keys),
                 )?;
+                store.restrict_indexes(&table, &[])?;
                 counters.insert(r.clone(), table);
             }
         }
@@ -183,6 +188,10 @@ impl Frame {
             }
         }
         for (id, op) in self.operators.iter_mut().enumerate() {
+            let _context = w.profile_scope(
+                || json!({"stage":"rule cache","ruleStep":id,"relation":steps[id].0.output}),
+            );
+            let _cpu = super::super::super::logic::profile::span(|| "rule cache".into());
             let mark = w.mark();
             let before = store.version(&op.result);
             let enabled = active.contains(&id);
@@ -255,6 +264,8 @@ impl Frame {
         }
         for (r, spec) in relations {
             let mark = w.mark();
+            let _context = w.profile_scope(|| json!({"stage":"merge and widen","relation":r}));
+            let _cpu = super::super::super::logic::profile::span(|| "merge and widen".into());
             fold::apply(
                 w,
                 spec,

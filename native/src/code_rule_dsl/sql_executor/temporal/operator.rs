@@ -133,6 +133,7 @@ impl Operator {
             (format!("delta_{result}"), spec.keys),
         ] {
             store.create(w.db, &name, versions::Schema::integers(spec.width, keys))?;
+            store.restrict_indexes(&name, &[])?;
         }
         let mut query = query.clone();
         bind(&mut query, inputs);
@@ -210,6 +211,7 @@ impl Operator {
             };
             for table in [&p.plus, &p.minus] {
                 store.create(w.db, table, versions::Schema::integers(width, width))?;
+                store.restrict_indexes(table, &[])?;
             }
             pending.insert(name.clone(), p);
         }
@@ -219,6 +221,7 @@ impl Operator {
             &improvements,
             versions::Schema::integers(spec.width, spec.keys),
         )?;
+        store.restrict_indexes(&improvements, &[])?;
         Ok(Self {
             run,
             result,

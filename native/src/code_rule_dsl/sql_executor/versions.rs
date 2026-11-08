@@ -4,6 +4,7 @@ use super::*;
 use parking_lot::RwLock;
 use std::cell::RefCell;
 pub(super) mod fork;
+mod probes;
 mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
@@ -96,6 +97,7 @@ pub(super) struct Version {
     primary: Link<Row>,
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
+    secondary: Arc<[bool]>,
     distinct: Vec<usize>,
     next: i64,
 }
@@ -104,10 +106,13 @@ fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
 }
 impl Version {
     pub fn empty_like(&self) -> Self {
-        Self::empty(self.schema.clone())
+        let mut empty = Self::empty(self.schema.clone());
+        empty.secondary = self.secondary.clone();
+        empty
     }
     pub fn empty(schema: Arc<Schema>) -> Self {
         Self {
+            secondary: (0..schema.columns.len()).map(|c| c > 0).collect(),
             indexes: vec![None; schema.columns.len()],
             distinct: vec![0; schema.columns.len()],
             schema,
@@ -130,6 +135,15 @@ impl Version {
         };
         self.ids = Node::set_index(&self.ids, key([Some(row.id)]), None);
         for (c, &v) in row.values.iter().enumerate() {
+            if c == 0 {
+                if !Node::has_prefix(&self.full, &[v]) {
+                    self.distinct[0] -= 1;
+                }
+                continue;
+            }
+            if !self.secondary[c] {
+                continue;
+            }
             self.indexes[c] = Node::set_index(&self.indexes[c], key([v, Some(row.id)]), None);
             if !Node::has_prefix(&self.indexes[c], &[v]) {
                 self.distinct[c] -= 1;
@@ -137,6 +151,9 @@ impl Version {
         }
     }
     fn insert(&mut self, row: Row) {
+        if !Node::has_prefix(&self.full, &[row.values[0]]) {
+            self.distinct[0] += 1;
+        }
         self.full = Node::set(&self.full, row.values.clone(), Some(row.clone()));
         self.primary = if self.schema.keys == self.schema.columns.len() {
             self.full.clone()
@@ -149,6 +166,9 @@ impl Version {
         };
         self.ids = Node::set_index(&self.ids, key([Some(row.id)]), Some(row.clone()));
         for (c, &v) in row.values.iter().enumerate() {
+            if c == 0 || !self.secondary[c] {
+                continue;
+            }
             if !Node::has_prefix(&self.indexes[c], &[v]) {
                 self.distinct[c] += 1;
             }
@@ -208,12 +228,33 @@ impl Source for Version {
         tree::size(&self.full)
     }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        if !self.indexed(c) {
+            return self.len().max(1);
+        }
         (self.len() / self.distinct[c].max(1))
             .max(1)
             .saturating_mul(if batch { 8 } else { 1 })
     }
-    fn indexed(&self, _: usize) -> bool {
-        true
+    fn indexed(&self, c: usize) -> bool {
+        c == 0 || self.secondary[c]
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        Some(self.schema.keys)
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        Some(self.primary_batch(values))
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        if (0..self.schema.keys).all(|c| columns.contains(&c)) {
+            1
+        } else {
+            columns
+                .iter()
+                .map(|&c| self.estimated_matches(c, false))
+                .min()
+                .unwrap_or(self.len())
+                .max(1)
+        }
     }
     fn composite(&self) -> bool {
         true
@@ -231,9 +272,27 @@ impl Source for Version {
                     .collect(),
             );
         }
-        let &(c, v) = eq
+        let prefix = (0..self.schema.keys)
+            .map_while(|c| eq.iter().find(|(col, _)| *col == c).map(|(_, v)| Some(*v)))
+            .collect::<Vec<_>>();
+        let range = Node::prefix_ranks(&self.full, &prefix);
+        let secondary = eq
             .iter()
-            .min_by_key(|(c, _)| self.estimated_matches(*c, false))?;
+            .filter(|(c, _)| *c > 0 && self.indexed(*c))
+            .min_by_key(|(c, _)| self.estimated_matches(*c, false));
+        if !prefix.is_empty()
+            && secondary.is_none_or(|(c, _)| range.len() <= self.estimated_matches(*c, false))
+        {
+            return Some(
+                range
+                    .filter(|&row| {
+                        eq.iter()
+                            .all(|&(c, v)| Node::nth(&self.full, row).values[c] == Some(v))
+                    })
+                    .collect(),
+            );
+        }
+        let &(c, v) = secondary?;
         Some(
             self.lookup(c, &[v])?
                 .into_iter()
@@ -245,6 +304,18 @@ impl Source for Version {
         )
     }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if c == 0 {
+            let values = values.iter().copied().collect::<BTreeSet<_>>();
+            return Some(
+                values
+                    .into_iter()
+                    .flat_map(|v| Node::prefix_ranks(&self.full, &[Some(v)]))
+                    .collect(),
+            );
+        }
+        if !self.indexed(c) {
+            return None;
+        }
         let mut found = Vec::new();
         for &v in values {
             Node::prefix(&self.indexes[c], &[Some(v)], &mut found);
@@ -302,8 +373,26 @@ impl Source for Mutable {
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
         self.state.read().estimated_matches(c, b)
     }
-    fn indexed(&self, _: usize) -> bool {
-        true
+    fn indexed(&self, c: usize) -> bool {
+        self.state.read().indexed(c)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        let mut state = self.state.write();
+        if columns.iter().any(|&c| !state.indexed(c)) {
+            if let Some(log) = self.undo.write().as_mut() {
+                log.versions.entry(self.id).or_insert_with(|| state.clone());
+            }
+            state.ensure_indexes(columns);
+        }
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.state.read().primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.state.read().lookup_primary_batch(values)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.state.read().estimated_matches_all(columns)
     }
     fn composite(&self) -> bool {
         true

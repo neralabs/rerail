@@ -10,6 +10,7 @@ pub(super) struct Pool {
 pub(super) struct Work<'a> {
     pub db: &'a rusqlite::Connection,
     pub versions: Option<&'a versions::Store>,
+    pub profiler: Option<&'a super::super::sql_profile::Profiler>,
     pub pool: Pool,
     used: Vec<String>,
     positions: BTreeMap<(String, bool), usize>,
@@ -33,6 +34,9 @@ impl Pool {
 }
 
 impl<'a> Work<'a> {
+    pub fn profile_scope(&self, fields: impl FnOnce()->Value) -> Option<super::super::sql_profile::Context> {
+        self.profiler.map(|p| p.scope(fields()))
+    }
     /// Sequential temporal operators reuse scratch slots while the caller's deltas stay live.
     pub fn mark(&self) -> Mark {
         Mark {
@@ -54,6 +58,7 @@ impl<'a> Work<'a> {
         Self {
             db,
             versions: None,
+            profiler: None,
             pool: pool.clone(),
             used: vec![],
             positions: BTreeMap::new(),

@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(in crate::code_rule_dsl) struct Database {
+    // Drop the callback before closing its connection.
+    profiler: Option<Box<crate::code_rule_dsl::sql_profile::Profiler>>,
     connection: Connection,
     /// The store file the connection is on; a recycled owner serves only that store.
     pub(super) path: PathBuf,
@@ -29,6 +31,19 @@ pub(in crate::code_rule_dsl) struct Database {
 }
 
 impl Database {
+    pub(in crate::code_rule_dsl) fn profiler(&self) -> Option<&crate::code_rule_dsl::sql_profile::Profiler> {
+        self.profiler.as_deref()
+    }
+    pub(in crate::code_rule_dsl) fn profile_scope(&self, fields: impl FnOnce()->serde_json::Value) -> Option<crate::code_rule_dsl::sql_profile::Context> {
+        self.profiler().map(|p| p.scope(fields()))
+    }
+    pub(in crate::code_rule_dsl) fn profile_checkpoint(&self) {
+        if let Some(profiler) = &self.profiler {
+            if let Err(error) = profiler.checkpoint(self) {
+                eprintln!("SQL profile checkpoint failed: {error}");
+            }
+        }
+    }
     /// Forget execution bookkeeping after a standalone SQL session drops its generated objects.
     pub(in crate::code_rule_dsl) fn reset_execution(&self) {
         *self.storage.borrow_mut() = Storage::default();
@@ -141,6 +156,9 @@ impl Database {
     /// A connection on `store`'s file with the symbol functions and the `demand` modules.
     pub(in crate::code_rule_dsl) fn open(store: &ContentStore) -> StoreResult<Self> {
         let connection = store.open_connection()?;
+        // SAFETY: this field is declared before the owned connection.
+        let profiler = unsafe { crate::code_rule_dsl::sql_profile::Profiler::configured(&connection)? };
+        if let Some(p)=&profiler {p.context(serde_json::json!({"scope":"sql-owner","stage":"connection setup","executionPhase":"connectionSetup"}));}
         // Derived relations and their `new_`/`delta_` tables live in memory; the store's pages stay
         // its own (03 §4).
         connection.execute_batch("PRAGMA temp_store = MEMORY")?;
@@ -148,6 +166,7 @@ impl Database {
         let registry = Arc::new(MatchRegistry::default());
         register_module(&connection, Arc::clone(&registry))?;
         Ok(Self {
+            profiler,
             connection,
             path: store.database_path().to_path_buf(),
             healthy: Cell::new(true),

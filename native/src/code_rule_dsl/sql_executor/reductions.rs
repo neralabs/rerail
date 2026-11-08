@@ -89,6 +89,7 @@ fn owned(
 ) -> Result<()> {
     if let Some(storage) = storage {
         storage.create(db, name, versions::Schema::generated(definition)?)?;
+        storage.restrict_indexes(name, &[])?;
     } else {
         db.execute_batch(&format!(
             "CREATE TEMP TABLE {}({definition}) WITHOUT ROWID",
@@ -154,7 +155,22 @@ pub(super) fn prepare(
     let mut initialized = Vec::new();
     for state in run.reductions.as_mut().unwrap().values_mut() {
         if !state.ready && potential.contains(&state.output) {
+            let _context = w.profile_scope(
+                || json!({"stage":"initialize retained support","relation":state.output}),
+            );
+            let _cpu = super::super::logic::profile::span(|| "initialize retained support".into());
+            let operation = w.profiler.map(|p| {
+                p.operation(
+                    "initialize retained support",
+                    ("sql-extension", 0),
+                    0,
+                    vec![],
+                )
+            });
             state.initialize(w.db, &mut run.objects, storage)?;
+            if let Some(operation) = operation {
+                operation.finish_unobserved();
+            }
             state.ready = true;
             initialized.push(state.output.clone());
         }
@@ -343,6 +359,10 @@ impl Retained {
                     quote(&rule.contributions)
                 ))
                 .map_err(error)?;
+            } else if let Some(source) =
+                super::super::facts::vtab::bound_source(db, &rule.contributions)
+            {
+                source.prepare_index(&(rule.width..rule.width + self.width).collect::<Vec<_>>());
             }
             for atom in &rule.atoms {
                 rule.index(

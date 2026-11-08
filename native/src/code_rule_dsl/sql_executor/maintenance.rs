@@ -493,7 +493,7 @@ pub(super) fn maintain(
         // Native inputs keep their indexed overlays. SQL results temporarily restore their
         // old membership inside the batch savepoint, using only row deltas and existing indexes.
         // This costs only the deletion set, without distributing joins over 2^N alternatives.
-        let mut overlays = overlay::Overlays::new(w.db);
+        let mut overlays = overlay::Overlays::new(w.db, w.profiler);
         let mut old_inputs = BTreeMap::new();
         let mut sql_deleted = BTreeMap::new();
         for (_, q) in &steps {

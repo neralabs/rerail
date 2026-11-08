@@ -167,9 +167,20 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             continue;
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let profile_key = super::super::profile::on().then(||format!("{name} stratum {stratum}: {}",scc.iter().cloned().collect::<Vec<_>>().join(",")));
+        let record = |rule: &Rule, kind: &str, x: Option<super::super::profile::RulePlan>, took: f64| {
+            if let (Some(key),Some(x)) = (&profile_key,x) {
+                let number = prog.rules.iter().position(|r|std::ptr::eq(r,rule));
+                super::super::profile::stratum(key,"SQL emission",||"compile-time search; runtime SQL counters are recorded separately".into());
+                super::super::profile::planned(key,kind,number,&x,took,0,None,None);
+                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||rule.to_string()); }
+            }
+        };
         let mut planned = Vec::new();
         for rule in &rules {
-            let (order, _, _) = model.plan_rule(prog, &rule.head, &rule.body, None)?;
+            let started = profile_key.as_ref().map(|_|super::super::profile::now());
+            let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((rule, order));
         }
         let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel));
@@ -189,7 +200,9 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
                     if !own(l) {
                         continue;
                     }
-                    let (order, _, _) = model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
+                    let started = profile_key.as_ref().map(|_|super::super::profile::now());
+                    let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, Some(i))?;
+                    record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
                     let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
