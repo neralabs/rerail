@@ -2196,8 +2196,12 @@ The script takes 5.4 s CPU on the same tree. The engine is still about 8x slower
 file-local part, spread over strata of a few hundred ms each (`la_ask_*` callee resolution, `la_vis`,
 `la_base_name`, `ast_parent`).
 
+The whole pack on s200 (65 rules, 172 files in scope) runs in 34.8 s CPU at a 1,257 MB peak footprint, over
+the 1 GB budget. Three rules had passed 3 GB on 50 files (match contexts that were cross products) and one failed
+to run (an empty demand split); both are fixed (`77762bf31`).
+
 **Closure:** the full tree runs within the 1 GB budget by the OS's measure, at no more than a few times the
-script's CPU, with its findings equal to the script's.
+script's CPU, with its findings equal to the script's; the s200 pack runs within 1 GB.
 
 ## O114. `.scope` forms the run does not read
 
