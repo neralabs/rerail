@@ -29,6 +29,7 @@ mod hiding;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod prepared;
+mod retain;
 mod bridge;
 mod inputs;
 mod world;
@@ -194,6 +195,8 @@ pub(crate) struct Report {
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub(crate) prepared: &'static str,
+    /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
+    pub(crate) cross_strata: Option<(usize, usize)>,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1079,8 +1082,11 @@ pub(crate) fn run_with_options(
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
+    // Every input the cross-file part reads, as bound: a session keeps their digests (decision 0077).
+    let mut cross_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
     for (rel, source, _) in &repository {
         modules.bind(&db, rel, Arc::clone(source))?;
+        cross_inputs.push((rel.clone(), Arc::clone(source)));
     }
     let repository_stats = |stats: &mut super::Stats| {
         for (rel, _, measured) in &repository {
@@ -1626,6 +1632,7 @@ pub(crate) fn run_with_options(
             let empty = crate::code_rule_dsl::logic::native::component::columns_source(
                 columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
             cross_stats.measured(rel, columns.iter().map(|name| ((*name).to_owned(), [0, 0, 0, 0])), []);
+            cross_inputs.push((rel.clone(), Arc::clone(&empty)));
             modules.bind(&db, rel, empty)?;
         }
     }
@@ -1670,15 +1677,20 @@ pub(crate) fn run_with_options(
                 .collect();
             cross_stats.measured(&rel, measured, []);
         }
-        modules.bind(&db, &rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
+        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+        cross_inputs.push((rel.clone(), Arc::clone(&source)));
+        modules.bind(&db, &rel, source)?;
     }
     for rel in &split.exports {
         let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
+        cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(&db, rel, source)?;
     }
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
+    // Strata a session's run evaluated, of all (decision 0077).
+    let mut cross_strata: Option<(usize, usize)> = None;
     // `returns`, held for the typing outputs (`corpus::typing`).
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
@@ -1696,11 +1708,68 @@ pub(crate) fn run_with_options(
         let k = declared.map(cross_rounds::k);
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
-            let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
-            if wanted.contains("returns") {
-                returns = held_rows(&db, &got, "returns", 2)?;
+            match session.as_ref().map(|s| &s.cross) {
+                // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
+                Some(cell) => {
+                    let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
+                    let ckey = retain::key(&prepared_key, &cross.program);
+                    let mut cell = cell.lock().expect("the session's cross-file part");
+                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let part = cut.program(&cross);
+                    let mut stats = cross_stats;
+                    if let Some(kept) = cell.as_ref() {
+                        for (rel, source) in cut.sources(kept, &part.program) {
+                            let measured = syntax::statistics(source.as_ref());
+                            stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+                            modules.bind(&db, &rel, source)?;
+                        }
+                    }
+                    let derived = cut.derived(&part.program)?;
+                    let mut keep = wanted.clone();
+                    // An output is written to its table, where the write phase reads it, and read back from there.
+                    keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
+                    let got = super::run_atoms_native_over(&part, &db, "main", stats, keep, modes)?;
+                    if wanted.contains("returns") {
+                        returns = held_rows(&db, &got, "returns", 2)?;
+                    }
+                    // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
+                    let rows = derived
+                        .iter()
+                        .map(|rel| (rel, part.program.decls[rel].len()))
+                        .filter(|(_, width)| *width > 0)
+                        .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
+                        .collect::<Result<Vec<_>>>()?;
+                    let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
+                    let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
+                    native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+                    for (rel, lines, nodes) in clean_outputs {
+                        if outputs_of(&rel) {
+                            outputs.entry(rel.clone()).or_default().extend(lines);
+                            node_columns.insert(rel, nodes);
+                        }
+                    }
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs);
+                    crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
+                        format!(
+                            "{} of {} strata run; inputs changed: {}; {} relations kept for the next run, {:.1} MB",
+                            cut.strata.0,
+                            cut.strata.1,
+                            if cut.changed.is_empty() { "none".to_owned() } else { cut.changed.iter().take(8).cloned().collect::<Vec<_>>().join(", ") },
+                            next.relations(),
+                            next.bytes() as f64 / 1e6
+                        )
+                    });
+                    cross_strata = Some(cut.strata);
+                    *cell = Some(next);
+                }
+                None => {
+                    let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
+                    if wanted.contains("returns") {
+                        returns = held_rows(&db, &got, "returns", 2)?;
+                    }
+                    native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+                }
             }
-            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops) {
             // The rounds run the hops' cone; what reads it and no hop reads runs once, after the last round.
             // Held: what the rest reads, unless an output (written to its table, read from there).
@@ -1885,7 +1954,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin, cross_strata })
 }
 
 
