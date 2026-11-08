@@ -466,6 +466,8 @@ la_internal_attr(a) :- la_set("LAZY_INTERNAL_ATTRS", a).
 .decl la_arg(c: node, i: number, a: node)
 la_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a0, j),
     la_posarg(a0), unparen(a0, a), i = count : { child(al, b, j2), j2 < j, la_posarg(b) }.
+// `f(x for x in y)`: the generator is the call's arguments itself, and ast's one positional argument.
+la_arg(c, 0, a) :- kind(c, "call"), field(c, "arguments", a), kind(a, "generator_expression").
 .decl la_posarg(a: node)
 la_posarg(a) :- child(al, a, _), kind(al, "argument_list"), !kind(a, "keyword_argument"),
     !kind(a, "dictionary_splat"), !kind(a, "comment").
