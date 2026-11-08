@@ -247,7 +247,6 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
-mod native_cpu_tier2;
 mod native_ir;
 mod output;
 mod packed_arena;

@@ -236,7 +236,6 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let prepared = Executors::new(&p);
-    let tier2 = native_cpu_tier2::compile(&p.block_programs()[0], &compiled.fallbacks).unwrap_or_else(|e| panic!("tier 2 compiles: {e}"));
     let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
     // A token row's tokens: its kind's and its keywords' kinds (the evaluator retypes them).
     let members = |row: &str| -> Vec<String> {
@@ -282,12 +281,10 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            // Tier 1 refuses by a fallback bit; tier 2 (which reads them too) by tokens that make
-            // no tree.
+            // Tier 1 refuses by a fallback bit. The evaluator's other refusals (tokens that make
+            // no tree) are tier 2's, which this test does not run.
             let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
-            let cuts: Vec<Vec<u64>> = got.iter().map(|w| cut(w.clone(), n)).collect();
             if !out.errors.is_empty() {
-                assert!(tier2.write(&cuts, &bytes).is_none(), "{executor}, {n} bytes: the evaluator rejects ({:?}) but the file does not fall back", out.errors);
                 rejected += 1;
                 continue;
             }
@@ -465,34 +462,6 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    // Tier 2, generated: the function alone over laid-out files, then `write` whole (the layout,
-    // the call, the nodes copied out).
-    let now = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `t` is a valid timespec to write.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
-    let tier2 = json_tier2();
-    if let Some(path) = std::env::var_os("RERAIL_DUMP_TIER2") {
-        std::fs::write(&path, format!("{}\n\n{}", tier2.clif, tier2.disassembly)).expect("writes");
-    }
-    let mut laid: Vec<_> = runs.iter().zip(&bytes).map(|(r, b)| tier2.lay_out(&r.outputs, b)).collect();
-    let (mut best, mut nodes) = (f64::MAX, 0);
-    for _ in 0..5 {
-        let start = now();
-        nodes = tier2.call_laid(&mut laid);
-        best = best.min(now() - start);
-    }
-    println!("tier 2, the function: {:.3} ns per block, {nodes} nodes, {:.2} ns per node (CPU time, best of 5)", best / blocks as f64 * 1e9, best / nodes as f64 * 1e9);
-    let mut best = f64::MAX;
-    for _ in 0..3 {
-        let start = now();
-        let n: usize = runs.iter().zip(&bytes).filter_map(|(r, b)| tier2.write(&r.outputs, b)).map(|(n, _)| n.len()).sum();
-        best = best.min(now() - start);
-        assert_eq!(n as u64, nodes);
-    }
-    println!("tier 2, write (layout, call, copy out): {:.3} ns per block (CPU time, best of 3)", best / blocks as f64 * 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
@@ -581,166 +550,22 @@ fn json_fallbacks() -> Vec<u16> {
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
 
-/// JSON's tier 2, generated (`native_cpu_tier2`), with JSON's fallbacks.
-fn json_tier2() -> native_cpu_tier2::CompiledTier2 {
-    native_cpu_tier2::compile(&json_block_program(), &json_fallbacks()).unwrap_or_else(|e| panic!("tier 2 compiles: {e}"))
-}
-
-/// JSON's tier 1 on Cranelift.
-fn json_tier1() -> native_cpu_block::CompiledBlock {
-    native_cpu_block::compile(&native_ir::lower(&json_program()).expect("lowers").block_programs.remove(0)).expect("compiles")
-}
-
-/// The tape the two tiers write (decision 0046) equals tree-sitter's byte for byte, for every
+/// The tape a block program writes (decision 0046) equals tree-sitter's byte for byte, for every
 /// file that does not go to tree-sitter; a file tree-sitter finds an error in always goes to it.
-/// Tier 2 is the generated function, over tier 1's masks from the interpreter and from Cranelift.
+/// Open: waits for the generated tier 2 (decision 0050).
 #[test]
+#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
 fn json_tapes_equal_tree_sitter_byte_for_byte() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let block = json_block_program();
-    let (tier1, tier2) = (json_tier1(), json_tier2());
-    let mut cases = inputs();
-    cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
-    let (mut equal, mut fallback) = (0, 0);
-    for bytes in cases {
-        let Ok(source) = std::str::from_utf8(&bytes) else { continue };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        let want = parsed.to_bytes().expect("bytes");
-        for (executor, outputs) in [("interpreter", block.interpret(&bytes)), ("cranelift", tier1.run(&bytes))] {
-            match tier2.tape(&outputs, &grammar, source).unwrap_or_else(|e| panic!("{executor}: {e}")) {
-                None => fallback += 1,
-                Some(_) if has_error => {
-                    let mut parser = tree_sitter::Parser::new();
-                    {
-                        use ast_grep_language::LanguageExt;
-                        parser.set_language(&GrammarDialect::Json.get_ts_language()).expect("json");
-                    }
-                    let tree = parser.parse(source, None).expect("parses");
-                    panic!("{executor}: a tape for a file tree-sitter finds an error in: {source:?}: {}", tree.root_node().to_sexp());
-                }
-                Some(tape) => {
-                    assert!(tape.to_bytes().expect("bytes") == want, "{executor}: tape differs for {source:?}");
-                    equal += 1;
-                }
-            }
-        }
-    }
-    eprintln!("{equal} tapes equal, {fallback} to tree-sitter");
-    assert!(equal > 0);
+    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
 }
 
 /// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
 /// (one path a line), on Cranelift's batch: each file's tape equals tree-sitter's byte for byte,
 /// or the file goes to tree-sitter; never a tape where tree-sitter finds an error. Run by name.
 #[test]
-#[ignore = "a corpus check; run by name with RERAIL_JSON_FILES"]
+#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
 fn json_corpus_tapes_equal_tree_sitter() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
-    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let (tier1, tier2) = (json_tier1(), json_tier2());
-    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
-    let runs = native_cpu_block::run_batch(&[&tier1], &files);
-    let (mut equal, mut fallback, mut not_utf8, mut differ) = (0, 0, 0, Vec::new());
-    for ((path, bytes), run) in paths.iter().zip(&bytes).zip(&runs) {
-        let Ok(source) = std::str::from_utf8(bytes) else {
-            not_utf8 += 1;
-            continue;
-        };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        match tier2.tape(&run.outputs, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
-            None => {
-                fallback += 1;
-                if !has_error {
-                    eprintln!("{path}: valid JSON to tree-sitter");
-                }
-            }
-            Some(_) if has_error => panic!("{path}: a tape where tree-sitter finds an error"),
-            Some(tape) if tape.to_bytes().expect("bytes") == parsed.to_bytes().expect("bytes") => equal += 1,
-            Some(_) => differ.push(path.clone()),
-        }
-    }
-    eprintln!("{} files: {equal} tapes equal, {fallback} to tree-sitter, {not_utf8} not UTF-8, {} differ", paths.len(), differ.len());
-    assert!(differ.is_empty(), "tapes differ: {:?}", &differ[..differ.len().min(10)]);
-}
-
-/// Doc 16 §8's trace: `{"a":[1,"x"]}` is 19 nodes, each with its kind, start and size.
-#[test]
-fn json_tier2_writes_doc_16s_nodes() {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let source = br#"{"a":[1,"x"]}"#;
-    let (nodes, _) = json_tier2().write(&json_tier1().run(source), source).expect("a tape");
-    let got: Vec<(&str, u32, u32)> = nodes.iter().map(|n| (grammar.node_kind_for_id(n.kind).unwrap_or("?"), n.start, n.size)).collect();
-    let q = "\"";
-    let want = [
-        ("document", 0, 19),
-        ("object", 0, 18),
-        ("{", 0, 1),
-        ("pair", 1, 15),
-        ("string", 1, 4),
-        (q, 1, 1),
-        ("string_content", 2, 1),
-        (q, 3, 1),
-        (":", 4, 1),
-        ("array", 5, 9),
-        ("[", 5, 1),
-        ("number", 6, 1),
-        (",", 7, 1),
-        ("string", 8, 4),
-        (q, 8, 1),
-        ("string_content", 9, 1),
-        (q, 10, 1),
-        ("]", 11, 1),
-        ("}", 12, 1),
-    ];
-    assert_eq!(got, want);
-}
-
-/// The `br_table`s of tier 2's CLIF, each as its number of arms (the default included).
-fn br_tables(clif: &str) -> Vec<usize> {
-    clif.lines()
-        .filter(|l| l.contains("br_table"))
-        .map(|l| 1 + l.split_once('[').and_then(|(_, r)| r.split_once(']')).map_or(0, |(arms, _)| arms.split(',').filter(|a| !a.trim().is_empty()).count()))
-        .collect()
-}
-
-/// Tier 2 dispatches on the token that starts at a byte: one `br_table`, with an arm per token
-/// row and one for a byte where no token starts (an end only). The rows are cases, not data.
-#[test]
-fn json_tier2_has_one_case_per_token_row() {
-    let tokens = json_block_program().nodes.iter().filter(|r| r.leaf).count();
-    let t = json_tier2();
-    let tables = br_tables(&t.clif);
-    assert_eq!(tables.iter().filter(|&&n| n == tokens + 1).count(), 1, "one dispatch of {} arms; br_tables {tables:?}", tokens + 1);
-}
-
-/// Tier 2's function reads only its arguments: the masks, the bytes, and the columns it writes.
-/// No global, no data object, no table of the program's: its rows are its code.
-#[test]
-fn json_tier2_reads_no_rows() {
-    let t = json_tier2();
-    let signature = t.clif.lines().next().expect("a signature");
-    assert_eq!(signature.matches("i64").count(), 9, "eight pointer and length arguments, one result: {signature}");
-    for word in ["global_value", "symbol_value", "func_addr", "gv0", "stack_load", "stack_store"] {
-        assert!(!t.clif.contains(word), "tier 2 uses {word}");
-    }
-}
-
-/// Tier 2 calls nothing per token but the built-in validators: one call site per row with one.
-#[test]
-fn json_tier2_calls_nothing_per_token_but_its_validator() {
-    let checks = json_block_program().nodes.iter().filter(|r| r.check.is_some()).count();
-    let t = json_tier2();
-    let calls = t.clif.lines().filter(|l| l.contains(" call ") || l.contains("call_indirect")).count();
-    assert_eq!(calls, checks, "{calls} calls, {checks} validators");
+    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
 }
 
 

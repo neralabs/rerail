@@ -129,45 +129,21 @@ barriers), `json_cpu_plan_is_one_pass`, `plan_verifier_refuses_a_missing_barrier
 (with the budget), `match_scan_has_no_mid_pass_barrier` (121 words, 2 scan barriers, none in
 pass B).
 
-## 5. The CPU (done)
+## 5. The CPU
 
-**Built:** `native_cpu_tier2::compile(program, fallbacks)`: one Cranelift function per block
-program, generated from its rows. It reads tier 1's masks, word-major, and writes the nodes in
-preorder. Its columns are packed by the tape's one packer (`TapeImage::from_written`).
+**Builds:** `native_cpu_tier2`: a Cranelift function generated from the plan and the rows,
+over the masks tier 1 writes, as simdjson's stage 2 reads stage 1's indexes. One case per
+token kind. Its columns are packed by the tape's one packer (`TapeImage::from_written`), the
+format's encoder, not a rule.
 
-The function walks the events in byte order: every bit of a row's start or end mask. At each:
+**Tests:**
 
-- **the token** that starts there picks an arm of one `br_table`: an arm per token row, and one
-  for a byte where no token starts. In its arm, the rows' starts are tests in rank order. A
-  test the arm decides is folded: a token row's own start, another token row's (false), a
-  kind known from a row without keywords. Keywords are inlined as compares of 8-byte words.
-- **the ends** close the stack's top while its row ends there, by a `br_table` on the top's
-  row. A node that ends `with` its child's field closes with it, by another.
-- **the checks** send the file to tree-sitter: a fallback bit, two tokens at a byte, bytes in
-  no token, a stray or too-deep close, a validator, a second root.
-
-The CPU plan's rule is `also`: the pair opens from the left. Its `before ':'` is checked at
-the token after its first child (the string). A file where the two rules differ goes to
-tree-sitter.
-
-**Changed from the plan above:**
-
-- **The dispatch is per token row, not per kind.** JSON's punctuation is one row whose
-  keywords give six kinds: the kind is read in the arm, by compares, as simdjson's stage 2
-  switches on the byte.
-- **`check_nesting` is gone.** The stack makes nodes nest; the second-root check is generated.
-- **The validator is a call,** the only one: `json_number`, a built-in over the token's text.
-  Its exponent takes `-` only, as tree-sitter-json's.
-- **Open:** the masks are copied word-major and the source padded by 8 bytes before the call.
-  Tier 1's buffer is already word-major; reading it in place is phase 7's.
-- **Open:** two valid files of the 900 go to tree-sitter (as with the deleted writer).
-
-**Tests** (`bitlex_compile_tests`): `json_tapes_equal_tree_sitter_byte_for_byte` (on the
-interpreter's masks and Cranelift's), `json_tier2_writes_doc_16s_nodes` (doc 16 §8's 19
-nodes), `json_tier2_has_one_case_per_token_row`, `json_tier2_reads_no_rows` (arguments only;
-no global, data or stack slot), `json_tier2_calls_nothing_per_token_but_its_validator`, and
-`json_rows_equal_the_evaluator_on_every_executor` again asserting that a file the evaluator
-rejects falls back. The corpus, once: 900 files, 897 tapes equal, 3 to tree-sitter, 0 differ.
+- `json_tapes_equal_tree_sitter_byte_for_byte`, un-ignored.
+- `json_corpus_tapes_equal_tree_sitter`, un-ignored, run once at the phase's end.
+- `json_tier2_has_one_case_per_token_kind`: the CLIF's `br_table` has as many arms as kinds.
+- `json_tier2_reads_no_rows`: the function's arguments are masks, bytes and columns; nothing
+  of the program's tables is reachable from it.
+- `json_tier2_calls_nothing_per_token` except the built-in validator.
 
 ## 6. Metal
 
