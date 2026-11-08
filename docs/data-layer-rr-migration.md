@@ -106,7 +106,8 @@ It separates imported bytes from local repairs. It does not claim that a commit 
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory contains **89 target drafts and 11 absent translations**. None has full acceptance yet.
-The 89th draft, `internal_dead_code`, has a tested supplied-graph consumer. Native source graph construction remains missing.
+The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
+Production discovery, reporting, lifecycle behavior, and a randomized mixin case remain open.
 The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on the current engine.
 Its native detector includes all six source finding families. Production reporting and global migration acceptance remain open.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
@@ -1688,3 +1689,26 @@ It also tracks all ten authored survey and ordered-member libraries with their c
 The twelve raw-graph helper comparisons pass again on the current CLI.
 Inventory passes with eighty-nine drafts and eleven absent translations. These counts are unchanged by the source-producer work.
 The production-source refusal also passes its explicit regression check.
+
+### 2026-11-08 — Source facts reach native dead-code categories
+
+Commit `fc8275854` records complete source-file analysis outputs before the bridge exists.
+The corpus contains 121 cases, including the existing producer fixtures and fifteen focused reachability or confidence cases.
+Without the bridge, 102 cases return incorrect empty categories.
+The source-side guards require both dead symbols and rooted symbols that remain clean.
+
+The new `survey-produced-graph.rr` feeds native facts into the existing graph consumer.
+Supplied graph arguments remain separate. Native source annotations supply names and attribute names from their expression subtrees.
+Quoted strings remain strings; positional-only annotations retain the source inventory's exclusions.
+Import-reference confidence now uses a shared symbol-to-fqname relation.
+Stable sorting uses the existing first file/local keys instead of a graph-wide dense rank.
+
+All 121 complete comparisons pass in four disjoint shards.
+All four original assertions, thirty-six supplied-graph cases, and twelve raw-graph helper cases also pass.
+All 113 tooling tests and sixty subtests pass. The current committed Final tip remains `220a5d4f5`.
+The [source-analysis receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis.json.gz) contains those results and complete consumed programs.
+
+A separate adversarial case demonstrates the unresolved mixin gap in final analysis.
+With `Base.run` rooted, the source reaches both mixin helpers. The native path currently reports both as dead.
+The receipt records this failure separately. The 121 passing cases do not cover this ambiguity.
+The production default still refuses source execution. Discovery, dynamic roots, reporting, and lifecycle acceptance remain open.

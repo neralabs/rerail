@@ -1578,7 +1578,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
+      "sha256": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1588,12 +1588,17 @@
           "before": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3",
           "after": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
           "reason": "Derive ordered class accessors natively and preserve missing-method KeyErrors"
+        },
+        {
+          "before": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
+          "after": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
+          "reason": "Feed native source facts into the existing graph consumer; preserve first insertion keys and import-reference confidence; 121 complete source analysis comparisons pass (rr-survey-source-analysis.json.gz). Randomized mixin targets remain a separately recorded gap."
         }
       ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
-      "sha256": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
+      "sha256": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1602,6 +1607,11 @@
           "before": "535bc39381c2d1c58b7017186819a84fedd43e9074fff0ab5aea8422cb7a5e82",
           "after": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
           "reason": "Adopt ordered class accessors (23af0990d) and restrict native roots to the requested imported classes (378743b6b); exact programs and raw helper parity retained in rr-survey-ordered-members.json.gz"
+        },
+        {
+          "before": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
+          "after": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038",
+          "reason": "Feed native source facts into the existing graph consumer; preserve first insertion keys and import-reference confidence; 121 complete source analysis comparisons pass (rr-survey-source-analysis.json.gz). Randomized mixin targets remain a separately recorded gap."
         }
       ]
     },
@@ -1684,6 +1694,14 @@
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-produced-graph.rr",
+      "sha256": "beb9f20e76755413e06f0c96c4e702457bfb52fb6d90785a2c7ad5c2c9fcc7ba",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis.json.gz"
     }
   ],
   "rules": [
@@ -2126,7 +2144,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38"
+      "ruleSha256": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94"
     },
     {
       "check": "imperative_private_functions",

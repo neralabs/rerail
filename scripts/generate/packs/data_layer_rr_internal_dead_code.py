@@ -17,7 +17,7 @@ def internal_dead_code(source,target,header):
     execute=next(n.value for n in module.body if isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name) and n.target.id=='VALID_EXECUTE_CATEGORIES')
     code='import json; print(json.dumps(list('+ast.unparse(execute)+')))'
     order=json.loads(subprocess.check_output([sys.executable,'-c',code],env=dict(os.environ,PYTHONHASHSEED='0'),text=True))
-    text+='#include "data-layer/survey-graph.rr"\n'+empty_outputs()
+    text+='#include "data-layer/survey-produced-graph.rr"\n'+empty_outputs()
     text+='\n.decl idc_execute_category(i: number, category: symbol)\n'
     text+=''.join(f'idc_execute_category({i}, {json.dumps(name)}).\n' for i,name in enumerate(order))
     text+='\nIDCValue(@place("", 0), cat(module, ".", attr)) :- option("entryPoint", "_collect_literal_imported_fqnames"), option("source", source), match_all('+json.dumps(regex)+', source).\n'
@@ -98,7 +98,7 @@ idc_abc_implementation(c) :- sg_ancestor(c, base), idc_reachable(base), sg_symbo
 .decl idc_abstract_override(sid: symbol)
 idc_abstract_override(sid) :- sg_owner(sid, c), sg_symbol(_, sid, name, _, _, _, _, _, _, _), sg_ancestor(c, base), sg_method(base, name, method), sg_symbol(_, method, _, _, _, _, _, _, _, 1).
 .decl idc_import_referenced(sid: symbol)
-idc_import_referenced(sid) :- option_item("symbolIds", i, sid), option_item("symbolFqNames", i, fq), sg_imported(_, _, fq).
+idc_import_referenced(sid) :- sg_symbol_fq(sid, fq), sg_imported(_, _, fq).
 .decl idc_callback(sid: symbol)
 idc_callback(sid) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), ((prefix("_create_", name), (suffix("_connection", name) ; suffix("_validator", name) ; suffix("_factory", name))) ; contains("register", @lower(name))).
 .decl idc_unused_function(sid: symbol)
@@ -128,7 +128,7 @@ idc_result("high_confidence_intents", sid) :- idc_high_class(sid), idc_intent(si
 idc_result("high_confidence_grammar_classes", sid) :- idc_high_class(sid), idc_grammar(sid).
 idc_result("high_confidence_other_classes", sid) :- idc_high_class(sid), !idc_intent(sid), !idc_grammar(sid).
 .decl idc_sorted(category: symbol, sid: symbol, ordinal: number)
-idc_sorted(category, sid, ordinal) :- idc_result(category, sid), sg_symbol(i, sid, _, _, _, path, line, _, _, _), ordinal = count : { idc_result(category, other), sg_symbol(j, other, _, _, _, other_path, other_line, _, _, _), (@str_cmp(other_path, path) < 0 ; (other_path = path, other_line < line) ; (other_path = path, other_line = line, j < i)) }.
+idc_sorted(category, sid, ordinal) :- idc_result(category, sid), sg_symbol(_, sid, _, _, _, path, line, _, _, _), sg_order(sid, file, local), ordinal = count : { idc_result(category, other), sg_symbol(_, other, _, _, _, other_path, other_line, _, _, _), sg_order(other, f, i), (@str_cmp(other_path, path) < 0 ; (other_path = path, other_line < line) ; (other_path = path, other_line = line, (f < file ; (f = file, i < local)))) }.
 IDCGroup(@place("", 0), category, i) :- option("entryPoint", "analyze_dead_code"), idc_category(i, category).
 IDCItem(@place("", 0), category, sid, ordinal) :- option("entryPoint", "analyze_dead_code"), idc_sorted(category, sid, ordinal), !idc_excluded(sid).
 '''

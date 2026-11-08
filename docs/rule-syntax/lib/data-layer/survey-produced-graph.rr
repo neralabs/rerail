@@ -1,0 +1,40 @@
+// Feed the shared graph consumer from native source facts. Supplied graph
+// arguments remain an independent API and never acquire source-derived rows.
+#include "data-layer/survey-graph.rr"
+#include "data-layer/survey-exports.rr"
+
+.decl sgp_active()
+sgp_active() :- !option("suppliedGraph", "true").
+.decl sgp_owner(n: node, has_owner: number)
+sgp_owner(n, 0) :- sgs_definition(n, _, _, _, _, "").
+sgp_owner(n, 1) :- sgs_definition(n, _, _, _, _, owner), owner != "".
+
+sg_symbol(first_local, sid, name, module, k, path, row, owner, has, abstract) :- sgp_active(), sgc_symbol(n, _, first_local, sid), sgs_symbol(n, d, _, _, _, name, _, k, owner, row, _), sgs_module(d, path, module), sgp_owner(n, has), sgs_abstract(n, abstract).
+sg_order(sid, file, local) :- sgp_active(), sgc_symbol(_, file, local, sid).
+sg_symbol_fq(sid, fq) :- sgp_active(), sgc_fqname(fq, sid).
+sg_decorator(sid, text) :- sgp_active(), sgc_symbol(n, _, _, sid), sgs_decorator(n, _, text).
+sg_base_text(sid, text) :- sgp_active(), sgc_symbol(n, _, _, sid), sgs_base(n, _, text).
+sg_base(c, b, i) :- sgp_active(), sgc_base(c, i, b).
+sg_subclass(c, sub) :- sgp_active(), sgc_subclass(c, sub).
+sg_method(c, name, sid) :- sgp_active(), sgc_method(c, name, _, sid).
+sg_fqname(fq, sid) :- sgp_active(), sgc_fqname(fq, sid).
+sg_module(module) :- sgp_active(), sgc_module(module, _, _, _).
+sg_imported(module, local, fq) :- sgp_active(), sgc_import(module, "imported", local, fq).
+sg_import_module(module, target) :- sgp_active(), sgc_import(module, "import_module", _, target).
+sg_defined(module, name, sid, i) :- sgp_active(), sgc_defined(module, name, i, sid).
+sg_module_name_ref(module, name) :- sgp_active(), sgc_module(module, d, _, _), sgs_module_ref(d, name).
+sg_exported(sid) :- sgp_active(), sgx_root(sid).
+sg_call(sid, target) :- sgp_active(), sge_call(sid, target).
+sg_call(sid, target) :- sgp_active(), sge_class_use(sid, target).
+
+// Source annotation_names parses the canonical annotation expression, then
+// collects Name.id and Attribute.attr. These names come from the same native
+// expression subtree; quoted annotations remain string constants.
+.decl sgp_annotation_expr(sid: symbol, expr: node)
+sgp_annotation_expr(sid, e) :- sgp_active(), sgn_context(n, sid, _, _), sgs_parameter_site(n, _, _, _, e), kind(e, _).
+sgp_annotation_expr(sid, e) :- sgp_active(), sgn_context(n, sid, _, _), field(n, "return_type", e).
+.decl sgp_annotation_node(sid: symbol, expr: node)
+sgp_annotation_node(sid, e) :- sgp_annotation_expr(sid, e).
+sgp_annotation_node(sid, n) :- sgp_annotation_expr(sid, e), within(n, e).
+sg_annotation(sid, @nfkc(name)) :- sgp_annotation_node(sid, n), ast_name(n, name).
+sg_annotation(sid, @nfkc(name)) :- sgp_annotation_node(sid, n), kind(n, "attribute"), field(n, "attribute", a), text(a, name).
