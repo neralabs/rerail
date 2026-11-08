@@ -212,6 +212,19 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ordered_object_wildcards_keep_first_key_order_and_last_value_with_array_duplicates() {
+        let source = r#"{"categories":{"Z":["old"],"NEEDS_REVIEW":["foo","foo"],"Z":["last"],"EMPTY":[],"A":["tail"]}}"#;
+        let actual = rows("json", source, "/categories/*#/*", false,
+            &[("priority", "int"), ("category", "sym"), ("index", "int"), ("name", "sym")]).unwrap();
+        assert_eq!(actual, vec![
+            vec![Value::Int(0), Value::Str("Z".into()), Value::Int(0), Value::Str("last".into())],
+            vec![Value::Int(1), Value::Str("NEEDS_REVIEW".into()), Value::Int(0), Value::Str("foo".into())],
+            vec![Value::Int(1), Value::Str("NEEDS_REVIEW".into()), Value::Int(1), Value::Str("foo".into())],
+            vec![Value::Int(3), Value::Str("A".into()), Value::Int(0), Value::Str("tail".into())],
+        ]);
+    }
+
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
         let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();
