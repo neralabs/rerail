@@ -1,0 +1,1014 @@
+{
+  "cases": [
+    {
+      "id": "entry-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-read_version",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read_version(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-read_version_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read_version_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-versioned_read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.versioned_read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.versioned_read_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-versioned_write",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.versioned_write(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-versioned_write_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.versioned_write_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-write",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.write(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-write_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.write_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-write_version",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.write_version(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "entry-write_version_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.write_version_async(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-bare",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-alias",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: CallbackType):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-qualified",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: typing.Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-quoted",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: \"Callable[[ReadTransaction], T]\"):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-callable-name",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: CallableTransaction):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-transaction-only",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: ReadTransaction):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-lower-case",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-substring",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: NotCallableTransaction):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-space-literal",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: \"Callable Transaction\"):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-unicode",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: \uff23\uff41\uff4c\uff4c\uff41\uff42\uff4c\uff45[[\uff32\uff45\uff41\uff44\uff34\uff52\uff41\uff4e\uff53\uff41\uff43\uff54\uff49\uff4f\uff4e], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-dict",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: dict[\"Callable\", \"Transaction\"]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-posonly",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(fn: Callable[[ReadTransaction], T], /, conn):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-kwonly",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, *, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-vararg",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, *fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-kwarg",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, **fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-separate-annotations",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn: Callable, fn: Transaction):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "parameter-none",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "callee-bare",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "callee-not-entry",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.execute(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "callee-parentheses",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return ((conn.read))(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "callee-receiver-call",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return factory().read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "callee-missing-callback",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read()\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncDatabaseConnection-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncDatabaseConnection:\n    def read(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncDatabaseConnection-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncDatabaseConnection:\n    def versioned_read_async(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncDatabaseConnection-ordinary",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncDatabaseConnection:\n    def ordinary(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncVersionedDatabaseConnection-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncVersionedDatabaseConnection:\n    def read(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncVersionedDatabaseConnection-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncVersionedDatabaseConnection:\n    def versioned_read_async(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-SyncVersionedDatabaseConnection-ordinary",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncVersionedDatabaseConnection:\n    def ordinary(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-AsyncDatabaseConnection-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class AsyncDatabaseConnection:\n    def read(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-AsyncDatabaseConnection-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class AsyncDatabaseConnection:\n    def versioned_read_async(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-AsyncDatabaseConnection-ordinary",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class AsyncDatabaseConnection:\n    def ordinary(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-Other-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class Other:\n    def read(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-Other-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class Other:\n    def versioned_read_async(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-Other-ordinary",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class Other:\n    def ordinary(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-qualname",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class Outer:\n    class Inner:\n        def helper(conn, fn: Callable[[ReadTransaction], T]):\n            return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-qualname",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def outer():\n    def helper(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-in-function",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def outer():\n    class C:\n        def helper(conn, fn: Callable[[ReadTransaction], T]):\n            return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-nested",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class SyncDatabaseConnection:\n    def outer(self):\n        def read(conn, fn: Callable[[ReadTransaction], T]):\n            return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "postorder",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def outer(conn, fn: Callable[[ReadTransaction], T]):\n    def inner(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "named-versioned_read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-versioned_read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: txn.versioned_read(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "named-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read_async(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-versioned_read_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: txn.versioned_read_async(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "named-versioned_write",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_write(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-versioned_write",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: txn.versioned_write(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "named-versioned_write_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_write_async(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-versioned_write_async",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: txn.versioned_write_async(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-getattr",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, \"versioned_read\", None)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-default-arg",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, \"other\", \"versioned_read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-first-arg",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(\"versioned_read\", \"other\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-keyword",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, name=\"versioned_read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-attribute-getattr",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return owner.getattr(txn, \"versioned_read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-concat",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, \"versioned_\" + \"read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-adjacent",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, \"versioned_\" \"read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-escaped",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, \"versioned_\\u0072ead\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-bytes",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, b\"versioned_read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-f-string",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, f\"versioned_read\")\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-starred",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return getattr(txn, *[\"versioned_read\"])\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "reentry-plain-read",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.read(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-position",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(0, worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-wrong-position",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-unresolved",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(fn=unknown)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-qualified",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(fn=owner.worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-keyword-wins",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(0, worker, fn=other)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-starred",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(*args, worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "callback-no-callback",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read()\n"
+        }
+      ]
+    },
+    {
+      "id": "defined-after",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    conn.read(fn=worker)\n    def worker(txn):\n        return txn.versioned_read(domain)\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-functions",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    def worker(txn):\n        return None\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "grandchild-only",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    def worker(txn):\n        def grandchild():\n            return txn.versioned_read(domain)\n    conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-nested",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: (lambda: txn.versioned_read(domain)))\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-elsewhere",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    other = lambda txn: txn.versioned_read(domain)\n    return conn.read(fn=lambda t: t)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-class",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    class C:\n        def worker(txn):\n            return txn.versioned_read(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "two-reasons",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn, fn: Callable[[ReadTransaction], T]):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "module-call",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "conn.read(fn=lambda txn: txn.versioned_read(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "two-parents",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def first(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    conn.read(fn=worker)\ndef second(conn):\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-call",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "@conn.read(fn=lambda txn: txn.versioned_read(domain))\ndef process(conn):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "default-call",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn=conn.read(fn=lambda txn: txn.versioned_read(domain))):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-decorator",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    @txn.versioned_read(domain)\n    def worker(txn):\n        return None\n    return conn.read(fn=worker)\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-raw-disabled",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def process(conn):\n    return conn.read(fn=lambda txn: txn.\uff56\uff45\uff52\uff53\uff49\uff4f\uff4e\uff45\uff44\uff3f\uff52\uff45\uff41\uff44(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-raw-enabled",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "# versioned_read\ndef process(conn):\n    return conn.read(fn=lambda txn: txn.\uff56\uff45\uff52\uff53\uff49\uff4f\uff4e\uff45\uff44\uff3f\uff52\uff45\uff41\uff44(domain))\n"
+        }
+      ]
+    },
+    {
+      "id": "outside-allowed-l2000_connection/connection.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "outside-allowed-l9900_auto_api/_versioning_helpers.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l9900_auto_api/_versioning_helpers.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-docs/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "docs/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "conform/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l5200_vector_index/tests/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/tests/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l5200_vector_index/test_example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/test_example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-data_layer/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "data_layer/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-_internal/example.py",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "_internal/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    }
+  ]
+}

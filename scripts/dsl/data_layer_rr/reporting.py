@@ -54,7 +54,8 @@ def run(args):
     for index, case in selected:
         if native:
             rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
-            result = execute_native(engine, rule, case['files'], {}, workspace_name=case.get('workspaceName', 'corpus'))
+            options=({'repositoryRoot':str(args.source.resolve())} if case['check']=='transaction_callback_wrappers' else {})
+            result = execute_native(engine, rule, case['files'], options, workspace_name=case.get('workspaceName', 'corpus'))
             report['sourceDetectorModules'] = [name for name in sys.modules if name.startswith('scripts.lint_')]
             if report['sourceDetectorModules']:
                 raise ValueError('The native reporter imported source detectors')

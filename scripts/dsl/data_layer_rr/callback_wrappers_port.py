@@ -76,14 +76,22 @@ def collector_result(module,path,source,tree,suite=None,check_inline=None):
 
 def scan(suite,entry,module,values):
     paths=[Path(p) for p in values['files']] if entry=='_violations_for_files' else [Path(values['file_path'])]
-    files=[];original={}
+    root=Path(values.get('root',module.REPO_ROOT));provided=None
+    if entry=='scan_source':provided=values['source']
+    if entry=='scan_file':
+        try:provided=paths[0].read_text(encoding='utf-8')
+        except (OSError,UnicodeDecodeError):provided=''
+    files=[];original={};relatives=[];scopes=[]
     for i,path in enumerate(paths):
-        try:text=path.read_text(encoding='utf-8')
+        actual=path if path.is_absolute() else root/path
+        try:text=actual.read_text(encoding='utf-8')
         except (OSError,UnicodeDecodeError):continue
-        logical=f'input-{i}/'+path.name;original[logical]=path
+        logical=f'input-{i}/'+path.name;original[logical]=actual
         files.append(dict(path=logical,source=text))
-    options=dict(repositoryRoot=str(module.REPO_ROOT))
-    if entry=='scan_source':options['providedSource']=values['source']
+        relatives.append(relative_path(module,actual))
+        scopes.append(actual.relative_to(root).as_posix() if actual.is_relative_to(root) else actual.as_posix())
+    options=dict(repositoryRoot=str(module.REPO_ROOT),documentPaths=[f['path'] for f in files],relativePaths=relatives,scopePaths=scopes)
+    if provided is not None:options['providedSource']=provided
     rows=suite.native('transaction_callback_wrappers',entry,files,options)
     return [module.Violation(file_path=original[r['path']],line=r['line'],qualname=r['parameters']['qualname'],message=r['message']) for r in ordered(rows)]
 

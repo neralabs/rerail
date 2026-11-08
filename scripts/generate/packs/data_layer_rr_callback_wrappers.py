@@ -8,7 +8,7 @@ def transaction_callback_wrappers(source,target,header):
     text=header('transaction_callback_wrappers',target)
     text=re.sub(r'^\.scope include .*$', '.scope include "**/*.py"',text,flags=re.M)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude',text,flags=re.M)
-    text+='#include "python/print.rr"\n'
+    text+='#include "python/print.rr"\n#include "project.rr"\n'
     for rel,values in [('tcw_entrypoint',original.TRANSACTION_ENTRYPOINTS),('tcw_versioned',original.REENTRANT_VERSIONED_ENTRYPOINTS),
         ('tcw_allowed_path',original.ALLOWED_RELATIVE_PATHS),('tcw_trigger',original.TRANSACTION_CALLBACK_WRAPPER_EXTRACTOR.source_triggers)]:
         text+=f'.decl {rel}(name: symbol)\n'+''.join(f'{rel}({q(v)}).\n' for v in sorted(values))
@@ -28,7 +28,12 @@ tcw_gedge(to_number(p), field, c) :- option_item("astParents", c, p), p != "-1",
 tcw_gancestor(n, a) :- tcw_gedge(a, _, n).
 tcw_gancestor(n, a) :- tcw_gedge(p, _, n), tcw_gancestor(p, a).
 .decl tcw_doc(d: number, path: symbol, relative: symbol)
-tcw_doc(d, p, p) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary").
+tcw_doc(d, p, relative) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), option_item("documentPaths", i, p), option_item("relativePaths", i, relative).
+tcw_doc(d, p, p) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), !option_item("documentPaths", _, p), !option("repositoryRoot", _).
+tcw_doc(d, p, @slice(absolute, strlen(root) + 1, strlen(absolute))) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"),
+ !option_item("documentPaths", _, p), option("repositoryRoot", root), workspace_root(workspace), absolute = cat(workspace, "/", p), prefix(cat(root, "/"), absolute).
+tcw_doc(d, p, absolute) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), !option_item("documentPaths", _, p),
+ option("repositoryRoot", root), workspace_root(workspace), absolute = cat(workspace, "/", p), !prefix(cat(root, "/"), absolute).
 tcw_doc(0, p, relative) :- tcw_graph(), option("originalPath", p), option("relativePath", relative).
 .decl tcw_raw(d: number, source: symbol)
 tcw_raw(d, text) :- !tcw_graph(), tcw_doc(d, _, _), source(d, sp), text(sp, text).
@@ -102,16 +107,21 @@ def semantics():
 tcw_triggered(d) :- tcw_raw(d, source), tcw_trigger(trigger), contains(trigger, source).
 .decl tcw_selected(d: number)
 tcw_selected(0) :- tcw_graph().
-tcw_selected(d) :- !tcw_graph(), tcw_doc(d, _, _), option("entryPoint", _), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d).
+tcw_selected(d) :- !tcw_graph(), tcw_doc(d, _, _), file_name(d, name), suffix(".py", name), option("entryPoint", _), tcw_api_gate(), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d).
 tcw_selected(d) :- !tcw_graph(), tcw_doc(d, p, _), !option("entryPoint", _), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d), !tcw_hidden(d),
  (prefix("data_layer/", p) ; prefix("_internal/", p) ; tcw_layer(p)).
 .decl tcw_test(d: number)
-tcw_test(d) :- path_part(d, p), (p = "tests" ; p = "test").
+tcw_test(d) :- doc(d, p, _), !option_item("documentPaths", _, p), path_part(d, part), (part = "tests" ; part = "test").
+tcw_test(d) :- doc(d, p, _), option_item("documentPaths", i, p), option_item("scopePaths", i, scope), match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?", scope).
+.decl tcw_api_gate()
+tcw_api_gate() :- option("entryPoint", entry), entry != "scan_file", entry != "scan_source".
+tcw_api_gate() :- option("entryPoint", entry), (entry = "scan_file" ; entry = "scan_source"), option("providedSource", source), tcw_trigger(trigger), contains(trigger, source).
 .decl tcw_hidden(d: number)
 tcw_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl tcw_inline_enabled(d: number)
-tcw_inline_enabled(d) :- tcw_raw(d, source), contains("getattr", source).
-tcw_inline_enabled(d) :- tcw_raw(d, source), tcw_versioned(name), contains(name, source).
+tcw_inline_enabled(d) :- tcw_raw(d, source), contains("getattr", source), !option("inlineOverride", _).
+tcw_inline_enabled(d) :- tcw_raw(d, source), tcw_versioned(name), contains(name, source), !option("inlineOverride", _).
+tcw_inline_enabled(d) :- tcw_doc(d, _, _), option("inlineOverride", "true").
 .decl tcw_has_callback_annotation(f: node)
 tcw_has_callback_annotation(f) :- tcw_parameter_annotation(f, text), contains("Callable", text), contains("Transaction", text).
 .decl tcw_boundary(f: node)
@@ -153,6 +163,7 @@ tcw_issue(f, 1) :- tcw_function(f, _), tcw_position(f, d, _, _, _), tcw_selected
 .violation Tcw{name}API(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "TCW00{reason+1}" {json.dumps(message)}
 Tcw{name}API(@place(path, l), qual, end, entry, {reason}) :- tcw_issue(f, {reason}), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), option("entryPoint", _).
 .violation Tcw{name}(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "transaction_callback_wrapper" "{{qualname}}: {message}"
+.severity Tcw{name} error
 Tcw{name}(@place(path, l), qual, end, entry, {reason}) :- tcw_issue(f, {reason}), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), !option("entryPoint", _).
 '''
     return text

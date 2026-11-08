@@ -8,6 +8,7 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_transaction_callback_wrappers.py
 #include "python/ast.rr"
 #include "python/print.rr"
+#include "project.rr"
 .decl tcw_entrypoint(name: symbol)
 tcw_entrypoint("read").
 tcw_entrypoint("read_async").
@@ -48,7 +49,12 @@ tcw_gedge(to_number(p), field, c) :- option_item("astParents", c, p), p != "-1",
 tcw_gancestor(n, a) :- tcw_gedge(a, _, n).
 tcw_gancestor(n, a) :- tcw_gedge(p, _, n), tcw_gancestor(p, a).
 .decl tcw_doc(d: number, path: symbol, relative: symbol)
-tcw_doc(d, p, p) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary").
+tcw_doc(d, p, relative) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), option_item("documentPaths", i, p), option_item("relativePaths", i, relative).
+tcw_doc(d, p, p) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), !option_item("documentPaths", _, p), !option("repositoryRoot", _).
+tcw_doc(d, p, @slice(absolute, strlen(root) + 1, strlen(absolute))) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"),
+ !option_item("documentPaths", _, p), option("repositoryRoot", root), workspace_root(workspace), absolute = cat(workspace, "/", p), prefix(cat(root, "/"), absolute).
+tcw_doc(d, p, absolute) :- !tcw_graph(), doc(d, p, _), doc_role(d, "primary"), !option_item("documentPaths", _, p),
+ option("repositoryRoot", root), workspace_root(workspace), absolute = cat(workspace, "/", p), !prefix(cat(root, "/"), absolute).
 tcw_doc(0, p, relative) :- tcw_graph(), option("originalPath", p), option("relativePath", relative).
 .decl tcw_raw(d: number, source: symbol)
 tcw_raw(d, text) :- !tcw_graph(), tcw_doc(d, _, _), source(d, sp), text(sp, text).
@@ -116,16 +122,21 @@ tcw_parameter_annotation(f, printed) :- tcw_function(f, _), tcw_gedge(f, "args",
 tcw_triggered(d) :- tcw_raw(d, source), tcw_trigger(trigger), contains(trigger, source).
 .decl tcw_selected(d: number)
 tcw_selected(0) :- tcw_graph().
-tcw_selected(d) :- !tcw_graph(), tcw_doc(d, _, _), option("entryPoint", _), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d).
+tcw_selected(d) :- !tcw_graph(), tcw_doc(d, _, _), file_name(d, name), suffix(".py", name), option("entryPoint", _), tcw_api_gate(), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d).
 tcw_selected(d) :- !tcw_graph(), tcw_doc(d, p, _), !option("entryPoint", _), tcw_triggered(d), !syntax_error(d, _, _), !tcw_test(d), !tcw_hidden(d),
  (prefix("data_layer/", p) ; prefix("_internal/", p) ; tcw_layer(p)).
 .decl tcw_test(d: number)
-tcw_test(d) :- path_part(d, p), (p = "tests" ; p = "test").
+tcw_test(d) :- doc(d, p, _), !option_item("documentPaths", _, p), path_part(d, part), (part = "tests" ; part = "test").
+tcw_test(d) :- doc(d, p, _), option_item("documentPaths", i, p), option_item("scopePaths", i, scope), match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?", scope).
+.decl tcw_api_gate()
+tcw_api_gate() :- option("entryPoint", entry), entry != "scan_file", entry != "scan_source".
+tcw_api_gate() :- option("entryPoint", entry), (entry = "scan_file" ; entry = "scan_source"), option("providedSource", source), tcw_trigger(trigger), contains(trigger, source).
 .decl tcw_hidden(d: number)
 tcw_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl tcw_inline_enabled(d: number)
-tcw_inline_enabled(d) :- tcw_raw(d, source), contains("getattr", source).
-tcw_inline_enabled(d) :- tcw_raw(d, source), tcw_versioned(name), contains(name, source).
+tcw_inline_enabled(d) :- tcw_raw(d, source), contains("getattr", source), !option("inlineOverride", _).
+tcw_inline_enabled(d) :- tcw_raw(d, source), tcw_versioned(name), contains(name, source), !option("inlineOverride", _).
+tcw_inline_enabled(d) :- tcw_doc(d, _, _), option("inlineOverride", "true").
 .decl tcw_has_callback_annotation(f: node)
 tcw_has_callback_annotation(f) :- tcw_parameter_annotation(f, text), contains("Callable", text), contains("Transaction", text).
 .decl tcw_boundary(f: node)
@@ -164,9 +175,11 @@ tcw_issue(f, 1) :- tcw_function(f, _), tcw_position(f, d, _, _, _), tcw_selected
 .violation TcwHelperAPI(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "TCW001" "forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure"
 TcwHelperAPI(@place(path, l), qual, end, entry, 0) :- tcw_issue(f, 0), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), option("entryPoint", _).
 .violation TcwHelper(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "transaction_callback_wrapper" "{qualname}: forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure"
+.severity TcwHelper error
 TcwHelper(@place(path, l), qual, end, entry, 0) :- tcw_issue(f, 0), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), !option("entryPoint", _).
 
 .violation TcwInlineAPI(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "TCW002" "forbidden inline transaction callback wrapper: nested callback re-enters versioned transaction APIs instead of using read_version*/write_version*"
 TcwInlineAPI(@place(path, l), qual, end, entry, 1) :- tcw_issue(f, 1), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), option("entryPoint", _).
 .violation TcwInline(at: span, qualname: symbol, exit_order: number, entry_order: number, reason: number) code "transaction_callback_wrapper" "{qualname}: forbidden inline transaction callback wrapper: nested callback re-enters versioned transaction APIs instead of using read_version*/write_version*"
+.severity TcwInline error
 TcwInline(@place(path, l), qual, end, entry, 1) :- tcw_issue(f, 1), tcw_position(f, d, l, entry, end), tcw_doc(d, path, _), tcw_qualname(f, qual), !option("entryPoint", _).

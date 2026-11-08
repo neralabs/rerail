@@ -1418,7 +1418,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-callback-wrappers.rr",
-      "sha256": "52a482cecf230441a5e883ebec45e2b7d92161458b4ffe2f972ad4b193bd5fac",
+      "sha256": "fe2a630d2b0fe9df891e89afe1e10c48bc0b9d4ec43c81f11238798fddee3921",
       "origin": "authored",
       "upstreamPath": "scripts/lint_transaction_callback_wrappers.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1646,7 +1646,7 @@
       "legacySha256": "ccfa86dd6d1f393a80e969d148af343376bafa36d36358a18d4834e7d5561205",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-callback-wrappers.rr",
-      "ruleSha256": "52a482cecf230441a5e883ebec45e2b7d92161458b4ffe2f972ad4b193bd5fac"
+      "ruleSha256": "fe2a630d2b0fe9df891e89afe1e10c48bc0b9d4ec43c81f11238798fddee3921"
     },
     {
       "check": "transaction_patterns",
