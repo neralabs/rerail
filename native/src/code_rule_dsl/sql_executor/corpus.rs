@@ -24,6 +24,8 @@ pub(super) struct Run {
     keys: Vec<i64>,
     by_key: HashMap<i64, usize>,
     entries: Vec<OnceLock<Option<Arc<memo::Entry>>>>,
+    /// The first frame that did not decode: its path and the store's message.
+    failed: OnceLock<String>,
 }
 
 impl Run {
@@ -31,7 +33,7 @@ impl Run {
         let keys = frames.iter().map(|f| memo::frame_key(f).map_err(|e| error(format!("{}: {e}", f.path)))).collect::<Result<Vec<_>>>()?;
         let by_key = keys.iter().enumerate().map(|(i, k)| (*k, i)).collect();
         let entries = frames.iter().map(|_| OnceLock::new()).collect();
-        Ok(Self { frames, keys, by_key, entries })
+        Ok(Self { frames, keys, by_key, entries, failed: OnceLock::new() })
     }
 
     /// Each document's key and stored path.
@@ -43,10 +45,25 @@ impl Run {
         self.frames.len()
     }
 
-    /// A document's entry. A frame that does not decode reads as empty: a source has no error
-    /// path, and the frame was checked when it was written.
+    /// A document's entry. A frame that does not decode has none, and is recorded as the run's
+    /// failure (`Source::failure`), which fails the statement that read it.
     fn entry(&self, doc: usize) -> Option<Arc<memo::Entry>> {
-        self.entries[doc].get_or_init(|| memo::decode_frame(&self.frames[doc]).ok().map(Arc::new)).clone()
+        self.entries[doc]
+            .get_or_init(|| match memo::decode_frame(&self.frames[doc]) {
+                Ok(entry) => Some(Arc::new(entry)),
+                Err(e) => {
+                    let _ = self.failed.set(format!(
+                        "{}: its corpus memo frame does not decode ({e}); run the corpus again",
+                        self.frames[doc].path
+                    ));
+                    None
+                }
+            })
+            .clone()
+    }
+
+    pub fn failure(&self) -> Option<String> {
+        self.failed.get().cloned()
     }
 }
 
@@ -180,6 +197,9 @@ impl Source for Corpus {
     }
     fn made_on_lookup(&self) -> bool {
         true
+    }
+    fn failure(&self) -> Option<String> {
+        self.run.failure()
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         if !self.locations.contains(&column) {

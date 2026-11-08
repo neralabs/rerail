@@ -88,7 +88,8 @@ same name from another program.
 - The frames stay compressed. Binding decompresses only each frame's first eight bytes, which
   hold its document key.
 - Each relation's rows of a document are decoded when a statement first reads them, and kept.
-  - A lookup on a `node` or `loc` column decodes the one document the value names.
+  - A lookup on a `node` or `loc` column decodes the one document the value names. The virtual
+    table takes a source's length only for a scan, so a lookup never makes every row.
   - A scan, or a lookup on another column, decodes every document once.
 - The source says its rows are made on lookup, so joins probe it rather than scan it.
 - A file-local output's lines are parsed when decoded. Its `int`, `node` and `loc` columns are
@@ -97,7 +98,9 @@ same name from another program.
 
 Limits:
 - Cross-file relations are not framed, so they cannot be bound.
-- A frame that fails to decode reads as empty, because a source has no error path.
+- A frame that fails to decode fails the statement that reads it, naming the file
+  (`Source::failure`, checked when the virtual table filters). The failure is the run's: later
+  statements over it fail too, until the corpus is run again and bound again.
 - A lookup scans its document's rows. There is no per-document index yet.
 
 **Not built yet:** the remainder below, which is the target. That covers cross-file relations,

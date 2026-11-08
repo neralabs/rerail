@@ -579,5 +579,23 @@ named(n, x) :- def(n, x), x = "g".
         .unwrap();
     assert_eq!(rows(&executor, "SELECT sym_text(x) FROM rr_rel_shared"), json!([["f"]]));
     assert!(executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["nope".into()])).is_err());
+    // A frame that does not decode fails the statement that needs it, naming the file; a lookup
+    // into another document does not decode it, so it still answers.
+    let a_node = rows(&executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
+    let b = rows(&executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
+    let root = std::fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
+    let changed = executor
+        .connection()
+        .execute(
+            "UPDATE facts_results SET raw_length = raw_length + 1 WHERE path = ?1 AND plan_digest = \
+             (SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)",
+            [&b, &root],
+        )
+        .unwrap();
+    assert_eq!(changed, 1);
+    executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
+    assert_eq!(rows(&executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
+    let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
+    assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
