@@ -69,6 +69,7 @@ impl Retained {
         phase: &mut crate::code_rule_dsl::sql_executor::phase::Phase,
         full: bool,
     ) -> Result<(String, String)> {
+        if w.profiler.is_some() { phase.analyses.push(json!({"full_rebuild":full,"analysis":self.explain()})); }
         if !full {
             return fused::append(self, w, changes, phase);
         }
@@ -99,7 +100,7 @@ impl Retained {
         let values = phase.view(self.width, &values);
         let heads = phase.relation(
             self.width + 1,
-            &format!("SELECT {cols},count(*) FROM {values} GROUP BY {cols}"),
+            &self.head_query(&cols, &values),
         );
         phase.replace_all(store, &self.heads, &heads)?;
         let result = phase.relation(

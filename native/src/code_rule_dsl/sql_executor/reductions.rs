@@ -14,6 +14,7 @@ mod maintain;
 mod plan;
 mod reducer;
 mod sums;
+mod properties;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
 
@@ -225,7 +226,7 @@ pub(super) fn prepare(
     for state in run.reductions.as_mut().unwrap().values_mut() {
         if !state.ready && potential.contains(&state.output) {
             let _context = w.profile_scope(
-                || json!({"stage":"initialize retained support","relation":state.output}),
+                || json!({"stage":"initialize retained support","relation":state.output,"logicalAnalysis":state.explain()}),
             );
             let _cpu = super::super::logic::profile::span(|| "initialize retained support".into());
             let operation = w.profiler.map(|p| {
@@ -316,7 +317,7 @@ pub(super) fn planned(
                 eligible = false;
                 break;
             }
-            match plan::rule(db, output, id, q, native)? {
+            match plan::rule(db, output, id, q, native, &e.analysis.relation_keys)? {
                 Some(rule) => {
                     nonmonotone |= !rule.reducers.is_empty();
                     rules.push(rule);
@@ -338,6 +339,7 @@ pub(super) fn planned(
             lattice,
             ready: false,
         };
+        crate::code_rule_dsl::logic::profile::decision("retained logical analyses", || state.explain().to_string());
         retained.insert(output.clone(), state);
     }
     Ok(retained)
@@ -447,7 +449,9 @@ impl Retained {
             if fused {
                 continue;
             }
-            if storage.is_some() {
+            if self.support_uniqueness().proven {
+                insert(db, &self.heads, &self.head_query(&heads, &quote(&rule.contributions)), storage)?;
+            } else if storage.is_some() {
                 let hjoin = (0..self.width)
                     .map(|i| format!("h.c{i}=d.h{i}"))
                     .collect::<Vec<_>>()
@@ -500,7 +504,7 @@ impl Retained {
             insert(
                 db,
                 &self.heads,
-                &format!("SELECT {cols},count(*) FROM ({queries}) GROUP BY {cols}"),
+                &self.head_query(&cols, &format!("({queries})")),
                 storage,
             )?;
         }

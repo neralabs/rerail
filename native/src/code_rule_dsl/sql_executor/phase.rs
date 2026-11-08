@@ -24,6 +24,7 @@ pub(super) struct Counts {
 }
 #[derive(Default)]
 pub(super) struct Phase {
+    pub analyses: Vec<Value>,
     definitions: Vec<String>,
     outputs: Vec<Output>,
 }
@@ -145,7 +146,7 @@ impl Phase {
             self.definitions.join(","),
             arms.join(" UNION ALL ")
         );
-        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>()}));
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"logicalAnalyses":self.analyses}));
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.

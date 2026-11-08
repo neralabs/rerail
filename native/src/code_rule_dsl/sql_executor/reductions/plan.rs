@@ -11,6 +11,8 @@ pub(super) struct Atom {
 }
 #[derive(Clone)]
 pub(super) struct Rule {
+    pub uniqueness: Arc<crate::code_rule_dsl::logic::analysis::keys::Proof>,
+    pub scalar_analysis: Arc<crate::code_rule_dsl::logic::analysis::scalars::Analysis>,
     pub contexts: String,
     pub contributions: String,
     pub width: usize,
@@ -107,6 +109,7 @@ pub(super) fn rule(
     id: usize,
     q: &Query,
     native: bool,
+    known: &crate::code_rule_dsl::logic::analysis::keys::Keys,
 ) -> Result<Option<Rule>> {
     if !q.ctes.is_empty() {
         return Ok(None);
@@ -114,6 +117,7 @@ pub(super) fn rule(
     let mut atoms = Vec::new();
     let mut fields_by_name = BTreeMap::new();
     let mut width = 0;
+    let mut input_columns = vec![];
     for (at, item) in q.body.from.iter().enumerate() {
         let relation = match &item.relation {
             // The splitter reads this closed integer domain. It participates in contexts
@@ -128,6 +132,7 @@ pub(super) fn rule(
             return Ok(None);
         }
         let columns = fields(db, &item.relation)?;
+        input_columns.push(columns.clone());
         for (i, c) in columns.iter().enumerate() {
             fields_by_name.insert((item.alias.clone(), c.clone()), width + i);
         }
@@ -171,6 +176,8 @@ pub(super) fn rule(
         };
         sites.push(reducer);
     }
+    let scalar_analysis = reducer::combined::plan(&mut sites, &fields_by_name);
+    let uniqueness = crate::code_rule_dsl::logic::sql::properties::projection(q, &input_columns, known).unique();
     let mut context = q.clone();
     context.body.distinct = true;
     context.body.columns = q
@@ -200,6 +207,8 @@ pub(super) fn rule(
         }
     }
     let mut rule = Rule {
+        uniqueness: Arc::new(uniqueness),
+        scalar_analysis: Arc::new(scalar_analysis),
         contexts: format!("{prefix}_contexts"),
         contributions: format!("{prefix}_contributions"),
         width,
