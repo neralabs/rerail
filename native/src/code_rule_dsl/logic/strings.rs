@@ -351,7 +351,104 @@ impl Vocabulary {
     }
 }
 
+/// The values a relation's column can hold when they come from the program's constants alone: a fact relation's
+/// (rows matching the atom's constants), a constant relation's (`typing::file_local::constant_relations`), or a
+/// derived column every rule fills from such a column or a literal. A superset is enough for its one reader,
+/// `implied_set_tests`. `None` where a value may come from anything else.
+fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<std::collections::BTreeSet<String>> {
+    use std::collections::BTreeSet;
+    if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
+        return None;
+    }
+    let rules: Vec<&super::front::Rule> = prog.rules.iter().filter(|r| r.head.rel == rel).collect();
+    if rules.is_empty() {
+        if prog.inputs.contains(&rel.to_owned()) {
+            return None;
+        }
+        let rows = prog.facts.get(rel)?;
+        return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+    }
+    visiting.push((rel.to_owned(), col));
+    let mut out = BTreeSet::new();
+    for rule in rules {
+        let got = match rule.head.args.get(col) {
+            Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),
+            Some(Term::Var(v)) => rule.body.iter().find_map(|l| {
+                let Literal::Atom(a) = l else { return None };
+                if a.neg {
+                    return None;
+                }
+                let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
+                // A fact relation read with constants: only the rows that hold them.
+                if !prog.rules.iter().any(|r| r.head.rel == a.rel) && let Some(rows) = prog.facts.get(&a.rel) {
+                    let matches = |row: &Vec<super::front::Value>| a.args.iter().zip(row).all(|(t, v)| match (t, v) {
+                        (Term::Str(x), super::front::Value::Str(y)) => x == y,
+                        (Term::Int(x), super::front::Value::Int(y)) => x == y,
+                        (Term::Str(_) | Term::Int(_), _) => false,
+                        _ => true,
+                    });
+                    if prog.inputs.contains(&a.rel) {
+                        return None;
+                    }
+                    return rows.iter().filter(|r| matches(r)).map(|row| match row.get(c) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+                }
+                constant_domain(prog, &a.rel, c, visiting)
+            }),
+            _ => None,
+        };
+        match got {
+            Some(values) => out.extend(values),
+            None => {
+                visiting.pop();
+                return None;
+            }
+        }
+    }
+    visiting.pop();
+    Some(out)
+}
+
+/// Most patterns an implied set test takes (`implied_set_tests`): a bigger table is tested as written.
+const IMPLIED_SET_MAX: usize = 4096;
+
+/// A text test whose pattern is a variable taking a constant table's values (`contains(x, t)` for each deleted
+/// name x of a table) implies the test of the whole table as one set (`contains(t, {…})`): it is added before it.
+/// Over a text relation it becomes a vocabulary test (each string matched once, all patterns at a time), and the
+/// pattern-at-a-time test runs only on the strings that pass, not on every string for every pattern.
+fn implied_set_tests(prog: &mut Program) {
+    let mut added = 0;
+    for i in 0..prog.rules.len() {
+        let mut extra = Vec::new();
+        for l in &prog.rules[i].body {
+            let Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(1) } = l else { continue };
+            let [Term::Var(s), Term::Var(p)] = args.as_slice() else { continue };
+            if !is_test(op) {
+                continue;
+            }
+            let domain = prog.rules[i].body.iter().find_map(|b| match b {
+                Literal::Atom(a) if !a.neg => {
+                    let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == p))?;
+                    constant_domain(prog, &a.rel, c, &mut Vec::new())
+                }
+                _ => None,
+            });
+            if let Some(values) = domain.filter(|d| !d.is_empty() && d.len() <= IMPLIED_SET_MAX) {
+                extra.push(Literal::Cmp { l: Term::Call(op.clone(), vec![Term::Var(s.clone()), Term::Call(SET.to_owned(), values.into_iter().map(Term::Str).collect())]), op: "=", r: Term::Int(1) });
+            }
+        }
+        added += extra.len();
+        let body = &mut prog.rules[i].body;
+        for (k, lit) in extra.into_iter().enumerate() {
+            body.insert(k, lit);
+        }
+    }
+    if added > 0 {
+        super::profile::decision("implied set tests", || format!("{added} text tests of a constant table's values each gained the test of the whole table as one set"));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
+    implied_set_tests(prog);
     let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
     let (mut tests, mut specs) = (Vec::new(), Vec::new());

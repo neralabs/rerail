@@ -1849,13 +1849,17 @@ exports read back from `x`).
 
 Left out, by cause (none of them is a quick fix):
 
-- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
-  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
-  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
-  one down), but `front::cycles` measures by preorder and has no depth count.
+- **lazy-architecture**: was refused as an unbounded value cycle (`la_cls` climbs `ast_parent`, whose decorator
+  rule moves to a later node in preorder). Runs since 2026-11-07: `front::cycles` also measures depth (t12). Its
+  speed and memory are O116.
 - **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
-  `artifact="test_collection"`). Stamped-artifact readers are not written.
-- **versioned-table-names**: `n ~ `pattern`` (O103).
+  `artifact="test_collection"`). Stamped-artifact readers are not written. A grep reader does not replace the
+  probes (t11, O118); test-budget can count tests statically instead (t13, O119).
+- **versioned-table-names**: runs since 2026-11-07 (O103).
+
+2026-11-07: `.scope` was not applied at all before then, so the pack's counts above included findings in test
+files and outside each policy's directories. With it, the 66 running rules give 32 findings on s50 and 58 on s200
+(637 and 2,960 before). Peak RSS on s200 is 1,463 MB, 1,163 MB without lazy-architecture.
 
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
@@ -2010,6 +2014,12 @@ assumed. The test passes (merge of Typing-support-final-shape, 56a615905).
 pattern, over the chunk, and give an input relation of its matches and captures, which the rule then joins.
 
 **Closure:** a pattern literal plans and runs, and versioned-table-names runs in the pack.
+
+Closed (2026-11-07): ``n ~ `pattern` `` lowers to `ast_match(p, n, g, c)` atoms (capture "" is n; each `$X` binds
+X; a negated pattern binds nothing). The batch compiles each pattern once per grammar with ast-grep, matches it over
+each document, and maps matches to projected nodes by kind and byte range (`core_rr::CoreRows::patterns`). Test:
+`rr::tests::pattern_literals_match_and_bind_their_metavariables`. versioned-table-names gives 0 findings on the
+1,000-file slice; the Python linter reports the full tree clean. `$$$X` captures nothing yet.
 
 ## O104. Two guards keep a run's store objects from collection; one should go
 
@@ -2272,3 +2282,83 @@ program back, and other corpus tests fail the same way (`cross_file_rows_are_mem
 further: the code is final-shape's (0073, 0074).
 
 **Closure:** a program read back from the store runs as the one prepared, with a test that runs twice on one store.
+## O116. lazy-architecture's speed and memory
+
+**What was wrong with the shape.** The rule was 52 ms a file on 1,000 files (52.5 s CPU) and did not finish the
+full tree in 600 s. The cost was not one slow join. Six things together made the engine do work the Python script
+never does:
+
+1. *Most of the program ran cross-file.* 438 of 700 rules ran once over all files, holding 621 MB of base
+   relations on 1,000 files. The causes were equal variables that carried no location, constant tables, joins
+   through symbols only, and string "ask" relations. Fixed: equalities carry locations, constant relations are
+   derived in both parts.
+2. *Every string annotation was parsed as a guest*, 36k on 1,000 files, though no rule the outputs need reads
+   one. Fixed: guests are made only when a needed rule reads them.
+3. *Single literals fell back to SQLite.* Concatenation, constant sets and split heads had no native step.
+   Fixed (`e6c4fcd04`).
+4. *Every file was read.* The script reads its scope, about a third of the tree. Fixed: the run reads the
+   documents the policies' `.scope` selects (O117).
+5. *Two plans scanned what they should look up.* LA_018 tested each source line against 55 surface names, one
+   at a time. Fixed: a test of a constant table's values first tests the whole table as one set
+   (`strings::implied_set_tests`). `la_scan` read 28M containment pairs to find each function's 467k nodes,
+   because `within`'s fanout by ancestor was weighted by subtree size (about 1,000). Fixed: priced by mean
+   subtree size, as `nearest`'s descent is.
+6. *The cross part held whole-corpus node attributes* (`line`, `docof`, `visit_index`, `node`: 673 MB on the
+   full tree) for about ten thousand lookups. A file-local relation with a row per node (`la_leaf_target`) was
+   exported whole because the one rule that read it also read a cross-file relation. Fixed: a join of
+   file-local relations alone is pushed into the chunks, and a chunk keeps base attribute rows only for the
+   nodes its exports hold (`file_local::semijoin_bases`).
+
+One rule bug showed up on the full tree: `frozenset(x for x in y)` read as `frozenset()` gave 11 LA-017
+findings. Fixed in `la_arg`.
+
+**Now.** Full data-layer tree (3,117 files in scope of 9,024): 0 findings, as the script. The run took 43 s CPU
+and 881G instructions, against 151 s CPU and over 2,770G instructions before. The engine's peak footprint is
+829 MB, against 3.6 GB before; `time -l` reports 1.36 GB maximum RSS. CPU figures were taken at load average 45.
+The script takes 5.4 s CPU on the same tree. The engine is still about 8x slower: 34 s of the 43 s is the
+file-local part, spread over strata of a few hundred ms each (`la_ask_*` callee resolution, `la_vis`,
+`la_base_name`, `ast_parent`).
+
+The whole pack on s200 (65 rules, 172 files in scope) runs in 34.8 s CPU at a 1,257 MB peak footprint, over
+the 1 GB budget. Three rules had passed 3 GB on 50 files (match contexts that were cross products) and one failed
+to run (an empty demand split); both are fixed (`77762bf31`).
+
+**Closure:** the full tree runs within the 1 GB budget by the OS's measure, at no more than a few times the
+script's CPU, with its findings equal to the script's; the s200 pack runs within 1 GB.
+
+## O117. `.scope` forms the run does not read
+
+The run now reads only the documents the policies' `.scope` globs (`dirs`, `include`, `exclude`, `tests false`)
+select, as the scripts' discovery does. On 1,000 files that is 348. Still not read: `report dirs`, `text`,
+`embedded`, and `option("…")` entries, whose values come from policy options. In a pack that combines policies,
+documents are the union of their scopes. Each policy's facts are not yet limited to its own scope.
+
+**Closure:** each `.scope` form is applied or refused by name, and in a combined pack each policy reads only its
+scope's facts.
+
+## O118. A grep reader for files that are not documents
+
+t11 specifies `.input r(IO=grep, glob=…, re=…)`: one walk and one multi-pattern scan per file for all grep inputs,
+rows memoised by content. It is for lock files, CI YAML and `.md` tables. It does not replace
+plan-composition-architecture's runtime probes, which hash objects the builder makes as it runs.
+
+**Closure:** decided (t11 §10), then built or dropped.
+
+## O119. test-budget from a static model of pytest's collection
+
+t13 counts tests from the trees: files, `Test*` classes and their bases across files, parametrize lists
+(constants resolved across files), fixtures with `params=`. A prototype gives 13,610 against pytest's 14,449 on
+the 9,010-file tree (−5.8%), and −5.9% on main. Missing in the engine: a `product` aggregate, a TOML reader for
+pytest's settings, and findings in one scope with names resolved across the whole workspace.
+
+**Closure:** the model is written in `.rr`, checked against the per-file counts, and test-budget reports it.
+
+## O120. A regex group over a span binds a span where rules compare text
+
+Since `5e026dcfa` (merged from the final-shape branch), `match("…(?<x>…)", sp)` over a span `sp` binds `x` to the
+group's span (`rx_span`'s `m`), not its text. `bounded-composed-graph-paths` compares such an `x` with strings
+(`bcgp_block(p, "PathPattern", h, _)`), so its program fails to lower: `the string "PathPattern" stands where an
+integer goes`. The rule is skipped in the s200 pack run.
+
+**Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
+the pack runs the rule again.

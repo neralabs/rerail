@@ -71,6 +71,8 @@ pub(crate) struct Projection {
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    /// The AST patterns the program matches (`front::Program::ast_patterns`): rows of `ast_match`.
+    pub(crate) ast_patterns: Vec<String>,
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
     text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
@@ -81,7 +83,7 @@ pub(crate) struct Projection {
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -99,7 +101,7 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -776,6 +778,8 @@ impl Batch {
         } else {
             Vec::new()
         };
+        // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
+        let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
@@ -810,6 +814,18 @@ impl Batch {
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &mut string);
+            }
+            if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
+                && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
+            {
+                let compiled = ast_patterns.entry(tag).or_insert_with(|| {
+                    projection
+                        .ast_patterns
+                        .iter()
+                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
+                        .collect()
+                });
+                c.patterns(&p, dialect, lang, compiled, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));

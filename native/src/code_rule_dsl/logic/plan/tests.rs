@@ -700,7 +700,7 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let result = run(&p, &db, inputs, None, None);
+    let result = run(&p, &db, inputs, None, Hooks::default());
     unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
     let result = result.unwrap();
     assert_eq!(result.outputs["captured"].len(), 1000);

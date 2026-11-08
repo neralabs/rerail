@@ -121,6 +121,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "token_before" | "token_after" => &["x", "t"],
         "tree_digest" | "annotation_text" | "annotation_constant_repr" | "call_receiver_text" | "call_text" | "call_function_text" => &["n", "s"],
         "rx_span" => &["p", "c", "j", "g", "m"],
+        "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
         "guest" => &["g", "host", "at", "grammar"],
         "doc_role" => &["d", "r"],
