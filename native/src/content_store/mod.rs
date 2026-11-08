@@ -34,7 +34,6 @@ pub(crate) use prefilter::TapePrefilter;
 mod publication;
 mod read_cache;
 mod reclamation;
-pub use reclamation::CorpusRunLease;
 mod relationships;
 mod results;
 mod rows;
@@ -204,7 +203,7 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    pub(crate) fn from_sha256_digest(digest: [u8; 32]) -> Self {
+    pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
 
@@ -309,6 +308,19 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
+impl SourceId {
+    /// The row id, to name a source across runs of one process (a run handing a source to the next to hold).
+    pub(crate) fn row(self) -> i64 {
+        self.0
+    }
+
+    /// The source a row id names (`row`).
+    pub(crate) fn from_row(row: i64) -> Self {
+        SourceId(row)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 

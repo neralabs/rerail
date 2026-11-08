@@ -142,6 +142,19 @@ fn named_errors() {
     // Down one way and up the other: no key moves one way.
     let both = format!("{decls}q(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- field(n, \"object\", o), q(o, p), nm(n, s).\nq(o, s) :- field(n, \"object\", o), q(n, s).\n");
     assert!(matches!(parse(&both), Err(Error::UnboundedValueCycle { .. })));
+    // O111: through constant keys that never come back (`era001`'s grammar), finitely many values; a key that comes
+    // back is not bounded.
+    let grammar = ".decl g(k: symbol, r: symbol)\ng(\"N\", \"[a-z]+\").\ng(\"E\", @cat(n, \"(?:,\", n, \")*\")) :- g(\"N\", n).\ng(\"S\", @cat(\"(?:\", e, \")\")) :- g(\"E\", e).\n";
+    assert!(parse(grammar).is_ok(), "{:?}", parse(grammar).err());
+    let back = format!("{grammar}g(\"N\", @cat(s, \"x\")) :- g(\"S\", s).\n");
+    assert!(matches!(parse(&back), Err(Error::UnboundedValueCycle { .. })));
+    // A count whose next value a lower stratum binds (`era_run` along `era_cline`'s lines) takes its values.
+    let lines = ".decl ln(d: number, l: number)\n.input ln\n.decl run(d: number, l0: number, l: number)\nrun(d, l, l) :- ln(d, l).\nrun(d, l0, @add(l, 1)) :- run(d, l0, l), t = @add(l, 1), ln(d, t).\n";
+    assert!(parse(lines).is_ok(), "{:?}", parse(lines).err());
+    let unbound = ".decl ln(d: number, l: number)\n.input ln\n.decl run(d: number, l0: number, l: number)\nrun(d, l, l) :- ln(d, l).\nrun(d, l0, @add(l, 1)) :- run(d, l0, l), t = @add(l, 2), ln(d, t).\n";
+    assert!(matches!(parse(unbound), Err(Error::UnboundedValueCycle { .. })));
+    let same = ".decl g(k: symbol, r: symbol)\ng(\"N\", \"a\").\ng(\"N\", @cat(n, \"a\")) :- g(\"N\", n).\n";
+    assert!(matches!(parse(same), Err(Error::UnboundedValueCycle { .. })));
     // A derived relation's guarantee carries the bound (`attr_of` in T's calls.rdl).
     let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());

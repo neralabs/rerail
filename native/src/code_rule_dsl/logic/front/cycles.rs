@@ -424,7 +424,21 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 break;
             }
         }
+        // A head term that a finite variable is assigned (`$t = @add($l, 1), lines(d, $t, _)` and the head's
+        // `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's finitely many values
+        // (O111: `era001`'s `era_run`).
+        let finite_terms: Vec<&Term> = rule
+            .body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if finite.contains(v) => Some(r),
+                _ => None,
+            })
+            .collect();
         for (j, t) in rule.head.args.iter().enumerate() {
+            if finite_terms.contains(&t) {
+                continue;
+            }
             for (c, made) in sources(t, &from) {
                 out.push((c, (rule.head.rel.clone(), j), made));
             }
@@ -752,6 +766,58 @@ fn keys<'a>(choices: &[(&'a str, Vec<Key>)], limit: usize) -> Vec<BTreeMap<&'a s
     out
 }
 
+/// Whether a component recurses only between constant keys, and never back to one (O111): each relation has a
+/// column that is a constant in every rule's head and in every atom of the component read, and the graph from a head's
+/// `(relation, constant)` to its atoms' is acyclic. Every derivation is then at most as deep as that graph, and makes
+/// finitely many values: `era001`'s `era_re` builds its statement grammar from `N` up to `STMT` this way.
+fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
+    let key = |t: &Term| match t {
+        Term::Str(s) => Some(format!("s{s}")),
+        Term::Int(n) => Some(format!("i{n}")),
+        _ => None,
+    };
+    let arity = |rel: &str| rules.iter().find(|r| r.head.rel == rel).map_or(0, |r| r.head.args.len());
+    // Each relation's key column: the first that every head and every read in the component holds a constant at.
+    let mut columns = BTreeMap::<&str, usize>::new();
+    for rel in component {
+        let reads = rules.iter().flat_map(|r| {
+            r.body.iter().filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == *rel => Some(a),
+                _ => None,
+            })
+        });
+        let heads = rules.iter().filter(|r| r.head.rel == *rel).map(|r| &r.head);
+        let atoms: Vec<_> = heads.chain(reads).collect();
+        let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
+        columns.insert(rel.as_str(), c);
+    }
+    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.clone(), k));
+    let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
+    for rule in rules {
+        let Some(head) = node(&rule.head) else { return false };
+        let to = graph.entry(head).or_default();
+        for l in &rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && component.contains(&a.rel)
+            {
+                let Some(n) = node(a) else { return false };
+                to.insert(n);
+            }
+        }
+    }
+    // Acyclic: repeatedly remove the keys that reach no other key.
+    let mut left = graph;
+    loop {
+        let sinks: Vec<_> = left.iter().filter(|(_, to)| to.iter().all(|t| !left.contains_key(t))).map(|(k, _)| k.clone()).collect();
+        if sinks.is_empty() {
+            return left.is_empty();
+        }
+        for k in sinks {
+            left.remove(&k);
+        }
+    }
+}
+
 /// The components with a value cycle, each bounded by the tree; fails on one that is not
 /// (`Error::UnboundedValueCycle`).
 pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
@@ -774,6 +840,12 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         }
         let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
         if !value_cycle(prog, &rules, component) {
+            continue;
+        }
+        // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so
+        // finitely many values when the constants do not come back.
+        if constant_keyed(&rules, component) {
+            treed.push(component.clone());
             continue;
         }
         // The relations with no node column: functions between the others' rows, or keyed by a count.

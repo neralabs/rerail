@@ -245,3 +245,82 @@ fn serverplan_quality_s_regexes_lower() {
     // Most are literal sets in disguise.
     assert!(by.get("literals").copied().unwrap_or(0) * 2 > patterns.len(), "{by:?}");
 }
+
+/// A group of automata determinized once and read back from the cache matches what it matched when built, and what
+/// each pattern alone matches (decision 0075). A second set of searchers reads every group; none is built again.
+#[test]
+fn searchers_read_from_the_cache_match_as_when_built() {
+    #[derive(Default)]
+    struct Memory(std::sync::Mutex<HashMap<String, Option<Vec<u8>>>>);
+    impl vocabulary::DfaCache for Memory {
+        fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
+            self.0.lock().unwrap().get(key).cloned()
+        }
+        fn put(&self, key: &str, dfa: Option<&[u8]>) {
+            self.0.lock().unwrap().insert(key.to_owned(), dfa.map(<[u8]>::to_vec));
+        }
+    }
+    let mut rng = Lcg(11);
+    let mut terms = (0..400).map(|_| {
+        let len = rng.below(9) as usize;
+        text(&mut rng, len)
+    }).collect::<Vec<_>>();
+    // Text the DFA may give up on (non-ASCII), asked of the lazy one instead.
+    terms.extend(["é", "caché", "_écache", "ß_cache"].map(|t| t.as_bytes().to_vec()));
+    let lowered = PATTERNS.iter().map(|p| regex(p)).collect::<Vec<_>>();
+    let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
+    let refs = terms.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let cache = Memory::default();
+    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    assert_eq!(built.compiling.read, 0);
+    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    assert_eq!(read.compiling.built, 0, "{:?}", read.compiling);
+    assert_eq!(read.compiling.read + read.compiling.lazy, built.compiling.built + built.compiling.lazy);
+    let (from_built, _) = built.evaluate(&refs);
+    let (from_cache, _) = read.evaluate(&refs);
+    assert_eq!(from_cache, from_built);
+    for (p, pattern) in PATTERNS.iter().enumerate() {
+        let truth = regex::bytes::Regex::new(pattern).unwrap();
+        let want = refs.iter().enumerate().filter(|(_, t)| truth.is_match(t)).map(|(i, _)| i as u32).collect::<Vec<_>>();
+        assert_eq!(from_cache[p], want, "{pattern} ({})", lowered[p].production);
+    }
+}
+
+/// Decision 0075's measurement: thread CPU to determinize a group of word-shaped patterns, against reading it back.
+#[test]
+#[ignore = "a measurement (decision 0075), not a check"]
+fn determinizing_a_group_costs_more_than_reading_it() {
+    #[derive(Default)]
+    struct Memory(std::sync::Mutex<HashMap<String, Option<Vec<u8>>>>);
+    impl vocabulary::DfaCache for Memory {
+        fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
+            self.0.lock().unwrap().get(key).cloned()
+        }
+        fn put(&self, key: &str, dfa: Option<&[u8]>) {
+            self.0.lock().unwrap().insert(key.to_owned(), dfa.map(<[u8]>::to_vec));
+        }
+    }
+    let cpu = || {
+        let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        u + s
+    };
+    let patterns = [
+        r"(?i)select\s+\w+\s+from", r"[A-Z][a-z]{3,12}[0-9]{1,4}", r"\w+_[0-9]{2,6}x", r"(?i)^(?:todo|fixme|xxx)\b",
+        r"[a-f0-9]{8}-[a-f0-9]{4}", r"(?i)password\s*=", r"\b[A-Z_]{4,}\b", r"^\s*#\s*type:",
+        r"[0-9]+\.[0-9]+\.[0-9]+", r"(?i)https?://\w+", r"__\w+__", r"\w+\.\w+\(\)",
+        r"^[a-z]+(?:_[a-z0-9]+)*$", r"(?i)\bsleep\s*\(", r"[<>]=?\s*[0-9]{2,}", r"\\[nrtx0-9]",
+    ];
+    // ASCII classes: Unicode `\w` and `\b` do not determinize within the limit, and such a group runs lazily.
+    let ascii = patterns.iter().map(|p| format!("(?-u){}", p.replace(r"\b", ""))).collect::<Vec<_>>();
+    let lowered = ascii.iter().map(|p| regex(p)).collect::<Vec<_>>();
+    let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
+    let cache = Memory::default();
+    let at = cpu();
+    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    let build = cpu() - at;
+    let at = cpu();
+    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    let reading = cpu() - at;
+    let bytes: usize = cache.0.lock().unwrap().values().flatten().map(Vec::len).sum();
+    println!("built {:?} in {build:.4} s CPU; read {:?} in {reading:.4} s CPU; {bytes} bytes stored", built.compiling, read.compiling);
+}

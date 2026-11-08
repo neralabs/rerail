@@ -168,7 +168,9 @@ impl ContentStore {
         for row in rows {
             let (path, plan, codec, raw_length, frame) = row?;
             let plan = digest(&plan)?;
-            let entry = decode(codec, raw_length, frame)?;
+            // A row whose frame does not decode to its length is a miss (O112): the clause runs again, and its
+            // result replaces the row.
+            let Ok(entry) = decode(codec, raw_length, frame) else { continue };
             memo.results.insert(
                 plan,
                 FactsResult {
@@ -197,7 +199,10 @@ impl ContentStore {
         for (path, set, words, codec, raw_length, counts) in rows {
             let set = digest(&set)?;
             let plans = self.plan_set(&connection, set)?;
-            let mut counts = decode_counts(&decode(codec, raw_length, counts)?)?;
+            // Undecodable counts are a miss for the row's plans (O112); the next write replaces them.
+            let Some(mut counts) = decode(codec, raw_length, counts).ok().and_then(|raw| decode_counts(&raw).ok()) else {
+                continue;
+            };
             for (ordinal, plan) in plans.iter().enumerate() {
                 if word_bit(&words, ordinal) && !memo.results.contains_key(plan) {
                     let c = counts.remove(&(ordinal as u32)).ok_or_else(|| {
@@ -415,12 +420,16 @@ fn merge_completion(
         })
         .optional()?;
     let (mut merged_words, mut merged_counts) = match stored {
-        Some((w, codec, raw_length, frame)) => (
-            w.chunks_exact(8)
-                .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
-                .collect::<Vec<_>>(),
-            decode_counts(&decode(codec, raw_length, frame)?)?,
-        ),
+        // A stored row that does not decode is replaced, not merged (O112).
+        Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, frame).ok().and_then(|raw| decode_counts(&raw).ok()) {
+            Some(counts) => (
+                w.chunks_exact(8)
+                    .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
+                    .collect::<Vec<_>>(),
+                counts,
+            ),
+            None => (Vec::new(), HashMap::new()),
+        },
         None => (Vec::new(), HashMap::new()),
     };
     if merged_words.len() < words.len() {

@@ -48,7 +48,7 @@ py_want("builtins").
 .decl py_docmod(d: number, p: symbol, q: symbol)
 py_docmod(d, p, q) :- doc(d, p, q), q != "".
 .decl py_workspace(q: symbol)
-py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _, _).
+py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _).
 
 // VERSIONS: `name: 3.0-` or `name: 3.0-3.9`, maybe with a comment (`_typeshed: 3.0-  # ...`). A module not listed
 // has its nearest listed parent's range.
@@ -122,4 +122,4 @@ py_before(q, n) :- py_at(q, _, l), py_layer(l, m), py_layer(_, n), m < n.
 .decl py_resolves(q: symbol, f: symbol, layer: symbol)
 py_resolves(q, f, l) :- py_at(q, f, l), py_layer(l, n), !py_before(q, n).
 
-load(f, q, "python", "library") :- py_resolves(q, f, _).
+load(f, q, "python") :- py_resolves(q, f, _).

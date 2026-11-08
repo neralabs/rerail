@@ -39,7 +39,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O37 | Phase 4 / 8 | The lowered B006 clause reports 4 mutable defaults on S7's `f010.py` that W does not (`Optional[…]`, `Annotated[…]` annotations); `the_slice_finds_ws_findings_on_real_files` ignored | open |
 | O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS`. 2026-11-04: tasks are implicit in segments and lanes are fitted to the free budget (decision 0033); 37 of 39 equal | closed |
 | O40 | Phase 9 | Two interpreted S2 clauses (ruff-async251, ruff-sim300) are recursive groups whose host rounds exceed the 200-launch limit (`BackendLaunchLimit`); their rounds belong on the device | open |
-| O41 | Phase 10 | Bounded cross-file rounds (k = 2) leave calls.rdl short of its fixpoint on the vtab corpus (a third file crossing adds 8 of 5,112 hop rows); the unconverged frontier is reported but not yet marked pending | open |
+| O41 | Phase 10 | Bounded cross-file rounds (k = 2) leave calls.rdl short of its fixpoint on the vtab corpus (a third file crossing adds 8 of 5,112 hop rows); the unconverged frontier is reported but not yet marked pending | closed (2026-11-07): the typing programs no longer run in rounds; the cross-file part is one fixpoint (decision 0065 step 1) |
 | O42 | Phase 10 | Terms, declarations and dependency summaries wired into the corpus runner (`corpus::typing`); left: terms inside the engine's lattice, variance | closed (2026-11-04) |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition. Roots that are walks no longer size each file for a backend that never runs (one packed batch per file, ~130 MB over the GPU run's): 752 MB, in the GPU run. The kernels keep no thread memory (the driver's scratch, decision 0034): 603 MB, 335 MB after the audit | open |
 | O43 | Phase 10 (step 30) | Launch cost on the device: each chunk pays one GPU wake-up from idle (about 0.85 ms, 12 of 19–22 ms of host wait on async-sync-boundary at 1 in 8, decision 0040) because the GPU sits idle while the CPU runs the chunk's joins. The joins themselves are small (about 0.1 s of 7.7 s CPU, at most 245K rows into a step over the run), so the goal is not join speed: it is to keep the chunk on the device in one launch. Close by running a chunk's native joins on Metal in the same command buffer as its nearest ancestors (one command buffer, one wait a chunk): plan chosen on the host from statistics as now; each step a sort or hash join kernel over the shared relations, counting then writing (or writing into a reused block and retrying on overflow); negation as an anti-join; text tests as chunked matchers; aggregates and cross-file rounds stay as they are. Loading inputs, building indexes and the per-chunk statistics (about 2.8 s of CPU) are the same shape and move with it. Validated by the profile's device phases: one launch per chunk, schedule (GPU waking) no longer paid per chunk, findings unchanged | open |
@@ -2094,6 +2094,15 @@ them is enough.
 
 **Closure:** one lease, the other's tests kept against it.
 
+**Closed (2026-11-07):** the shared file lock (`hold_collection`) is the run's one hold. Every collector takes it
+exclusively first (`try_collect`: `collect`, `keep_corpus_runs`, `collect_corpus_pass`), and a process that dies
+releases it with its descriptors. `begin_corpus_run`, its pin kind and the check in `collect` are gone: the pin row
+cost a write transaction per run and, when a run died, held all generation-based collection off for an hour. The
+row lease had no tests of its own. `readers_publish_memos_and_roots_before_collection_resumes` checks what both
+promised: a reader's unrooted source, tape and memo rows outlive collection until its manifest names them. Removing
+the row lease showed that the stored prepared program (decisions 0073 to 0075) had no root and was collected
+between runs: the run's manifest now names its sources.
+
 ## O109. A run read from memoised base rows derives other rows
 
 Decision 0063 memoises the base rows a file hands the cross-file part (`memo::Entry::base`), each row its file's by
@@ -2111,6 +2120,13 @@ reads base relations) is ignored with this reason, so a session reruns every fil
 **Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
 the session test runs again.
 
+**Closed (2026-11-08):** with the hold-back lifted, the 4096-node run, read whole from the memo, gives 241 `call_open`
+rows and 256 `call_target`, as T and the evaluated run do. Every output file is equal. The guest-hiding fix (O110)
+was in when they first agreed, and it is the likely cause: hiding read `tbv`'s `live_asg` from its annotation copy
+only. That was not proven by reverting it. One gap remained: a run read whole from the memo wrote no
+`rr_embed_req.csv`, a file-local output no file made, which the evaluated run writes empty. Every output now has its
+file. The hold-back is removed, and `a_session_reruns_what_an_edit_changed` runs again.
+
 ## O110. Four builtin receivers are Unknown after the Typing-support merge
 
 After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`
@@ -2123,6 +2139,11 @@ passes on that branch alone was not checked: building a second target would exce
 ignored with this reason.
 
 **Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
+
+**Closed (2026-11-07):** 44 exact of 44, and the test runs again. The cause was the engine, not the merge: guest
+hiding (decision 0058 §2) specialized `tbv`'s `live_asg` to its annotation copy because `tv`'s first column may hold
+an annotation's node, and so dropped every host row of it. A variable now needs to be definitely a guest's node to be
+specialized; a rule whose variable only may be one is split into the host's rule and a guest clone (0058, amended).
 
 ## O111. Python pack rules that fail to run, alone or combined
 
@@ -2143,6 +2164,38 @@ points to how a directory is combined, not to the bandit rules. Not investigated
 
 **Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
 
+**Progress (2026-11-08).** `check-rr` over the 546 files: 539 pass the reader (526 before).
+
+- **Messages:** `{{` and `}}` are braces of a message's text (`rr::lower::findings`), as the converter already
+  wrote them (`convert::policy`). The 14 messages with literal braces now double them. In `fast003`,
+  `{{{K}}}` is a brace around the parameter's name.
+- **Value cycles:** `era001` runs. A recursion only between constant keys that never come back
+  (`era_re("EXPR", …) :- era_re("OPD", …)`) is bounded (`cycles::constant_keyed`). So is a head term equal to a
+  term a lower stratum's variable is assigned (`era_run`'s `@add($l, 1)` checked against `era_cline`).
+- **Combining:** a directory's policies are read as `run-rr` reads one (`tools::program_text`), so their language's
+  base relations are declared. The "relation kind … not declared" failure is gone. 60, 120 and 240 rules
+  combine and run.
+
+What remains:
+
+- **Listed with their reason:**
+  - `ruff-b005`: its index rises until `@slice` gives `""`, which no static bound sees. Rewritten with
+    `$j < strlen($v)` it would be a capped count.
+  - `ruff-fast003`, `ruff-perf403` and `ruff-ruf001` to `ruf003` (with ruf001's `confusables.rr`): `match_all`
+    over a node, O80.
+- **The full pack (539 rules) does not prepare within 2 minutes.** Preparing was superlinear. Three hot spots are
+  fixed:
+  - `lower` rebuilt every column's domain map per rule (52.8 s to 0.13 s at 240 rules);
+  - `strings::vocabulary_columns` scanned every rule per declaration;
+  - guest hiding's `carry` re-analysed every rule each round, now a worklist.
+
+  At 240 rules the run takes 23.6 s user, against 91.4 s before. At 539, `hiding::hide` is still about 58 s of the
+  68 s that combining takes (sampled): its specialization loop runs `carry` from scratch each round and clones
+  every rule. Peak RSS is 2.0 GB at 240 rules, over the 1 GB budget.
+
+**Closure (narrowed):** the combined pack prepared within the run cap and the memory budget: hiding's
+specialization incremental, and the pack's peak memory measured and cut.
+
 ## O112. The shared tape cache holds memo rows whose length does not match
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
@@ -2158,6 +2211,11 @@ and the run fails instead of missing. The file was not moved (DB files are not m
 fresh store (`RERAIL_TAPE_CACHE`).
 
 **Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.
+
+**Closed (2026-11-07):** a row that does not decode is a miss. `facts_memo` skips a result row whose frame does
+not decode to its length, and a completion row whose counts do not, so only that row's plans are evaluated again.
+`put_facts_memo` overwrites a result row, and a completion row it cannot merge into is replaced instead of failing
+the write (`a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced`). The writer of the bad rows was not found.
 
 ## O113. lazy-architecture's speed and memory
 
@@ -2239,4 +2297,3 @@ integer goes`. The rule is skipped in the s200 pack run.
 
 **Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
 the pack runs the rule again.
-

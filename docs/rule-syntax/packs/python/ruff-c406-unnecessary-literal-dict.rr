@@ -13,7 +13,7 @@
 //   c4_call(c, x), c4_only(c, a), list_like(e, k)
 
 .violation C406(at: node, kind: symbol) code "C406"
-    "Rewrite `dict([(k, v), ...])` as the dict literal `{k: v, ...}` and `dict([])` as `{}`; check the result when a pair unpacks with `*`, as in `(k, *v)`."
+    "Rewrite `dict([(k, v), ...])` as the dict literal `{{k: v, ...}}` and `dict([])` as `{{}}`; check the result when a pair unpacks with `*`, as in `(k, *v)`."
     suppress ruff "C406"
 C406(c, k) :- c4_call(c, "dict"), c4_only(c, a), list_like(a, k), (k = "list" ; k = "tuple"),
     count : { child(a, e, _), !kind(e, "comment"), !two_tuple(e) } = 0.

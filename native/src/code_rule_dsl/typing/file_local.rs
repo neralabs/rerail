@@ -574,7 +574,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
 /// relations a cross-file rule reads) and `base` (the base relations a cross-file rule reads, and `node` and `doc`,
 /// which decode findings). In `cross`, both are inputs. `same_doc` names, for each file-local and base relation, the
 /// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Programs {
     pub(crate) local: crate::code_rule_dsl::logic::front::Program,
     pub(crate) cross: crate::code_rule_dsl::logic::front::Program,

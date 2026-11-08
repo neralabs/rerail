@@ -153,6 +153,19 @@ Bad(n, "second", 8) :- kind(n, "identifier").
     }
 }
 
+/// O111: `{{` and `}}` are braces of a message's text, as the converter writes them; a lone `}` stays text.
+#[test]
+fn doubled_braces_in_a_message_are_text() {
+    let rows = finding_contract("x = y\n", r#"
+.policy "contract:braces" revision 1
+.language python
+.violation Lit(at: node, why: symbol) "use `{{k: v for ...}}` for {why} }"
+Lit(n, "dicts") :- kind(n, "identifier").
+"#);
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["message"] == "use `{k: v for ...}` for dicts }"), "{rows:?}");
+}
+
 /// This producer binds a source span, not a tree node. Per-file memoization must use its document key.
 #[test]
 fn source_span_producers_retain_rows_through_local_planning() {
@@ -1221,7 +1234,13 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
 .output called
 "#).unwrap();
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    // Each run's files end in a comment of its own (this test's directory and the chunk size), so no run reads
+    // another's rows from the per-file memo (decision 0052): every run evaluates its chunks.
+    let originals: Vec<(std::path::PathBuf, String)> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "py")).map(|p| { let s = std::fs::read_to_string(&p).unwrap(); (p, s) }).collect();
     let run = |chunk_nodes: usize| {
+        for (p, s) in &originals {
+            std::fs::write(p, format!("{s}# chunks of {chunk_nodes} in {}\n", dir.display())).unwrap();
+        }
         let out = dir.join(format!("out{chunk_nodes}"));
         // Every file evaluated in every run: a memo hit would not be chunked (decision 0063 memoises base rows too).
         let options = serde_json::json!({ "memo": "off" });
