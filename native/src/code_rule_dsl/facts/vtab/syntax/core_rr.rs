@@ -154,7 +154,7 @@ pub(super) fn is_unit(family: Family, kind: &str) -> bool {
 }
 
 /// A unit's name: the text of its first named child that is an identifier (Python's `def f`, `class C`).
-fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<&'a str> {
+pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<&'a str> {
     f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
 }
 
@@ -814,7 +814,7 @@ impl CoreRows {
                     {
                         continue;
                     }
-                    let cid = i64::from(p.key) << 32 | i64::from(c);
+                    let cid = Projected::id(p.key, &p.defs, c);
                     let text = &src[a as usize..b as usize];
                     let found: std::sync::Arc<[(u32, u32, u32, u32)]> = match memo && text.len() <= RX_MEMO_TEXT {
                         true => match self.rx_memo.get(&(pat as usize, Box::from(text))) {
@@ -831,7 +831,7 @@ impl CoreRows {
                         let name = names[g as usize].expect("a named group");
                         let id = base + x.spans.len() as u32;
                         x.spans.push([a + s0, a + e0]);
-                        self.rx_span.push([pat, cid, i64::from(j), string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
+                        self.rx_span.push([pat, cid, i64::from(j), string(name) as i64, Projected::id(p.key, &p.defs, id)]);
                         captured.entry((pattern, name)).or_default().push(([a + s0, a + e0], id));
                     }
                 }
