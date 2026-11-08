@@ -223,7 +223,7 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
 
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
-    let mut st = conn.prepare(&format!("SELECT {} FROM {table}", cols.join(", ")))?;
+    let mut st = conn.prepare(&format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
     let mut rows = st.query([])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -478,7 +478,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     }
     for rel in store.rels.iter().filter(|_| comp.write) {
         let marks: Vec<String> = (1..=rel.types.len()).map(|i| format!("?{i}")).collect();
-        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", rel.table, marks.join(", ")))?;
+        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", crate::code_rule_dsl::logic::sql::table(&rel.table), marks.join(", ")))?;
         for id in rel.stored..rel.n {
             let vals: Vec<Value> = rel.row(id).iter().zip(&rel.types).map(|(&v, &t)| {
                 if t == b's' { Value::Text(syms.names[v as usize].clone()) } else { Value::Integer(v) }
@@ -542,6 +542,16 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
+        }
+        // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics (as `native::setfix`; here
+        // each probe runs it, not once a wave per rule).
+        "whole" => {
+            let j = parse_join(conn, &unhex(body)?, &mut SYMS.write().unwrap())?;
+            let mut store = comp.store.write().unwrap();
+            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
+            drop(store);
+            comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?.whole = Some(j);
+            return Ok(());
         }
         other => return Err(err(format!("unknown probe kind {other}"))),
     };
@@ -742,7 +752,7 @@ pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
     let Some(rel) = DERIVED.lock().unwrap().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
     let syms = SYMS.read().unwrap();
     let marks: Vec<String> = (1..=rel.k).map(|i| format!("?{i}")).collect();
-    let mut ins = conn.prepare(&format!("INSERT INTO {table} VALUES ({})", marks.join(", ")))?;
+    let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", crate::code_rule_dsl::logic::sql::table(table), marks.join(", ")))?;
     for id in rel.stored..rel.len() {
         let vals: Vec<Value> = rel.row(id).iter().zip(&rel.types).map(|(&v, &t)| {
             if t == b's' { Value::Text(syms.names[v as usize].clone()) } else { Value::Integer(v) }
@@ -779,7 +789,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     let base = which == "b";
     let (table, cols, types) = (unhex(table)?, unhex(cols)?, types.as_bytes());
     let (t0, c0) = (Instant::now(), thread_cpu());
-    let mut st = conn.prepare(&format!("SELECT {cols} FROM {table}"))?;
+    let mut st = conn.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(&table)))?;
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
     while let Some(r) = q.next()? {

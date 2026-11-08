@@ -106,7 +106,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -328,6 +328,9 @@ pub(crate) struct Document {
     pub facts: Arc<Facts>,
     /// A guest's place in its host (decision 0055); `None` for a file's own tree. A guest's `path` is its host's.
     pub guest: Option<Arc<Guest>>,
+    /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
+    /// a file of the corpus, whose module follows from its path.
+    pub module: Option<Arc<str>>,
 }
 
 /// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
@@ -353,15 +356,22 @@ pub(crate) fn module(rel: &str) -> String {
         }
         return std::iter::once("crate").chain(parts).collect::<Vec<_>>().join(".");
     }
-    let m = rel.trim_end_matches(".py").replace('/', ".");
+    // A stub (`.pyi`) is named as its module is.
+    let m = rel.strip_suffix(".pyi").or_else(|| rel.strip_suffix(".py")).unwrap_or(rel).replace('/', ".");
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
+/// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
+pub(crate) fn package_of(path: &str, m: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
+}
+
 pub(crate) fn package(rel: &str) -> String {
     let m = module(rel);
-    if rel.ends_with("__init__.py") { m } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
+    if rel.ends_with("__init__.py") || rel.ends_with("__init__.pyi") { m } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 
 /// Which of T's rules a kind falls under, by name.
@@ -373,6 +383,8 @@ enum Class {
     Integer,
     Operator,
     FunctionDefinition,
+    /// `for` and `with` statements, which an `async` keyword marks too.
+    AsyncStatement,
     FunctionItem,
     Attribute,
     String,
@@ -389,6 +401,7 @@ impl Class {
                 Self::Operator
             }
             "function_definition" => Self::FunctionDefinition,
+            "for_statement" | "with_statement" => Self::AsyncStatement,
             "function_item" => Self::FunctionItem,
             "attribute" => Self::Attribute,
             "string" => Self::String,
@@ -798,8 +811,8 @@ impl Batch {
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if !rx_spans.is_empty() && guest.is_none() {
-                c.matches(&mut p, &rx_spans, &mut string);
+            if !rx_spans.is_empty() && guest.is_none() && !withheld {
+                c.matches(&mut p, dialect, &rx_spans, &mut string);
             }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
@@ -820,12 +833,21 @@ impl Batch {
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
-            let python = d.path.ends_with(".py");
+            let python = d.path.ends_with(".py") || d.path.ends_with(".pyi");
             let dotted = python || d.path.ends_with(".rs");
-            let module = if shape == Shape::Core && !dotted { String::new() } else { module(&d.path) };
+            let named = d.module.as_deref();
+            let module = match named {
+                Some(m) => m.to_owned(),
+                None if shape == Shape::Core && !dotted => String::new(),
+                None => module(&d.path),
+            };
             doc.push([key, string(&d.path) as i64, string(&module) as i64]);
             if shape != Shape::Core || python {
-                pkg.push([key, string(&package(&d.path)) as i64]);
+                let package = match named {
+                    Some(m) => package_of(&d.path, m),
+                    None => package(&d.path),
+                };
+                pkg.push([key, string(&package) as i64]);
             }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {
@@ -893,7 +915,8 @@ impl Batch {
                         }
                     }
                     // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
-                    Class::FunctionDefinition if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
+                    // `async for`, `async with` likewise.
+                    Class::FunctionDefinition | Class::AsyncStatement if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
                         op_t.push([n, string("async") as i64]);
                     }
                     Class::FunctionItem

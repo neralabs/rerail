@@ -1,18 +1,19 @@
-#include <metal_stdlib>
-using namespace metal;
+// Block programs' Metal interpreter (metal_block_program.rs): a batch of files, each under its own
+// program, in one launch (decision 0066). Each lane owns W consecutive bytes of a file (W = 16, 32
+// or 64) and its W-bit word of every value, so a 32-lane SIMD group works on 32 words at once. A
+// group's values are slots of lane words in its worker's scratch, in device memory (decision
+// 0034). Each step runs once; a carried step resolves its carry by look-back (`look_back`,
+// `halo_exchange`) before the next.
 
-// Block programs' Metal interpreter (metal_block_program.rs): the set program's shape, every
-// operation in order, one dispatch per round: a carried operation ends a round, its groups'
-// aggregates are scanned, and the next round starts with it (metal_block_carry.metal). Each lane owns W consecutive source bytes (W = 16,
-// 32 or 64) and its W-bit word of every value, so the SIMD group's full ALU width works on
-// words: a 32-lane group covers 32 * W bytes. Values are slots of lane words.
-// The operations a dispatch runs, [from, to), and the lanes.
-struct BlockArgs { uint from, to, lanes, pad; };
 // An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
-// eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane), operands a and b, and an immediate
-// (eq's byte; const's pattern as b = low half, imm = high half; plane's bit), and the carried
-// operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, each with its round in b.
+// eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands
+// a and b, and an immediate (eq's byte; const's pattern as b = low half, imm = high half; plane's
+// bit), and the carried operations 8 prev (imm the distance), 9 toggle, 10 escaped, 12 fill
+// (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay).
 struct BlockStep { uint op, a, b, imm; };
+// A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts
+// (output indices, at `outs[ext0..]`).
+struct ProgramRow { uint step0, steps, out0, outs, ext0, exts, pad0, pad1; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
 // test leaves each zero byte's high bit, and a multiply gathers the four bits of a word.
@@ -30,18 +31,16 @@ static inline uint plane16(uint4 v, uint k) {
   return g.x | (g.y << 4u) | (g.z << 8u) | (g.w << 12u);
 }
 
-static inline ushort plane_lane(device const uint4* p, uint k, ushort) { return ushort(plane16(p[0], k)); }
-static inline uint plane_lane(device const uint4* p, uint k, uint) { return plane16(p[0], k) | (plane16(p[1], k) << 16u); }
-static inline ulong plane_lane(device const uint4* p, uint k, ulong) {
-  return ulong(plane16(p[0], k)) | (ulong(plane16(p[1], k)) << 16u) | (ulong(plane16(p[2], k)) << 32u) |
-         (ulong(plane16(p[3], k)) << 48u);
+// A lane's word of a byte test over its chunks, from chunk `first` of the file.
+template <typename M> static inline M eq_file(device const uint4* bytes, FileRow f, uint first, uint c4) {
+  M out = M(0);
+  for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++) out = M(out | M(ulong(eq16(load16(bytes, f, first + c), c4)) << (16u * c)));
+  return out;
 }
-
-static inline ushort eq_lane(device const uint4* p, uint c4, ushort) { return ushort(eq16(p[0], c4)); }
-static inline uint eq_lane(device const uint4* p, uint c4, uint) { return eq16(p[0], c4) | (eq16(p[1], c4) << 16u); }
-static inline ulong eq_lane(device const uint4* p, uint c4, ulong) {
-  return ulong(eq16(p[0], c4)) | (ulong(eq16(p[1], c4)) << 16u) | (ulong(eq16(p[2], c4)) << 32u) |
-         (ulong(eq16(p[3], c4)) << 48u);
+template <typename M> static inline M plane_file(device const uint4* bytes, FileRow f, uint first, uint k) {
+  M out = M(0);
+  for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++) out = M(out | M(ulong(plane16(load16(bytes, f, first + c), k)) << (16u * c)));
+  return out;
 }
 
 // The lane's W bits of a 64-bit pattern that repeats every 64 bytes.
@@ -51,92 +50,110 @@ static inline M pattern(ulong c, uint lane) {
   return M(c >> ((lane * w) & 63u));
 }
 
+// Group g of file f (lane l): every step of its program, then its outputs and extracts. False
+// when a look-back has to wait for another launch.
 template <typename M>
-static inline void run(device const uint4* bytes, device M* values, constant BlockArgs& p,
-                       device const BlockStep* steps, device atomic_uint* states, uint lane, uint g, uint l) {
+static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l, uint spins, device const ProgramRow* programs,
+                           device const BlockStep* steps, device const uint* outs, device M* slots, device M* out,
+                           device atomic_uint* states, device atomic_uint* halos, device atomic_uint* ext_states,
+                           device uint* positions, device uint* counts) {
+  const ProgramRow pr = programs[f.program];
   const uint chunks = uint(sizeof(M)) / 2u;
-  const uint groups = p.lanes / 32u;
-  device const uint4* mine = bytes + lane * chunks;
-  for (uint at = p.from; at < p.to; at++) {
-    const BlockStep s = steps[at];
+  const uint W = uint(sizeof(M)) * 8u;
+  const uint gl = g * 32u + l;
+  const uint lanes = f.groups * 32u;
+  for (uint at = 0u; at < pr.steps; at++) {
+    const BlockStep s = steps[pr.step0 + at];
     // Operands are earlier values. Steps without one hold other things in a and b (const's
     // pattern), so the reads are clamped to slots already defined.
-    const M a = values[min(s.a, at) * p.lanes + lane];
-    const M b = values[min(s.b, at) * p.lanes + lane];
-    // A carried step's round is in b; its state array holds each group's inclusive prefix.
-    device atomic_uint* state = states + s.b * groups;
-    M out;
+    const M a = slots[min(s.a, at) * 32u + l];
+    const M b = slots[min(s.b, at) * 32u + l];
+    device atomic_uint* state = states + f.state_base + s.b * f.groups;
+    M v = M(0);
     switch (s.op) {
-      case 0u: out = eq_lane(mine, s.imm * 0x01010101u, M(0)); break;
-      case 1u: out = pattern<M>(ulong(s.b) | (ulong(s.imm) << 32u), lane); break;
-      case 2u: out = ~a; break;
-      case 3u: out = a & b; break;
-      case 4u: out = a | b; break;
-      case 5u: out = a ^ b; break;
-      case 6u: out = a & ~b; break;
-      case 7u: out = plane_lane(mine, s.imm, M(0)); break;
-      case 8u: out = apply_prev(a, s.imm, lane_in_halo(summary_prev(a, s.imm), carry_before(state, 2u, g), l)); break;
-      case 9u: out = apply_toggle(a, lane_in_parity(summary_toggle(a), carry_before(state, 0u, g), l)); break;
-      case 10u: out = apply_after_odd_run(a, lane_in_borrow(summary_after_odd_run(a), carry_before(state, 1u, g), l)); break;
-      default: out = M(0); break;
+      case 0u: v = eq_file<M>(bytes, f, gl * chunks, s.imm * 0x01010101u); break;
+      case 1u: v = pattern<M>(ulong(s.b) | (ulong(s.imm) << 32u), gl); break;
+      case 2u: v = ~a; break;
+      case 3u: v = a & b; break;
+      case 4u: v = a | b; break;
+      case 5u: v = a ^ b; break;
+      case 6u: v = a & ~b; break;
+      case 7u: v = plane_file<M>(bytes, f, gl * chunks, s.imm); break;
+      case 11u: v = M((plane_file<M>(bytes, f, gl * chunks, s.imm) << 1u) | M((file_byte_before(bytes, f, gl * chunks) >> s.imm) & 1u)); break;
+      case 8u: {
+        ulong h = 0ul;
+        if (!halo_exchange(halos + f.halo_base + s.b * f.groups * 3u, g, l, halo_last(a), spins, h)) return false;
+        v = apply_prev(a, s.imm, halo_before(a, l, h));
+        break;
+      }
+      case 9u: {
+        const uint t = summary_toggle(a);
+        uint cin = 0u;
+        if (!look_back(state, g, l, t | ((1u ^ t) << 1u), spins, cin)) return false;
+        v = apply_toggle(a, cin);
+        break;
+      }
+      case 10u: {
+        uint o0 = 0u, o1 = 0u, cin = 0u;
+        const M f0 = escaped(a, M(0), o0), f1 = escaped(a, M(1), o1);
+        if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1u), spins, cin)) return false;
+        v = select(f0, f1, cin != 0u);
+        break;
+      }
+      case 12u: {
+        // `fill`: its ends are in imm (b is the carry's index).
+        const M e = slots[min(s.imm, at) * 32u + l];
+        uint o0 = 0u, o1 = 0u, cin = 0u;
+        const M f0 = fill_word(a, e, M(0), o0), f1 = fill_word(a, e, M(1), o1);
+        if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1u), spins, cin)) return false;
+        v = select(f0, f1, cin != 0u);
+        break;
+      }
+      case 13u: v = M(within_lane<M>(f.len + s.imm, gl * W) & ~within_lane<M>(s.imm, gl * W)); break;
+      default: break;
     }
-    values[at * p.lanes + lane] = out;
+    slots[at * 32u + l] = v;
   }
+  for (uint k = 0u; k < pr.outs; k++) out[f.out_base + k * lanes + gl] = slots[outs[pr.out0 + k] * 32u + l];
+  const uint capacity = max(f.len, 1u);
+  for (uint e = 0u; e < pr.exts; e++) {
+    const M v = slots[outs[pr.out0 + outs[pr.ext0 + e]] * 32u + l];
+    if (!extract_write(v, gl, g, l, f.len, ext_states + f.ext_base + e * f.groups, positions + f.pos_base + e * capacity,
+                       capacity, counts + f.ext_base + e * f.groups, spins * 64u))
+      return false;
+  }
+  return true;
 }
 
-// A carried step's group aggregate: the SIMD group's combined lane summaries of its operand.
-template <typename M>
-static inline uint aggregate(device const M* values, constant BlockArgs& p, device const BlockStep* steps, uint lane) {
-  const BlockStep s = steps[p.to];
-  const M a = values[s.a * p.lanes + lane];
-  switch (s.op) {
-    case 8u: return reduce_halo(summary_prev(a, s.imm));
-    case 9u: return reduce_parity(summary_toggle(a));
-    default: return reduce_borrow(summary_after_odd_run(a));
+// Persistent workers (decision 0027): each takes group numbers in launch order and interprets
+// its file's program over the group, reading the file in its slab (decision 0067). `p`: the batch's groups, the polls after the first, the
+// most steps of any program.
+#define BATCH_KERNEL(W, M)                                                                                       \
+  kernel void block_batch_##W(                                                                                   \
+      device const uint4* s0 [[buffer(0)]], device M* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], \
+      device const uint* group_file [[buffer(3)]], device atomic_uint* states [[buffer(4)]],                     \
+      device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],                     \
+      device uint* positions [[buffer(7)]], device uint* counts [[buffer(8)]], device atomic_uint* tickets [[buffer(9)]], \
+      device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], device const ProgramRow* programs [[buffer(12)]], \
+      device const BlockStep* steps [[buffer(13)]], device const uint* outs [[buffer(14)]], device M* scratch [[buffer(15)]], \
+      device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], \
+      uint w [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {                           \
+    device M* slots = scratch + w * p.z * 32u;                                                                   \
+    for (uint round = 0u; round < p.x; round++) {                                                               \
+      uint ticket = 0u;                                                                                          \
+      if (l == 0u) ticket = atomic_fetch_add_explicit(&tickets[0], 1u, memory_order_relaxed);                    \
+      const uint t = simd_broadcast(ticket, ushort(0));                                                          \
+      if (t >= p.x) return;                                                                                      \
+      if (done[t] != 0u) continue;                                                                               \
+      const FileRow f = files[group_file[t]];                                                                    \
+      device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;                \
+      const bool ok = interpret_file<M>(bytes, f, t - f.group0, l, p.y, programs, steps, outs, slots, out, states, halos, \
+                                        ext_states, positions, counts);                                          \
+      if (l == 0u && ok) done[t] = 1u;                                                                           \
+      if (l == 0u && !ok) atomic_fetch_add_explicit(&tickets[1], 1u, memory_order_relaxed);                     \
+    }                                                                                                            \
   }
-}
 
-#define BLOCK_KERNELS(W, M)                                                                                     \
-  kernel void block_program_##W(device const uint4* bytes [[buffer(0)]], device M* values [[buffer(1)]],       \
-                                constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]], \
-                                device atomic_uint* states [[buffer(4)]], uint lane [[thread_position_in_grid]], \
-                                uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {   \
-    run<M>(bytes, values, p, steps, states, lane, g, l);                                                         \
-  }                                                                                                              \
-  kernel void block_summary_##W(device const M* values [[buffer(1)]], constant BlockArgs& p [[buffer(2)]],      \
-                                device const BlockStep* steps [[buffer(3)]], device uint* aggregates [[buffer(5)]], \
-                                uint lane [[thread_position_in_grid]], uint g [[threadgroup_position_in_grid]],   \
-                                uint l [[thread_index_in_simdgroup]]) {                                          \
-    const uint agg = aggregate<M>(values, p, steps, lane);                                                       \
-    if (l == 0u) aggregates[g] = agg;                                                                            \
-  }
-
-BLOCK_KERNELS(16, ushort)
-BLOCK_KERNELS(32, uint)
-BLOCK_KERNELS(64, ulong)
-
-// The groups' aggregates scanned into inclusive prefixes (the interpreter's threadgroup level):
-// one threadgroup of 256 threads, each folding a stretch of groups, a scan of the stretches in
-// threadgroup memory, then each stretch written. Loops over sizes, bounded.
-kernel void block_carry_scan(device const uint* aggregates [[buffer(0)]], device uint* states [[buffer(1)]],
-                             constant uint2& p [[buffer(2)]], uint t [[thread_position_in_threadgroup]]) {
-  threadgroup uint totals[256];
-  const uint groups = p.x, kind = p.y;
-  const uint per = (groups + 255u) / 256u;
-  const uint from = min(t * per, groups), to = min(from + per, groups);
-  uint acc = carry_identity(kind);
-  for (uint g = from; g < to; g++) acc = combine_carry(kind, acc, aggregates[g]);
-  totals[t] = acc;
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  for (uint d = 1u; d < 256u; d <<= 1u) {
-    const uint before = t >= d ? totals[t - d] : carry_identity(kind);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    totals[t] = combine_carry(kind, before, totals[t]);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
-  acc = t > 0u ? totals[t - 1u] : carry_identity(kind);
-  for (uint g = from; g < to; g++) {
-    acc = combine_carry(kind, acc, aggregates[g]);
-    states[g] = CARRY_INCLUSIVE | acc;
-  }
-}
+BATCH_KERNEL(16, ushort)
+BATCH_KERNEL(32, uint)
+BATCH_KERNEL(64, ulong)

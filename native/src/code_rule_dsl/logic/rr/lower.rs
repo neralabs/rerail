@@ -51,6 +51,20 @@ pub(super) const TESTS: [(&str, &str); 11] = [
     ("match", "rx"),
 ];
 
+/// A regex the rule computes, made whole-string: `@concat(@concat("^(?:", re), ")$")` (`print` writes it back as `re`).
+pub(super) fn anchored(re: Term) -> Term {
+    let cat = |a: Term, b: Term| Term::Call("concat".to_owned(), vec![a, b]);
+    cat(cat(Term::Str("^(?:".to_owned()), re), Term::Str(")$".to_owned()))
+}
+
+/// The pattern `anchored` wrapped.
+pub(super) fn unanchored(t: &Term) -> Option<&Term> {
+    let Term::Call(f, args) = t else { return None };
+    let [Term::Call(g, inner), Term::Str(close)] = args.as_slice() else { return None };
+    let [Term::Str(open), re] = inner.as_slice() else { return None };
+    (f == "concat" && g == "concat" && open == "^(?:" && close == ")$").then_some(re)
+}
+
 fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
@@ -131,6 +145,9 @@ struct Lowerer {
     /// The relations declared `must, may`, and the rules a `must` or `may` head wrote (by index).
     three: BTreeSet<String>,
     modal: BTreeMap<usize, String>,
+    /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
+    /// it was lowered with, so reading it back makes none again.
+    printed_demands: BTreeSet<String>,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -183,6 +200,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             }
         }
     }
+    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d)).map(|d| (*d).to_owned()).collect();
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -861,6 +879,9 @@ impl Lowerer {
                 if !*neg && matches!(rel.as_str(), "parse_of" | "splice_of") {
                     self.value_demand(rel, args)?;
                 }
+                if let Some(demand) = world_demand(rel) {
+                    self.world_demand(demand, args)?;
+                }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
@@ -905,6 +926,9 @@ impl Lowerer {
     /// The corpus runner runs these rules first, makes what is asked for and rebinds the batch with it. A given
     /// variable nothing else binds asks for nothing.
     fn demand(&mut self, req: &str, given: &[(STerm, &str)], out: &STerm, guests: bool) -> Result<(), Error> {
+        if self.printed_demands.contains(req) {
+            return Ok(());
+        }
         let vars: Vec<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).collect();
         if given.iter().any(|(t, _)| !matches!(t, STerm::Var(_) | STerm::Str(_))) {
             return Ok(());
@@ -1023,6 +1047,67 @@ impl Lowerer {
             body.push(Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![Term::Var("rr_demand_doc".to_owned()), Term::Wild, Term::Wild], neg: false, gated: false }));
         }
         let rule = Rule { head, body };
+        if !self.prog.rules.contains(&rule) {
+            self.prog.rules.push(rule);
+        }
+        Ok(())
+    }
+
+    /// `dir_entry(d, …)` or `file_line(p, …)`, read or negated, asks for the listing of d or the lines of p (t21 E1):
+    /// `rr_dir_req(d)` or `rr_file_req(p)` over the rule's other literals that bind it, those that read none of what
+    /// the atom gives. The corpus runner answers the requests and runs the rules again (`corpus::world`). A key
+    /// nothing else binds asks for nothing: the atom reads what other rules asked for.
+    fn world_demand(&mut self, demand: &str, args: &[STerm]) -> Result<(), Error> {
+        if self.printed_demands.contains(demand) {
+            return Ok(());
+        }
+        let Some(key) = args.first() else { return Ok(()) };
+        let head = |key: Term| Atom { rel: demand.to_owned(), args: vec![key], neg: false, gated: false };
+        self.prog.decls.insert(demand.to_owned(), vec![("k".to_owned(), "sym".to_owned())]);
+        let s = match key {
+            // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
+            STerm::Str(k) => {
+                let row = vec![Value::Str(k.clone())];
+                let rows = self.prog.facts.entry(demand.to_owned()).or_default();
+                if !rows.contains(&row) {
+                    rows.push(row);
+                }
+                return Ok(());
+            }
+            STerm::Var(s) => s,
+            _ => return Ok(()),
+        };
+        // What the atom gives: its other arguments' variables, and every literal joined to them.
+        let mut reads = body_vars(&args[1..].iter().map(|a| Lit::Cmp { l: a.clone(), op: "=", r: a.clone() }).collect::<Vec<_>>());
+        reads.remove(s);
+        let mut keep: Vec<bool> = vec![true; self.siblings.len()];
+        loop {
+            let mut grew = false;
+            for (l, k) in self.siblings.iter().zip(keep.iter_mut()) {
+                let vars = body_vars(std::slice::from_ref(l));
+                if *k && vars.iter().any(|x| reads.contains(x)) {
+                    *k = false;
+                    reads.extend(vars.into_iter().filter(|x| x != s));
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let saved = self.siblings.clone();
+        let mut keep = keep.into_iter();
+        self.siblings.retain(|_| keep.next().unwrap_or(false));
+        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`).
+        let binds = self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && body_vars(std::slice::from_ref(l)).contains(s),
+            Lit::Cmp { l, op: "=", r } => matches!(l, STerm::Var(v) if v == s) || matches!(r, STerm::Var(v) if v == s),
+            _ => false,
+        });
+        let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
+        self.siblings = saved;
+        let Some(ctx) = ctx.transpose()? else { return Ok(()) };
+        let rule = Rule { head: head(Term::Var(s.clone())), body: vec![Literal::Atom(ctx)] };
         if !self.prog.rules.contains(&rule) {
             self.prog.rules.push(rule);
         }
@@ -1285,10 +1370,10 @@ impl Lowerer {
         };
         let gs = groups(re);
         let all = rel == "match_all";
-        // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
-        // column here; `span_patterns` finds which spans it holds.
+        // A span `match_all` (or `match` with groups) reads through a derived relation (`t(d, sp) :- source(d, sp),
+        // …`, or `kind(c, "comment")`) is a node-typed column here; `span_patterns` finds which spans it holds.
         if let STerm::Var(v) = s
-            && (self.span_container(v).is_some() || all && self.node_typed(v))
+            && (self.span_container(v).is_some() || (all || !gs.is_empty()) && self.node_typed(v))
         {
             if !positions.is_empty() {
                 return Err(Error::Syntax("match_all ordinal, start, end outputs require a symbol text".to_owned()));
@@ -1342,7 +1427,7 @@ impl Lowerer {
     }
 
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source` or `src_line`. Read off the rules, so a printed program (`rr::print`) has them too.
+    /// the same body by `source`, `src_line` or `kind(c, "comment")`. Read off the rules, so a printed program (`rr::print`) has them too.
     /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
     /// or through another such column (a fixpoint).
     fn span_patterns(&mut self) -> Result<(), Error> {
@@ -1351,6 +1436,7 @@ impl Lowerer {
             body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
                 ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
                 ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some(SpanIn::Comment),
                 _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
             })
         };
@@ -1383,7 +1469,7 @@ impl Lowerer {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
                 let Some(within) = binder(&rule.body, c, &columns) else {
-                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source` or `src_line` (O80: a node's matches as spans)", rule.head.rel));
+                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source`, `src_line` or a comment (O80: a node's matches as spans)", rule.head.rel));
                 };
                 self.prog.rx_spans.insert((within, p.clone()));
             }
@@ -1451,12 +1537,13 @@ impl Lowerer {
         }
     }
 
-    /// Whether a sibling binds `v` to a `source` or `src_line` span, the spans `rx_span` runs over.
+    /// Whether a sibling binds `v` to a `source` or `src_line` span or a comment, the spans `rx_span` runs over.
     fn span_container(&self, v: &str) -> Option<SpanIn> {
         self.siblings.iter().find_map(|l| match l {
             Lit::Atom { rel, args, neg: false } => match (rel.as_str(), args.as_slice()) {
                 ("source", [_, STerm::Var(x)]) if x == v => Some(SpanIn::Source),
                 ("src_line", [_, _, STerm::Var(x)]) if x == v => Some(SpanIn::Line),
+                ("kind", [STerm::Var(x), STerm::Str(k)]) if x == v && k == "comment" => Some(SpanIn::Comment),
                 _ => None,
             },
             _ => None,
@@ -1479,7 +1566,9 @@ impl Lowerer {
         let [STerm::Str(re), s] = args else { unreachable!("match with a pattern") };
         let whole = Term::Str(format!("^(?:{re})$"));
         let s = self.term(s)?;
-        let mut out = Vec::new();
+        // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
+        // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
+        let mut out = vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![s.clone(), whole.clone()]), op: "=", r: Term::Int(1) }];
         for g in groups(re) {
             out.push(Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("rx_group".to_owned(), vec![s.clone(), whole.clone(), Term::Str(g)]) });
         }
@@ -1569,14 +1658,12 @@ impl Lowerer {
                     .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
-            // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
+            // `match` is whole-string, as in Soufflé; the engine's `rx` searches. A pattern the rule reads (an
+            // option's) is anchored as it runs.
             if op == "rx" {
                 p = match p {
                     Term::Str(re) => Term::Str(format!("^(?:{re})$")),
-                    pattern => Term::Call("concat".to_owned(), vec![
-                        Term::Call("concat".to_owned(), vec![Term::Str("^(?:".to_owned()), pattern]),
-                        Term::Str(")$".to_owned()),
-                    ]),
+                    other => anchored(other),
                 };
             }
             return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
@@ -1721,6 +1808,13 @@ impl Lowerer {
                 .cloned()
                 .collect()
         };
+        // Inputs alone when they bind the variables: a context of derived relations ties the helper to them, and
+        // to their recursion (`type_app(t, h, i, a) :- ann_input(t), …, field(m, "subscript", a), i = count : {
+        // field(m, "subscript", a0), a0 < a }` with ann_input recursive through type_app would aggregate in its
+        // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
+        let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
+        let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        let (base, base_bound) = Self::bound_context(base);
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
         // So do atoms of the clause's own heads, where the rest binds the variables: through one, the aggregate
         // would sit in the head's recursion (`la_cb(n, e) :- …, la_cb(s, v), count : { la_vis(n, x, s2, …) } = 0`).
@@ -1729,7 +1823,13 @@ impl Lowerer {
         let own = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if heads.contains(rel));
         let (first, bound) = Self::bound_context(context(false).into_iter().filter(|l| !own(l)).collect());
         let (first, bound) = if vars.iter().all(|v| bound.contains(v)) { (first, bound) } else { Self::bound_context(context(false)) };
-        let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
+        let context = if vars.iter().all(|v| base_bound.contains(v)) {
+            base
+        } else if vars.iter().all(|v| bound.contains(v)) {
+            first
+        } else {
+            Self::bound_context(context(true)).0
+        };
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2096,6 +2196,9 @@ fn groups(re: &str) -> Vec<String> {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
+/// The relations a guest or value read asks through (`demand`).
+const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
+
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 
@@ -2107,6 +2210,14 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
     ("unparse", 1, "unparse_of", &[("t", "sym"), ("x", "sym")]),
     ("splice", 3, "splice_of", &[("t", "sym"), ("n", "node"), ("t2", "sym"), ("t3", "sym")]),
 ];
+
+/// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
+/// entries, `dir_entry(dir, name, is_dir)`, and a file's lines, `file_line(path, i, text)` (from 1).
+pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 2] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req")];
+
+fn world_demand(rel: &str) -> Option<&'static str> {
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+}
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();

@@ -13,7 +13,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::field_atom;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, tape_tag};
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Domain {
     Int,
     Node,
@@ -198,6 +198,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
 }
 
 /// A program lowered for one dialect.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Lowered {
     pub(in crate::code_rule_dsl) program: Program,
     pub(in crate::code_rule_dsl) domains: Domains,

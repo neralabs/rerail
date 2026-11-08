@@ -357,6 +357,31 @@ pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> Str
     *STATE.lock().unwrap().decisions.entry((topic.to_owned(), text())).or_default() += 1;
 }
 
+/// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
+pub(in crate::code_rule_dsl) fn decisions() -> BTreeMap<(String, String), u64> {
+    if !on() {
+        return BTreeMap::new();
+    }
+    STATE.lock().unwrap().decisions.clone()
+}
+
+/// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
+/// step's result to state again (`add_decisions`).
+pub(in crate::code_rule_dsl) fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
+    decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
+}
+
+/// Decisions a reused step made when it ran (`decisions_since`), stated for this run.
+pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
+    if !on() {
+        return;
+    }
+    let mut state = STATE.lock().unwrap();
+    for (k, n) in made {
+        *state.decisions.entry(k.clone()).or_default() += n;
+    }
+}
+
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
 pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {

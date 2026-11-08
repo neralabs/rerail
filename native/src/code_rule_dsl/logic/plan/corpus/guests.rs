@@ -311,6 +311,7 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            module: host.module.clone(),
         }))
     }
 
@@ -338,6 +339,8 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+            // A value is no module's: its text is a rule's, not a file's.
+            module: None,
         }))
     }
 
@@ -394,7 +397,8 @@ fn wrapped(text: String, place: Placement) -> (String, Placement) {
 /// gives no facts.
 fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(core::Facts, u32)>, String> {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
-    // The cache is shared by every run on the machine; a failed write there (O95) parses without it.
+    // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
+    // parses without it. A source collected under the run is stored again with its tape (O95).
     let built = match cache.map(|cache| core::build_cached(&file, cache)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {

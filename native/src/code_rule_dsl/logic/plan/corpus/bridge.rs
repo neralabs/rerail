@@ -58,7 +58,8 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 /// The typing program `name`'s text.
 fn source(name: &str) -> Result<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
-    std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))
+    // Its `#include`s read in (`python/modules.rr`, …).
+    crate::code_rule_dsl::tools::program_text(&path).map_err(Error::Plan)
 }
 
 /// The rows of the bridged relations, by relation: added to the rule's facts as they are, not printed and parsed.

@@ -72,24 +72,7 @@ pub(super) fn apply(
         for reducer in &rule.reducers {
             if let Some((keys, touched)) = reducer.apply(w, changes)? {
                 groups += touched;
-                let positions = reducer.context_keys(rule);
-                let same = if positions.is_empty() {
-                    "k.c0=1".into()
-                } else {
-                    positions
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| format!("c.c{c}=k.c{i}"))
-                        .collect::<Vec<_>>()
-                        .join(" AND ")
-                };
-                execute(
-                    w.db,
-                    &format!(
-                        "INSERT OR IGNORE INTO {dirty} SELECT c.* FROM {keys} k CROSS JOIN {} c WHERE {same}",
-                        rule.contexts
-                    ),
-                )?;
+                reducer.mark_contexts(w, rule, &keys, &dirty)?;
             }
         }
         contexts +=
@@ -125,6 +108,9 @@ pub(super) fn apply(
                 equal("c", "d", rule.width)
             ),
         )?;
+        for reducer in &rule.reducers {
+            reducer.refresh_dependencies(w, rule, &dirty, &active)?;
+        }
         execute(
             w.db,
             &format!(
@@ -161,6 +147,25 @@ pub(super) fn apply(
     )?;
     let plus = w.table(width)?;
     let minus = w.table(width)?;
+    // Retain raw candidate multiplicities for lattice outputs. Fold only affected keys.
+    if state.lattice.is_some() {
+        execute(
+            w.db,
+            &format!(
+                "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {totals} WHERE n=0)",
+                state.heads
+            ),
+        )?;
+        execute(
+            w.db,
+            &format!(
+                "INSERT OR REPLACE INTO {} SELECT {cols},n FROM {totals} WHERE n>0",
+                state.heads
+            ),
+        )?;
+        let (delta, touched) = lattice::apply(state, w, &totals)?;
+        return Ok((delta, contexts, groups + touched));
+    }
     let inserted = execute(
         w.db,
         &format!("INSERT INTO {plus} SELECT {cols} FROM {totals} WHERE old_n=0 AND n>0"),

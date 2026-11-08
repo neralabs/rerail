@@ -54,11 +54,6 @@ pub(super) fn expressions(block: &Select) -> Vec<&E> {
         }))
         .collect()
 }
-pub(super) fn visit(block: &Select, f: &mut dyn FnMut(&E)) {
-    for e in expressions(block) {
-        e.visit(f);
-    }
-}
 pub(super) fn replace(block: &mut Select, f: &mut dyn FnMut(&mut E)) {
     for (e, _) in &mut block.columns {
         e.visit_mut(f);
@@ -111,6 +106,7 @@ pub(super) fn rule(
     output: &str,
     id: usize,
     q: &Query,
+    native: bool,
 ) -> Result<Option<Rule>> {
     if !q.ctes.is_empty() {
         return Ok(None);
@@ -139,11 +135,21 @@ pub(super) fn rule(
     }
     let prefix = format!("__sql_state_{output}_r{id}");
     let mut occurrences = Vec::new();
-    visit(&q.body, &mut |e| {
-        if matches!(e, E::Scalar(_) | E::Exists { .. }) && !occurrences.contains(e) {
-            occurrences.push(e.clone());
-        }
-    });
+    fn collect(e: &E, occurrences: &mut Vec<E>) {
+        e.visit(&mut |e| {
+            if let E::Scalar(query) | E::Exists { query, .. } = e {
+                for nested in expressions(query) {
+                    collect(nested, occurrences);
+                }
+                if !occurrences.contains(e) {
+                    occurrences.push(e.clone());
+                }
+            }
+        });
+    }
+    for e in expressions(&q.body) {
+        collect(e, &mut occurrences);
+    }
     let mut sites = Vec::new();
     for e in occurrences {
         let Some(reducer) = Reducer::plan(
@@ -151,6 +157,8 @@ pub(super) fn rule(
             &format!("{prefix}_s{}", sites.len()),
             &e,
             &fields_by_name,
+            &sites,
+            native,
         )?
         else {
             return Ok(None);
@@ -242,11 +250,24 @@ pub(super) fn rule(
 }
 
 impl Rule {
-    pub fn context_field(&self, e: &E) -> usize {
-        let E::Qualified { alias, column } = e else {
-            unreachable!()
-        };
-        self.fields[&(alias.clone(), column.clone())]
+    pub fn in_context(&self, e: &E, context: &str) -> E {
+        let mut expression = e.clone();
+        expression.visit_mut(&mut |e| {
+            if let Some(reducer) = self.reducers.iter().find(|r| r.original == *e) {
+                *e = reducer.lookup_at(self, context);
+            }
+            if let E::Qualified {
+                alias,
+                column: name,
+            } = e
+            {
+                *e = column(
+                    context,
+                    &format!("c{}", self.fields[&(alias.clone(), name.clone())]),
+                );
+            }
+        });
+        expression
     }
     pub fn evaluation(&self, table: &str) -> Query {
         let mut query = self.evaluation.clone();
@@ -260,6 +281,11 @@ impl Rule {
         query
     }
     pub fn index(&self, db: &rusqlite::Connection, columns: &[usize]) -> Result<()> {
+        if super::super::super::facts::vtab::bound_source(db, &self.contexts)
+            .is_some_and(|s| s.writable())
+        {
+            return Ok(());
+        }
         let columns: Vec<_> = columns
             .iter()
             .copied()

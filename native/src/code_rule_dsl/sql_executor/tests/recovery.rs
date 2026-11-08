@@ -21,7 +21,23 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
         e.bind_snapshot(json!({"files":corpus.iter().map(|(p,s)|json!({"path":p,"source":s,"language":"python"})).collect::<Vec<_>>()} ).to_string()).unwrap();
         e.set_limits(json!({"max_steps":200_000_000}).to_string())
             .unwrap();
-        e.run(program.into(), "python".into(), None).unwrap();
+        let (result, work) =
+            super::scaling::profile(&mut e, |e| e.run(program.into(), "python".into(), None));
+        if let Err(err) = result {
+            let mut heavy = work
+                .sql
+                .borrow()
+                .iter()
+                .map(|(sql, counts)| (sql.clone(), *counts))
+                .collect::<Vec<_>>();
+            heavy.sort_by_key(|(_, c)| std::cmp::Reverse(c.0));
+            panic!(
+                "{output}: {err}; vm={}, scans={}; {:?}",
+                work.vm.get(),
+                work.data_scans.get(),
+                heavy.into_iter().take(8).collect::<Vec<_>>()
+            );
+        }
         if output == "call_target" {
             let snapshot=json!({"files":corpus.iter().map(|(p,s)|json!({"path":p,"source":s,"language":"python"})).collect::<Vec<_>>()}).to_string();
             let (snapshot, _) =
@@ -40,6 +56,7 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
                         digest: [0; 32],
                         facts: Arc::new(facts),
                         guest: None,
+                        module: None,
                     }
                 })
                 .collect();
@@ -352,6 +369,7 @@ fn corpus_sql_uses_the_shared_wave_kernel_for_min_lattices() {
         "",
         false,
         1024,
+        &[],
     );
     result.unwrap();
     assert_eq!(
@@ -393,6 +411,7 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
         "",
         false,
         1024,
+        &[],
     )
     .unwrap();
     for (name, text) in [
@@ -451,6 +470,7 @@ fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
         "",
         false,
         1024,
+        &[],
     )
     .unwrap();
     for name in ["p0_flag", "p1_flag"] {

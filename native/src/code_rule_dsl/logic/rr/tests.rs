@@ -637,6 +637,25 @@ fn normalized(mut p: front::Program) -> front::Program {
     p
 }
 
+/// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
+/// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
+/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
+/// asks for nothing, and the requests change no relation the program derives.
+fn without_requests(mut p: front::Program) -> front::Program {
+    let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
+    loop {
+        p.rules.retain(|r| !gone.contains(&r.head.rel));
+        let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.clone()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h)).collect();
+        if more.is_empty() {
+            break;
+        }
+        gone.extend(more);
+    }
+    p.decls.retain(|k, _| !gone.contains(k));
+    p
+}
+
 fn error_name(e: &Error) -> String {
     format!("{e:?}").split(['(', ' ', '{']).next().unwrap_or_default().to_owned()
 }
@@ -647,11 +666,6 @@ fn error_name(e: &Error) -> String {
 fn rdl_programs_translate_to_the_same_program() {
     let mut failures = Vec::new();
     for (name, text, path) in authored() {
-        // O101: a program that reads `parsed` lowers it to a demand in `.rr` (decision 0055) and not in `.rdl`, and
-        // printing it lowers the demand again. calls.rdl reads `parsed` since its quoted annotations (C1).
-        if name.ends_with("typing/programs/calls.rdl") {
-            continue;
-        }
         let rr = match translate(&text) {
             Ok(rr) => rr,
             Err(e) => {
@@ -663,12 +677,15 @@ fn rdl_programs_translate_to_the_same_program() {
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
-        match (front::parse(&text).map(normalized), parse(&rr)) {
+        // The program's own statements: an `#include` passes through the translation as it is (checked above), and
+        // what it names is read with the file (`parse_file`), not here.
+        let own: String = rr.lines().map(|l| if l.starts_with("#include") { "" } else { l }).collect::<Vec<_>>().join("\n");
+        match (front::parse(&text).map(normalized), parse(&own)) {
             (Ok(a), Ok(b)) => {
-                failures.extend(difference(&a, &b).map(|d| format!("{name}: {d}")));
+                failures.extend(difference(&a, &without_requests(b.clone())).map(|d| format!("{name}: {d}")));
                 // Printed, the program reads back as itself.
                 match print(&b).and_then(|text| parse(&text)) {
-                    Ok(c) => failures.extend(difference(&b, &c).map(|d| format!("{name}, printed: {d}"))),
+                    Ok(c) => failures.extend(difference(&without_requests(b), &without_requests(c)).map(|d| format!("{name}, printed: {d}"))),
                     Err(e) => failures.push(format!("{name}, printed: {e}")),
                 }
             }
@@ -1206,7 +1223,9 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let run = |chunk_nodes: usize| {
         let out = dir.join(format!("out{chunk_nodes}"));
-        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        // Every file evaluated in every run: a memo hit would not be chunked (decision 0063 memoises base rows too).
+        let options = serde_json::json!({ "memo": "off" });
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes, &Default::default(), &options).unwrap();
         ["called", "violation"].map(|rel| {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
             rows.sort();
@@ -1628,6 +1647,34 @@ fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
     rows
 }
 
+
+#[test]
+fn printed_guest_demand_rules_are_not_generated_again() {
+    for source in [r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl parsed(s: node, grammar: symbol, r: node)
+.input parsed
+.decl result(r: node)
+result(r) :- context(n, _), parsed(n, "annotation", r).
+.output result
+"#,r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl result(t: symbol)
+result(t) :- context(n, x), t = @parse("sql", x).
+.output result
+"#] {
+        let original = parse(source).unwrap();
+        assert!(original.rules.iter().any(|r|r.head.rel.starts_with("rr_")));
+        let mut current = original.clone();
+        for _ in 0..3 {
+            current = parse(&print(&current).unwrap()).unwrap();
+            assert!(difference(&original,&current).is_none(), "{:?}",difference(&original,&current));
+        }
+    }
+}
+
 /// A value document is its askers' files' (O96): two files asking for one text share a value, and each keeps its
 /// rows in the memo. A second run over the same files reads every file from the memo and gives the first run's rows.
 #[test]
@@ -1805,4 +1852,54 @@ Plain(n) :- kind(n, "subscript"), !(n ~ `$O[:-$K]`).
     got.sort();
     assert_eq!(got, ["Cut:1", "Cut:3", "Plain:2"]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// O101: a program whose reads make demands (`parsed`, `@parse`, `@splice`, `file_line`) prints back as itself.
+/// The printed text declares the demands it was lowered with, so reading it makes none again.
+#[test]
+fn a_program_with_demands_prints_back_as_itself() {
+    let text = r#"
+.decl q(s: node, x: symbol)
+q(s, x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), str(s, x).
+.decl ann(s: node, r: node)
+ann(s, r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl fixed(x: symbol)
+fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
+.decl lines(i: number)
+lines(i) :- file_line("setup.cfg", i, _).
+.output ann, fixed, lines
+"#;
+    let once = parse(text).unwrap();
+    let printed = print(&once).unwrap();
+    let twice = parse(&printed).unwrap();
+    assert!(difference(&once, &twice).is_none(), "{:?}", difference(&once, &twice));
+    assert_eq!(print(&twice).unwrap(), printed);
+    for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {
+        assert!(once.decls.contains_key(demand), "{demand} is made");
+    }
+}
+
+/// O106: a relation may be named like a SQL keyword. Every statement that names it quotes it (`sql::ident`), through
+/// recursion, negation and an aggregate.
+#[test]
+fn relations_named_like_sql_keywords_run() {
+    let rule = r#"
+.decl values(x: number)
+values(1).
+values(2).
+values(3).
+.decl order(x: number, y: number)
+order(x, y) :- values(x), values(y), y = x + 1.
+order(x, z) :- order(x, y), order(y, z).
+.decl select(x: number)
+select(x) :- values(x), !order(x, _).
+.decl group(n: number)
+group(n) :- n = count : { order(_, _) }.
+.output values, order, select, group
+"#;
+    let [values, order, select, group] = <[Vec<String>; 4]>::try_from(guests_run("sqlkeywords", &[("a.py", "x = 1\n")], rule, &["values", "order", "select", "group"])).unwrap();
+    assert_eq!(values, ["1", "2", "3"]);
+    assert_eq!(order, ["1\t2", "1\t3", "2\t3"]);
+    assert_eq!(select, ["3"]);
+    assert_eq!(group, ["3"]);
 }

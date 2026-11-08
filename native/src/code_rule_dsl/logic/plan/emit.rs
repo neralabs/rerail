@@ -2,9 +2,9 @@
 //! steps of a `waves::schedule::Program`, so the frontier loop runs it instead of `run`'s own
 //! stratum loop. Each strongly connected component is a stratum, in `strata`' order:
 //! - a rule of a non-recursive component is one step over whole relations;
-//! - a recursive component's rules are each one step over whole relations, which reads (and so
-//!   waits on) only lower strata, and per positive atom of the component one delta variant,
-//!   planned with that atom first, which reads its `delta_` table and runs again whenever it grew;
+//! - a recursive component's full steps wait on lower strata and recursive aggregate inputs.
+//!   Each positive own atom also has a delta variant, planned with that atom first,
+//!   which reads its `delta_` table and runs again whenever it grew;
 //! - a relation's constant rows are one step, in a stratum before every component's.
 //!
 //! Lattice relations fold by key as `merge_lattice` merges them (`Program::lattices`). The views
@@ -176,9 +176,10 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
         for (rule, order) in &planned {
             let query = model.checked_query(prog, &rule.head, order, None, None)?;
-            // A recursive component's rule over whole relations runs once: its own atoms' later
-            // rows reach it through the delta variants.
-            let reads = reads(order, &|rel| !recursive || !scc.contains(rel));
+            // Positive own atoms have delta variants. An aggregate needs the complete
+            // current input, so wake the full query when that recursive input changes.
+            let aggregates=order.iter().filter_map(|s|match &s.lit {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
+            let reads = reads(order, &|rel| !recursive || !scc.contains(rel) || aggregates.contains(rel));
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
         if recursive {

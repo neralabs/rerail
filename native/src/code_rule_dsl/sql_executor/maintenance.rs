@@ -10,29 +10,21 @@ pub(super) struct Delta {
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) struct Work<'a> {
-    pub db: &'a rusqlite::Connection,
-    pub scratch: Vec<String>,
-    pub sequence: usize,
-}
+pub(super) use super::scratch::Work;
 impl Work<'_> {
     pub fn table(&mut self, width: usize) -> Result<String> {
-        let name = format!("__rr_update_{}", self.sequence);
-        self.sequence += 1;
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
-        self.db
-            .execute_batch(&format!(
-                "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
-                quote(&name),
+        self.allocate(
+            format!(
+                "{},PRIMARY KEY({})",
                 cols.iter()
-                    .map(|c| format!("{c} INTEGER"))
+                    .map(|c| format!("{c} INTEGER NOT NULL"))
                     .collect::<Vec<_>>()
                     .join(","),
                 cols.join(",")
-            ))
-            .map_err(error)?;
-        self.scratch.push(name.clone());
-        Ok(name)
+            ),
+            true,
+        )
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
@@ -88,14 +80,6 @@ impl Work<'_> {
             )
             .map_err(error)? as u64;
         Ok((old, n))
-    }
-    pub fn cleanup(&self) -> Result<()> {
-        for name in self.scratch.iter().rev() {
-            self.db
-                .execute_batch(&format!("DROP TABLE IF EXISTS {}", quote(name)))
-                .map_err(error)?;
-        }
-        Ok(())
     }
 }
 
@@ -158,7 +142,7 @@ pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Res
     Ok(views.len())
 }
 
-fn barrier(q: &Query) -> bool {
+pub(super) fn barrier(q: &Query) -> bool {
     if !q.ctes.is_empty() {
         return true;
     }
@@ -169,6 +153,10 @@ fn barrier(q: &Query) -> bool {
         .iter()
         .map(|(e, _)| e)
         .chain(&q.body.predicates)
+        .chain(q.body.from.iter().flat_map(|item| match &item.join {
+            Join::On(on) => on.iter(),
+            Join::Cross => [].iter(),
+        }))
     {
         e.visit(&mut |e| {
             if matches!(e, E::Exists { .. } | E::Scalar(_)) {
@@ -214,13 +202,61 @@ fn insert_query(db: &rusqlite::Connection, table: &str, q: &Query) -> Result<usi
     .map_err(error)
 }
 fn anchor(q: &mut Query, at: usize) {
-    let delta = q.body.from.remove(at);
-    q.body.from.insert(0, delta);
+    let mut delta = q.body.from.remove(at);
+    if let Join::On(conditions) = std::mem::replace(&mut delta.join, Join::Cross) {
+        q.body.predicates.extend(conditions);
+    }
     for item in &mut q.body.from {
         if let Join::On(conditions) = std::mem::replace(&mut item.join, Join::Cross) {
             q.body.predicates.extend(conditions);
         }
     }
+    // A changed document can bind a native node before it binds a retained walk. Keep the
+    // small delta outermost, then prefer joins connected to aliases already bound. Keeping
+    // the original tail order can scan every walk row before testing the document.
+    let mut bound = BTreeSet::from([delta.alias.clone()]);
+    let mut ordered = vec![delta];
+    while !q.body.from.is_empty() {
+        let score = |alias: &str| {
+            q.body
+                .predicates
+                .iter()
+                .filter(|e| {
+                    let E::Binary {
+                        operator: B::Equal,
+                        left,
+                        right,
+                    } = e
+                    else {
+                        return false;
+                    };
+                    let mut aliases = BTreeSet::new();
+                    for expr in [left, right] {
+                        expr.visit(&mut |e| {
+                            if let E::Qualified { alias, .. } = e {
+                                aliases.insert(alias.clone());
+                            }
+                        });
+                    }
+                    aliases.contains(alias)
+                        && aliases.iter().any(|a| bound.contains(a))
+                        && aliases.iter().all(|a| a == alias || bound.contains(a))
+                })
+                .count()
+        };
+        let at = q
+            .body
+            .from
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, f)| (score(&f.alias), std::cmp::Reverse(*i)))
+            .unwrap()
+            .0;
+        let next = q.body.from.remove(at);
+        bound.insert(next.alias.clone());
+        ordered.push(next);
+    }
+    q.body.from = ordered;
 }
 fn targeted(mut q: Query, table: &str) -> Query {
     let alias = "rr_update_target";
@@ -302,6 +338,7 @@ pub(super) fn maintain(
     let (mut positives, mut deletions) = (0u64, 0u64);
     let mut refreshed = Vec::new();
     let mut incremental = Vec::new();
+    let mut recursive_partitions = 0u64;
     let (mut reducer_groups, mut context_rows) = (0u64, 0u64);
     let mut outputs = BTreeMap::new();
     for (_, group) in groups {
@@ -368,6 +405,36 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
+            if let Some(state) = group
+                .first()
+                .and_then(|r| {
+                    run.emitted
+                        .program
+                        .steps
+                        .iter()
+                        .filter(|s| s.output == *r)
+                        .map(|s| s.stratum)
+                        .max()
+                })
+                .and_then(|s| run.recursive.get(&s))
+            {
+                let (deltas, partitions, waves) = state.apply(w, run, changes, limit)?;
+                positives += waves;
+                recursive_partitions += partitions;
+                for (r, d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0) + d.inserted - d.deleted;
+                    run.counts.insert(r.clone(), count);
+                    if run.outputs.contains(&r) {
+                        outputs.insert(
+                            r.clone(),
+                            json!({"inserted":d.inserted,"deleted":d.deleted}),
+                        );
+                    }
+                    incremental.push(r.clone());
+                    changes.insert(r, d);
+                }
+                continue;
+            }
             let mut old = BTreeMap::new();
             for r in &group {
                 let snapshot = w.snapshot(r, arities[r])?;
@@ -405,8 +472,9 @@ pub(super) fn maintain(
             }
             continue;
         }
-        // Current native inputs plus deleted rows retain their native lookup paths. SQL results
-        // use separate query variants, so SQLite never materializes an old-input UNION view.
+        // Native inputs keep their indexed overlays. SQL results temporarily restore their
+        // old membership inside the batch savepoint, using only row deltas and existing indexes.
+        // This costs only the deletion set, without distributing joins over 2^N alternatives.
         let mut overlays = overlay::Overlays::new(w.db);
         let mut old_inputs = BTreeMap::new();
         let mut sql_deleted = BTreeMap::new();
@@ -431,6 +499,34 @@ pub(super) fn maintain(
                     }
                 }
             }
+        }
+        for (r, (minus, width)) in &sql_deleted {
+            // A lattice key can have different old and new values. Remove insertions first
+            // so the old value fits its unique key. Never materialize the complete relation.
+            if changes[r].inserted > 0 {
+                let cols = (0..*width)
+                    .map(|i| format!("c{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                w.db.execute(
+                    &format!(
+                        "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                        quote(r),
+                        quote(&changes[r].plus)
+                    ),
+                    [],
+                )
+                .map_err(error)?;
+            }
+            w.db.execute(
+                &format!(
+                    "INSERT OR IGNORE INTO {} SELECT * FROM {}",
+                    quote(r),
+                    quote(minus)
+                ),
+                [],
+            )
+            .map_err(error)?;
         }
         let mut over = BTreeMap::new();
         let mut front = BTreeMap::new();
@@ -479,29 +575,8 @@ pub(super) fn maintain(
                             .map_err(error)?
                             .column_count();
                     variant.body.from[i].relation = source(delta, width);
-                    // Distribute old SQL-table reads over current/deleted alternatives. The
-                    // delta anchor stays first, and every branch uses the original table indexes.
-                    let mut variants = vec![variant];
-                    for (j, rel) in atoms(q) {
-                        if j == i {
-                            continue;
-                        }
-                        if let Some((table, width)) = sql_deleted.get(&rel) {
-                            let deleted = variants
-                                .iter()
-                                .map(|v| {
-                                    let mut v = v.clone();
-                                    v.body.from[j].relation = source(table, *width);
-                                    v
-                                })
-                                .collect::<Vec<_>>();
-                            variants.extend(deleted);
-                        }
-                    }
-                    for mut variant in variants {
-                        anchor(&mut variant, i);
-                        w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
-                    }
+                    anchor(&mut variant, i);
+                    w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
                 }
             }
             for r in &group {
@@ -521,6 +596,34 @@ pub(super) fn maintain(
                 break;
             }
             deletions += 1;
+        }
+        // Restore current membership before rederivation or downstream work. Any error above
+        // rolls back the whole savepoint, including temporarily removed insertions.
+        for (r, (minus, width)) in &sql_deleted {
+            let cols = (0..*width)
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            w.db.execute(
+                &format!(
+                    "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                    quote(r),
+                    quote(minus)
+                ),
+                [],
+            )
+            .map_err(error)?;
+            if changes[r].inserted > 0 {
+                w.db.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO {} SELECT * FROM {}",
+                        quote(r),
+                        quote(&changes[r].plus)
+                    ),
+                    [],
+                )
+                .map_err(error)?;
+            }
         }
         drop(overlays);
         let mut removed = BTreeMap::new();
@@ -645,6 +748,6 @@ pub(super) fn maintain(
         }
     }
     Ok(
-        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
+        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
     )
 }

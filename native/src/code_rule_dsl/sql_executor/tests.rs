@@ -1,9 +1,13 @@
 use super::*;
 mod documents;
+mod preparation;
 mod recovery;
+mod recursive;
+mod registered_joins;
+mod scaling;
 mod updates;
 
-fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
+pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
     let executor = CodeRuleSqlExecutor::new(
         dir.path()
@@ -15,7 +19,7 @@ fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     (dir, executor)
 }
 
-fn rows(executor: &CodeRuleSqlExecutor, sql: &str) -> Value {
+pub(super) fn rows(executor: &CodeRuleSqlExecutor, sql: &str) -> Value {
     serde_json::from_str::<Value>(&executor.query(sql.to_owned(), None, None).unwrap()).unwrap()["rows"].clone()
 }
 
@@ -310,6 +314,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
             modes,
             false,
             1024,
+            &[],
         )
         .unwrap();
         if modes.is_empty() {

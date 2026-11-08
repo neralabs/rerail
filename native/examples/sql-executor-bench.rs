@@ -222,6 +222,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             )?);
         }
+        for (i, batch) in request["file_changes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            updates.push(phase(
+                &trace_state,
+                &format!("file-edit-{i}"),
+                &mut phases,
+                || {
+                    session
+                        .apply_file_changes(
+                            batch.to_string(),
+                            request["max_waves"].as_u64().map(|n| n as u32),
+                        )
+                        .and_then(|s| {
+                            serde_json::from_str(&s)
+                                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                        })
+                },
+            )?);
+        }
         let mut results = Vec::new();
         for (i, query) in request["queries"]
             .as_array()

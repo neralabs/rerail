@@ -1,0 +1,5 @@
+{
+  "title": "Swallowed exceptions",
+  "rule": "bandit-b110-try-except-pass",
+  "note": "B110 flags an except Exception: (or bare except:) whose whole body is pass. Like Bandit by default, a handler for a specific exception is taken as meant, and one that logs is fine."
+}

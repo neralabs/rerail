@@ -52,12 +52,19 @@ impl Rows {
 impl Live {
     pub fn from_source(source: &dyn Source) -> Self {
         let columns = source.columns();
+        let width = columns.len();
+        Self::from_rows(
+            columns,
+            (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()),
+        )
+    }
+    pub fn from_rows(columns: Vec<String>, values: impl IntoIterator<Item = Vec<i64>>) -> Self {
         let mut rows = Rows {
             indexes: vec![BTreeMap::new(); columns.len()],
             ..Rows::default()
         };
-        for i in 0..source.len() {
-            rows.insert((0..columns.len()).map(|c| source.value(i, c)).collect());
+        for row in values {
+            rows.insert(row);
         }
         Self {
             columns,

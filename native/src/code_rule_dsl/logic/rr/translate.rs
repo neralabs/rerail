@@ -56,7 +56,8 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize, usize)>, Error> {
         }
         let start = pos;
         let rest = &src[pos..];
-        if rest.starts_with("//") {
+        // A comment, or an `#include` line: copied as it is, in the gap between statements.
+        if rest.starts_with("//") || rest.starts_with("#include") {
             pos += rest.find('\n').unwrap_or(rest.len());
             continue;
         }

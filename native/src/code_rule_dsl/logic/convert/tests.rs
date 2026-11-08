@@ -31,6 +31,11 @@ struct Adjust {
     keep: Option<Box<dyn Fn(&str) -> bool>>,
 }
 
+thread_local! {
+    /// Compiled rule files by their text (`convert`).
+    static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<crate::code_rule_dsl::model::CompiledCodeRule>>> = Default::default();
+}
+
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
 /// `violation(rule, clause, code, path, line)`.
 fn convert(path: &Path, adjust: &Adjust) -> Converted {
@@ -54,7 +59,17 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
     let text = if relational.is_empty() { text } else { document.to_string() };
     // Only relational clauses report: nothing is left to compile.
     let reports = document["clauses"].as_array().into_iter().flatten().any(|c| c.get("define").is_none());
-    let compiled = reports.then(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{id}: {e:?}")));
+    // A rule file compiles once per test process: the replay converts the same rule for each of its events, and
+    // compiling builds every matcher of the rule (most of the replay's CPU before). Only `adjust` differs per event.
+    let compiled = reports.then(|| {
+        COMPILED.with(|cache| {
+            cache
+                .borrow_mut()
+                .entry(text.clone())
+                .or_insert_with(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{id}: {e:?}")).inner)
+                .clone()
+        })
+    });
     let mut e = Emitter::new(GrammarDialect::Python);
     let (include, exclude) = adjust.scope.clone().unwrap_or_else(|| (scope_globs(&document, "include"), scope_globs(&document, "exclude")));
     // The scope: a document in an include glob and in no exclude glob.
@@ -74,7 +89,7 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
         .map(|c| (c, Err(Gap("relational (SQL stages)".into()))))
         .collect();
-    for clause in compiled.iter().flat_map(|c| &c.inner.clauses) {
+    for clause in compiled.iter().flat_map(|c| &c.clauses) {
         if adjust.keep.as_ref().is_some_and(|keep| !keep(&clause.id)) {
             continue;
         }
@@ -191,6 +206,20 @@ fn hand_written(check: &str, given: bool) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
         return None;
     }
+    // Read and printed once per check: the replay asks for each of the check's events.
+    thread_local! {
+        static PRINTED: std::cell::RefCell<std::collections::HashMap<(String, bool), Option<String>>> = Default::default();
+    }
+    let key = (check.to_owned(), given);
+    if let Some(text) = PRINTED.with(|p| p.borrow().get(&key).cloned()) {
+        return text;
+    }
+    let text = hand_written_once(check, given);
+    PRINTED.with(|p| p.borrow_mut().insert(key, text.clone()));
+    text
+}
+
+fn hand_written_once(check: &str, given: bool) -> Option<String> {
     let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;
@@ -495,6 +524,11 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
+        // `RERAIL_REPLAY_PROFILE=<dir>`: each event's run profiled into <dir>/e<k> (`logic::profile`), to be summed.
+        if let Ok(profiles) = std::env::var("RERAIL_REPLAY_PROFILE") {
+            crate::code_rule_dsl::logic::profile::set(true);
+            crate::code_rule_dsl::logic::profile::set_directory(&std::path::Path::new(&profiles).join(format!("e{k}")));
+        }
         let ran = super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
             // Every output has its file, empty or not: no `violation.csv` is a program without violations.
             .and_then(|_| std::fs::read_to_string(out.join("violation.csv")).map_err(|e| super::super::plan::Error::Plan(format!("violation.csv: {e}"))));
