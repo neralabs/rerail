@@ -74,6 +74,9 @@ class Contract:
         sys.modules['scripts.lint_internal_dead_code'] = module
         self.module=module
         originals = codes({'internal_dead_code': module})
+        if self.backend:
+            from internal_dead_code_port import graph_algorithm_codes
+            originals.update(graph_algorithm_codes(module))
         targets = [(module,n,None) for n,f in vars(module).items() if inspect.isfunction(f) and f.__module__==module.__name__]
         targets += [(getattr(module,c),n,None) for c in CLASSES for n,f in vars(getattr(module,c)).items() if inspect.isfunction(f) and f.__code__.co_filename == str(self.args.source / "scripts/lint_internal_dead_code.py")]
         targets += [(getattr(module, c), n, c) for c, names in PROPERTIES.items() for n in names]

@@ -49,6 +49,8 @@ idc_import_root(sid) :- option_item("importedFqNames", _, fq), sg_resolved(fq, s
 idc_public(c, sid) :- option_item("providedPublicClasses", i, c), option_item("providedPublicSymbols", i, sid).
 .decl idc_dunder(c: symbol, sid: symbol)
 idc_dunder(c, sid) :- option_item("providedDunderClasses", i, c), option_item("providedDunderSymbols", i, sid).
+.violation IDCGraphAccessorRequired(at: span, sid: symbol) code "IDC_GRAPH_ACCESSOR_REQUIRED" "Ordered class accessor facts are required for {sid}"
+IDCGraphAccessorRequired(@place("", 0), sid) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid), sg_class(sid), !option_item("providedClassAccessors", _, sid).
 IDCValue(@place("", 0), sid) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid).
 IDCValue(@place("", 0), method) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid), sg_class(sid), (idc_public(sid, method) ; idc_dunder(sid, method)).
 .decl idc_excluded(sid: symbol)

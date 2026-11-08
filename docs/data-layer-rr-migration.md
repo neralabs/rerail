@@ -100,7 +100,8 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **88 target drafts and 12 absent translations**. None has full acceptance yet.
+The current inventory contains **89 target drafts and 11 absent translations**. None has full acceptance yet.
+The 89th draft, `internal_dead_code`, has a tested supplied-graph consumer. Native source graph construction remains missing.
 The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on the current engine.
 Its native detector includes all six source finding families. Production reporting and global migration acceptance remain open.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
@@ -1411,3 +1412,42 @@ It does not exercise the main dead-code analysis or the real symbol-graph builde
 Native acceptance therefore also needs source-derived graph cases for exports, inheritance, annotations, call reachability, import references, and confidence categories.
 The native rule must use the current engine's symbol and traversal interfaces. Calling the Python graph builder from a rule would violate the migration constraint.
 No native translation or completion is claimed for this next rule. The inventory remains 88 drafts and 12 absent translations.
+
+## 2026-11-08 — Internal dead-code graph consumer
+
+The empty native consumer fails all four original tests through successful engine execution, without semantic fallback.
+Those four helper tests pass after native translation.
+The shared graph contract now uses typed symbol, method, base, import, reference, call, root, and annotation columns.
+The native clauses preserve graph reachability and the separate unique-annotation closure, followed by confidence classification and stable output ordering.
+The test bridge does not invoke the production Python graph algorithms.
+Both native assertion paths now guard imported `SymbolGraph` algorithms, including their nested code.
+Two tooling tests enforce that guard. Generated storage construction remains host protocol.
+
+The new main-analysis corpus supplies real graph data structures with controlled symbols and edges.
+It covers cycles, class members, overrides, mixins, structural protocols, conventions, imports, module references, annotations, exclusions, and confidence categories.
+Four initial cases fail against the archived empty consumer.
+The expanded corpus passes 35 of 36 cases before an annotation transport repair.
+The failing case uses a real class named `__rerail_annotation`.
+The transport had filtered every matching name, including that class reference.
+The repair excludes only the synthetic assignment binding by its structural position.
+All 36 supplied-graph cases then pass. These results do not prove extraction from source files.
+
+All 14 controls that remove required behavior produce full DTO mismatches through successful native execution.
+All 102 tooling tests and 100 readers pass on the existing root CLI for Final shape `65d78128c`.
+No native engine code was added.
+The [consumer receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-internal-dead-code-consumer.json.gz) contains the complete cohort, exact programs, controls, and source cases.
+The [empty consumer](../gate/data-layer/fixtures/host/data-layer-port/rr-internal-dead-code-empty-consumer.json.gz) and
+[annotation red rung](../gate/data-layer/fixtures/host/data-layer-port/rr-internal-dead-code-graph-red.json.gz) preserve the failing stages.
+
+The first empty-consumer attempt failed before assertions because the filesystem ran out of space.
+It is not counted as detector evidence. The later four-test failure is the genuine red baseline.
+Nine inactive frozen test executables were compressed reversibly, recovering 2,823,735,977 bytes.
+Their decompressed hashes match the original bytes. The active CLI and latest frozen unit executable remain available.
+Shared build directories and sibling worktrees were untouched.
+
+Native source graph construction and ordered class-accessor production remain missing.
+The default draft emits `IDC_SOURCE_GRAPH_REQUIRED`; the adapter refuses unsupported raw-graph class accessor requests.
+It does not present those paths as clean results.
+The [shared contract and remaining producer plan](data-layer-survey-graph.md) specify the next work and its acceptance requirements.
+Production reporting, CLI/enforcement, registry/scope, persistent workspaces, and broader helper domains remain open.
+The inventory is 89 drafts and 11 absent translations. This is a consumer checkpoint, not a completed rule or global acceptance.

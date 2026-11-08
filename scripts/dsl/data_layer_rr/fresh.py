@@ -115,7 +115,8 @@ def run(args):
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
         if 'internal_dead_code' in modules:
-            from internal_dead_code_port import install
+            from internal_dead_code_port import install,graph_algorithm_codes
+            original_codes.update(graph_algorithm_codes(modules['internal_dead_code']))
             install(backend,modules['internal_dead_code'])
         if 'async_sync_delegation' in modules:
             from async_sync_delegation_port import install

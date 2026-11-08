@@ -47,7 +47,9 @@ sg_resolved(cat(module, ".", local), sid) :- sg_imported(module, local, next), !
 sg_resolved(fq, sid) :- option_item("resolvedNames", i, fq), option_item("resolvedSymbols", i, sid), !sg_fqname(fq, _).
 .decl sg_annotation(sid: symbol, name: symbol)
 sg_annotation(sid, name) :- option_item("annotationSymbols", i, sid), option_item("annotationNames", i, name).
-sg_annotation(sid, @nfkc(name)) :- option_item("annotationFiles", i, path), option_item("annotationFileSymbols", i, sid), doc(d, path, _), !syntax_error(d, _, _), ast_name(n, name), docof(n, d), name != "__rerail_annotation".
+.decl sg_annotation_binding(n: node)
+sg_annotation_binding(n) :- option_item("annotationFiles", _, path), doc(d, path, _), docof(n, d), kind(a, "assignment"), field(a, "left", n), line(n, 1), col(n, 0).
+sg_annotation(sid, @nfkc(name)) :- option_item("annotationFiles", i, path), option_item("annotationFileSymbols", i, sid), doc(d, path, _), !syntax_error(d, _, _), ast_name(n, name), docof(n, d), !sg_annotation_binding(n).
 sg_annotation(sid, @nfkc(name)) :- option_item("annotationFiles", i, path), option_item("annotationFileSymbols", i, sid), doc(d, path, _), !syntax_error(d, _, _), kind(n, "attribute"), docof(n, d), field(n, "attribute", a), text(a, name).
 .decl sg_type_import(module: symbol, name: symbol, sid: symbol)
 sg_type_import(module, name, sid) :- sg_imported(module, name, fq), sg_resolved(fq, sid), sg_class(sid).

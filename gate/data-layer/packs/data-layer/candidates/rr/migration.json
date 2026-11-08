@@ -1568,14 +1568,14 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "a560aebde06a5e2dbe681ee6d06a78efe9d0774eab9682a8bc0719f97690f468",
+      "sha256": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
-      "sha256": "7e66895b830571c722732caa42ed9fc1561ca1e32c3daffcef473146236b5af5",
+      "sha256": "535bc39381c2d1c58b7017186819a84fedd43e9074fff0ab5aea8422cb7a5e82",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2021,7 +2021,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "a560aebde06a5e2dbe681ee6d06a78efe9d0774eab9682a8bc0719f97690f468"
+      "ruleSha256": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3"
     },
     {
       "check": "imperative_private_functions",

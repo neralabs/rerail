@@ -1,6 +1,22 @@
 """Transport graph arguments as columns; run dead-code decisions in native rules."""
 import json
+import inspect
 from pathlib import Path
+import types
+
+
+def graph_algorithm_codes(module):
+    """Guard imported graph algorithms too; graph storage construction is host protocol."""
+    result={}
+    def register(code,name):
+        result[code]=('internal_dead_code.symbol_graph',name,False)
+        for value in code.co_consts:
+            if isinstance(value,types.CodeType):register(value,name)
+    for name,value in vars(module.SymbolGraph).items():
+        if name=='__init__':continue
+        if isinstance(value,(staticmethod,classmethod)):value=value.__func__
+        if inspect.isfunction(value):register(value.__code__,value.__qualname__)
+    return result
 
 
 def graph_columns(graph):
@@ -50,6 +66,7 @@ def graph_columns(graph):
                 for target in graph.public_methods_of_class(sid):data['providedPublicClasses'].append(sid);data['providedPublicSymbols'].append(target)
                 for target in graph._class_dunder_methods(sid):data['providedDunderClasses'].append(sid);data['providedDunderSymbols'].append(target)
     data['exportedRoots']=list(graph.exported_root_ids)
+    data['providedClassAccessors']=[sid for sid,symbol in graph.symbols.items() if not hasattr(graph,'class_methods') and vars(symbol).get('is_class')]
     data['suppliedGraph']=True
     return data,documents
 
@@ -68,7 +85,12 @@ def install(suite,module):
         return suite.native('internal_dead_code',entry,documents,data)
     def values(rows):return {r['parameters']['value'] for r in rows if r['code']=='IDC_VALUE'}
     suite.replace(module,'_collect_literal_imported_fqnames',lambda source:values(native('_collect_literal_imported_fqnames',options=dict(source=source))))
-    suite.replace(module,'_resolve_dynamic_import_roots',lambda graph,imported_fqnames:values(native('_resolve_dynamic_import_roots',graph,dict(importedFqNames=list(imported_fqnames)))))
+    def dynamic_roots(graph,imported_fqnames):
+        rows=native('_resolve_dynamic_import_roots',graph,dict(importedFqNames=list(imported_fqnames)))
+        if any(row['code']=='IDC_GRAPH_ACCESSOR_REQUIRED' for row in rows):
+            raise NotImplementedError('Native ordered class-accessor projection remains unimplemented')
+        return values(rows)
+    suite.replace(module,'_resolve_dynamic_import_roots',dynamic_roots)
     def filtered(results,graph,excluded_paths):
         rows=native('_filter_results_by_excluded_paths',graph,dict(**result_columns(results),excludedPaths=list(excluded_paths)))
         if any(r['code']=='IDC_KEEP_RESULTS' for r in rows):return results
