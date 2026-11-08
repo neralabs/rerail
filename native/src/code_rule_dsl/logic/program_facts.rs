@@ -305,12 +305,15 @@ impl Writer<'_> {
             }
         }
         for (span, text) in &prog.rx_spans {
+            // Kinds and captures carry their names after a unit separator.
             let span = match span {
-                SpanIn::Source => "source",
-                SpanIn::Line => "line",
-                SpanIn::Comment => "comment",
+                SpanIn::Source => "source".to_owned(),
+                SpanIn::Line => "line".to_owned(),
+                SpanIn::Comment => "comment".to_owned(),
+                SpanIn::Kinds(kinds) => std::iter::once("kinds").chain(kinds.iter().map(String::as_str)).collect::<Vec<_>>().join("\u{1f}"),
+                SpanIn::Capture(pattern, group) => format!("capture\u{1f}{group}\u{1f}{pattern}"),
             };
-            self.row("rx_span", vec![s(span), s(text)]);
+            self.row("rx_span", vec![s(&span), s(text)]);
         }
     }
 }
@@ -565,11 +568,14 @@ impl<'a> Reader<'a> {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
-            let span = match text(&row[0])?.as_str() {
-                "source" => SpanIn::Source,
-                "line" => SpanIn::Line,
-                "comment" => SpanIn::Comment,
-                other => return Err(bad(format!("no span {other}"))),
+            let named = text(&row[0])?;
+            let span = match named.split('\u{1f}').collect::<Vec<_>>().as_slice() {
+                ["source"] => SpanIn::Source,
+                ["line"] => SpanIn::Line,
+                ["comment"] => SpanIn::Comment,
+                ["kinds", kinds @ ..] => SpanIn::Kinds(kinds.iter().map(|k| (*k).to_owned()).collect()),
+                ["capture", group, ..] => SpanIn::Capture(named.splitn(3, '\u{1f}').nth(2).unwrap_or_default().to_owned(), (*group).to_owned()),
+                _ => return Err(bad(format!("no span {named}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }

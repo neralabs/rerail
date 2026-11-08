@@ -107,7 +107,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -773,7 +773,7 @@ impl Batch {
             projection
                 .rx_spans
                 .iter()
-                .map(|(within, re)| regex::Regex::new(re).map(|r| (*within, re.as_str(), r)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}"))))
+                .map(|(within, re)| regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}"))))
                 .collect::<StoreResult<_>>()?
         } else {
             Vec::new()

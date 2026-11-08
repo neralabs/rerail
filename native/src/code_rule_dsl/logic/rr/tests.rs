@@ -1328,6 +1328,43 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0081: `match_all` over nodes the rules bind to a kind, through derived columns that join kinds, and over
+/// another pattern's captures; a distinct text is scanned once, and containers with equal text each get their spans.
+/// A capture inside `count : { … }` reads its text from the rule.
+#[test]
+fn match_all_over_nodes_of_a_kind_and_over_captures_gives_spans() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchkinds");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = \"/x/{id}/{name}\"\nb = \"/x/{id}/{name}\"\nc = 'k9 zz'\n# note AB12 CD3\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl str_or_comment(s: node)
+str_or_comment(s) :- kind(s, "string").
+str_or_comment(s) :- kind(s, "comment").
+.decl param(k: symbol, l: number, c: number)
+param(x, l, c) :- str_or_comment(s), match_all("\\{(?<k>[a-z]+)\\}", s), text(k, x), line(k, l), col(k, c).
+.decl wd(w: span)
+wd(w) :- kind(c, "comment"), match_all("(?<w>[A-Z]+[0-9]+)", c).
+.decl digit(x: symbol)
+digit(x) :- wd(w), match_all("(?<d>[0-9])", w), text(d, x).
+.decl ndig(t: symbol, n: number)
+ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
+.output param, digit, ndig
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    // Two strings with one text: each its own spans, at its own line and column.
+    assert_eq!(read("param"), "id\t1\t9\nid\t2\t9\nname\t1\t14\nname\t2\t14");
+    assert_eq!(read("digit"), "1\n2\n3");
+    assert_eq!(read("ndig"), "AB12\t2\nCD3\t1");
+}
+
 /// `data-layer/noqa-sec-ratchet.rr`, whose `match_all` over each line's span is what lowering refused (O80): every
 /// SEC code on a suppression line counts, inside the comment or not.
 #[test]
