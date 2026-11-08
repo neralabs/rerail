@@ -1,9 +1,9 @@
-# 0094: Phase 0 is one loader: paths become facts, for rule programs and for the sources they read
+# t23. Phase 0 as one loader for rule programs and sources: a perspective
 
-Status: proposed (2026-11-08). Draft for review. It is numbered 0094 because no branch held 0094 on that date; the
-number is to be confirmed in the register. It fills the "P0 files" phase that 0083 §1 names but does not design. It
-keeps 0065 §2a (requests are answered inside a fixpoint, with no pass before the run) and 0089 §1 (a module is a
-path plus the digest of its text).
+A perspective for the session designing phase 0 (file management, change detection, and loading rule and source
+files the same way). It is not a decision and claims no number. Where it says "Decision" below, read "proposal".
+It fills the "P0 files" phase that 0083 §1 names but does not design. It keeps 0065 §2a (requests are answered
+inside a fixpoint, with no pass before the run) and 0089 §1 (a module is a path plus the digest of its text).
 
 ## Intro
 
@@ -38,7 +38,7 @@ This decision makes one loader, phase 0, that does both jobs the same way:
 The rest of this record is: what P0 is (§1), its two passes (§2), how it knows a file is unchanged (§3), the
 record of reads and early cutoff (§4), keys (§5), storage (§6), and what it replaces (§7).
 
-## Decision
+## Proposal
 
 ### 1. P0 is a fact space whose rules ask for paths
 
