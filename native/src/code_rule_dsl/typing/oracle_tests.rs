@@ -1080,6 +1080,13 @@ fn spike_o125_a_session_maintains_calls_rr() {
         let derived = dump();
         let differ: Vec<&String> = derived.keys().filter(|k| kept.get(*k) != derived.get(*k)).collect();
         println!("O125 {edit}: outputs {}", if differ.is_empty() { "equal".to_owned() } else { format!("DIFFER in {differ:?}") });
+        for k in &differ {
+            let a: BTreeSet<&String> = kept.get(*k).into_iter().flatten().collect();
+            let b: BTreeSet<&String> = derived.get(*k).into_iter().flatten().collect();
+            let only_kept: Vec<&&String> = a.difference(&b).collect();
+            let only_derived: Vec<&&String> = b.difference(&a).collect();
+            println!("O125 {edit} {k}: {} rows, {} only maintained, {} only derived; e.g. {:?} / {:?}", b.len(), only_kept.len(), only_derived.len(), only_kept.iter().take(3).collect::<Vec<_>>(), only_derived.iter().take(3).collect::<Vec<_>>());
+        }
     }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);
