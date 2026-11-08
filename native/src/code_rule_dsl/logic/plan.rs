@@ -2248,6 +2248,7 @@ impl Run<'_, '_> {
         self.materialize(&reads)?;
         use crate::code_rule_dsl::logic::front::Native;
         let (edge, target, roots) = match native {
+            Native::BalancedRows { input, limits } => return self.balanced_rows(rel,input,limits),
             Native::OrderedRows { input } => return self.ordered_rows(rel, input),
             Native::BfsWalk { edge, roots } => return self.bfs_walk(rel, edge, roots),
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
@@ -2280,6 +2281,48 @@ impl Run<'_, '_> {
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
+    }
+
+    /// Read the complete task demand and its matching work with two queries.
+    /// The producer has no per-occurrence SQL calls or rule-specific behavior.
+    fn balanced_rows(&mut self, rel: &str, input: &str, limits: &str) -> Result<usize> {
+        use super::native::balanced_rows::{Row,partition};
+        #[derive(Clone,PartialEq,Eq,Hash)]
+        enum Task { Number(i64), Text(String) }
+        let task = |value: &SqlValue| -> Result<Task> { match value {
+            SqlValue::Integer(v) => Ok(Task::Number(*v)),
+            SqlValue::Text(v) => Ok(Task::Text(v.clone())),
+            _ => Err(Error::Plan("balanced_rows: task IDs must be scalar".into())),
+        }};
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let (g,n) = (self.model.col(limits,0),self.model.col(limits,1));
+        let counts: Vec<(SqlValue,i64)> = self.db.prepare(&format!("SELECT DISTINCT {g},{n} FROM {}",ident(limits)))?
+            .query_map([],|r| Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut ids = HashMap::new();
+        let mut values = Vec::new();
+        let mut demands = Vec::new();
+        for (value,count) in counts {
+            let key = task(&value)?;
+            let id = match ids.get(&key) {
+                Some(&id) => id,
+                None => { let id=values.len() as i64;ids.insert(key,id);values.push(value);id },
+            };
+            demands.push((id,count));
+        }
+        let c: Vec<String> = (0..4).map(|i| format!("w.{}",self.model.col(input,i))).collect();
+        let text = if self.model.inputs.atoms.is_some() { format!("sym_text({})",c[2]) } else { c[2].clone() };
+        let sql = format!("SELECT DISTINCT {},{},{text},{} FROM {} w JOIN {} l ON {}=l.{g}",c[0],c[1],c[3],ident(input),ident(limits),c[0]);
+        let raw: Vec<(SqlValue,i64,String,i64)> = self.db.prepare(&sql)?.query_map([],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut work = Vec::with_capacity(raw.len());
+        for (value,occurrence,key,weight) in raw {
+            let id = *ids.get(&task(&value)?).ok_or_else(|| Error::Plan("balanced_rows: work outside the requested tasks".into()))?;
+            work.push(Row { task:id,occurrence,key,weight });
+        }
+        let rows = partition(work,&demands).map_err(Error::Plan)?;
+        let count = rows.len();
+        insert_many(self.db,&format!("INSERT OR IGNORE INTO {}",ident(rel)),rows.into_iter().map(|(task,row,bin,ordinal)|
+            vec![values[task as usize].clone(),SqlValue::Integer(row),SqlValue::Integer(bin),SqlValue::Integer(ordinal)]).collect())?;
+        Ok(count)
     }
 
     /// One SQL window over the whole typed batch, not a correlated count per row.

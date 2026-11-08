@@ -279,6 +279,13 @@
 // sort by their typed values (symbols as text), with one zero-based global rank.
 // One SQL window sorts the whole batch. Empty input produces no rows.
 .decl ordered_rows(a: node, b: node, ordinal: number, rows: relation)
+// balanced_rows(task, row, bin, ordinal, rows, limits): rows(task, occurrence,
+// key, weight), limits(task, bins). Per task, sort by decreasing nonnegative
+// weight then key text then occurrence. Assign to the least-loaded bin, ties
+// by bin index. Emit in bin and append order, with zero-based task ordinals.
+// Occurrences are unique per task; equal keys remain separate occurrences.
+// All requested tasks are one batch; tasks absent from limits produce no rows.
+.decl balanced_rows(task: node, row: number, bin: number, ordinal: number, rows: relation, limits: relation)
 // components(d, c, k, edge, own): document d's strongly connected component of the graph edge(d, e) (d depends on
 // e), named by its smallest document c, and the component's key k: the SHA-256 of its documents' digests own(d, h),
 // sorted, then the keys of the components it depends on, sorted. Equal keys mean equal digests over the whole import

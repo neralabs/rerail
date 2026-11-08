@@ -24,6 +24,8 @@ pub(in crate::code_rule_dsl) mod aggregation;
 pub(in crate::code_rule_dsl) mod dfs_first;
 /// Ordered breadth-first traversal for a whole batch of demanded roots.
 pub(in crate::code_rule_dsl) mod bfs_walk;
+/// Whole-batch weighted partitions, preserving occurrence identities.
+pub(in crate::code_rule_dsl) mod balanced_rows;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
 pub(in crate::code_rule_dsl) mod components;
 pub(in crate::code_rule_dsl) mod match_all;

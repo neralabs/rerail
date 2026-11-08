@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 10] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 11] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -80,6 +80,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 10] = [
     ("dfs_first_memo", &[3, 4, 5]),
     ("bfs_walk", &[3, 4]),
     ("ordered_rows", &[3]),
+    ("balanced_rows", &[4, 5]),
     ("components", &[3, 4]),
 ];
 
@@ -1861,6 +1862,13 @@ impl Lowerer {
                 let rel = self.precedes_stop(set);
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
+            ("balanced_rows", [task, row, bin, ordinal, input, limits]) => {
+                let (STerm::Var(input), STerm::Var(limits)) = (input, limits) else {
+                    return Err(Error::Syntax("balanced_rows: input and limits are relations, by name".to_owned()));
+                };
+                let rel = self.balanced_rows(input, limits)?;
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(task)?,self.term(row)?,self.term(bin)?,self.term(ordinal)?], neg, gated: false }));
+            }
             ("ordered_rows", [first, second, ordinal, input]) => {
                 let STerm::Var(input) = input else {
                     return Err(Error::Syntax("ordered_rows: input is a relation, by name".to_owned()));
@@ -1901,6 +1909,27 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    fn balanced_rows(&mut self, input: &str, limits: &str) -> Result<String, Error> {
+        let rel = format!("rr_balanced_{input}_{limits}");
+        if self.prog.natives.contains_key(&rel) { return Ok(rel); }
+        let rows = self.prog.decls.get(input).ok_or_else(|| Error::Syntax(format!("balanced_rows: undeclared input {input}")))?;
+        let counts = self.prog.decls.get(limits).ok_or_else(|| Error::Syntax(format!("balanced_rows: undeclared limits {limits}")))?;
+        if rows.len()!=4 || counts.len()!=2 || !matches!(rows[0].1.as_str(),"sym"|"int"|"node") || rows[0].1!=counts[0].1
+            || rows[1].1!="int" || rows[2].1!="sym" || rows[3].1!="int" || counts[1].1!="int" {
+            return Err(Error::Syntax("balanced_rows: input must be (task, numeric occurrence, symbol key, numeric weight), limits (same task type, numeric bins)".into()));
+        }
+        let task_type = rows[0].1.clone();
+        self.prog.decls.insert(rel.clone(), vec![("task".into(),task_type),("row".into(),"int".into()),("bin".into(),"int".into()),("ordinal".into(),"int".into())]);
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str,args: Vec<Term>| Literal::Atom(Atom { rel:rel.to_owned(),args,neg:false,gated:false });
+        self.prog.rules.push(Rule {
+            head: Atom { rel:rel.clone(),args:vec![v("task"),v("row"),Term::Int(0),Term::Int(0)],neg:false,gated:false },
+            body:vec![atom(input,vec![v("task"),v("row"),v("key"),v("weight")]),atom(limits,vec![v("task"),v("count")])],
+        });
+        self.prog.natives.insert(rel.clone(),Native::BalancedRows { input:input.to_owned(),limits:limits.to_owned() });
+        Ok(rel)
     }
 
     fn ordered_rows(&mut self, input: &str) -> Result<String, Error> {
