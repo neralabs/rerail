@@ -1152,3 +1152,73 @@ The compact evidence archive is `/Users/jeremy/orca/artifacts/rerail-sql-wave-ph
 It retains the final reports, raw receipts, parity bundles, paired CPU observations, requests, source patch, and validation logs.
 The temporary comparison worktree, build targets, and intermediate capture directories are removed after archival.
 Cleanup also removes stale Rerail prefilter test files from exited processes, while preserving active jobs and their outputs.
+
+### CTE materialization costs (2026-11-08)
+
+This change starts from `e727c6987` and preserves the fixed 100-execution allowance.
+The initial phase forced temporary tables for projections and intermediate row sets, even with a single consumer.
+Complete cache rebuilds also queried old rows through anti-joins and UNION operations, although their replacement keys covered those rows.
+
+#### Implementation
+
+`Phase::relation` retains its MATERIALIZED fence for checked expressions and native functions.
+`Phase::view` permits SQLite to inline pure projections, set operations, and aggregates over frozen inputs.
+Complete rebuilds use these views for head projections, result keys, candidate rows, and fold inputs.
+They omit redundant DISTINCT operations on keys that are already unique.
+
+A complete cache replacement covers every old result key. Old improvements are a subset of that result.
+The planner therefore uses the new result directly and replaces the complete improvement relation.
+It omits old-row anti-joins, UNION branches, and improvement-key packets that cannot affect the answer.
+Partial updates retain keyed patches and their existing query shapes.
+
+The first experiment also inlined sparse-update helpers and omitted empty old-row branches.
+It reduced VM work but increased small-edit CPU and introduced two extra warm SQL query variants.
+The final change restores the baseline warm queries. All ten warm phase queries match the baseline byte for byte.
+
+#### SQL work and parity
+
+Both sizes pass complete-state parity, expected failures, rollback, and recovery against independent cold executions.
+Both final captures use 100/100 engine SQL executions, with complete receipts and no unexpected explanation failures.
+The initial schedule still uses five phase statements and 16 SQL executions overall.
+
+| Initial work | 5,000 edges: before / after | 50,000 edges: before / after |
+| --- | ---: | ---: |
+| VM instructions | 5,876,559 / 4,929,092 | 58,724,559 / 49,254,092 |
+| Result-stream rows | 118,125 / 106,125 | 1,180,125 / 1,060,125 |
+| Sorts | 60 / 39 | 60 / 39 |
+| Automatic-index rows | 27,986 / 11,992 | 279,986 / 119,992 |
+
+Initial VM work decreases by 16%, result-stream rows by 10%, sorts by 35%, and automatic-index rows by 57%.
+Total captured VM work decreases by 14%, including verification reads and all other session work.
+These counters identify reduced work. The CPU comparison uses separate runs with profiling disabled.
+
+#### CPU, checks, and limits
+
+The CPU comparison uses three alternating baseline/final pairs at each size, with fresh stores and identical requests.
+Both development builds use Rust 1.95.0 with debug information and incremental compilation disabled.
+Shared profiling and SQL trace callbacks are disabled. Other compiler and test jobs ran concurrently on this macOS arm64 host.
+Every trial checks values, output deltas, guards against unrelated writes, and scratch reuse.
+
+| Regions / edges | Initial CPU before / after | Six edits CPU before / after | Peak RSS before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 / 5,000 | 1.326 / 1.231 s | 48.5 / 49.3 ms | 85.3 / 85.2 MiB |
+| 10,000 / 50,000 | 13.468 / 11.919 s | 52.1 / 47.2 ms | 639.7 / 638.4 MiB |
+
+Initial CPU decreases by 7–12%. Peak memory remains close to baseline.
+Sparse-edit timings vary, despite identical warm SQL. These samples do not establish a separate warm-path speedup.
+The comparison uses a new Rust 1.95 baseline, so its absolute CPU values differ from the preceding Rust 1.97 measurements.
+
+All 129 SQL, virtual-table, demand, and profiling tests pass, with one child-process test ignored by design.
+The checks include large recursive cases, direct CTE input changes, rollback, and cached expression evaluation counts.
+The updated phase test shares an inline projection across two consumers and checks one native function evaluation per execution.
+The library also compiles with `code-rule-profile` enabled on Rust 1.95.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no added findings.
+
+Necessary materialization remains for checked expressions and shared evaluated values.
+Grouping support counts and lattice values still requires separate aggregate work.
+Further optimization can combine compatible aggregates, provided it preserves evaluation counts, error timing, and sparse access paths.
+The complete-session allowance has no guaranteed headroom after this change.
+
+Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cte-costs-20261108.tar.gz`.
+The archive contains both baseline and final reports, raw receipts, full-state parity bundles, CPU trials, source patches, and check logs.
+Task build and temporary directories are removed after archival.

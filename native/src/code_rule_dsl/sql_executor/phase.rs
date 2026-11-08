@@ -29,13 +29,21 @@ pub(super) struct Phase {
 }
 impl Phase {
     pub fn relation(&mut self, width: usize, query: &str) -> String {
+        self.define(width, query, "MATERIALIZED")
+    }
+    /// Projections, set operations, and pure aggregates over frozen inputs.
+    /// Checked rule expressions and native functions stay behind `relation` fences.
+    pub fn view(&mut self, width: usize, query: &str) -> String {
+        self.define(width, query, "NOT MATERIALIZED")
+    }
+    fn define(&mut self, width: usize, query: &str, hint: &str) -> String {
         let name = format!("__rr_phase_{}", self.definitions.len());
         let columns = (0..width)
             .map(|i| format!("c{i}"))
             .collect::<Vec<_>>()
             .join(",");
         self.definitions
-            .push(format!("{name}({columns}) AS MATERIALIZED ({query})"));
+            .push(format!("{name}({columns}) AS {hint} ({query})"));
         name
     }
     pub fn patch(

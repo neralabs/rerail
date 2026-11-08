@@ -96,7 +96,7 @@ impl Retained {
         } else {
             contributions.join(" UNION ALL ")
         };
-        let values = phase.relation(self.width, &values);
+        let values = phase.view(self.width, &values);
         let heads = phase.relation(
             self.width + 1,
             &format!("SELECT {cols},count(*) FROM {values} GROUP BY {cols}"),
@@ -117,9 +117,9 @@ impl Retained {
         } else {
             String::new()
         };
-        let keys = phase.relation(
+        let keys = phase.view(
             keys,
-            &format!("SELECT DISTINCT {} FROM {result}{old}", names("", keys)),
+            &format!("SELECT {} FROM {result}{old}", names("", keys)),
         );
         Ok((keys, result))
     }

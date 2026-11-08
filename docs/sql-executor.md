@@ -441,6 +441,10 @@ Bulk loads preserve the integer checks of the writable virtual tables.
 Positive, call-free caches can combine contexts, contributions, support counts, improvements, and folds into one statement per wave.
 Materialized CTEs evaluate the expressions. A tagged result stream returns the affected rows and keys.
 Native code validates every replacement before publication and maintains persistent storage roots.
+Complete cache rebuilds use inline views for pure projections and set operations.
+They replace the full improvement relation and omit old rows that the rebuild already covers.
+Checked expressions and native functions retain materialization fences, so shared consumers do not repeat their evaluation.
+Sparse updates retain their existing materialization and prepared query shapes.
 Scalar reducers, registered lattice joins, and other checked shapes retain their existing SQL paths.
 Merge and widening functions still execute through SQLite.
 

@@ -182,7 +182,7 @@ impl Frame {
                         });
                 let (keys, next) = state.append_phase(w, &changed, &mut phase, full)?;
                 queries.push(format!("SELECT * FROM {keys}"));
-                result = Some((keys, next));
+                result = Some((keys, next, full));
                 op.ready = true;
             }
             let current = store.version(&self.inputs[r]);
@@ -190,7 +190,13 @@ impl Frame {
             op.comparison = current;
             if !queries.is_empty() {
                 let affected = phase.relation(spec.keys, &union(&queries, spec.keys));
-                let candidates = if let Some((keys, next)) = result {
+                // A full cache transition covers every old result key. Its
+                // overlay therefore contains only the new result, including
+                // when comparison changes add keys outside that result.
+                let full = result.as_ref().is_some_and(|(_, _, full)| *full);
+                let candidates = if let Some((_, next, true)) = &result {
+                    format!("SELECT * FROM {next}")
+                } else if let Some((keys, next, _)) = &result {
                     format!(
                         "SELECT c.* FROM {affected} k CROSS JOIN {} c WHERE {} AND NOT EXISTS(SELECT 1 FROM {keys} d WHERE {}) UNION SELECT * FROM {next}",
                         quote(&op.result),
@@ -204,7 +210,11 @@ impl Frame {
                         same("c", "k", spec.keys)
                     )
                 };
-                let candidates = phase.relation(spec.width, &candidates);
+                let candidates = if full {
+                    phase.view(spec.width, &candidates)
+                } else {
+                    phase.relation(spec.width, &candidates)
+                };
                 let improve = if spec.lattice {
                     let value = format!("c{}", spec.width - 1);
                     format!(
@@ -222,12 +232,16 @@ impl Frame {
                         same("p", "c", spec.keys)
                     ),
                 );
-                phase.patch_computed(store, &op.improvements, &affected, &values)?;
+                if full {
+                    phase.replace_all(store, &op.improvements, &values)?;
+                } else {
+                    phase.patch_computed(store, &op.improvements, &affected, &values)?;
+                }
                 touched
                     .get_mut(r)
                     .unwrap()
                     .push(format!("SELECT * FROM {affected}"));
-                overlays.insert(id, (affected, values));
+                overlays.insert(id, (affected, values, full));
             }
             if enabled != op.active && old_improvements.len() > 0 {
                 touched.get_mut(r).unwrap().push(format!(
@@ -256,18 +270,23 @@ impl Frame {
                 .enumerate()
                 .filter(|(id, op)| op.active && steps[*id].0.output == *r)
             {
-                let exclude = overlays.get(&id).map_or(String::new(), |(affected, _)| {
-                    format!(
-                        " AND NOT EXISTS(SELECT 1 FROM {affected} d WHERE {})",
-                        same("d", "c", spec.keys)
-                    )
-                });
-                candidates.push(format!(
-                    "SELECT c.* FROM {keys} k CROSS JOIN {} c WHERE {}{exclude}",
-                    quote(&op.improvements),
-                    same("c", "k", spec.keys)
-                ));
-                if let Some((_, values)) = overlays.get(&id) {
+                let overlay = overlays.get(&id);
+                // Old improvements are a subset of the old result. A complete
+                // replacement excludes all of them without an anti-join.
+                if !overlay.is_some_and(|(_, _, full)| *full) {
+                    let exclude = overlay.map_or(String::new(), |(affected, _, _)| {
+                        format!(
+                            " AND NOT EXISTS(SELECT 1 FROM {affected} d WHERE {})",
+                            same("d", "c", spec.keys)
+                        )
+                    });
+                    candidates.push(format!(
+                        "SELECT c.* FROM {keys} k CROSS JOIN {} c WHERE {}{exclude}",
+                        quote(&op.improvements),
+                        same("c", "k", spec.keys)
+                    ));
+                }
+                if let Some((_, values, _)) = overlay {
                     candidates.push(format!("SELECT * FROM {values}"));
                 }
             }

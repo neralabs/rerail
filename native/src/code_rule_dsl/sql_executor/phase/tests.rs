@@ -44,8 +44,11 @@ fn dependent_phase_outputs_evaluate_once_and_publish_atomically() {
     for _ in 0..2 {
         let mut phase = Phase::default();
         let next = phase.relation(2, "SELECT c0,phase_probe(c1+1) FROM phase_a WHERE c0=1");
-        let other = phase.relation(2, &format!("SELECT c0,c1+10 FROM {next}"));
-        phase.patch(&store, "phase_a", "phase_keys", &next).unwrap();
+        let projection = phase.view(2, &format!("SELECT c0,c1 FROM {next}"));
+        let other = phase.relation(2, &format!("SELECT c0,c1+10 FROM {projection}"));
+        phase
+            .patch(&store, "phase_a", "phase_keys", &projection)
+            .unwrap();
         phase
             .patch(&store, "phase_b", "phase_keys", &other)
             .unwrap();

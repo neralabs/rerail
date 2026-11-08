@@ -59,7 +59,11 @@ pub(super) fn append(
     computed: bool,
 ) -> Result<()> {
     let key = names("", spec.keys);
-    let candidate = phase.relation(spec.width, &candidates);
+    let candidate = if w.preparing {
+        phase.view(spec.width, candidates)
+    } else {
+        phase.relation(spec.width, candidates)
+    };
     let next_query = if spec.lattice {
         let value = format!("c{}", spec.width - 1);
         let proposed = format!(
