@@ -25,7 +25,7 @@
 // worker's `identifier` field (canonical_names): @nfkc of the text, whitespace and line continuations removed
 // (cpl_txt). A field's `_source` is its child's text so read. `line` is 0-based (W's `line+1` is line(n, l)); the
 // worker's `column` is the byte column of the start (col). The pythonAst fields are the CPython facts: body_sha256,
-// signature_sha256, dump_sha256, literal_json, `unparse` @unparse, `repr_unparse`/annotation_reprs @py_repr(@unparse),
+// signature_sha256, dump_sha256, literal_json, `unparse` @py_unparse, `repr_unparse`/annotation_reprs @py_repr(@py_unparse),
 // `dump` @ast_dump. Span containment (`x.__start >= y.__start AND x.__end <= y.__end`) is written as the stages write it.
 //
 // GAP (worker errors): W's pythonAst worker raises (the clause fails, no findings) where CPython rejects a gated
@@ -533,7 +533,7 @@ cached_signed(n, fq) :- cached_eff(n, fq, _, _), cached_pe(fq, _).
 .decl cached_aarg(n: node, j: symbol, x: symbol)
 cached_aarg(n, j, x) :- cached_arg(n, i, x), j = to_string(i).
 .decl cached_ann(f: node, x: symbol, a: symbol)
-cached_ann(f, x, a) :- cached_arg(f, _, x), cached_param(f, p, _, x, _), field(p, "type", ty), a = @unparse(ty).
+cached_ann(f, x, a) :- cached_arg(f, _, x), cached_param(f, p, _, x, _), field(p, "type", ty), a = @py_unparse(ty).
 .decl cached_hasann(f: node, x: symbol)
 cached_hasann(f, x) :- cached_ann(f, x, _).
 

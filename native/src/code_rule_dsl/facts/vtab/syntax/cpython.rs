@@ -6,7 +6,7 @@
 //! literal_json(n, v)                 W's pythonAst `literal_json` of expression node n: `json.dumps(ast.literal_eval(
 //!                                    node), sort_keys=True, separators=(",", ":"))` of the `ast` node at n's span
 //!                                    whose class n's kind is (W's `KINDS`); no row where either raises
-//! cpython_unparse(n, s)              core.rr's @unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
+//! cpython_unparse(n, s)              core.rr's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
 //!                                    alias) at n's span whose class n's kind is
 //! cpython_ast_dump(n, s)             core.rr's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
 //!                                    `ast` node at n's span whose class n's kind is
@@ -19,7 +19,7 @@
 //! `cpython_syntax_error` is core.rr's `syntax_error(d, l, msg)` of a Python document under the name the converter
 //! gives it: both read the tape's one cached verdict (`Facts::python_syntax`, `python_syntax::error`); the tape's
 //! `syntax_error(d)` (an ERROR or MISSING node) is apart.
-//! `@unparse(n)` and `@ast_dump(n)` lower to a variable `cpython_unparse` and `cpython_ast_dump` bind
+//! `@py_unparse(n)` and `@ast_dump(n)` lower to a variable `cpython_unparse` and `cpython_ast_dump` bind
 //! (`logic::plan::corpus`'s `cpython_functors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
 //! a def, a class or an assignment that tree-sitter ends later than CPython by its start). Rows hold string indexes,
 //! as `Batch::build`'s do.
@@ -32,7 +32,7 @@ use std::collections::{BTreeSet, HashMap};
 pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
 /// W's `literal_json` (`cpython::literal`).
 pub(crate) const LITERAL_JSON: &str = "literal_json";
-/// core.rr's `@unparse(n)` (`cpython::unparse`).
+/// core.rr's `@py_unparse(n)` (`cpython::unparse`).
 pub(crate) const UNPARSE: &str = "cpython_unparse";
 /// core.rr's `@ast_dump(n)` (`cpython::dump`).
 pub(crate) const AST_DUMP: &str = "cpython_ast_dump";

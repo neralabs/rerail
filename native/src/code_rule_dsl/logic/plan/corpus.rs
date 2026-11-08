@@ -465,8 +465,9 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
 }
 
 /// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
-/// (`facts::vtab::syntax::cpython`): `@unparse(n)` is the `s` of `cpython_unparse(n, s)`.
-const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("unparse", syntax::cpython::UNPARSE), ("ast_dump", syntax::cpython::AST_DUMP)];
+/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
+/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
+const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", syntax::cpython::UNPARSE), ("ast_dump", syntax::cpython::AST_DUMP)];
 
 /// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
 /// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
@@ -502,7 +503,7 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
                     lift(r, &mut bound);
                 }
                 front::Literal::Agg { atom, .. } if atom.args.iter().any(calls) => {
-                    return Err(Error::Plan(format!("@unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", atom.rel)));
+                    return Err(Error::Plan(format!("@py_unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", atom.rel)));
                 }
                 _ => {}
             }
@@ -938,7 +939,7 @@ pub(crate) fn run_with_options(
         }
         None => {
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
-            // @unparse(n) and @ast_dump(n) read the relations the batches bind them as.
+            // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as.
             cpython_functors(&mut prog)?;
             // The base relations it reads and does not derive are inputs, `.input` or not, as an authored file's are
             // (`convert::overlay`): the batches bind them, where a relation of its own would be an empty table.

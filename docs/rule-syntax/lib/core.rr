@@ -471,12 +471,16 @@
 .functor tree_digest(n: node): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
-// @unparse(n): CPython 3.13's ast.unparse of the `ast` node at n's span that n's kind is read as (W's pythonAst
+// @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
+// message previews such as "{@unparse(call)}". Keys and signatures must use their specified canonical format.
+// Of a tape (decision 0058), `x = @unparse(t)` is its text (`unparse_of(t, x)`).
+.functor unparse(n: node): symbol
+// @py_unparse(n): CPython 3.13's ast.unparse of the `ast` node at n's span that n's kind is read as (W's pythonAst
 // worker's KINDS: an `identifier` a Name, a `call` a Call, a `type` any expression, …): `(a or b) and not c` is
 // "(a or b) and (not c)", `f"{x=}"` is "f'x={x!r}'", `1e400` is "1e309". An expression, a keyword argument, a
 // parameter or an import alias; no value for a statement, or where CPython raises (an int of more than 4300 digits).
-// Byte-exact, so it may be a key: `@py_repr(@unparse(n))` is W's `repr_unparse`.
-.functor unparse(n: node): symbol
+// Byte-exact, so it may be a key: `@py_repr(@py_unparse(n))` is W's `repr_unparse`.
+.functor py_unparse(n: node): symbol
 // @ast_dump(n): CPython 3.13's ast.dump(node, include_attributes=False) of the `ast` node at n's span that n's kind is
 // read as (any node, statements too): `Call(func=Name(id='f', ctx=Load()))`. @sha256(@ast_dump(n)) is W's
 // dump_sha256, which dump_sha256(n, h) gives without the text. Cost: the text of n's whole subtree.

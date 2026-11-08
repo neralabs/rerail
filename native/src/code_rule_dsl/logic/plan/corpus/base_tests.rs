@@ -1547,8 +1547,8 @@ vals(k, t, v) :- literal_json(n, v), node(_, n, k, _, _), node_text(n, t).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `@unparse(n)` is CPython 3.13's `ast.unparse` of the `ast` node at n's span that W's worker reads n's kind as, and
-/// `@py_repr(@unparse(n))` W's `repr_unparse`. The values are CPython 3.13.14's.
+/// `@py_unparse(n)` is CPython 3.13's `ast.unparse` of the `ast` node at n's span that W's worker reads n's kind as,
+/// and `@py_repr(@py_unparse(n))` W's `repr_unparse`. The values are CPython 3.13.14's.
 #[test]
 fn unparse_is_ws_python_ast_field() {
     let source = "def f(a: \"x\", *b: int, c=1) -> dict[str, int]:\n    return a\nx = (a or b) and not c\ny = f\"{x!r:>{w}} {y=}\"\n";
@@ -1557,7 +1557,7 @@ fn unparse_is_ws_python_ast_field() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl printed(k: symbol, t: symbol, u: symbol, r: symbol)
-printed(k, t, @unparse(n), @py_repr(@unparse(n))) :- node(_, n, k, _, _), node_text(n, t), k != "identifier", k != "expression_statement".
+printed(k, t, @py_unparse(n), @py_repr(@py_unparse(n))) :- node(_, n, k, _, _), node_text(n, t), k != "identifier", k != "expression_statement".
 .output printed
 "#;
     let got = run(&dir, program, &["printed"]);

@@ -16,7 +16,7 @@
 //     constant's text as unparse writes it, up to the scan: W's decoded value (escapes decoded, adjacent literals
 //     joined) for a str, an f-string's literal pieces (fstring_piece) for a JoinedStr, each character
 //     str.isprintable() rejects (which repr writes as `\n`, `\xhh`, `\uhhhh`: a backslash and a word) as " x". One
-//     regex says the scan holds a matching word (graphql_authority_word). GAP (blocked: ast.unparse is @unparse, which
+//     regex says the scan holds a matching word (graphql_authority_word). GAP (blocked: ast.unparse is @py_unparse, which
 //     needs CPython): a bytes constant is read as written, piece by piece (W's value has no bytes text), not as repr
 //     writes the bytes; f-string pieces are as 3.12's unparse writes them (`\n`, `\t` escaped); \p{C}/\p{Z} are the
 //     regex crate's Unicode tables, not CPython's unicodedata.

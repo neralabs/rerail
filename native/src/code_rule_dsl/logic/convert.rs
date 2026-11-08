@@ -30,7 +30,7 @@
 //!   W's values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; Ruff's string
 //!   annotations and their trees, `string_annotation(s)` and `parsed(s, grammar, root)`, each tree a document of its
 //!   own; W's pythonAst `literal_json(n, v)`, `dump_sha256(n, h)`, `body_sha256(f, h)` and `signature_sha256(f, h)`).
-//!   Not core.rr's: core.rr's `@unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
+//!   Not core.rr's: core.rr's `@py_unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
 //!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rr's `syntax_error(d, l,
 //!   msg)`, as `cpython_syntax_error(d: number, l: number, msg: symbol)`, and the tape's (tree-sitter's ERROR and
 //!   MISSING nodes, the converter's `syntax_error(d: number)`) as `tape_syntax_error(d: number)`, given (below).

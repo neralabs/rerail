@@ -313,7 +313,7 @@ engine cannot step through runs them in SQL. Beyond Soufflé's `cat`, `strlen`, 
 @ed25519_ok(key: symbol, message: symbol, sig: symbol): number   // 1 or 0
 @rx_replace(s: symbol, re: symbol, by: symbol): symbol           // every match of re in s replaced by by
 @nfkc(s: symbol): symbol                          // s under Unicode NFKC: CPython's identifier normalization
-@unparse(n: node): symbol                         // CPython 3.13's ast.unparse of n
+@py_unparse(n: node): symbol                      // CPython 3.13's ast.unparse of n (@unparse is 0058's tape text)
 @ast_dump(n: node): symbol                        // CPython 3.13's ast.dump(n, include_attributes=False)
 @py_repr(s: symbol): symbol                       // CPython's repr of the str s
 s = join x by (k, …) sep "," : { … }              // an ordered string aggregate
@@ -337,7 +337,7 @@ s = sum x : { … }                                 // a number aggregate
   whitespace and line continuations taken out (`@rx_replace(t, "\\\\\\r?\\n|\\s+", "")` first). The engine's Unicode
   tables (`unicode-normalization` 0.1.26) are newer than CPython 3.13's (15.1), which changes no character 15.1
   assigns (Unicode's normalization stability), and an identifier CPython 3.13 reads has no other.
-- `@unparse(n)` (`cpython::unparse`) is CPython 3.13's `ast.unparse` of the `ast` node at n's span that n's kind is
+- `@py_unparse(n)` (`cpython::unparse`) is CPython 3.13's `ast.unparse` of the `ast` node at n's span that n's kind is
   read as (W's `KINDS`, as for `literal_json`, with any expression class: a `call` a Call, a `type` any expression):
   an expression, a `keyword_argument`, a parameter, an import alias; `_Unparser`'s precedence (`(a or b) and not c`
   is `(a or b) and (not c)`, `(x := a + b)` is `(x := (a + b))`, `f(x for x in y)` is `f((x for x in y))`),
@@ -346,10 +346,10 @@ s = sum x : { … }                                 // a number aggregate
   lowers to a relation the batches bind, `cpython_unparse(n, s)`, read in the rule's body: a rule has no row where
   the node has no value, and it may not be called in an aggregate's atom. `@py_repr(s)` is `repr(s)` of a str (`'`
   quotes unless s has `'` and no `"`, non-printable characters escaped as `str.isprintable` decides): W's
-  `repr_unparse` is `@py_repr(@unparse(n))`.
+  `repr_unparse` is `@py_repr(@py_unparse(n))`.
 - `@ast_dump(n)` (`cpython::dump`) is CPython 3.13's `ast.dump(node, include_attributes=False)` of the `ast` node
   found as for `dump_sha256` (any class, statements too): `f()` is `Call(func=Name(id='f', ctx=Load()))`. It writes
-  n's whole subtree, so a key is `dump_sha256`. It lowers as `@unparse` does, to `cpython_ast_dump(n, s)`.
+  n's whole subtree, so a key is `dump_sha256`. It lowers as `@py_unparse` does, to `cpython_ast_dump(n, s)`.
 - `join x by (k, …) sep "sep" : { … }` (`by k` for one key; `by` and `sep` optional, `""` the default separator) is
   the body's distinct `(k, …, x)` rows' `x`, ordered by `k, …` then `x`, numbers by value and symbols by code point
   (as W's `ORDER BY` over text and Python's `sorted()` order them), joined by `sep`; `""` over no rows. A number `x`

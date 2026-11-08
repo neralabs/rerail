@@ -9,7 +9,7 @@
 //! - `value`: Python values as CPython builds and prints them (a str with lone surrogates, an int of any size, the
 //!   reprs, `str.isprintable`).
 //! - `ast`: the file's `ast` tree, CPython's classes, fields and spans, built from Ruff's.
-//! - `unparse`: `ast.unparse` of an expression (core.rr's `@unparse(n)`); `dump`: `ast.dump(node,
+//! - `unparse`: `ast.unparse` of an expression (core.rr's `@py_unparse(n)`); `dump`: `ast.dump(node,
 //!   include_attributes=False)` (core.rr's `@ast_dump(n)`) and W's hashes of it, `dump_sha256`, `body_sha256` and
 //!   `signature_sha256`; `printed`: those of each located node of a file, and the tree-sitter kinds W's worker read
 //!   as each class.
