@@ -2413,8 +2413,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "b10c6c996ab4efcf99906f347d0a3d1da576d642",
-    "status": "Root Final shape engine through b10c6c996; reviewed generic compatibility extensions only",
+    "upstreamCommit": "1e4840f3c9100266e36e23308a6e36d8db678457",
+    "status": "Root Final shape engine through 1e4840f3c; reviewed generic compatibility extensions only",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2438,11 +2438,11 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "52a8ba030db7d50f557bb01c344739e74a84a203447533a603a2af789642615a"
+        "sha256": "d6984f2dee78d5558c3ca5d562576a21a4256567ef35625c78bfbb522b370ccb"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "150cb430abd63a416091e2edf35223320e908906317254eea9c8ffa751205b93"
+        "sha256": "9aab7a13e4825f43fb0b907b2483c6bcf4f67138d629e01b6b9e314908eab4e3"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",

@@ -15,6 +15,19 @@ class EngineAlignmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'repository root'):
             migration.verify_engine_alignment(Path('/unused'), dict(checkout='.rerail/engine'))
 
+    def test_engine_audit_requires_the_adopted_commit_in_history(self):
+        with patch.object(migration, 'git', side_effect=migration.subprocess.CalledProcessError(1, 'git')):
+            with self.assertRaisesRegex(ValueError, 'adopted Final shape'):
+                migration.verify_engine_alignment(Path('/unused'), dict(checkout='.', upstreamCommit='modern'))
+
+    def test_engine_audit_rejects_unrecorded_native_files(self):
+        def git(_root, *args):
+            return 'native/parallel_executor.rs' if args[0] == 'ls-files' else ''
+        with patch.object(migration, 'git', git):
+            with self.assertRaisesRegex(ValueError, 'Unreviewed engine changes'):
+                migration.verify_engine_alignment(Path('/unused'),
+                    dict(checkout='.', upstreamCommit='modern', nativeExtensions=[]))
+
     def test_engine_audit_checks_ancestry_and_exact_reviewed_extensions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

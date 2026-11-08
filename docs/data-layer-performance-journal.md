@@ -8604,3 +8604,53 @@ No Linear ticket is created.
 
 Evidence: [post-merge source values, native observations, controls, and validators](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-824-transaction-closure-alignment.json.gz).
 Final shape advances to `251fed5c0` during this replay. That committed backend update is the next integration checkpoint before further ports.
+# 2026-11-07: Adopt current Final shape before further migration
+
+The user required this worktree to use the current Final rerail shape engine.
+Merge `a15fa3c73` adopted its committed changes through `b10c6c996`.
+Merge `98ceb503a` then adopted `1e4840f3c`, including Bitlex, the tape pipeline, and residency changes.
+Both merges retained the upstream resolutions. The withdrawn library stage and replay stayed withdrawn.
+Decision 0065 remains a draft. Its typing direction replaced the older staged-library description in the migration guide.
+
+The frontend, executor, corpus scheduler, typing, transducer, residency, and content-store sources match the adopted upstream commit.
+The existing generic Python compatibility extensions remain on this runtime.
+They supply canonical expression text, parser diagnostics, traversal order, root metadata, and Boolean-context normalization after demand planning.
+Their relation registrations and tests also remain. No new Rust detector or execution engine was added for this checkpoint.
+
+The manifest now records all 18 extension files, including the dependency lock, with exact hashes.
+The migration inventory command checks root-checkout selection, upstream ancestry, extension boundaries, and extension bytes.
+The regression ladder first failed because the audit was absent. The implemented audit then passed its tests.
+Additional cases reject missing ancestry, unrecorded native files, and an executor outside the permitted extension boundary.
+All 72 migration-tool tests passed. The identical-library test still rejects a retired checkout.
+
+Acceptance used a newly built root CLI, frozen as `engine-3b5314e26f3b4b1e`.
+Its SHA-256 is `3b5314e26f3b4b1e5ba3184767926fedfc83d8a45de8a260b02af5da6e0fc31e`.
+Its build receipt records source commit `98ceb503a`, upstream `1e4840f3c`, and the native, Bitlex, Cargo manifest, and lock tree hashes.
+The CLI build took 81 seconds. The unit build took 147 seconds under the existing build-duration authorization.
+These compile times are separate from runtime measurements. This checkpoint makes no performance claim.
+
+The in-progress `transaction_callback_wrappers` port passed all four unchanged original tests, with two positive and two clean cases.
+All four complete raw-fact observations match the source. All four native calls succeeded, with no source detector fallback.
+All 116 supplemental API cases passed, including 71 positives. All 103 reporter cases passed, including 69 positives.
+The two finding families each passed enabled controls and rejected disabled controls in both interfaces.
+Each disabled original control retained the full collection and failed its positive assertion through successful empty native output.
+
+All 86 candidate reader checks passed, including every one of the 75 target drafts.
+Focused native groups passed 118 tests. The counts were RR 74, printing 2, diagnostics 2, and versioned SQL 5.
+Bitlex passed 19, block plans passed 14, and corpus planning passed 2.
+Six upstream cases remained ignored. The receipt names each case and retains its reason:
+`hand_written_rules_lowering_report`, `write_rr_translations`, `dump_json_rows`, `json_batch_cost_per_block`,
+`json_corpus_tapes_equal_tree_sitter`, and `json_tier1_is_simdjsons_stage1`.
+The RR unit command excluded the broad `rule_syntax_files_pass_check_rr` survey. The 86 candidate readers ran separately.
+No original callback assertion, supplemental API case, or reporter case was skipped.
+
+The [alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-1e484-alignment.json.gz)
+retains the build provenance, commands, source oracles, native observations, mutation controls, logs, and receipt validator.
+The validator checks exact shard coverage, ordered values, source pinning, executable hashes, and source tree identity.
+Its initial run expected the API report status `passed`; that report uses `completed`.
+The corrected validator checks `completed` and every individual passed result. It does not discard failures.
+
+The migration inventory remains 75 drafts and 25 absent translations. Full migration acceptance remains false.
+Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+Further ports use this root engine and its current shared libraries. The nested historical engines remain retired.
+No whole-repository cold execution or whole-batch benchmark ran for this checkpoint.

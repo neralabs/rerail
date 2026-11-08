@@ -10,15 +10,13 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`824c07935`. That branch includes the migration and regex fixes, the current planner,
-indexed SQL maintenance, native relation reclamation, corpus publication leases, and the current Python module world.
-It also keeps parsed rules and prepared programs for the process, as decision 0060 specifies.
-Merge `eec59e31c` adopts tape-based rule lowering and the upstream relation-lifetime resolutions.
-The transaction receipts through `43c8c521d` remain a historical checkpoint.
-The [post-merge receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-824-transaction-closure-alignment.json.gz) records the complete focused replay on `824c07935`.
-Merge `2bf167c90` takes those changes without restoring an older planner or executor.
-Merge its committed engine, frontend, libraries, build files, and locks into this root.
+Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
+`1e4840f3c`. Merge `a15fa3c73` takes the typing and runtime resolutions through `b10c6c996`.
+Merge `98ceb503a` also takes the generated Bitlex parser pipeline, tape changes, and residency changes.
+The upstream library stage and replay are withdrawn. Decision 0065 describes typing as one fixpoint over stored derivations.
+The frontend, executor, corpus scheduler, typing, transducer, residency, and content-store code retain the upstream resolutions.
+Older transaction and alignment receipts remain historical evidence for their stated binaries.
+
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
 The canonical printer also supplies call-receiver text for `async_patterns`.
@@ -26,6 +24,10 @@ The ownership rule also requests whole-call and callee text through the shared `
 All four text columns share one native parse for each demanded prepared file batch.
 The generic `project.rr` input supplies the caller's root spelling once per run, without path resolution or a directory scan.
 These generic extensions use the modern engine's existing relation and demand interfaces.
+The manifest records all 18 extension files, including the dependency lock, with exact hashes.
+`migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
+It rejects retired checkouts and native changes outside the reviewed extension boundary.
+New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.
 It makes one additional native AST pass per prepared file batch when a program reads the relation.
@@ -33,6 +35,7 @@ Repeated batch preparation can repeat that pass. Rule decisions remain in Datalo
 Uncommitted sibling work is not part of this baseline.
 
 The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
+The older `.rerail/data-layer-batch-seven/engine-source` checkout is also retired.
 Existing receipts retain their historical engine hashes. They do not certify the current engine.
 The replay harness rejects libraries loaded from another checkout, even when their bytes match.
 New acceptance runs use a frozen binary built from this root, with a receipt that records its source commit.
@@ -65,7 +68,12 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **74 target drafts and 26 absent translations**. None has full acceptance yet.
+The current inventory contains **75 target drafts and 25 absent translations**. None has full acceptance yet.
+The 75th draft, `transaction_callback_wrappers`, passes all four original tests on the engine through `1e4840f3c`.
+It also passes 116 API cases and 103 reporter cases, including 71 and 69 positives respectively.
+Both finding families reject independent disabled-detector controls in the original and configured interfaces.
+The [alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-1e484-alignment.json.gz) contains complete source and native observations.
+Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 74th draft, `transaction_closures`, passes all 131 unchanged original tests and preserves 126 complete API observations.
 There are 98 cases with direct native queries and twelve more cases that assert native constant values.
 All 21 remaining cases run their host protocol, storage, DTO, or argparse assertions. The direct receipt identifies each case.
