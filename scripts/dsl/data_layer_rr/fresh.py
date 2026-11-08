@@ -3,7 +3,9 @@
 These contracts supplement the unchanged upstream suites. They never count as original pytest cases.
 """
 import argparse
+import contextlib
 import importlib
+import io
 import json
 import os
 from pathlib import Path
@@ -26,6 +28,8 @@ def selected_cases(cases, part, parts):
 
 def arguments(values, root):
     def convert(value):
+        if isinstance(value,dict) and set(value)=={'frozenset'}:
+            return frozenset(convert(item) for item in value['frozenset'])
         if isinstance(value, dict) and set(value) == {'pythonAst', 'mode'}:
             import ast
             tree = ast.parse(value['pythonAst'], mode=value['mode'])
@@ -105,6 +109,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'sql_grammar_escape_hatches' in modules:
+            from grammar_escape_port import install
+            install(backend,modules['sql_grammar_escape_hatches'])
         if 'transaction_patterns' in modules:
             from patterns_port import install
             install(backend, modules['transaction_patterns'])
@@ -234,6 +241,9 @@ def run(args):
                         action = lambda: owner.analyze(values['tree'])
                     def call():
                         return analyzed_state(owner, action())
+                elif native and case['check']=='sql_grammar_escape_hatches':
+                    backend.item=SimpleNamespace(nodeid=case['id'])
+                    call=lambda:getattr(module,case['entry'])(**values)
                 elif native:
                     backend.item = SimpleNamespace(nodeid=case['id'])
                     call = lambda: backend.scan(case['check'], case['entry'], module, values)
@@ -247,7 +257,14 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                actual = invoke(call, root)
+                if case['check']=='sql_grammar_escape_hatches':
+                    output,errors=io.StringIO(),io.StringIO()
+                    with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
+                        actual=invoke(call,root)
+                    actual.update(stdout=output.getvalue().replace(str(root),'$ROOT'),
+                                  stderr=errors.getvalue().replace(str(root),'$ROOT'))
+                else:
+                    actual = invoke(call, root)
                 if native:
                     original = recorded['results'][index]
                     if original['id'] != case['id']:

@@ -9060,3 +9060,62 @@ Shared registry/scope assertions, production registration, CLI/enforcement, and 
 The inventory contains 81 drafts and 19 absent translations. Full migration acceptance remains false.
 
 Evidence: [SQL regex source/native contracts and validator](../gate/data-layer/fixtures/host/data-layer-port/rr-regex-sql-parsing-native-contracts.json.gz).
+
+## 2026-11-08: Grammar escape-hatch translation and native annotation values
+
+The 82nd draft is `sql_grammar_escape_hatches`. Final shape remains at `07a6b4171`, including the fetched remote tip.
+All development and builds use the active root. Neither retired engine changed.
+
+All 165 original tests pass with their complete setup, call, and teardown phases.
+The replay preserves all 134 observations, including 21 positive file checks, visitor state, exceptions, and captured output.
+The nine CLI assertions retain their host protocol. Native relations provide classification, signature verification, counts, formatted reports, and return status.
+No rule invokes Python.
+
+The implementation follows two non-obvious source details.
+`SAFE_PARAM_TYPES` is static, despite its discovery comment. Inheritance closes before aliases propagate.
+The native rule keeps those stages separate. Directory discovery also preserves the source's full-path `test` substring behavior.
+It does not apply that class-definition skip to an explicitly supplied file.
+
+The original suite passed before the additional corpus did.
+The 65 supplemental API cases exposed twelve missed non-string annotation literals and one missing syntax warning.
+The tape contains the literal nodes, but the rule lacked their Python value representations.
+The shared native AST producer now emits `annotation_constant_repr` for non-string constants within annotations.
+It shares its demanded parse with the other Python text columns and skips constants outside annotations.
+The rule reads typed rows. It adds no Rust detector or per-node callback.
+
+The first value implementation preserved Ruff's source spelling for a large hexadecimal integer.
+Python reports its decimal value. The printer now uses the existing bigint library for radix conversion.
+The same correction applies to canonical annotation text. No new dependency or parallel evaluator was added.
+The native regression checks nested bytes, floats, infinity, complex values, large integers, booleans, None, and Ellipsis.
+It also checks that an assignment outside annotations contributes no row.
+
+The source-call guard needed a diagnostic repair: CPython clears a profile callback when that callback raises.
+The new contract rearms it before each test. The first failed run then exposes all 36 unported helper cases.
+That failed run remains rejected because it records source calls; its other passing cases never count as native evidence.
+Four subsequent failures had equal detector returns but different fixture-root string arguments.
+The transport now normalizes an exact fixture-root string, and the source oracle was recorded again.
+
+All 65 API cases now pass, including 39 positive results. All 17 production-reporter cases pass, including eight positives.
+The reporter corpus tests the ceiling on both sides, deduplication before counting, inheritance across files, literal values, triggers, and scope.
+Explicit `.severity` declarations preserve the source's `error` DTO value.
+A path helper also exposed the existing SQL emitter's unquoted `join(...)` function name.
+The rule uses scoped path concatenation instead. That SQL-emitter defect remains outside this delivery; no Linear ticket was created.
+
+Eleven disabled-output controls fail as intended through successful native execution.
+One initial control selected an attribute annotation rather than a forward reference.
+The unchanged result exposed the wrong witness. The corrected control uses the recorded positive forward-reference case.
+
+All 93 policy/table files pass the reader check. All 89 migration tooling tests pass.
+The new native integration test and both canonical-printer tests pass: three tests, with none ignored.
+The preceding regex SQL rule also passes all 125 original tests again on the new engine.
+
+The final frozen CLI is `cli-f6f0fbc47f877092`, built from `97aada35a`.
+Its build takes 10.816 seconds wall time; the standard-feature unit build takes 29.064 seconds.
+The earlier value implementation's builds and failed comparisons remain in the receipt.
+Compilation is separate from execution. No whole-repository or whole-batch cold benchmark ran.
+
+The inventory contains 82 drafts and 18 absent translations. Full migration acceptance remains false.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+The direct original suite does not exercise every legacy helper entry point; the receipt does not claim exhaustive source-domain coverage.
+
+Evidence: [Grammar escape-hatch source/native contracts and validator](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-escape-hatches-native-contracts.json.gz).

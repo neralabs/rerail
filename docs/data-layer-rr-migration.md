@@ -36,6 +36,9 @@ Rules can join those positions to format-specification spans. No additional pars
 Valid scalar escapes use the shared Python value decoder, including Unicode character names.
 The `python_repr` text functor shares the native canonical printer's Python string quoting and Unicode escape rules.
 It takes text values, with no AST traversal or Python execution.
+The `annotation_constant_repr` relation supplies non-string literal values within annotations, including nested literals.
+It shares the existing demanded native AST pass and excludes literals outside annotations.
+Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
 The manifest records all 21 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
@@ -84,7 +87,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **81 target drafts and 19 absent translations**. None has full acceptance yet.
+The current inventory contains **82 target drafts and 18 absent translations**. None has full acceptance yet.
+The 82nd draft, `sql_grammar_escape_hatches`, preserves class inheritance, subsequent alias propagation, unsafe parameter types, lexical usages, deduplication, and the signed ceiling.
+All 165 unchanged original tests pass with 134 complete observations, including visitor state, captured output, and 21 positive file checks.
+Its 65 supplemental API cases include 39 positive results. All 17 reporter cases pass, including eight positives above the ceiling.
+Eleven controls cover detector families, inheritance, aliases, transparent containers, forward references, literal values, signatures, and the ceiling.
+The supplemental corpus caught twelve missing literal findings after the original suite passed. The new native value relation addresses those gaps.
+Original CLI assertions execute their host protocol with native decisions and report formatting. Rules invoke no Python.
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-escape-hatches-native-contracts.json.gz) retains complete source/native values and regression history.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 81st draft, `regex_sql_parsing`, implements the pinned indicator lists, classification precedence, lexical calls, and pattern previews in `.rr`.
 All 125 unchanged original tests pass, including 14 positive file checks and all 128 recorded API/property observations.
 Its 343 supplemental API cases include 44 file checks, with 27 positives. All 64 reporter cases pass, including 41 positives.

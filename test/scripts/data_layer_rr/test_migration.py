@@ -16,6 +16,12 @@ def module():
 
 
 class MigrationTests(unittest.TestCase):
+    def test_fresh_arguments_distinguish_an_empty_set_from_an_absent_override(self):
+        module()
+        from fresh import arguments
+        value=arguments(dict(explicit={'frozenset':[]},missing=None,names={'frozenset':['A','A','B']}),Path('/fixture'))
+        self.assertEqual(value,dict(explicit=frozenset(),missing=None,names=frozenset({'A','B'})))
+
     def test_fresh_shards_keep_global_oracle_indices_and_cover_every_case_once(self):
         module()
         from fresh import selected_cases

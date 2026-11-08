@@ -1,0 +1,182 @@
+{
+  "cases": [
+    {
+      "id": "ceiling-0",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "id": "ceiling-1",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "ceiling-16",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "ceiling-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "ceiling-18",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment17(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "dedupe-before-ceiling",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "dedupe-reasons",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str, other: object): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "cross-file-inheritance",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class Parent(SqlRenderable): pass\n"
+        },
+        {
+          "path": "api/child.py",
+          "source": "# SqlRenderable\nclass Fragment0(Parent):\n    def __init__(self, value: str): pass\nclass Fragment1(Parent):\n    def __init__(self, value: str): pass\nclass Fragment2(Parent):\n    def __init__(self, value: str): pass\nclass Fragment3(Parent):\n    def __init__(self, value: str): pass\nclass Fragment4(Parent):\n    def __init__(self, value: str): pass\nclass Fragment5(Parent):\n    def __init__(self, value: str): pass\nclass Fragment6(Parent):\n    def __init__(self, value: str): pass\nclass Fragment7(Parent):\n    def __init__(self, value: str): pass\nclass Fragment8(Parent):\n    def __init__(self, value: str): pass\nclass Fragment9(Parent):\n    def __init__(self, value: str): pass\nclass Fragment10(Parent):\n    def __init__(self, value: str): pass\nclass Fragment11(Parent):\n    def __init__(self, value: str): pass\nclass Fragment12(Parent):\n    def __init__(self, value: str): pass\nclass Fragment13(Parent):\n    def __init__(self, value: str): pass\nclass Fragment14(Parent):\n    def __init__(self, value: str): pass\nclass Fragment15(Parent):\n    def __init__(self, value: str): pass\nclass Fragment16(Parent):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "no-trigger-child",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class Parent(SqlRenderable): pass\n"
+        },
+        {
+          "path": "api/child.py",
+          "source": "class Fragment0(Parent):\n    def __init__(self, value: str): pass\nclass Fragment1(Parent):\n    def __init__(self, value: str): pass\nclass Fragment2(Parent):\n    def __init__(self, value: str): pass\nclass Fragment3(Parent):\n    def __init__(self, value: str): pass\nclass Fragment4(Parent):\n    def __init__(self, value: str): pass\nclass Fragment5(Parent):\n    def __init__(self, value: str): pass\nclass Fragment6(Parent):\n    def __init__(self, value: str): pass\nclass Fragment7(Parent):\n    def __init__(self, value: str): pass\nclass Fragment8(Parent):\n    def __init__(self, value: str): pass\nclass Fragment9(Parent):\n    def __init__(self, value: str): pass\nclass Fragment10(Parent):\n    def __init__(self, value: str): pass\nclass Fragment11(Parent):\n    def __init__(self, value: str): pass\nclass Fragment12(Parent):\n    def __init__(self, value: str): pass\nclass Fragment13(Parent):\n    def __init__(self, value: str): pass\nclass Fragment14(Parent):\n    def __init__(self, value: str): pass\nclass Fragment15(Parent):\n    def __init__(self, value: str): pass\nclass Fragment16(Parent):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "constant-0",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: 1.25): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: 1.25): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "constant-1",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: list[b'\\xff']): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "constant-2",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-0",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "other/a.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "class Fragment0(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment1(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment2(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment3(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment4(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment5(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment6(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment7(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment8(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment9(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment10(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment11(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment12(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment13(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment14(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment15(SqlRenderable):\n    def __init__(self, value: str): pass\nclass Fragment16(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    }
+  ]
+}

@@ -57,6 +57,8 @@ def run(args):
         if native:
             rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
             options=({'repositoryRoot':str(args.source.resolve())} if case['check']=='transaction_callback_wrappers' else {})
+            if case['check']=='sql_grammar_escape_hatches':
+                options['sourceModulePath']=str(args.source.resolve()/'scripts/lint_sql_grammar_escape_hatches.py')
             result = execute_native(engine, rule, case['files'], options, workspace_name=case.get('workspaceName', 'corpus'))
             report['sourceDetectorModules'] = [name for name in sys.modules if name.startswith('scripts.lint_')]
             if report['sourceDetectorModules']:
@@ -109,6 +111,8 @@ def run(args):
                 native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['parameters']['exit_order'],-r['parameters']['entry_order']))
             if case['check']=='regex_sql_parsing':
                 native_rows=sorted(native_rows,key=lambda r:'regex_sql_parsing:'+r['code']+':'+r['path']+':'+str(r['line'])+':'+r['message'])
+            if case['check']=='sql_grammar_escape_hatches':
+                native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['parameters'].get('phase',0),r['parameters'].get('ordinal',0)))
             if case['check']=='render_raw_strings':
                 native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['code'],r['parameters']['ordinal']))
             if case['check']=='render_fstrings':
@@ -171,7 +175,7 @@ def run(args):
                         finding['message'] = finding['message'].replace(str(root)+'/', '')
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
-        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches','render_fstrings','render_raw_strings','regex_sql_parsing'}:
+        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches','render_fstrings','render_raw_strings','regex_sql_parsing','sql_grammar_escape_hatches'}:
             last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code', 'async_sync_boundary': 'code', 'plan_scope_ownership':'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)

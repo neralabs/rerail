@@ -1496,6 +1496,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/sql-grammar-escape-hatches.rr",
+      "sha256": "bd3732506cc7f6a2cd2282e82e0e35243786f465fae044fede89ec4ab95f20b6",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_sql_grammar_escape_hatches.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -1801,8 +1808,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-sql-grammar-escape-hatches.json",
       "legacySha256": "9fe021819a3cbd3410f74b99ec1e33758d4eb680fd7e744e73c4cc8c186fbd1c",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/sql-grammar-escape-hatches.rr",
+      "ruleSha256": "bd3732506cc7f6a2cd2282e82e0e35243786f465fae044fede89ec4ab95f20b6"
     },
     {
       "check": "grammar_render_methods",

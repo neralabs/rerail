@@ -41,6 +41,8 @@ class Contract:
                                  args.parts, args.baseline, args.rule_root)
 
     def value(self, value):
+        root=self.item.funcargs.get('tmp_path') if self.item else None
+        if isinstance(value,str) and root is not None and value==str(root):return '$ROOT'
         if isinstance(value,self.module.GrammarClassVisitor):return dict(type='GrammarClassVisitor',state=self.value(vars(value)))
         if isinstance(value, ast.AST):
             return dict(syntax=visit_columns(value))
@@ -109,6 +111,7 @@ class Contract:
                     if not passive and name!='cli_main':
                         self.fallbacks.append(name)
                         raise AssertionError('Original semantic function invoked: '+name)
+            self.guard = guard
             sys.setprofile(guard)
             threading.setprofile(guard)
 
@@ -128,6 +131,10 @@ class Contract:
         self.item = item
         if self.backend:
             self.backend.item = item
+            # CPython clears a profile callback that raises. A failed test must
+            # not disable source-call detection in every subsequent test.
+            sys.setprofile(self.guard)
+            threading.setprofile(self.guard)
 
     def pytest_runtest_logreport(self, report):
         self.cases.setdefault(report.nodeid, []).append(dict(phase=report.when, outcome=report.outcome))

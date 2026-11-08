@@ -1,0 +1,1094 @@
+{
+  "format": "rerail.grammar-escape-api-cases/v1",
+  "cases": [
+    {
+      "id": "annotation-0",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-1",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: object):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-2",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: Any):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-3",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: int):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-4",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: bytes):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-5",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: SqlTableName):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-6",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: SqlTableName | None):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-7",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: list[str]):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-8",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: dict[SqlTableName, tuple[str, int]]):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-9",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: list):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-10",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: Optional[SqlTableName]):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-11",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: typing.Optional[str]):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-12",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: typing.SqlTableName):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-13",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 'list[str]'):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-14",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 'typing.Optional[SqlTableName]'):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-15",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: ''):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-16",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: '\ud835\udcd0'):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-17",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: \ud835\udcd0):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-18",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: b'raw'):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-19",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: b'\\xff'):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-20",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: list[b'raw']):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-21",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 1.25):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-22",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 1_000.00):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-23",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 1e2):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-24",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 2e309):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-25",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 0x10):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-26",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 123456789012345678901234567890):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-27",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 0x123456789012345678901234567890):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-28",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 1j):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-29",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 2.5j):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-30",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: ...):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-31",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: True):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-32",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: None):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-33",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: factory(str)):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-34",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: 1 + 2):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-35",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str | str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "posonly",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str, /): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "kwonly",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, *, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "varargs",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, *value: str, **other: Any): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "async-init",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    async def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "same-line-dedupe",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, first: str, second: object): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-usage-dedupe",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlRawSql(SqlRenderable): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "alias-stages",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "Alias = SqlRenderable\nclass Derived(Alias):\n    def __init__(self, v: str): pass\nclass Other(SqlRenderable):\n    def __init__(self, v: Derived): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "inheritance",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Parent(SqlRenderable): pass\nclass Child(Parent):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "alias-union",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Parent(SqlRenderable): pass\nAlias = Parent | int\nclass Child(Alias):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "protected",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlAdminToolRawStatement(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Outer(SqlRawSql):\n    class Nested(SqlRenderable):\n        def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "syntax",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Broken(SqlRenderable):\n    def __init__(self, x: str)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "malformed-heuristic",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "def f(x='(:'):\n    class Fragment(SqlRenderable):\n        def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "no-trigger-syntax",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "unrelated broken )\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "override-0",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "grammar_class_names": {
+          "frozenset": []
+        },
+        "safe_param_types": {
+          "frozenset": [
+            "str"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-1",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "grammar_class_names": {
+          "frozenset": [
+            "SqlRenderable"
+          ]
+        },
+        "safe_param_types": {
+          "frozenset": [
+            "str"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-2",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "grammar_class_names": {
+          "frozenset": []
+        }
+      }
+    },
+    {
+      "id": "override-3",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "safe_param_types": {
+          "frozenset": [
+            "str"
+          ]
+        }
+      }
+    },
+    {
+      "id": "usage-0",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "x = SqlRawSql()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "usage-1",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "text = 'SqlRawSql()'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "usage-2",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import SqlRawSqlWithParams\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "usage-3",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\u00a0\u001c# SqlRawSql()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "usage-4",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "broken ) SqlRawSql(\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "usage-5",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "x = SqlRawSql()\rSqlUnsafe()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "collect-0",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "class Parent(SqlRenderable): pass\n"
+        },
+        {
+          "path": "impl/b.py",
+          "source": "# SqlRenderable\nclass Child(Parent):\n    def __init__(self, value: str): pass\n"
+        },
+        {
+          "path": "impl/tests/usage.py",
+          "source": "x = SqlRawSql()\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/a.py"
+          },
+          {
+            "path": "impl/b.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "collect-1",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "class Parent(SqlRenderable): pass\n"
+        },
+        {
+          "path": "impl/b.py",
+          "source": "# SqlRenderable\nclass Child(Parent):\n    def __init__(self, value: str): pass\n"
+        },
+        {
+          "path": "impl/tests/usage.py",
+          "source": "x = SqlRawSql()\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "."
+          }
+        ]
+      }
+    },
+    {
+      "id": "collect-2",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "class Parent(SqlRenderable): pass\n"
+        },
+        {
+          "path": "impl/b.py",
+          "source": "# SqlRenderable\nclass Child(Parent):\n    def __init__(self, value: str): pass\n"
+        },
+        {
+          "path": "impl/tests/usage.py",
+          "source": "x = SqlRawSql()\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/tests"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-scan_file",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_file",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "missing.py"
+        }
+      }
+    },
+    {
+      "id": "missing-scan_usages",
+      "check": "sql_grammar_escape_hatches",
+      "entry": "scan_usages",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "missing.py"
+        }
+      }
+    }
+  ]
+}
