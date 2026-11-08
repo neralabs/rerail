@@ -88,6 +88,19 @@ CASES = [
     ('walk-self-cycle', {'a.py': 'class C(C):\n def method(self): pass\n def __init__(self): pass\n'}),
     ('walk-function-base', {'a.py': 'class Factory:\n def method(self): pass\ndef Factory(): pass\n', 'entry.py': 'from a import Factory as Alias\nclass C(Alias): pass\n'}),
     ('walk-deeper-than-64', {'a.py': deep_inheritance(70)}),
+    ('member-self-and-super', {'a.py': 'class Base:\n def _private(self): pass\n @property\n def prop(self): pass\nclass C(Base):\n def _private(self): pass\n def run(self):\n  self._private()\n  self.prop\n  super()._private()\n  self.missing()\n'}),
+    ('member-mixin-single', {'a.py': 'class Base:\n def run(self): self._hook()\nclass Mixin:\n def _hook(self): pass\nclass C(Base, Mixin): pass\n'}),
+    ('member-cobase-order', {'a.py': 'class Base:\n def run(self): self._hook()\nclass First:\n def _hook(self): pass\nclass Second:\n def _hook(self): pass\nclass C(Base, First, Second): pass\n'}),
+    ('member-module-reexport', {'impl.py': 'def target(): pass\n', 'bridge.py': 'from impl import target as Alias\n', 'entry.py': 'import impl as module\nimport bridge\ndef run():\n module.target()\n bridge.Alias()\n module.missing()\n'}),
+    ('member-imported-class', {'impl.py': 'class Base:\n def method(self): pass\nclass C(Base): pass\n', 'bridge.py': 'from impl import C as Public\n', 'entry.py': 'from bridge import Public as Alias\ndef run(obj: Alias):\n Alias.method()\n obj.method()\n'}),
+    ('member-local-types', {'a.py': 'class C:\n def method(self): pass\ndef run(first: C | None, second: C[int], quoted: "C", qualified: pkg.C):\n first.method()\n second.method()\n quoted.method()\n qualified.method()\n C.method()\n'}),
+    ('member-import-module-blocks-parameter', {'a.py': 'import missing as obj\nclass C:\n def method(self): pass\ndef run(obj: C): obj.method()\n'}),
+    ('member-import-class-blocks-local', {'impl.py': 'class Imported: pass\n', 'entry.py': 'class Alias:\n def method(self): pass\nfrom impl import Imported as Alias\ndef run(): Alias.method()\n'}),
+    ('member-local-class-blocks-parameter', {'a.py': 'class obj: pass\nclass Other:\n def method(self): pass\ndef run(obj: Other): obj.method()\n'}),
+    ('member-constructor-and-class-annotations', {'a.py': 'class Worker:\n def method(self): pass\nclass Other:\n def method(self): pass\nclass Base:\n worker: Other\nclass C(Base):\n worker: Other\n def __init__(self, worker: Worker): pass\n def run(self):\n  self.worker.method()\n  self._worker.method()\n'}),
+    ('member-annotation-fallbacks', {'a.py': 'class Worker:\n def method(self): pass\nclass Other:\n def method(self): pass\nclass Base:\n worker: Worker\nclass C(Base):\n _worker: Other\n def __init__(self, worker: Worker, _worker): pass\n def run(self):\n  self._worker.method()\n  self.worker.method()\n'}),
+    ('member-last-class-first-parameter', {'a.py': 'class First:\n def method(self): pass\nclass Second:\n def method(self): pass\nclass C:\n worker: First\n worker: Second\n def run(self): self.worker.method()\ndef run(obj: First, obj: Second): obj.method()\n'}),
+    ('member-local-import-after-module-replacement', {'a.py': 'def run(obj):\n from impl import C as obj\n obj.method()\n', 'a/__init__.py': '', 'impl.py': 'class C:\n def method(self): pass\n'}),
 ]
 
 
@@ -176,6 +189,12 @@ def source_rows(source, files):
     for sid,symbol in graph.symbols.items():
         if not symbol.is_function:continue
         for i,ref in enumerate(symbol.raw_refs):
+            targets=graph._resolve_ref(symbol,ref)
+            assert len(targets)<=1
+            target=targets[0] if targets else None
+            rows.append(dict(kind='graph_ref',owner=sid,ordinal=i,ref_kind=ref.kind,base=ref.base or '',attr=ref.attr,
+                             has_target=int(target is not None),target=target or '',
+                             target_kind=graph.symbols[target].kind if target is not None else ''))
             if ref.kind!='name_call':continue
             target=graph._resolve_name_call(symbol,graph.modules[symbol.module],ref.attr)
             rows.append(dict(kind='graph_name_call',owner=sid,ordinal=i,name=ref.attr,
