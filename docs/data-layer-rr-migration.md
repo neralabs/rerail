@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`1e4840f3c`. Merge `a15fa3c73` takes the typing and runtime resolutions through `b10c6c996`.
+`9993e7e5f`. Merge `8f9f001a4` adopts its persistent prepared-program storage (decision 0073).
+Merge `a15fa3c73` takes the typing and runtime resolutions through `b10c6c996`.
 Merge `98ceb503a` also takes the generated Bitlex parser pipeline, tape changes, and residency changes.
 The upstream library stage and replay are withdrawn. Decision 0065 describes typing as one fixpoint over stored derivations.
 The frontend, executor, corpus scheduler, typing, transducer, residency, and content-store code retain the upstream resolutions.
@@ -24,9 +25,11 @@ The ownership rule also requests whole-call and callee text through the shared `
 All four text columns share one native parse for each demanded prepared file batch.
 The generic `project.rr` input supplies the caller's root spelling once per run, without path resolution or a directory scan.
 These generic extensions use the modern engine's existing relation and demand interfaces.
-The manifest records all 18 extension files, including the dependency lock, with exact hashes.
+The typed JSON reader preserves member order, exposes shape and JSON projections, and shares one decoded document across selectors.
+The manifest records all 19 extension files, including the dependency lock, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
+If the local Final shape branch advances, the audit rejects acceptance until this branch includes its new commits.
 New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.
@@ -68,7 +71,13 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **75 target drafts and 25 absent translations**. None has full acceptance yet.
+The current inventory contains **76 target drafts and 24 absent translations**. None has full acceptance yet.
+The 76th draft, `transaction_patterns`, passes all 118 unchanged original tests on the engine through `9993e7e5f`.
+It preserves all 117 recorded API observations, including collector state and helper results.
+Its 151 supplemental API cases include 124 scans, with 96 positives. All 61 reporter cases pass, including 17 positives.
+Ten controls disable individual detector or helper outputs and make the selected positive assertions fail.
+The [current alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-9993-alignment.json.gz) preserves the complete results and exact comparison contracts.
+Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 75th draft, `transaction_callback_wrappers`, passes all four original tests on the engine through `1e4840f3c`.
 It also passes 116 API cases and 103 reporter cases, including 71 and 69 positives respectively.
 Both finding families reject independent disabled-detector controls in the original and configured interfaces.

@@ -8654,3 +8654,72 @@ The migration inventory remains 75 drafts and 25 absent translations. Full migra
 Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 Further ports use this root engine and its current shared libraries. The nested historical engines remain retired.
 No whole-repository cold execution or whole-batch benchmark ran for this checkpoint.
+
+
+## 2026-11-07: Adopt Final shape prepared-program storage and verify the current rule
+
+The active engine now includes Final shape `9993e7e5fbadc8fd8340c4c01e515f3328ffec60`, through merge `8f9f001a4`.
+Its decision 0073 keeps prepared programs in the existing content store across processes.
+The merge retained its frontend, corpus scheduler, typing, tooling, and prepared-program storage implementations.
+These sources match Final shape. The text vocabulary retains only four additional generic Python text registrations.
+The recorded native differences comprise 19 extension and test files, including the dependency lock.
+No retired engine checkout supplied a build, library, or runtime for this checkpoint.
+
+A new audit regression initially failed because acceptance ignored newer commits on the local Final shape branch.
+The implemented audit requires those commits in this branch's history.
+A standalone clone without that local branch still requires the recorded upstream ancestor and exact extension hashes.
+The earlier root-checkout and extension-boundary checks remain enforced. All 79 tooling tests pass.
+
+The root CLI build took 40.26 seconds. The standard unit build took 55.60 seconds.
+Compile times remain separate from runtime measurements. This checkpoint makes no performance claim.
+The frozen CLI has SHA-256 `a9e68e528e1ea4f1158300c47cbd4ac17d057fedc4f9abe587a169aa02cdd696`.
+Both build receipts record the merged source and native, Bitlex, Cargo manifest, and lock tree hashes.
+
+The first unit command incorrectly selected the headless CLI feature.
+It failed with 15 missing `WorkspaceStorageTask.compute` errors in unchanged upstream storage tests.
+The standard unit build succeeded without an engine change.
+Focused native groups pass 102 tests: RR 66, inputs 9, literal decoding 6, printer 2, simplification 11, and typing 6.
+The prepared-program store regression and demanded Boolean regression each pass one test.
+Three upstream reporting or benchmark helpers remain ignored: `hand_written_rules_lowering_report`, `write_rr_translations`, and `nearest_costs_by_solver`.
+The stored-program test proves identical rows after preparation, reuse from the store, and reuse from memory.
+
+The current `transaction_patterns` draft passes all 118 unchanged original tests, with no skipped case or detector fallback.
+All 117 recorded API observations match, including helper returns and collector state.
+Twelve cases make no recorded helper call. Their individual identities remain in the receipt.
+Eleven inspect constants obtained from the native configuration query. The export assertion uses host reflection.
+Ephemeral signing creates test fixtures in the host harness. Signature canonicalization and verification execute natively.
+Filesystem discovery and metadata transport also remain host adapter work.
+
+All 151 supplemental API cases pass. They include 124 scans, with 96 positives, and 27 helper cases.
+All 61 reporter cases pass, including 17 positives. Every supplied expected value comes from the pinned original source.
+Ten independent controls disable the detector, call collection, category override, inference, signature message, signature verification,
+baseline loader, constants, constructor classification, or category membership output.
+Each disabled output makes its selected original positive assertion fail through a successful native query.
+The first three controls also fail their configured reporter positives. Their enabled forms pass.
+
+The final API ladder includes `_check_call` on `conn.read(conn.write())`.
+The source single-call helper adds only `read`. The recursive visitor owns the nested `write`.
+The red replay exposed an extra `write` in the native helper result.
+The rule now restricts single-call demand to the supplied root occurrence. The final 151-case replay includes this regression.
+
+Earlier ladders in this checkpoint also exposed category precedence, prefix matching, bytes escapes, and known-empty input errors.
+The rule retains source annotation precedence, category dictionary order, first-parameter selection, duplicate calls, and function-exit ordering.
+The modern input reader preserves ordered JSON wildcard positions and shares one decoded document across selectors.
+Its type projection distinguishes invalid shapes. Its JSON projection preserves large integers in the public loader result.
+The bytes decoder preserves unknown byte escapes instead of interpreting them as Unicode string escapes.
+All nine input-reader tests and six core literal tests pass on the merged engine.
+
+Source FactEngine workers return complete file groups in completion order.
+Six source recordings demonstrate both two-file permutations. The harness permits those group permutations explicitly.
+It retains every field, duplicate, and within-file order, and rejects interleaved file groups.
+The receipt preserves the source and native orders before comparison.
+
+All 87 candidate reader checks pass, including every one of the 76 target drafts.
+Every acceptance command stayed within its 115-second bound. No full-repository or whole-batch cold benchmark ran.
+The [alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-9993-alignment.json.gz)
+contains complete oracles, native results, controls, commands, compile diagnostics, logs, build identities, and its validator.
+The validator checks exact shard coverage, complete values, source pinning, native hashes, and source tree identity.
+
+The inventory now contains 76 drafts and 24 absent translations. Full migration acceptance remains false.
+Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+Further migration work uses this merged root engine and its shared libraries.

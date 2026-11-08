@@ -233,6 +233,18 @@ def verify_engine_alignment(root, source):
         git(root, 'merge-base', '--is-ancestor', upstream, 'HEAD')
     except subprocess.CalledProcessError as error:
         raise ValueError('The engine does not include the adopted Final shape commit') from error
+    # A local sibling can advance after the recorded adoption. A fresh audit must
+    # not certify that older engine while the current branch is available here.
+    if branch := source.get('upstreamBranch'):
+        try:
+            current = git(root, 'rev-parse', '--verify', branch)
+        except subprocess.CalledProcessError:
+            current = None  # A standalone clone still checks the recorded commit.
+        if current:
+            try:
+                git(root, 'merge-base', '--is-ancestor', current, 'HEAD')
+            except subprocess.CalledProcessError as error:
+                raise ValueError('Merge the newer local Final shape before migration acceptance') from error
     reviewed = {item['path']: item['sha256'] for item in source['nativeExtensions']}
     for name in reviewed:
         if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)

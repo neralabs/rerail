@@ -2431,8 +2431,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "1e4840f3c9100266e36e23308a6e36d8db678457",
-    "status": "Root Final shape engine through 1e4840f3c; reviewed generic Python compatibility and ordered JSON input extensions",
+    "upstreamCommit": "9993e7e5fbadc8fd8340c4c01e515f3328ffec60",
+    "status": "Root Final shape engine through 9993e7e5f; upstream prepared-program storage; reviewed generic Python and typed JSON input extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2524,12 +2524,13 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "257708953496c38f0980af4356d2cfdef3a1aa834437e7f04f747d6f4839661b"
+        "sha256": "8d270edd7ffbe55771957ea5e7410dbff45d5487abdf0f6367dbdb936aab78fe"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
         "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
       }
-    ]
+    ],
+    "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape"
   }
 }
