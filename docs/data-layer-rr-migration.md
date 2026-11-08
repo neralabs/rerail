@@ -78,6 +78,10 @@ The older `.rerail/data-layer-batch-seven/engine-source` checkout is also retire
 Existing receipts retain their historical engine hashes. They do not certify the current engine.
 The replay harness rejects libraries loaded from another checkout, even when their bytes match.
 New acceptance runs use a frozen binary built from this root, with a receipt that records its source commit.
+The manifest's `engineSource.cliArtifact` also binds acceptance to the exact compiled binary and four source trees.
+After a successful build, run `migration.py register-artifact <build-receipt.json>` before native acceptance.
+Registration checks the adopted Final commit, committed source trees, build ancestry, and binary hash before it writes the manifest.
+Both native execution boundaries reject an older frozen binary. Hashes are cached by file identity and timestamps within each process.
 Do not use the retired engine to bypass a failure in the current runtime.
 
 Migration rules and fixtures live under `gate/data-layer/`, as Final shape defines them.
@@ -1737,3 +1741,24 @@ The [mixin receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-m
 Final shape advances to `2e8195371` before the remaining original/helper regressions start.
 The ancestry guard rejects those runs before native execution.
 These results remain historical evidence for `220a5d4f5`. They do not certify the newer engine.
+
+### 2026-11-08 — Current Final integration and compiled-artifact enforcement
+
+Merge `16e572605` adopts Final `2e8195371`. Final then integrates additional sibling branches while that build runs.
+The superseded build stops with exit 143. The following merge adopts committed Final `ead5f57c5`, including SQL phases and phased-facts work.
+All twenty-seven local native extension paths remain within the reviewed boundary.
+The sibling's unfinished merge and working files remain untouched.
+
+The root CLI build for `ead5f57c5` fails with nineteen compiler errors in session maintenance.
+They include missing state variables, missing maintenance helpers, and incompatible retained-cell or counter types.
+The two files named by these errors are byte-identical to the committed Final versions.
+No successful CLI artifact exists for this merge. Acceptance on the new engine remains unverified.
+
+The audit also exposes a provenance gap: source alignment alone does not prove which frozen executable a harness uses.
+Commit `1c936259c` introduces failing tests for stale or unrecorded binaries, changed source trees, and both execution boundaries.
+The new artifact check requires the compiled binary's hash, source trees, adopted Final commit, and build ancestry.
+Registration validates the receipt before it changes the manifest. A failed registration preserves the prior manifest.
+The full tooling suite passes all 118 tests and sixty-four subtests after implementation.
+The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-final-artifact-guard.json.gz) retains the compiler log, source equality, and TDD evidence.
+Native acceptance will resume after a current Final build succeeds and its artifact is registered.
+The 130 source comparisons remain historical evidence for the earlier engine. The migration remains incomplete.

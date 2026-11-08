@@ -65,6 +65,20 @@ class EngineAlignmentTests(unittest.TestCase):
                     else:suite.Suite(Path('/source'),Path('/old-cli'),[],0,1,Path('/baseline'))
                 direct.assert_not_called();worker.assert_not_called()
 
+    def test_artifact_registration_validates_before_it_changes_the_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            receipt=dict(source['cliArtifact'],path=binary.relative_to(root).as_posix())
+            record=root/'build.json';migration.write_json(record,receipt)
+            manifest=root/migration.MANIFEST;migration.write_json(manifest,dict(engineSource=dict(upstreamCommit='modern')))
+            with patch.object(migration,'git',self.artifact_git),patch.object(migration,'verify_engine_alignment'):
+                migration.register_artifact(root,record)
+                self.assertEqual(migration.read_json(manifest)['engineSource']['cliArtifact'],receipt)
+                before=manifest.read_bytes();binary.write_bytes(b'unrecorded engine')
+                with self.assertRaisesRegex(ValueError,'binary.*recorded'):
+                    migration.register_artifact(root,record)
+                self.assertEqual(manifest.read_bytes(),before)
+
     def test_engine_audit_rejects_a_retired_checkout(self):
         with self.assertRaisesRegex(ValueError, 'repository root'):
             migration.verify_engine_alignment(Path('/unused'), dict(checkout='.rerail/engine'))

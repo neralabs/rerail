@@ -80,6 +80,7 @@ class Suite:
                         '.rerail/data-layer-batch-seven/engine-source'):
             if engine.resolve().is_relative_to((ROOT / retired).resolve()):
                 raise ValueError('Acceptance cannot use a binary from a retired engine checkout')
+        migration.verify_engine_artifact(ROOT, manifest['engineSource'], engine)
         self.source, self.engine, self.checks = source, engine, checks
         self.part, self.parts = part, parts
         self.rule_root = rule_root or ROOT / 'gate/data-layer/packs/data-layer/candidates/rr'

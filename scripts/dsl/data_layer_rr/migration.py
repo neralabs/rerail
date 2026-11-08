@@ -15,6 +15,8 @@ PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
 MANIFEST = Path('gate/data-layer/packs/data-layer/candidates/rr/migration.json')
 DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
+ENGINE_SOURCE_TREES = ('native', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
+_ARTIFACT_DIGESTS = {}
 # Generic compatibility extensions only. Runtime architecture comes from Final shape.
 ENGINE_EXTENSION_BOUNDARIES = (
     'Cargo.lock', 'native/Cargo.toml',
@@ -276,6 +278,41 @@ def verify_engine_alignment(root, source):
             raise ValueError(f'{name}: engine bytes differ from the reviewed extension')
 
 
+def verify_engine_artifact(root, source, engine):
+    """Source ancestry is insufficient: the executed bytes must match its recorded build."""
+    artifact = source.get('cliArtifact')
+    if not artifact:
+        raise ValueError('Native acceptance requires a recorded CLI artifact')
+    if artifact.get('upstreamCommit') != source['upstreamCommit']:
+        raise ValueError('The binary was not built for the adopted Final shape')
+    if git(root, 'diff', '--name-only', 'HEAD', '--', *ENGINE_SOURCE_TREES):
+        raise ValueError('Engine sources must be committed before native acceptance')
+    for name in ENGINE_SOURCE_TREES:
+        if artifact.get('sourceTrees', {}).get(name) != git(root, 'rev-parse', 'HEAD:' + name):
+            raise ValueError(f'{name}: binary source tree differs from the active engine')
+    git(root, 'merge-base', '--is-ancestor', artifact['engineCommit'], 'HEAD')
+    stat = engine.stat()
+    key = (str(engine.absolute()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    # Hash immutable frozen artifacts once per process, rather than reading a
+    # large executable for every fixture. A changed file has a different key.
+    if key not in _ARTIFACT_DIGESTS:
+        _ARTIFACT_DIGESTS[key] = sha(engine.read_bytes())
+    if _ARTIFACT_DIGESTS[key] != artifact['sha256']:
+        raise ValueError('The executed binary differs from the recorded CLI artifact')
+
+
+def register_artifact(root, receipt_path):
+    """Register a successful root build only after its provenance and bytes pass."""
+    manifest = read_json(root / MANIFEST)
+    receipt = read_json(receipt_path)
+    source = dict(manifest['engineSource'], cliArtifact=receipt)
+    verify_engine_alignment(root, source)
+    verify_engine_artifact(root, source, root / receipt['path'])
+    manifest['engineSource'] = source
+    write_json(root / MANIFEST, manifest)
+    return manifest
+
+
 def repair(root, paths, reason):
     """Bind a reviewed edit to its imported bytes; invalidate any earlier test status."""
     manifest = read_json(root / MANIFEST)
@@ -345,9 +382,11 @@ def main():
     commands.add_parser('sync').add_argument('source', type=Path)
     commands.add_parser('inventory')
     commands.add_parser('check')
+    commands.add_parser('register-artifact').add_argument('receipt', type=Path)
     args = parser.parse_args()
     manifest = (adopt(ROOT, args.source.resolve()) if args.command == 'adopt'
-                else sync(ROOT, args.source.resolve()) if args.command == 'sync' else verify(ROOT))
+                else sync(ROOT, args.source.resolve()) if args.command == 'sync'
+                else register_artifact(ROOT, args.receipt) if args.command == 'register-artifact' else verify(ROOT))
     if args.command == 'check':
         require_complete(manifest['rules'])
     counts = {}
