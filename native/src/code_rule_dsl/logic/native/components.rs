@@ -1,4 +1,4 @@
-//! `components(d, c, key, edge, own)` (`core.rr`, decision 0074 §2): each document's component of the
+//! `components(d, c, key, edge, own)` (`core.rr`, decision 0076 §2): each document's component of the
 //! graph `edge(d, e)` (d depends on e) and the component's Merkle key.
 //!
 //! - A component is a strongly connected component; `c` is its smallest document.

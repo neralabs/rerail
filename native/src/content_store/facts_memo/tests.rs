@@ -241,32 +241,35 @@ fn a_run_digest_names_the_output_not_the_content() {
     assert_ne!(other, Some(digests[0]));
 }
 
-/// O112: a stored row whose frame does not decode to its recorded length (the shared store held 18) reads as a miss
-/// for its plan, not an error for every lookup on its source; the next evaluation's row replaces it. A damaged
-/// completion row is replaced rather than merged.
 #[test]
-fn a_row_that_does_not_decode_is_a_miss_and_is_rewritten() {
-    let (_path, store) = store("damaged");
-    let bytes = b"y = 2\n";
+fn a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced() {
+    // O112: a row whose frame decodes to another length than its metadata fails only its own plans.
+    let (_path, store) = store("undecodable");
+    let bytes = b"x = 1\n";
     let source = store.put_facts_source(bytes, content(bytes), &[]).unwrap();
     let set = FactsPlanSet::new(vec![plan(1), plan(2), plan(3)]);
-    let key = FactsMemoKey { source, fact_schema: 3, path: "b.py" };
-    store.put_facts_memo(key, &set, &[result(1, true, b"rows"), result(2, false, b"other")], &[]).unwrap();
-    store.put_facts_memo(key, &set, &[], &[completion(2, false, b"c")]).unwrap();
+    let key = FactsMemoKey { source, fact_schema: 7, path: "a.py" };
+    store
+        .put_facts_memo(key, &set, &[result(1, false, b"one"), result(2, false, b"two")], &[completion(2, false, b"c3")])
+        .unwrap();
     {
         let connection = store.connection.lock().unwrap();
-        connection.execute("UPDATE facts_results SET raw_length = raw_length + 1 WHERE plan_digest = ?1", [&plan(1)[..]]).unwrap();
-        connection.execute("UPDATE facts_completions SET raw_length = raw_length + 1", []).unwrap();
+        connection
+            .execute("UPDATE facts_results SET raw_length=raw_length+1 WHERE plan_digest=?1", [&plan(1)[..]])
+            .unwrap();
+        connection.execute("UPDATE facts_completions SET raw_length=raw_length+1", []).unwrap();
     }
     let read = store.facts_memo(key).unwrap();
-    assert_eq!(read.damaged, 2);
-    assert!(!read.results.contains_key(&plan(1)));
-    assert_eq!(read.results[&plan(2)].entry, b"other");
+    assert_eq!(read.results.keys().collect::<Vec<_>>(), vec![&plan(2)]);
     assert!(read.completed.is_empty());
-    // Evaluated again: the new rows replace the damaged ones.
-    store.put_facts_memo(key, &set, &[result(1, true, b"rows")], &[completion(2, false, b"c")]).unwrap();
+    assert_eq!(read.run_digest(&set), None);
+
+    // Evaluated again, the clauses' rows replace the bad ones.
+    store
+        .put_facts_memo(key, &set, &[result(1, false, b"one")], &[completion(2, false, b"c3")])
+        .unwrap();
     let read = store.facts_memo(key).unwrap();
-    assert_eq!(read.damaged, 0);
-    assert_eq!(read.results[&plan(1)].entry, b"rows");
-    assert_eq!(read.completed[&plan(3)], (false, b"c".to_vec()));
+    assert_eq!(read.results[&plan(1)].entry, b"one");
+    assert_eq!(read.completed[&plan(3)], (false, b"c3".to_vec()));
+    assert!(read.run_digest(&set).is_some());
 }

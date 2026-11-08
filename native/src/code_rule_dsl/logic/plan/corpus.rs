@@ -193,7 +193,7 @@ pub(crate) struct Report {
     pub(crate) typing_runs: bridge::Runs,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub(crate) memo: (usize, usize),
-    /// The cross-file memo (decision 0074): import components found and components derived.
+    /// The cross-file memo (decision 0076): import components found and components derived.
     pub(crate) cross: (usize, usize),
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
@@ -522,7 +522,7 @@ impl Drop for HeldPlan<'_> {
     }
 }
 
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], relations: &[(String, String)], reading: Option<crate::content_store::CollectionLease>, lease: Option<crate::content_store::CorpusRunLease<'_>>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], relations: &[(String, String)], reading: Option<crate::content_store::CollectionLease>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -533,7 +533,6 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     // The manifest now protects the sources. Release before collection, including warm runs
     // that must resume a pass deferred by another active reader.
     drop(reading);
-    drop(lease);
     if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
         return Ok(None);
     }
@@ -776,7 +775,9 @@ pub(crate) fn run_with_options(
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
     let tapes = if cfg!(feature = "tape-cache") { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
-    // Hold before any source/stat lookup, through parsing, memo publication and the run manifest.
+    // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
+    // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
+    // that dies releases it with its process.
     let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose().map_err(|e| Error::Plan(e.to_string()))?;
     let own_store;
     let store: &ContentStore = match (&session, &tapes) {
@@ -792,14 +793,6 @@ pub(crate) fn run_with_options(
             &own_store
         }
     };
-    // A run that records its manifest holds collection off the store's sources until it has (`CorpusRunLease`): the
-    // sources it reads are held by nothing before.
-    let lease = if tapes.is_some() && t.is_none() {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        Some(store.begin_corpus_run(now + 3600).map_err(|e| Error::Plan(e.to_string()))?)
-    } else {
-        None
-    };
     let db = Connection::open(&path)?;
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
     db.execute_batch("PRAGMA synchronous=OFF")?;
@@ -808,7 +801,7 @@ pub(crate) fn run_with_options(
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
-    // Cross-file rows memoised per import component (decision 0074): the program asks, and its documents' language
+    // Cross-file rows memoised per import component (decision 0076): the program asks, and its documents' language
     // has import rules in `components.rr`. Not for a discovery round of `world`, which runs part of the program; the
     // final round's world facts are program facts, so they are in the plan's digest.
     let cross_mode = cross_memo::mode();
@@ -838,9 +831,19 @@ pub(crate) fn run_with_options(
     } else {
         None
     };
+    // The sources the stored program lives under: the program text's, its facts document's and its groups of automata
+    // (decisions 0073 to 0075). No file roots them, so the run's manifest names them, and collection keeps them while
+    // it keeps the run.
+    let mut program_sources: Vec<crate::content_store::SourceId> = durable.into_iter().collect();
     let (kept, from) = match (kept, durable) {
         (Some(p), _) => (Some(p), "memory"),
-        (None, Some(source)) => (prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(holds), "store"),
+        (None, Some(source)) => {
+            let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
+            (found.map(|(p, document)| {
+                program_sources.push(document);
+                p
+            }), "store")
+        }
         (None, None) => (None, ""),
     };
     let reused = kept.is_some();
@@ -893,7 +896,11 @@ pub(crate) fn run_with_options(
             kept.insert(prepared_key, prepared.clone());
             drop(kept);
             if let Some(source) = durable {
-                prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))?;
+                // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
+                match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
+                    Some(document) => program_sources.push(document),
+                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned()),
+                }
             }
             prepared
         }
@@ -906,6 +913,22 @@ pub(crate) fn run_with_options(
         (false, _) => "prepared".to_owned(),
     });
     let Prepared { prog, vocabulary, lowered, sets, demanded, pushed, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    // The text tests' plans compiled once for the process (decision 0075), their groups of automata read from the store
+    // when an earlier process determinized them.
+    let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
+    let compiled = match durable {
+        Some(_) => {
+            let groups = prepared::StoredDfas(store, Default::default());
+            let compiled = vocabulary.compile(Some(&groups));
+            program_sources.extend(groups.1.into_inner().unwrap_or_default());
+            compiled
+        }
+        None => vocabulary.compile(None),
+    };
+    drop(compiling);
+    if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
+        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read from the store, {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
+    }
     let vocabulary = vocabulary.again();
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
@@ -922,7 +945,7 @@ pub(crate) fn run_with_options(
         Some(declared) => cross_memo::split(&mut split.cross, declared, &memo_program)?,
         None => None,
     };
-    crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0074)", || match (&cross_declared, &cross_plan) {
+    crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
         (None, _) if cross_memo::declared(&prog).is_none() => "off: the program declares no `.pragma \"cross-memo\"`".to_owned(),
         (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else if world_round.is_some() { "a discovery round" } else { "no import rules for the run's language" }),
         (Some(_), None) => "off: the component rules did not reach the cross-file part".to_owned(),
@@ -1061,13 +1084,10 @@ pub(crate) fn run_with_options(
         Some(memo::Memo::Stored(_)) if memoised => Some(HeldPlan::new(store, memo::plan_digest(&memo_program)).map_err(|e| Error::Plan(e.to_string()))?),
         _ => None,
     };
-    // A cross-file part that reads base relations takes their rows from the chunks it evaluates. Decision 0063 memoises
-    // a file's rows of them too (`memo::Entry::base`), but a run read from them derived other rows than the evaluated
-    // run (O109): such a run is not memoised, as before 0063, until it does.
-    let memoised = memoised && stored.is_empty();
-    if !stored.is_empty() && memo.is_some() && t.is_none() {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated (O109)", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
-    }
+    // A cross-file part that reads base relations takes their rows from the chunks it evaluates, and from a file's
+    // memoised rows of them (decision 0063, `memo::Entry::base`). A run read from them was held back while it derived
+    // other rows than the evaluated run (O109). Since guest hiding no longer drops host rows (O110) the two agree, and
+    // the run is memoised again.
     // One transaction for every export's table, not a commit each.
     let mut tables = String::from("BEGIN;");
     for rel in &split.exports {
@@ -1570,6 +1590,7 @@ pub(crate) fn run_with_options(
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's sources, for its manifest (decision 0053).
     let mut run_sources = worker_cpu.2.clone();
+    run_sources.extend(program_sources.iter().copied());
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
@@ -1587,16 +1608,16 @@ pub(crate) fn run_with_options(
             relations.push((rel.clone(), serde_json::json!({ "lines": cols }).to_string()));
         }
     }
-    // With the cross-file memo, the manifest also names the components' stored rows (decision 0074), known only
+    // With the cross-file memo, the manifest also names the components' stored rows (decision 0076), known only
     // after the cross-file part: published then, the lease held until.
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() {
-        record_run(store, root, &run_sources, &memo_program, &relations, reading, lease)?
+        record_run(store, root, &run_sources, &memo_program, &relations, reading)?
     } else if recording {
-        publish_later = Some((relations, reading, lease));
+        publish_later = Some((relations, reading));
         None
     } else {
-        drop((reading, lease));
+        drop(reading);
         None
     };
     statements.enter("stats");
@@ -1704,7 +1725,7 @@ pub(crate) fn run_with_options(
     let mut rounds = cross_rounds::Rounds::default();
     // `returns`, held for the typing outputs (`corpus::typing`).
     let mut wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
-    // The import components (decision 0074): derived first, from the exports, and each one's stored rows looked up.
+    // The import components (decision 0076): derived first, from the exports, and each one's stored rows looked up.
     // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
     let mut cross_state: Option<(cross_memo::Components, cross_memo::Found)> = None;
     if let Some(plan) = &cross_plan {
@@ -1743,7 +1764,7 @@ pub(crate) fn run_with_options(
             wanted.extend(plan.memo.keys().filter(|r| !prog.outputs.contains(*r)).cloned());
         }
         drop(components_span);
-        crate::code_rule_dsl::logic::profile::decision("import components (decision 0074)", || {
+        crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
             format!(
                 "{} documents in {} components over {} edges; {} found ({}), {} derived",
                 components.of.len(),
@@ -1756,7 +1777,7 @@ pub(crate) fn run_with_options(
         });
         cross_state = Some((components, found));
     }
-    // The memoised relations' derived rows, for storing (decision 0074).
+    // The memoised relations' derived rows, for storing (decision 0076).
     let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
     let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
     let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
@@ -1908,15 +1929,23 @@ pub(crate) fn run_with_options(
             .map(|rel| (rel.clone(), cross.program.decls[rel].iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect()))
             .collect();
         let recorded = cross_memo::record(&store, plan, components, found, cross_mode, &memo_rows, &nodes, &paths)?;
-        crate::code_rule_dsl::logic::profile::decision("import components stored (decision 0074)", || {
+        crate::code_rule_dsl::logic::profile::decision("import components stored (decision 0076)", || {
             format!("{} components' rows stored ({} rows); {} found components verified", recorded.stored, recorded.rows, recorded.verified)
         });
         run_sources.extend(found.sources.iter().copied().chain(recorded.sources.iter().copied()));
     }
-    if let Some((relations, reading, lease)) = publish_later {
-        collecting = record_run(store, root, &run_sources, &memo_program, &relations, reading, lease)?;
+    if let Some((relations, reading)) = publish_later {
+        collecting = record_run(store, root, &run_sources, &memo_program, &relations, reading)?;
     }
     statements.enter("write");
+    // Every output has its file, empty when nothing made a row: a run read whole from the memo hands no rows of a
+    // file-local output no file made (`rr_embed_req`), which an evaluated run writes empty (O109).
+    for rel in &prog.outputs {
+        if !outputs.contains_key(rel) && let Some(cols) = prog.decls.get(rel) {
+            outputs.insert(rel.clone(), Vec::new());
+            node_columns.entry(rel.clone()).or_insert_with(|| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+        }
+    }
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
@@ -2612,7 +2641,7 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
-    /// Decision 0074: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
+    /// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
     /// re-derives the edited file's component and its importers' only; `verify` derives everything again and
     /// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
     /// outside its closure.
@@ -2691,10 +2720,10 @@ uses(n, f) :- imp(n, q), def(f, q).
         let program = [7; 32];
         // Simulate another active run deferring the first run's background collection.
         let reader = store.hold_collection().unwrap();
-        super::record_run(&store, &root, &[source], &program, &[], None, None).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], None).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, &[], Some(reader), None).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], Some(reader)).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(!store.corpus_collection_due().unwrap());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }

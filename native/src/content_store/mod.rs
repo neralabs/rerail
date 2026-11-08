@@ -34,7 +34,6 @@ pub(crate) use prefilter::TapePrefilter;
 mod publication;
 mod read_cache;
 mod reclamation;
-pub use reclamation::CorpusRunLease;
 mod relationships;
 mod results;
 mod rows;
@@ -204,7 +203,7 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    pub(crate) fn from_sha256_digest(digest: [u8; 32]) -> Self {
+    pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
 

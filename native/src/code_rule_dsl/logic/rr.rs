@@ -153,7 +153,7 @@ impl LibraryFile {
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
 const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
-/// The library's programs the engine adds to a run itself (decision 0074's import components).
+/// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
@@ -237,6 +237,12 @@ fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
 /// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
 /// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
 /// here.
+/// `src` (a document named `name`) as a program, read off the tape the store keeps for it, as a rule file's is
+/// (`stored_statements`): a prepared program's document (decision 0074).
+pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
+    lower::lower(stored_statements(Path::new(name), src)?)
+}
+
 fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
     let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
     if let Some(store) = store {

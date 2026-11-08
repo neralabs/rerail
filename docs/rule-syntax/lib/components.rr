@@ -1,4 +1,4 @@
-// components: each document's import component and its key (decision 0074). The engine adds this program to a
+// components: each document's import component and its key (decision 0076). The engine adds this program to a
 // corpus run whose program declares `.pragma "cross-memo" "…"`; a rule does not include it.
 //
 // The file-local rules make three exports per document, which the per-file memo keeps (decision 0052): the modules

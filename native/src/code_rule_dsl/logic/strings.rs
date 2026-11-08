@@ -188,6 +188,12 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
     Some((op.as_str(), s.as_str(), patterns(p)?, *v == 1))
 }
 
+/// Every test's plans as the vocabulary engine runs them, and each plan's test.
+struct Compiled {
+    searchers: crate::code_rule_dsl::text::vocabulary::Searchers,
+    owner: Vec<usize>,
+}
+
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
@@ -195,6 +201,9 @@ pub(in crate::code_rule_dsl) struct Vocabulary {
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
     /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
     pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
+    /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
+    /// process compiles them once, and every batch runs the same searchers.
+    compiled: Arc<std::sync::OnceLock<Compiled>>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -221,13 +230,12 @@ impl Vocabulary {
         }
         if !fresh.is_empty() {
             tested += fresh.len();
-            let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
-                self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+            let compiled = self.compiled.get_or_init(|| self.compile_with(None));
             let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
-            let (hits, _undecided) = crate::code_rule_dsl::text::vocabulary::evaluate(&plans, &terms);
+            let (hits, _undecided) = compiled.searchers.evaluate(&terms);
             let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
             for (p, matched) in hits.iter().enumerate() {
-                let k = owner[p];
+                let k = compiled.owner[p];
                 for &t in matched {
                     bits[t as usize][k / 64] |= 1 << (k % 64);
                 }
@@ -259,15 +267,22 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
     let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
         .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
         .collect();
+    // Each relation's rules, found once: scanning every rule for every declaration in every round was quadratic in a
+    // combined pack (O111).
+    let mut by_head: HashMap<&str, Vec<&super::front::Rule>> = HashMap::new();
+    for rule in &prog.rules {
+        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let inputs: HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     loop {
         let mut found = Vec::new();
         for (relation, declaration) in &prog.decls {
             // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
             if prog.facts.get(relation).is_some_and(|rows| !rows.is_empty())
-                || (prog.inputs.contains(relation) && !columns.contains_key(relation)) {
+                || (inputs.contains(relation.as_str()) && !columns.contains_key(relation)) {
                 continue;
             }
-            let writers: Vec<_> = prog.rules.iter().filter(|r| &r.head.rel == relation).collect();
+            let writers: &[&super::front::Rule] = by_head.get(relation.as_str()).map_or(&[], Vec::as_slice);
             if writers.is_empty() {
                 continue;
             }
@@ -302,7 +317,25 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
 impl Vocabulary {
     /// The same tests for another run, with nothing tested yet.
     pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
-        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), ..Vocabulary::default() }
+        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), compiled: Arc::clone(&self.compiled), ..Vocabulary::default() }
+    }
+
+    fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Compiled {
+        let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
+            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+        Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache), owner }
+    }
+
+    /// Compiles every test's plans now, its groups of automata read from `cache` or kept in it (decision 0075), and
+    /// says what it did; `None` when they were compiled before (in this process).
+    pub(in crate::code_rule_dsl) fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
+        let mut made = None;
+        self.compiled.get_or_init(|| {
+            let compiled = self.compile_with(cache);
+            made = Some(compiled.searchers.compiling);
+            compiled
+        });
+        made
     }
 
     /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
@@ -363,7 +396,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, specs, seen: Mutex::default(), tested: Mutex::default() })
+    Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
 }
 
 pub(in crate::code_rule_dsl) mod functions;

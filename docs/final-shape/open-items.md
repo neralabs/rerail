@@ -2084,6 +2084,15 @@ them is enough.
 
 **Closure:** one lease, the other's tests kept against it.
 
+**Closed (2026-11-07):** the shared file lock (`hold_collection`) is the run's one hold. Every collector takes it
+exclusively first (`try_collect`: `collect`, `keep_corpus_runs`, `collect_corpus_pass`), and a process that dies
+releases it with its descriptors. `begin_corpus_run`, its pin kind and the check in `collect` are gone: the pin row
+cost a write transaction per run and, when a run died, held all generation-based collection off for an hour. The
+row lease had no tests of its own. `readers_publish_memos_and_roots_before_collection_resumes` checks what both
+promised: a reader's unrooted source, tape and memo rows outlive collection until its manifest names them. Removing
+the row lease showed that the stored prepared program (decisions 0073 to 0075) had no root and was collected
+between runs: the run's manifest now names its sources.
+
 ## O109. A run read from memoised base rows derives other rows
 
 Decision 0063 memoises the base rows a file hands the cross-file part (`memo::Entry::base`), each row its file's by
@@ -2101,6 +2110,13 @@ reads base relations) is ignored with this reason, so a session reruns every fil
 **Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
 the session test runs again.
 
+**Closed (2026-11-08):** with the hold-back lifted, the 4096-node run, read whole from the memo, gives 241 `call_open`
+rows and 256 `call_target`, as T and the evaluated run do. Every output file is equal. The guest-hiding fix (O110)
+was in when they first agreed, and it is the likely cause: hiding read `tbv`'s `live_asg` from its annotation copy
+only. That was not proven by reverting it. One gap remained: a run read whole from the memo wrote no
+`rr_embed_req.csv`, a file-local output no file made, which the evaluated run writes empty. Every output now has its
+file. The hold-back is removed, and `a_session_reruns_what_an_edit_changed` runs again.
+
 ## O110. Four builtin receivers are Unknown after the Typing-support merge
 
 After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`
@@ -2113,6 +2129,11 @@ passes on that branch alone was not checked: building a second target would exce
 ignored with this reason.
 
 **Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
+
+**Closed (2026-11-07):** 44 exact of 44, and the test runs again. The cause was the engine, not the merge: guest
+hiding (decision 0058 §2) specialized `tbv`'s `live_asg` to its annotation copy because `tv`'s first column may hold
+an annotation's node, and so dropped every host row of it. A variable now needs to be definitely a guest's node to be
+specialized; a rule whose variable only may be one is split into the host's rule and a guest clone (0058, amended).
 
 ## O111. Python pack rules that fail to run, alone or combined
 
@@ -2133,6 +2154,38 @@ points to how a directory is combined, not to the bandit rules. Not investigated
 
 **Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
 
+**Progress (2026-11-08).** `check-rr` over the 546 files: 539 pass the reader (526 before).
+
+- **Messages:** `{{` and `}}` are braces of a message's text (`rr::lower::findings`), as the converter already
+  wrote them (`convert::policy`). The 14 messages with literal braces now double them. In `fast003`,
+  `{{{K}}}` is a brace around the parameter's name.
+- **Value cycles:** `era001` runs. A recursion only between constant keys that never come back
+  (`era_re("EXPR", …) :- era_re("OPD", …)`) is bounded (`cycles::constant_keyed`). So is a head term equal to a
+  term a lower stratum's variable is assigned (`era_run`'s `@add($l, 1)` checked against `era_cline`).
+- **Combining:** a directory's policies are read as `run-rr` reads one (`tools::program_text`), so their language's
+  base relations are declared. The "relation kind … not declared" failure is gone. 60, 120 and 240 rules
+  combine and run.
+
+What remains:
+
+- **Listed with their reason:**
+  - `ruff-b005`: its index rises until `@slice` gives `""`, which no static bound sees. Rewritten with
+    `$j < strlen($v)` it would be a capped count.
+  - `ruff-fast003`, `ruff-perf403` and `ruff-ruf001` to `ruf003` (with ruf001's `confusables.rr`): `match_all`
+    over a node, O80.
+- **The full pack (539 rules) does not prepare within 2 minutes.** Preparing was superlinear. Three hot spots are
+  fixed:
+  - `lower` rebuilt every column's domain map per rule (52.8 s to 0.13 s at 240 rules);
+  - `strings::vocabulary_columns` scanned every rule per declaration;
+  - guest hiding's `carry` re-analysed every rule each round, now a worklist.
+
+  At 240 rules the run takes 23.6 s user, against 91.4 s before. At 539, `hiding::hide` is still about 58 s of the
+  68 s that combining takes (sampled): its specialization loop runs `carry` from scratch each round and clones
+  every rule. Peak RSS is 2.0 GB at 240 rules, over the 1 GB budget.
+
+**Closure (narrowed):** the combined pack prepared within the run cap and the memory budget: hiding's
+specialization incremental, and the pack's peak memory measured and cut.
+
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
@@ -2149,19 +2202,19 @@ fresh store (`RERAIL_TAPE_CACHE`).
 
 **Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.
 
-*Likely writer (2026-11-07, investigate-bend-vs-datalog):* an early version of decision 0074's corpus test
+*Likely writer (2026-11-07, investigate-bend-vs-datalog):* an early version of decision 0076's corpus test
 (`cross_file_rows_are_memoised_per_import_component`) ran an `UPDATE` on `facts_results` for every row with
 `path = 'b.py'` in the shared store, whatever its plan (17 rows then), to plant a bad row. The test now changes only
 its own plan's newest row and restores it.
 
-*Closed:* a row that does not decode is a miss. `facts_memo` skips it and counts it (`FactsMemo::damaged`, profiled
-as `corpus.memo_damaged_rows`); the file is evaluated again and its new row replaces the damaged one (the insert's
-upsert). A damaged completion row is replaced rather than merged. Test:
-`facts_memo::tests::a_row_that_does_not_decode_is_a_miss_and_is_rewritten`.
+**Closed (2026-11-07):** a row that does not decode is a miss. `facts_memo` skips a result row whose frame does
+not decode to its length, and a completion row whose counts do not, so only that row's plans are evaluated again.
+`put_facts_memo` overwrites a result row, and a completion row it cannot merge into is replaced instead of failing
+the write (`a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced`). The writer of the bad rows was not found.
 
 ## O113. `calls.rr` with `.pragma "cross-memo"` fails in world's final round: no statistics for `docof` (closed 2026-11-07)
 
-Found trying decision 0074 on the typing programs (2026-11-07). With the pragma appended (even naming no relation
+Found trying decision 0076 on the typing programs (2026-11-07). With the pragma appended (even naming no relation
 `calls.rr` derives), `python_calls_program_agrees_with_the_runtime` fails in the final round with "no statistics for
 docof.n" (`plan.rs`, an input a rule reads that is not a batch source and was not measured).
 
@@ -2183,7 +2236,7 @@ calls.rr's 234 cross-file relations, once run constants (`py_version`) and proje
 
 ## O114. The cross memo is correct on calls.rr but does not pay: what typing's rows depend on is global
 
-Measured 2026-11-07 (decision 0074 §7). Over the 84-file Jedi corpus, replaying 133 components (1.55 M rows) makes
+Measured 2026-11-07 (decision 0076 §7). Over the 84-file Jedi corpus, replaying 133 components (1.55 M rows) makes
 the cross part 3.6 s slower than deriving it (19.8 s against 16.2 s), and peak RSS reaches 1,038 MB.
 `RERAIL_CROSS_MEMO=verify` passes. The declarable relations (122 of 234) cost about 3.6 s to derive. The expensive
 fixpoint reads lookups over every document by name (`isqmod`, `qknown`, `qopen`, `tsub`, `tsup_open`, the demand
@@ -2199,3 +2252,23 @@ Two steps would change that, in order:
 
 **Closure:** with both, a warm replaying run's cross part costs less than a derived one on this corpus, under 1 GB.
 
+
+## O115. A prepared program read back from the store fails its run: "no such table: pre_85"
+
+Found merging final-rerail-shape into investigate-bend-vs-datalog (2026-11-08). On a fresh store,
+`prepared::tests::a_prepared_program_reads_back_from_its_facts_and_its_tape` passes once and fails the second time,
+when the program is read back from the store (decision 0074, rules as facts), with "no such table: pre_85" (a demand
+split's relation, `demand.rs`):
+
+```text
+RERAIL_TAPE_CACHE=/tmp/fresh.sqlite <test binary> --exact …a_prepared_program_reads_back_from_its_facts_and_its_tape   # ok
+RERAIL_TAPE_CACHE=/tmp/fresh.sqlite <test binary> --exact …a_prepared_program_reads_back_from_its_facts_and_its_tape   # fails
+```
+
+The test's round trip (front program, lowered program, file-local split) compares equal, so what differs is
+outside what it compares. In parallel test runs the in-memory cache (16 programs) is evicted, runs read their
+program back, and other corpus tests fail the same way (`cross_file_rows_are_memoised_per_import_component`,
+`a_corpus_runs_memoised_rows_bind_by_name_from_their_frames`); with `--test-threads=1` they pass. Not investigated
+further: the code is final-shape's (0073, 0074).
+
+**Closure:** a program read back from the store runs as the one prepared, with a test that runs twice on one store.

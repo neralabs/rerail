@@ -121,9 +121,6 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
     off();
     let set = plan(program);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
-    if memo.damaged > 0 {
-        crate::code_rule_dsl::prof::count("corpus.memo_damaged_rows", memo.damaged);
-    }
     match memo.results.get(&set.plans[0]) {
         Some(result) => Ok(Some(decode(&result.entry)?).filter(|entry| entry.key == key)),
         None => Ok(None),

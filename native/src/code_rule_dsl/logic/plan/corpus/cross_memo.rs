@@ -1,4 +1,4 @@
-//! A corpus run's cross-file rows, memoised per import component (decision 0074).
+//! A corpus run's cross-file rows, memoised per import component (decision 0076).
 //!
 //! - A program asks with `.pragma "cross-memo" "a b …"`. That names the cross-file relations whose rows are about
 //!   the document of their first node column and are a function of that document's import closure.
@@ -454,7 +454,7 @@ pub(super) fn record(
                     && !reach.contains(e)
                 {
                     return Err(Error::Plan(format!(
-                        "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0074): remove it from `.pragma \"{PRAGMA}\"`",
+                        "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0076): remove it from `.pragma \"{PRAGMA}\"`",
                         paths.get(&doc_of(row[*first])).map_or("?", String::as_str),
                         // A guest has no path: named by its key and its component's first file.
                         paths.get(&doc_of(row[n])).cloned().unwrap_or_else(|| format!(

@@ -185,7 +185,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
-                // `.pragma "cross-memo" "r s"` (decision 0074): cross-file relations memoised per import component.
+                // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {
                     l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
                 }

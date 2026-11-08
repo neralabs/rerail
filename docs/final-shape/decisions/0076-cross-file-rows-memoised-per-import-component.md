@@ -1,4 +1,4 @@
-# 0074: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
+# 0076: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
 Status: built (2026-11-07; steps 1–4, Python imports). Measured on the typing corpus (§7): correct, and no faster.
 

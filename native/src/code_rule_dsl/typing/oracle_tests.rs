@@ -410,7 +410,6 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
 const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
 #[test]
-#[ignore = "O110: since the Typing-support merge of 2026-11-07, four builtin receivers of pkg/typed.py are Unknown"]
 fn python_type_relations_agree_with_the_runtime() {
     let answers = score_python_types(&program("calls"));
     let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
@@ -913,7 +912,7 @@ fn benchmark_python_calls_program_corpus() {
     if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
         text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
     }
-    // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0074), as `.pragma "cross-memo"`.
+    // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0076), as `.pragma "cross-memo"`.
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
     }
