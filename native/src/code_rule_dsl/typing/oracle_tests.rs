@@ -962,6 +962,33 @@ fn benchmark_python_calls_program_corpus() {
         let t = target(&r[1]);
         classes.entry(key(&r[0])).or_default().insert(t);
     }
+    // `RERAIL_PYTHON_CALLS_ALL=<file>`: every answer the program gives, `site<TAB>kind<TAB>target`, a site as
+    // `path:line:column` and a target as `path:line` (or `<library>`), to compare two layouts of one corpus.
+    if let Ok(all) = std::env::var("RERAIL_PYTHON_CALLS_ALL") {
+        let mut site = |n: &str| -> String {
+            let f = file(n);
+            let s = at[n].0;
+            let src = sources.entry(f.clone()).or_insert_with(|| std::fs::read_to_string(root.join(&f)).unwrap_or_default());
+            let s = s.min(src.len());
+            let column = s - src[..s].rfind('\n').map_or(0, |i| i + 1);
+            format!("{f}:{}:{column}", line(src, s))
+        };
+        let mut lines: Vec<String> = Vec::new();
+        for (kind, rel) in [("def", "call_target"), ("class", "rr_jedi_cls")] {
+            for r in rows(rel) {
+                let s = site(&r[0]);
+                let f = file(&r[1]);
+                let t = if library(&f) { "<library>".to_owned() } else { site(&r[1]).rsplit_once(':').unwrap().0.to_owned() };
+                lines.push(format!("{s}\t{kind}\t{t}"));
+            }
+        }
+        for r in rows("call_open") {
+            lines.push(format!("{}\topen\t-", site(&r[0])));
+        }
+        lines.sort();
+        lines.dedup();
+        std::fs::write(all, lines.join("\n") + "\n").unwrap();
+    }
     let _ = std::fs::remove_dir_all(&out);
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();

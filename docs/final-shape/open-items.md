@@ -2486,3 +2486,16 @@ probe's component, head and planned joins, and `RERAIL_DUMP_STATS` prints what t
 
 **Closure:** met. Still open: storing exact per-file counts in the memo entry, in place of a mix's scaled ones.
 
+
+## O135. `calls_cx` with both memos off grows past 10 GB
+
+**Seen (2026-11-08, t22).** A cold run of `calls_cx` over the 84 files with `RERAIL_CORPUS_MEMO=off` and
+`RERAIL_CROSS_MEMO=off` reached 10.1 GB RSS after 6.8 min of CPU and was stopped. The same program with both memos
+on (a prime, recording) peaks at 842 MB in 128.8 s.
+
+**Not known yet.** Which part grows, the file-local chunk or the cross-file part, and whether the merge of
+`final-rerail-shape` (996ef7e1c) brought it. The earlier "edit with memos off" run (57 s, 0076 §9) set only
+`RERAIL_CROSS_MEMO=off`.
+
+**Next.** Run it again under a memory limit, with `RERAIL_PROFILE` and `RDL_WAVE_TRACE`, and stop at 1 GB. Then
+compare the phase RSS with the prime's. Step 0's no-memo comparison (t22) waits on this.
