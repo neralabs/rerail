@@ -2577,8 +2577,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "65d78128cf74158f780e1fd743d5a003db754c4e",
-    "status": "Root Final shape through 65d78128c with reviewed generic syntax capabilities and planner repairs",
+    "upstreamCommit": "066ab66ad61aafb4652fed852464235ae9f6eee9",
+    "status": "Root Final shape through 066ab66ad with reviewed generic syntax capabilities and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2614,11 +2614,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "30166a72dca2d42495d191007bdaaca08b3497187edf5b1efbd49e8d7ceee60c"
+        "sha256": "2418f222c5ddc88063cc48a10191ccdaaead9603d3dc14ec1cb22573b6e65dc0"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "be5f7d96f45637693482578462dbc40ce35e47e419e7d8046ec97f290e270c69"
+        "sha256": "5323d6e8f2f8abe944c423286ebf2574fca5e5db622ae607e5b30ef037b8da19"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2662,7 +2662,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "94916fa7bf57c3ec6b953a1a82124371ba5f0304ac26106030cc17df70da2f75"
+        "sha256": "6fcbdb411c01b6a173e6b37e38ed5d43492b830a3d8ec9d645ebde955caa1798"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
