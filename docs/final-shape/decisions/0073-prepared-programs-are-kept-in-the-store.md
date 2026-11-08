@@ -95,7 +95,8 @@ not this record's and is not attributed here.
 
 - **The entry is JSON, not facts.** Decision 0074 replaces it: the entry is facts, kept as a `.rr` document with
   its tape, which a rule can read.
-- **Matchers are compiled per process.** Specs are kept, not the compiled automata.
+- **Matchers are compiled per process.** Specs are kept, not the compiled automata. Decision 0075 keeps each group's
+  DFA in the store.
 - **A pack is still prepared one rule at a time.** The Python pack does not combine into one program (O111).
 
 ## Prior work consulted

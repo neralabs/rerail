@@ -518,7 +518,7 @@ impl Drop for HeldPlan<'_> {
     }
 }
 
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], reading: Option<crate::content_store::CollectionLease>, lease: Option<crate::content_store::CorpusRunLease<'_>>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], reading: Option<crate::content_store::CollectionLease>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -528,7 +528,6 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     // The manifest now protects the sources. Release before collection, including warm runs
     // that must resume a pass deferred by another active reader.
     drop(reading);
-    drop(lease);
     if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
         return Ok(None);
     }
@@ -771,7 +770,9 @@ pub(crate) fn run_with_options(
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
     let tapes = if cfg!(feature = "tape-cache") { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
-    // Hold before any source/stat lookup, through parsing, memo publication and the run manifest.
+    // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
+    // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
+    // that dies releases it with its process.
     let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose().map_err(|e| Error::Plan(e.to_string()))?;
     let own_store;
     let store: &ContentStore = match (&session, &tapes) {
@@ -786,14 +787,6 @@ pub(crate) fn run_with_options(
             own_store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
             &own_store
         }
-    };
-    // A run that records its manifest holds collection off the store's sources until it has (`CorpusRunLease`): the
-    // sources it reads are held by nothing before.
-    let lease = if tapes.is_some() && t.is_none() {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        Some(store.begin_corpus_run(now + 3600).map_err(|e| Error::Plan(e.to_string()))?)
-    } else {
-        None
     };
     let db = Connection::open(&path)?;
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
@@ -825,9 +818,19 @@ pub(crate) fn run_with_options(
     } else {
         None
     };
+    // The sources the stored program lives under: the program text's, its facts document's and its groups of automata
+    // (decisions 0073 to 0075). No file roots them, so the run's manifest names them, and collection keeps them while
+    // it keeps the run.
+    let mut program_sources: Vec<crate::content_store::SourceId> = durable.into_iter().collect();
     let (kept, from) = match (kept, durable) {
         (Some(p), _) => (Some(p), "memory"),
-        (None, Some(source)) => (prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(holds), "store"),
+        (None, Some(source)) => {
+            let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
+            (found.map(|(p, document)| {
+                program_sources.push(document);
+                p
+            }), "store")
+        }
         (None, None) => (None, ""),
     };
     let reused = kept.is_some();
@@ -881,8 +884,9 @@ pub(crate) fn run_with_options(
             drop(kept);
             if let Some(source) = durable {
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
-                if !prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
-                    crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned());
+                match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
+                    Some(document) => program_sources.push(document),
+                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned()),
                 }
             }
             prepared
@@ -896,6 +900,22 @@ pub(crate) fn run_with_options(
         (false, _) => "prepared".to_owned(),
     });
     let Prepared { prog, vocabulary, lowered, sets, demanded, pushed, located, merged: (remerged, reshared), split, interned: _ } = prepared;
+    // The text tests' plans compiled once for the process (decision 0075), their groups of automata read from the store
+    // when an earlier process determinized them.
+    let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
+    let compiled = match durable {
+        Some(_) => {
+            let groups = prepared::StoredDfas(store, Default::default());
+            let compiled = vocabulary.compile(Some(&groups));
+            program_sources.extend(groups.1.into_inner().unwrap_or_default());
+            compiled
+        }
+        None => vocabulary.compile(None),
+    };
+    drop(compiling);
+    if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
+        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read from the store, {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
+    }
     let vocabulary = vocabulary.again();
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
@@ -1547,13 +1567,14 @@ pub(crate) fn run_with_options(
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's sources, for its manifest (decision 0053).
-    let run_sources = worker_cpu.2.clone();
+    let mut run_sources = worker_cpu.2.clone();
+    run_sources.extend(program_sources.iter().copied());
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
-    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, reading, lease)? } else { drop((reading, lease)); None };
+    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, reading)? } else { drop(reading); None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -2492,10 +2513,10 @@ mod tests {
         let program = [7; 32];
         // Simulate another active run deferring the first run's background collection.
         let reader = store.hold_collection().unwrap();
-        super::record_run(&store, &root, &[source], &program, None, None).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, None).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, Some(reader), None).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, Some(reader)).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(!store.corpus_collection_due().unwrap());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }

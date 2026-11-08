@@ -283,7 +283,7 @@ fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) 
 
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
 /// did, or when what it stored no longer reads.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<Prepared>> {
+pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, SourceId)>> {
     super::memo::off();
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
@@ -291,24 +291,66 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let Ok(digest) = <[u8; 32]>::try_from(result.entry.as_slice()) else { return Ok(None) };
     let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
     let Some(facts) = document_facts(store, document, None)? else { return Ok(None) };
-    Ok(prepared_of(&facts, dialect).ok())
+    Ok(prepared_of(&facts, dialect).ok().map(|p| (p, document)))
 }
 
 /// Stores `prepared` as the program `key` names under `source`: its document (and the document's tape), the facts read
 /// off that tape, and the pointer to the document. A document whose tape does not give back the facts written is not
-/// stored, and `false` says so.
-pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<bool> {
+/// stored, and `None` says so; else the document's source, which the run's manifest names so collection keeps it.
+pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<SourceId>> {
     super::memo::off();
     let facts = facts_of(prepared);
     let text = program_facts::document(&facts, &schema()).map_err(invalid)?;
     let document = super::memo::source(store, &text)?;
     if document_facts(store, document, Some(&text))?.as_ref() != Some(&facts) {
-        return Ok(false);
+        return Ok(None);
     }
     let set = pointer_plan(key);
     let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
     store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: digest.to_vec() }], &[])?;
-    Ok(true)
+    Ok(Some(document))
+}
+
+/// The compiled groups' schema (decision 0075).
+const DFAS: u32 = 103;
+
+/// The path a compiled group is kept under (read by no path, as the other entries).
+const DFA_PATH: &str = "rerail/dfa";
+
+/// The plan a compiled group is kept under: what its key does not already name (the key names the engine, its version
+/// and the patterns).
+fn dfa_plan() -> FactsPlanSet {
+    FactsPlanSet::new(vec![Sha256::digest(b"rerail.dfa-entry/v1").into()])
+}
+
+/// Compiled groups of automata in the facts memo (decision 0075): each under its key, stored as a source, so a later
+/// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
+/// not determinize within the limit) and the DFA's bytes.
+/// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
+pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Mutex<Vec<SourceId>>);
+
+impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
+    fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
+        let source = self.0.held_source_by_hash(HashKey::sha256(key.as_bytes())).ok()??;
+        self.1.lock().expect("the groups' sources").push(source);
+        let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
+        match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
+            Some((1, bytes)) => Some(Some(bytes.to_vec())),
+            Some((0, _)) => Some(None),
+            _ => None,
+        }
+    }
+
+    fn put(&self, key: &str, dfa: Option<&[u8]>) {
+        // A group not kept is compiled again by the next process: nothing to report.
+        let Ok(source) = super::memo::source(self.0, key) else { return };
+        self.1.lock().expect("the groups' sources").push(source);
+        let mut entry = vec![u8::from(dfa.is_some())];
+        entry.extend_from_slice(dfa.unwrap_or_default());
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
+        let set = dfa_plan();
+        let _ = self.0.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]);
+    }
 }
 
 #[cfg(test)]

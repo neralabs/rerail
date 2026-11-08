@@ -55,17 +55,22 @@ pub(super) fn bound(prog: &Program) -> u32 {
     if off { GUEST_KEYS } else { HIDDEN_KEYS }
 }
 
-/// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree).
+/// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree). `definite`: it is
+/// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
+/// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
+/// For a derived relation's column, `definite` says every rule fills it with a definite variable.
 #[derive(Clone, Default, PartialEq)]
 struct Fact {
     scoped: bool,
     grammar: Option<String>,
+    definite: bool,
 }
 
 impl Fact {
     fn join(&mut self, other: &Fact) -> bool {
         let before = self.clone();
         self.scoped |= other.scoped;
+        self.definite |= other.definite;
         self.grammar = match (self.grammar.take(), &other.grammar) {
             (None, g) => g.clone(),
             (g, None) => g,
@@ -110,6 +115,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     // Each copy's relation and seeded columns, with their grammars.
     let mut specialized: BTreeMap<String, (String, BTreeMap<usize, String>)> = BTreeMap::new();
     let mut carried;
+    // Rules split once already: a variable of theirs that may be a guest's node has its clone (O110).
+    let mut split: BTreeSet<usize> = BTreeSet::new();
     loop {
         carried = carry(prog, &base_locations, &seeds, &view);
         let snapshot = prog.rules.clone();
@@ -122,7 +129,22 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 continue;
             }
             let facts = analyse(rule, &base_locations, &carried, &seeds[i]);
-            let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
+            // A variable that may be a guest's node of a known grammar, and may be a host's: the rule stays as it is
+            // for the host's, and a clone with the variable seeded as the guest's reads the guest's copies. Copying
+            // in place of the atom would drop the host's rows (`tv`'s nodes are both, and `tbv`'s `live_asg` read
+            // only the annotation copy, O110).
+            let maybe: BTreeMap<String, Fact> = facts
+                .iter()
+                .filter(|(_, f)| f.scoped && !f.definite && f.grammar.as_ref().is_some_and(|g| !g.is_empty()))
+                .map(|(v, f)| (v.clone(), Fact { definite: true, ..f.clone() }))
+                .collect();
+            if !maybe.is_empty() && split.insert(i) {
+                let mut seed = seeds[i].clone();
+                seed.extend(maybe);
+                copies.push((rule.clone(), seed));
+                changed = true;
+            }
+            let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
             for l in &mut rule.body {
                 if let Literal::Nearest { n, kindset, .. } = l {
                     if let Some(g) = grammar_of(n)
@@ -161,7 +183,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         let mut seed = BTreeMap::new();
                         for (c, g) in &cols {
                             if let Some(Term::Var(v)) = copy.head.args.get(*c) {
-                                seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()) });
+                                seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                             }
                         }
                         copies.push((copy, seed));
@@ -200,8 +222,9 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
             let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
             if atom_scoped {
+                // Named in the guest's grammar only where the node is the guest's (a clone's seed), not maybe one.
                 let grammar = cols.iter().find_map(|&c| match a.args.get(c) {
-                    Some(Term::Var(v)) => facts.get(v).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
+                    Some(Term::Var(v)) => facts.get(v).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
                     _ => None,
                 });
                 if let Some(g) = grammar {
@@ -298,6 +321,33 @@ fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<
             }
         }
         if !changed {
+            break;
+        }
+    }
+    // Which scoped columns only guest values fill: every column scoped is taken as definite, then a rule filling it
+    // with a variable that is not (a host node, or a column filled by one) makes it not, to a fixpoint.
+    for cols in carried.values_mut() {
+        for f in cols.iter_mut() {
+            f.definite = f.scoped;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (rule, seed) in prog.rules.iter().zip(seeds) {
+            let facts = analyse(rule, base, &carried, seed);
+            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
+            for (c, t) in rule.head.args.iter().enumerate() {
+                let definite = matches!(t, Term::Var(v) if facts.get(v).is_some_and(|f| f.definite));
+                if let Some(slot) = cols.get_mut(c)
+                    && slot.definite
+                    && !definite
+                {
+                    slot.definite = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
             return carried;
         }
     }
@@ -321,7 +371,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<Stri
             Some(Term::Str(s)) => Some(s.clone()),
             _ => None,
         });
-        let fact = Fact { scoped: true, grammar };
+        let fact = Fact { scoped: true, grammar, definite: true };
         for &c in cols.iter().chain(tape.iter()) {
             if let Some(v) = var(a.args.get(c)) {
                 facts.entry(v).or_default().join(&fact);
@@ -333,7 +383,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<Stri
         if let Some(cols) = carried.get(&a.rel) {
             for (c, f) in cols.iter().enumerate() {
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
-                    facts.entry(v).or_default().join(f);
+                    facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
                 }
             }
         }
@@ -426,5 +476,27 @@ mod tests {
         assert!(copies.contains("rr_in_sql_0_sql_1_pair"), "{copies:?}");
         let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
         assert!(out.contains("rr_in_sql_0_sql_1_pair("), "{out}");
+    }
+
+    /// O110: a column filled by host and guest nodes alike (`calls.rr`'s `tv`) is not a guest's column. A rule reading
+    /// a relation with a variable from it keeps reading the relation for the host's nodes, and a clone reads the
+    /// guest's copy; before, the rule read only the copy, and `tbv` lost every host assignment.
+    #[test]
+    fn a_maybe_guest_variable_keeps_the_host_rows_and_clones_for_the_guest() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl val(n: node)\nval(n) :- e(n).\nval(r) :- parsed(_, \"sql\", r).\n",
+            ".decl asg(n: node)\nasg(n) :- e(n).\n",
+            ".decl only(n: node)\nonly(r) :- parsed(_, \"sql\", r).\n",
+            ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
+        ))
+        .unwrap();
+        hide(&mut p, 1 << 30);
+        let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert!(outs.iter().any(|r| r.contains("val(") && r.contains(" asg(")), "the host's rows stay: {outs:#?}");
+        assert!(outs.iter().any(|r| r.contains("val(") && r.contains("rr_in_sql_0_asg(")), "a clone reads the guest's copy: {outs:#?}");
+        // A column only guest nodes fill is the guest's: its reader is specialized, not split.
+        assert!(outs.iter().any(|r| r.contains("only(") && r.contains("rr_in_sql_0_asg(")), "{outs:#?}");
+        assert!(!outs.iter().any(|r| r.contains("only(") && r.contains(" asg(")), "{outs:#?}");
     }
 }
