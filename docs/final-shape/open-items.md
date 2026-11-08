@@ -2840,6 +2840,18 @@ The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-laye
 **Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
 with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
 
+**Built 2026-11-08 (items 1–6):** `corpus/inputs.rs` reads `artifact=` from `--facts DIR` (default
+`<root>/.rerail/facts`), checks the envelope and the digest (git blob ids over the files the corpus walk sees), and
+gives one `input_error("artifact:NAME", kind, …)` per artifact. `withhold` removes, to a fixpoint, every rule that
+reads an incomplete relation through `!` or an aggregate, and the run prints each finding relation that may be
+missing rows, with how many of its rules read the artifact (`unknown: budget_exceeded (artifact:test_collection
+missing; 2 of its 3 rules)`). `rerail-engine facts-stamp RAW --out DIR --root REPO POLICY…` stamps. On the 133-file
+sample both checks now run, in 0.2 s and 1.0 s of CPU: without artifacts, with a failed producer, and with a fresh
+artifact (no Unknown). Tests: `corpus::inputs` (12).
+
+**Still open:** item 7 (`at="base"`, refused with this item's number); Unknown *places* (FINDINGS-LAYER §2's second
+evaluation), which needs the findings layer; `--require-facts`.
+
 ## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
 
 Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3

@@ -33,7 +33,7 @@ mod prepared;
 mod maintain;
 mod retain;
 mod bridge;
-mod inputs;
+pub(in crate::code_rule_dsl) mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
 mod cross_memo;
