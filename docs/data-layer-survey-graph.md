@@ -138,7 +138,7 @@ The scope probes establish these native behaviors:
 
 Implement the scope boundary explicitly:
 
-1. Produce the graph's wanted logical paths in the source discovery order. Keep facade resource paths in a separate relation.
+1. Produce wanted logical paths in discovery order, then reproduce the source scanner's assembly order. Keep facade resource paths separate.
 2. Load each physical document once. Use the same module label for either demand, with a prefix and its logical path.
 3. Recover each loaded document's logical path from that label. Retain ordinary relative paths for initial documents.
 4. Add a required `sgs_scan_file(document)` input to the source inventory. Its caller defines graph membership from wanted graph paths.
@@ -167,6 +167,38 @@ The ordered assembly receives the caller's scan ordinals, rather than canonical 
 The workspace contract supplies scan paths as producer inputs. It leaves file loading to the native engine.
 This tests the resource boundary independently of production directory discovery.
 Persistent update, deletion, and rename contracts remain required. The production default remains an explicit refusal.
+
+### Production discovery and scanner order
+
+`survey-discovery.rr` obtains directory configuration from global `env` settings named `data-layer.scan.0`, `data-layer.scan.1`, and so on.
+Without settings, it expands the source's `public` token.
+The request cone selects unordered graph paths and facade resources.
+After requests finish, a SQL window assigns discovery ordinals using typed root and component-order keys.
+This avoids correlated file-ranking counts and aggregate feedback in the loading component.
+
+The seventeen-case checkpoint proves selected paths, load demand, and complete findings on its small fixtures.
+It does not prove scanner order above fifty files. A separate 52-file counterexample changes the reported unreachable helper.
+The [linter](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_internal_dead_code.py#L969)
+builds its graph through the source [chunk partitioner](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1486).
+The source assembler consumes chunks in partition order, despite concurrent execution.
+
+The next implementation must preserve these requirements:
+
+1. Keep discovery order and assembly order as distinct relations. Up to fifty files, they are equal.
+2. Above fifty files, reproduce `max(workers, ceil(file_count / 16))` chunks, capped by the number of file occurrences.
+3. Sort occurrences by descending byte size, then Python path-component order. Preserve the original position when paths tie.
+4. Assign each occurrence to the bin with the smallest accumulated byte count. Break ties by bin index.
+5. Retain append order within each bin, remove empty bins, and assemble bins in increasing index order.
+6. Preserve repeated file occurrences. A relation keyed only by path would lose them.
+7. Reproduce the worker-count input from [process_pool.py](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/process_pool.py#L10).
+   Valid `NERA_LINTER_WORKERS` integers clamp to at least one. Invalid values use `min(cpu_count or 4, 8)`.
+8. Obtain sizes from shared directory metadata and execute the partitioner over the whole typed demand batch.
+9. Test module collisions, reachable helpers, weight ties, empty bins, and several worker counts against the pinned source.
+
+Partition all selected occurrences before dropping parse failures. Such files still affect bin weights and subsequent scan order.
+
+The intended engine boundary is a generic batched weighted-partition producer, with typed rows and no rule-specific detector.
+Reporting, production registration, and persistent updates also remain open. No Linear issue was created for this requirement.
 
 The `survey-exports.rr` library now constructs facade export rows, exported root sets, and exported class sets.
 It follows direct `data_layer/*.py` paths, sorted filenames, direct imports and definitions, and import precedence over local definitions.

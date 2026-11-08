@@ -43,7 +43,7 @@ class SurveyDiscoveryContractTests(unittest.TestCase):
         baseline=self.recording();categories=list(baseline['cases'][0]['expected']['analysis'])
         with tempfile.TemporaryDirectory() as temporary:
             status,result=self.run_native(Path(temporary),baseline,
-                lambda *args:(dict(paths=[],analysis={name:[] for name in categories}),[]))
+                lambda *args:(dict(paths=[],demandedPaths=[],analysis={name:[] for name in categories}),[]))
         self.assertEqual(status,1);self.assertTrue(result['complete']);self.assertFalse(result['passed'])
         self.assertEqual(len(result['cases']),len(contract.CASES))
         first=result['cases'][0]

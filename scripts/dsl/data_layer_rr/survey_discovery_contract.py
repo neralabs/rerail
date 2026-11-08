@@ -60,7 +60,8 @@ def source_case(source,item):
         graph=model.SymbolGraph(root,item['directories'])
         graph._scan(files=paths)
         graph._resolve_edges();graph._add_legacy_decorator_edges();graph._collect_data_layer_roots()
-        return dict(paths=[p.relative_to(root).as_posix() for p in paths],analysis=linter.analyze_dead_code(graph))
+        selected=[p.relative_to(root).as_posix() for p in paths]
+        return dict(paths=selected,demandedPaths=sorted(set(selected)),analysis=linter.analyze_dead_code(graph))
 
 
 def program():
@@ -70,6 +71,8 @@ def program():
 #include "data-layer/survey-discovery.rr"
 .violation DiscoveredPath(at: span, ordinal: number, path: symbol) code "DISCOVERED_PATH" "discovered"
 DiscoveredPath(@place("", 0), i, path) :- sgs_scan_path(path, i).
+.violation DemandedPath(at: span, path: symbol) code "DEMANDED_PATH" "demanded"
+DemandedPath(@place("", 0), path) :- sgs_graph_path(path).
 '''
 
 
@@ -80,7 +83,9 @@ def native_case(engine,rule,item):
         options['env']=[f'data-layer.scan.{i}={path}' for i,path in enumerate(item['directories'])]
     native=execute_workspace(engine,rule,item['files'],options)
     discovered=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='DISCOVERED_PATH'),key=lambda r:r['ordinal'])
-    result=dict(paths=[r['path'] for r in discovered],analysis=native_result([r for r in native['diagnostics'] if r['code']!='DISCOVERED_PATH']))
+    demanded=sorted(r['parameters']['path'] for r in native['diagnostics'] if r['code']=='DEMANDED_PATH')
+    result=dict(paths=[r['path'] for r in discovered],demandedPaths=demanded,
+                analysis=native_result([r for r in native['diagnostics'] if r['code'] not in {'DISCOVERED_PATH','DEMANDED_PATH'}]))
     return result,native['programInputs']
 
 
@@ -120,7 +125,7 @@ def main():
         for item in baseline['cases'][args.part::args.parts]:
             actual,inputs=native_case(args.engine,rule,item)
             result['cases'].append(dict(id=item['id'],expected=item['expected'],actual=actual,programInputs=inputs,
-                                       passed=actual['paths']==item['expected']['paths'] and same_result(item['expected']['analysis'],actual['analysis'])))
+                                       passed=actual['paths']==item['expected']['paths'] and actual['demandedPaths']==item['expected']['demandedPaths'] and same_result(item['expected']['analysis'],actual['analysis'])))
             write_json(args.output,result)
     result.update(complete=True,passed=all(c.get('passed',True) for c in result['cases']))
     write_json(args.output,result)

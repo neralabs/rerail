@@ -60,7 +60,8 @@ The `annotation_constant_repr` relation supplies non-string literal values withi
 It shares the existing demanded native AST pass and excludes literals outside annotations.
 Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
 Boolean operand formatting also follows CPython: each operand increases the required precedence, with saturation at `ATOM`.
-The manifest records all 27 extension files, including the dependency lock, typed shard-column mapping, and generic BFS operator, with exact hashes.
+The manifest records all 31 extension files, including typed syntax columns, graph operators, batched SQL ordering, filesystem metadata, and the join correction.
+Each file has an exact hash.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
 Adoption and artifact registration audit the local Final shape branch and its fetched remote tip.
@@ -1619,6 +1620,48 @@ All sixty-nine source comparisons, twelve raw-graph cases, four original tests, 
 All 107 tooling tests, 34 subtests, 100 typed policy readers, and seven focused native tests pass.
 The native diff now has 27 reviewed extension files. The six added paths implement this generic capability through Final's current architecture.
 No Linear issue was created.
+
+### Native discovery checkpoint and remaining scanner-order failure
+
+The native library now selects legacy roots, modern base roots, and sorted layer roots.
+It expands `public`, preserves explicit duplicate roots, and applies the pinned directory exclusions.
+It handles explicit files, directory links, broken explicit links, relative paths, and the root `.`.
+The reference command uses the actual pinned production scanner.
+
+`dir_metadata` exposes file status, link status, and byte size from `dir_entry`'s cached directory listing.
+The existing directory flag keeps its meaning. A new run reads fresh metadata.
+`ordered_rows` assigns typed ordinals with one SQL window over the input batch.
+Path keys preserve Python's component ordering. Neither implementation invokes Python.
+
+The request cone reads indexed scan settings through Final's global `env` facts.
+It does not read the per-document `option_item` input.
+Directory selection also stays separate from ordinal assignment. Aggregates and batched capture producers cannot run inside Final's recursive loading component.
+The implementation uses text predicates and string expressions there, with final ordering after discovery.
+
+A minimal two-directory test exposed a shared-engine correctness defect.
+Whole-input join probes with equal bodies but different destinations shared a deduplication key.
+The engine emitted metadata requests but discarded listing requests. Only two of four expected rows appeared.
+The key now includes the destination relation. The [failing reproduction](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-request-heads-red.json.gz) and native regression preserve this evidence.
+
+The recorded checkpoint passes seventeen discovery cases, including complete load-demand sets, ordered paths, and dead-code categories.
+Checking demand separately catches overscan even when final findings do not change.
+All ten discovery mutations cause mismatches through successful native execution.
+The same engine passes all 236 existing source comparisons, fifteen scope cases, and 46 existing controls.
+It also passes four original assertions, 36 supplied-graph cases, twelve raw-helper cases, eleven focused native tests, and 100 reader checks.
+The tooling suite passes 135 tests and 89 subtests.
+The first producer-control run timed out after 21 controls. A separate bounded rerun passes all 28; the incomplete prefix is not acceptance evidence.
+
+The final CLI build took 34.751 seconds. The unit-test build took 78.454 seconds.
+Both use committed engine source `2958f2617`; their SHAs start `6df468ad1145ec4c` and `7a683ad2f9a81065`.
+Compilation is recorded separately from test execution.
+The [checkpoint receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-checkpoint.json.gz)
+contains full comparisons, controls, native logs, 112 consumed programs, builds, harness bytes, and the known larger failure.
+
+This checkpoint does not complete production discovery.
+A 52-file fixture selects the same paths in both engines but reports a different unreachable helper.
+Above fifty files, Python scans size-balanced chunks. That changes which duplicate module definition wins.
+The native library currently uses discovery order for graph assembly, so it reports `helper_b` where Python reports `helper_a`.
+The production default still refuses execution. No rule is marked accepted.
 
 The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the source and raw-graph records, controls, complete programs, build identities, and regression logs.
 The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`, verified again on the final CLI.
