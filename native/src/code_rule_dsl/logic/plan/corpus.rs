@@ -1059,13 +1059,10 @@ pub(crate) fn run_with_options(
         Some(memo::Memo::Stored(_)) if memoised => Some(HeldPlan::new(store, memo::plan_digest(&memo_program)).map_err(|e| Error::Plan(e.to_string()))?),
         _ => None,
     };
-    // A cross-file part that reads base relations takes their rows from the chunks it evaluates. Decision 0063 memoises
-    // a file's rows of them too (`memo::Entry::base`), but a run read from them derived other rows than the evaluated
-    // run (O109): such a run is not memoised, as before 0063, until it does.
-    let memoised = memoised && stored.is_empty();
-    if !stored.is_empty() && memo.is_some() && t.is_none() {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated (O109)", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
-    }
+    // A cross-file part that reads base relations takes their rows from the chunks it evaluates, and from a file's
+    // memoised rows of them (decision 0063, `memo::Entry::base`). A run read from them was held back while it derived
+    // other rows than the evaluated run (O109). Since guest hiding no longer drops host rows (O110) the two agree, and
+    // the run is memoised again.
     // One transaction for every export's table, not a commit each.
     let mut tables = String::from("BEGIN;");
     for rel in &split.exports {
@@ -1804,6 +1801,14 @@ pub(crate) fn run_with_options(
     }
     phase("cross", statements.count());
     statements.enter("write");
+    // Every output has its file, empty when nothing made a row: a run read whole from the memo hands no rows of a
+    // file-local output no file made (`rr_embed_req`), which an evaluated run writes empty (O109).
+    for rel in &prog.outputs {
+        if !outputs.contains_key(rel) && let Some(cols) = prog.decls.get(rel) {
+            outputs.insert(rel.clone(), Vec::new());
+            node_columns.entry(rel.clone()).or_insert_with(|| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+        }
+    }
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
