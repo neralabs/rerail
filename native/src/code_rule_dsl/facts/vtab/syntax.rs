@@ -358,14 +358,14 @@ pub(crate) fn comment_body(text: &str) -> &str {
     body.trim()
 }
 
-/// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
-/// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `shape` numbers them (`node` ids are `key << 32 | local`): each local id's core id and kind name.
+/// For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Vec<(u32, &'static str)>> {
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
-    // A guest's nodes are its root's subtree.
-    let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
-    let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), Shape::Core, false, guest);
+    // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
+    let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
+    let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), shape, false, guest);
     Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
 }
 
@@ -822,18 +822,18 @@ enum Place {
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
 /// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
 /// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
-#[derive(Default)]
-struct Extra {
-    source: bool,
-    src_line: bool,
-    src_line_lf: bool,
-    tape_line: bool,
 ///
 /// And in `core.rr`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
 /// group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` span, one of its `src_line` spans
 /// or a comment node, is span `m` (`MATCH`, numbered with `match_all`'s), placed as `match_all`'s. Group "" is the
 /// whole match; a group that takes no part in a match has no row. The spans are those `source` and `src_line` give
 /// here, so the two join.
+#[derive(Default)]
+struct Extra {
+    source: bool,
+    src_line: bool,
+    src_line_lf: bool,
+    tape_line: bool,
     line_count: bool,
     text: bool,
     /// `text` of the `source` and `src_line` spans: core.rr's programs make it where a rule reads a copy of such a
@@ -867,14 +867,14 @@ struct Extra {
     comments: Vec<[i64; 2]>,
     /// The regexes of the `match_all` and `match_group` relations read (`Found`).
     matches: Vec<Found>,
+    rx_span: bool,
+    rx_spans: Vec<[i64; 5]>,
 }
 
 /// Regex `k`'s rows: its matches (`matchall_<k>(sp, m)`, when read) and their named groups' spans
 /// (`matchgroup_<k>(sp, m, g, gsp)`, when read; `g` a string index), with one numbering of `m` for both.
 struct Found {
     k: usize,
-    rx_span: bool,
-    rx_spans: Vec<[i64; 5]>,
     regex: Arc<regex::Regex>,
     all: bool,
     groups: bool,
@@ -907,13 +907,13 @@ impl Extra {
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
+            rx_span: shape == Shape::Core && read("rx_span"),
             matches: matches
                 .iter()
                 .enumerate()
                 .map(|(k, regex)| Found {
                     k,
                     regex: Arc::clone(regex),
-            rx_span: shape == Shape::Core && read("rx_span"),
                     all: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::MATCHES)),
                     groups: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::GROUPS)),
                     rows: Vec::new(),
@@ -925,13 +925,13 @@ impl Extra {
         }
     }
 
+    /// Whether spans are made (their matches' too), with places in `line`, `end_line` and `col`.
     fn spans(&self) -> bool {
         self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment || self.rx_span
     }
 
     /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
     fn line_rows(&self) -> bool {
-    /// Whether spans are made (their matches' too), with places in `line`, `end_line` and `col`.
         self.line && self.spans()
     }
 
@@ -1110,20 +1110,25 @@ impl Extra {
             self.line_counts.push([key, physical.len() as i64]);
         }
         let mut made: Vec<MadeSpan> = Vec::new();
+        // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
+        let (mut source_at, mut lines_at) = (None, 0..0);
         if self.source {
             let sp = span(0);
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
             self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, self.source_text, text, string);
+            source_at = Some(made.len());
             made.push((sp, 0..source.len(), None));
         }
         if self.src_line {
+            lines_at.start = made.len();
             for (i, r) in physical.iter().enumerate() {
                 let (l, sp) = (i + 1, span(i as u32 + 1));
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], self.line_text, text, string);
                 made.push((sp, r.clone(), Some(l)));
             }
+            lines_at.end = made.len();
         }
         if self.src_line_lf {
             for (i, r) in physical_lines(source, false).into_iter().enumerate() {
@@ -1133,25 +1138,20 @@ impl Extra {
                 made.push((sp, r, Some(l)));
             }
         }
-        // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
-        let (mut source_at, mut lines_at) = (None, 0..0);
         if self.tape_line {
             for i in 0..f.lines.starts().len() {
                 let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
                 let r = f.lines.start(i)..f.lines.end(i);
                 self.tape_lines.push([key, l as i64, sp]);
-            source_at = Some(made.len());
                 self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
                 made.push((sp, r, Some(l)));
             }
-            lines_at.start = made.len();
         }
         // Each regex's matches in each span, and their named groups, numbered through the document.
         let mut next: u32 = 0;
         let mut id = |p: &Projected| -> StoreResult<i64> {
             if next >= MATCH {
                 return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches and groups", p.key)));
-            lines_at.end = made.len();
             }
             next += 1;
             Ok(span(MATCH | (next - 1)))
@@ -1189,29 +1189,6 @@ impl Extra {
                 }
             }
         }
-        Ok(())
-    }
-
-    /// The relations read, their strings as atoms (`atom` of a string index), and the `match_all` relations read.
-    #[allow(clippy::type_complexity)]
-    fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
-        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
-        };
-        let mut out = Vec::new();
-        if self.source {
-            out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.to_vec()))));
-        }
-        if self.src_line {
-            out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.to_vec()))));
-        }
-        if self.src_line_lf {
-            out.push(("src_line_lf", relation(&["d", "l", "sp"], &mut self.src_lines_lf.iter().map(|r| r.to_vec()))));
-        }
-        if self.tape_line {
-            out.push(("tape_line", relation(&["d", "l", "sp"], &mut self.tape_lines.iter().map(|r| r.to_vec()))));
         // `rx_span`: each pattern over its spans, `j` each match in one.
         for (within, pattern, re) in if self.rx_span { rx } else { &[] } {
             use crate::code_rule_dsl::logic::front::SpanIn;
@@ -1247,6 +1224,29 @@ impl Extra {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// The relations read, their strings as atoms (`atom` of a string index), and the `match_all` relations read.
+    #[allow(clippy::type_complexity)]
+    fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
+        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
+            let mut r = Relation::new(columns);
+            rows.for_each(|row| r.push(&row));
+            r
+        };
+        let mut out = Vec::new();
+        if self.source {
+            out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.to_vec()))));
+        }
+        if self.src_line {
+            out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.to_vec()))));
+        }
+        if self.src_line_lf {
+            out.push(("src_line_lf", relation(&["d", "l", "sp"], &mut self.src_lines_lf.iter().map(|r| r.to_vec()))));
+        }
+        if self.tape_line {
+            out.push(("tape_line", relation(&["d", "l", "sp"], &mut self.tape_lines.iter().map(|r| r.to_vec()))));
         }
         if self.line_count {
             out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.to_vec()))));
@@ -1281,6 +1281,9 @@ impl Extra {
         if self.comment {
             out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
+        if self.rx_span {
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m]))));
+        }
         let mut matched = Vec::new();
         for found in self.matches {
             if found.all {
@@ -1304,9 +1307,6 @@ struct NodeRows {
     text: Vec<[i64; 2]>,
     intval: Vec<[i64; 2]>,
     op: Vec<[i64; 2]>,
-        if self.rx_span {
-            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m]))));
-        }
     name: Vec<[i64; 2]>,
     strs: Vec<[i64; 2]>,
     strprefix: Vec<[i64; 2]>,
