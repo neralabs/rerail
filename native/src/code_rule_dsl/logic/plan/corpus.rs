@@ -1030,6 +1030,8 @@ pub(crate) fn run_with_options(
     // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
+    // The stored tree counts this run read or wrote, for its manifest.
+    let mut own_sources: Vec<crate::content_store::SourceId> = Vec::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
@@ -1334,37 +1336,44 @@ pub(crate) fn run_with_options(
             // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
             // memo plans its cross-file part with no kinds (every `kind(n, "identifier")` looks empty), and a
             // join can start from a cross product of two kinds.
+            // Hits come in batches that cross chunks, so they are grouped by file type, and each group takes the
+            // counts of its own mix, else of a mix of its types, else of any mix measured under this program.
             if own {
-                let hit_nodes: u64 = hits.iter().map(|(_, e)| e.nodes).sum();
-                let mix = chunk_mix(hits.iter().map(|(path, e)| (path.as_str(), e.nodes as usize)));
-                if !own_once.contains_key(&mix)
-                    && let Some(m) = own_counts(store, &memo_program, &mix)
-                {
-                    own_once.insert(mix.clone(), m);
+                let mut groups: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
+                for (path, e) in &hits {
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    groups.entry(name.rsplit_once('.').map_or("", |(_, ext)| ext)).or_default().push((path.as_str(), e.nodes as usize));
                 }
-                match own_once.get(&mix) {
-                    Some((first, measured)) if *first > 0 => own_totals.add(&measured.scaled(hit_nodes as f64 / *first as f64)),
-                    _ => {
-                        memo_why.insert(format!("no tree counts for the memo hits' mix {mix}: the cross-file part plans without them"));
+                for (ext, files) in groups {
+                    let hit_nodes: usize = files.iter().map(|(_, n)| n).sum();
+                    let mix = chunk_mix(files.into_iter());
+                    let keys = [mix.clone(), format!("types/{ext}"), "any".to_owned()];
+                    let found = keys.iter().find_map(|k| {
+                        own_once.get(k).cloned().or_else(|| own_counts(store, &memo_program, k, &mut own_sources)).filter(|(first, _)| *first > 0)
+                    });
+                    match found {
+                        Some((first, measured)) => own_totals.add(&measured.scaled(hit_nodes as f64 / first as f64)),
+                        None => {
+                            memo_why.insert(format!("no tree counts for the memo hits' mix {mix}: the cross-file part plans without them"));
+                        }
                     }
                 }
             }
+            // Each export's rows over the batch, as columns: one statement per relation writes them to `x`, from
+            // a bound source (`rr_memo_w<width>`), not a statement per row.
+            let mut batch: BTreeMap<String, (usize, Vec<Vec<i64>>)> = BTreeMap::new();
             for (_, entry) in hits {
                 nodes += entry.nodes as usize;
                 for (rel, (width, values)) in entry.rows {
                     if values.is_empty() || !split.exports.contains(&rel) {
                         continue;
                     }
-                    let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
-                    let marks = vec!["?"; width].join(", ");
-                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
-                    let mut inserted = 0;
-                    for row in values.chunks(width) {
-                        inserted += insert.execute(rusqlite::params_from_iter(row.iter()))?;
+                    let cols = &mut batch.entry(rel).or_insert_with(|| (width, vec![Vec::new(); width])).1;
+                    for row in values.chunks_exact(width) {
+                        for (c, v) in row.iter().enumerate() {
+                            cols[c].push(*v);
+                        }
                     }
-                    let columns = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
-                    let rows = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), columns);
-                    totals.add_rows(&rel, inserted, rows.as_ref(), &types);
                 }
                 for (rel, (columns, lines)) in entry.lines {
                     outputs.entry(rel.clone()).or_default().extend(lines);
@@ -1376,6 +1385,17 @@ pub(crate) fn run_with_options(
                         held.1[c].get_or_insert_with(Vec::new).extend(values.iter().skip(k).step_by(held_columns.len()));
                     }
                 }
+            }
+            for (rel, (width, cols)) in batch {
+                let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
+                let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+                let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
+                let via = format!("rr_memo_w{width}");
+                modules.bind(&db, &via, rows.clone())?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {} FROM {via}", crate::code_rule_dsl::logic::sql::ident(&rel), names.join(", ")), [])?;
+                totals.add_rows(&rel, inserted, rows.as_ref(), &types);
+                // Released: the rows are in `x` now.
+                modules.bind(&db, &via, crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width]))?;
             }
             db.execute_batch("COMMIT")?;
         }
@@ -1397,7 +1417,11 @@ pub(crate) fn run_with_options(
                     let measured = Own::measure(&sources, &constants);
                     own_once.insert(mix.clone(), (chunk_nodes_built, measured.clone()));
                     if memoised {
-                        record_own_counts(store, &memo_program, &mix, chunk_nodes_built, &measured)?;
+                        // Under its mix, its types, and as the program's last measured mix (a hit's fallbacks).
+                        let types = mix.split('/').next().unwrap_or_default();
+                        for key in [mix.clone(), format!("types/{types}"), "any".to_owned()] {
+                            record_own_counts(store, &memo_program, &key, chunk_nodes_built, &measured, &mut own_sources)?;
+                        }
                     }
                     measured
                 }
@@ -1627,6 +1651,7 @@ pub(crate) fn run_with_options(
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's sources, for its manifest (decision 0053).
     let mut run_sources = worker_cpu.2.clone();
+    run_sources.extend(own_sources.iter().copied());
     run_sources.extend(program_sources.iter().copied());
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
@@ -2585,18 +2610,21 @@ fn own_name(program: &[u8; 32], mix: &str) -> String {
 }
 
 /// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run.
-fn own_counts(store: &ContentStore, program: &[u8; 32], mix: &str) -> Option<(usize, Own)> {
+/// Its source is named in the run's manifest (`held`), so collection keeps it (decision 0053).
+fn own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, held: &mut Vec<crate::content_store::SourceId>) -> Option<(usize, Own)> {
     let digest = store.binding(&own_name(program, mix)).ok()??;
     let source = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest)).ok()??;
-    Own::decode(&store.get_source(source).ok()?)
+    let own = Own::decode(&store.get_source(source).ok()?)?;
+    held.push(source);
+    Some(own)
 }
 
 /// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo.
-fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own) -> Result<()> {
+fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, held: &mut Vec<crate::content_store::SourceId>) -> Result<()> {
     use sha2::Digest as _;
     let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
     let bytes = own.encode(nodes);
-    store.put_source(&bytes, &[]).map_err(plan)?;
+    held.push(store.put_source(&bytes, &[]).map_err(plan)?);
     let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     let producer = memo::plan_digest(program);
     let record = crate::content_store::DerivationRecord { output: own_name(program, mix), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
