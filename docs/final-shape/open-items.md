@@ -1469,8 +1469,8 @@ tokens have no field.
   into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
   is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
-  per file and pattern) and over symbols (a native relation): decision 0054. Over a node's own text, `match_all`
-  is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
+  per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: over a node of a kind
+  and over an earlier capture too, each distinct text matched once per batch (decision 0081).
   (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
 - `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
@@ -2142,9 +2142,10 @@ Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail
 
 - **A message names no column:** `ruff-c404`, `ruff-c406` and `ruff-perf403` ("message: no column k: v"), and
   `ruff-fly002` ("FLY002_fstring message: no column a").
-- **No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.
-- **Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`
-  (`confusable_word`: `match_all` over a node, O80).
+- ~~**No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.~~ 2026-11-08:
+  `returns` is read back only when the cross-file part derives it (PYI006 runs; the others not rechecked).
+- ~~**Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`~~
+  (2026-11-08: RUF001 to RUF003 lower and run, decision 0081).
 - **Refused:** `ruff-b005`, whose value cycle is unbounded (see above).
 
 Given as one directory to `rerail-engine logic`, the pack does not combine. Leaving out the rules above, and others

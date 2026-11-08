@@ -1696,7 +1696,8 @@ pub(crate) fn run_with_options(
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
     let mut cross_recursive = 0;
-    // `returns`, held for the typing outputs (`corpus::typing`).
+    // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
+    // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
@@ -1735,7 +1736,7 @@ pub(crate) fn run_with_options(
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
-                    if wanted.contains("returns") {
+                    if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
@@ -1775,7 +1776,7 @@ pub(crate) fn run_with_options(
                 }
                 None => {
                     let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
-                    if wanted.contains("returns") {
+                    if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -1859,13 +1860,13 @@ pub(crate) fn run_with_options(
             let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
             let rest = part(rest);
             let got = super::run_atoms_native_over(&rest, &db, "main", st, rest_wanted.clone(), modes)?;
-            if rest_wanted.contains("returns") {
+            if rest_wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
             let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
-            if wanted.contains("returns") {
+            if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));

@@ -351,13 +351,19 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
-/// comment node (`kind(c, "comment")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), each
+/// comment node (`kind(c, "comment")`), each node of another kind (`kind(c, "string_content")`), or each span an
+/// earlier pattern's group captured (decision 0081). The batch runs a pattern once per distinct text of a node or
+/// capture (decision 0042 §2), never once per node.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
     Comment,
+    /// Nodes of this kind.
+    Kind(String),
+    /// The spans group `.1` of pattern `.0` captured.
+    Capture(String, String),
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
