@@ -1,6 +1,6 @@
 # Parser generators: the TDD plan for tier 2
 
-Status: plan, being built (2026-11-07). Rewritten for decision 0077: the tree section is a
+Status: plan, being built (2026-11-07). Rewritten for decision 0085: the tree section is a
 grammar (doc 18), and tier 2 is its state machine. Each phase writes its tests first and sees
 them fail. It builds until they pass, commits, and only then starts the next phase.
 
@@ -28,7 +28,7 @@ reference parser, the monoids' walks). None of them is an executor.
 
 The states and arms are the compiler's data. Two things read them: the pass that makes them
 (`grammar`) and the pass that lowers them to the transducer's words (`bitlex_tier2`, decision
-0079). No Rust function walks them to parse a file, and generated code calls no Rust. The guard
+0087). No Rust function walks them to parse a file, and generated code calls no Rust. The guard
 `only_the_compiler_reads_tier2s_states` fails if any other file reads them.
 
 ## 1. The tree section as a grammar (done)
@@ -55,7 +55,7 @@ nodes. One file has no tokens and falls back; the two that tree-sitter errs on a
 - refusals: not LL(1), an empty node, a self-reference without `nested`;
 - Moore's refinement merges states that act alike.
 
-The block program held token rows, keywords, `skip`, states and arms; since decision 0079
+The block program held token rows, keywords, `skip`, states and arms; since decision 0087
 they are the compiler's only, and the words carry them. The old rows (`after`, `before`,
 `also`, `parent`, code facts, the `json_number` validator) are deleted, with the Rust tape
 writer's leftovers.
@@ -100,7 +100,7 @@ and the last byte of each token whose end its row does not give. A one-byte toke
 its byte; a keyword-only row's word gives its length. JSON's second extract holds string
 contents' and words' last bytes.
 
-**5b. The words (decision 0079).** Tier 2 is the transducer's own instruction words, with new
+**5b. The words (decision 0087).** Tier 2 is the transducer's own instruction words, with new
 ones for the stream, lowered by its own pipeline: the words' interpreter, `native_ir`, and
 Cranelift's lowering of `native_ir`. There is no second IR and no new code generator. On
 Cranelift (`native_cpu_stream`) each word is a block, `SWITCH` a jump table, `RETURN` a
@@ -113,7 +113,7 @@ state:
   `LEAF`, `NODE_FIELD`, `NODE_SUPER`), a `PUSH` for a call, and `GOTO` the next state;
 - a nested level that may end closes its node and `RETURN`s; the root `ACCEPT`s.
 
-The verifier refuses any cycle without a `TOKEN`: no loop over bytes, ever (decision 0078). A
+The verifier refuses any cycle without a `TOKEN`: no loop over bytes, ever (decision 0086). A
 `CHECK` runs its block program over the token as tier 1 runs over a file, 64 bytes at a time,
 its carries passed from word to word; tree-sitter is never the way out of a case simdjson
 handles.
@@ -148,9 +148,9 @@ again at the known widths: at most one second pass.
 - `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in
   CPU time.
 
-**Tier 1's cost (decision 0078).** The number masks took tier 1 to 95 operations and 450 loop
+**Tier 1's cost (decision 0086).** The number masks took tier 1 to 95 operations and 450 loop
 instructions; with the check in tier 2 and one word token it is 37 and 174, below the old
-ratchets, which are lowered. Handing tier 2 its stream (decision 0079) took it to 40 and 182.
+ratchets, which are lowered. Handing tier 2 its stream (decision 0087) took it to 40 and 182.
 
 ## 6. Metal
 

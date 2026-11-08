@@ -1,4 +1,4 @@
-# 0082: A run can be dumped before it is stopped, and the profile counts memory
+# 0084: A run can be dumped before it is stopped, and the profile counts memory
 
 Status: built (2026-11-08)
 
@@ -102,7 +102,7 @@ Run on the pack, the dump named what the stacks alone could not: one program, `r
 again each round and counted as a change. That is fixed in `hiding::hide`. Errors at planning now name their rule
 or fact (`plan::lower`: `rule for p274_noqa_all_tail($R): the string "" stands where an integer goes`), and
 `check-rr` types the pruned program as a run does, so the six rules that fail are found in one 43 s pass, not one
-pack run each. Where the pack's time goes now is O123.
+pack run each. Where the pack's time goes now is O133.
 
 ## What this does not do yet
 

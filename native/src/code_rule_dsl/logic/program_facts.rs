@@ -310,8 +310,8 @@ impl Writer<'_> {
                 SpanIn::Source => "source".to_owned(),
                 SpanIn::Line => "line".to_owned(),
                 SpanIn::Comment => "comment".to_owned(),
-                SpanIn::Kinds(kinds) => std::iter::once("kinds").chain(kinds.iter().map(String::as_str)).collect::<Vec<_>>().join("\u{1f}"),
-                SpanIn::Capture(pattern, group) => format!("capture\u{1f}{group}\u{1f}{pattern}"),
+                SpanIn::Kind(k) => format!("kind:{k}"),
+                SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
         }
@@ -568,14 +568,18 @@ impl<'a> Reader<'a> {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
+            // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).
             let named = text(&row[0])?;
-            let span = match named.split('\u{1f}').collect::<Vec<_>>().as_slice() {
-                ["source"] => SpanIn::Source,
-                ["line"] => SpanIn::Line,
-                ["comment"] => SpanIn::Comment,
-                ["kinds", kinds @ ..] => SpanIn::Kinds(kinds.iter().map(|k| (*k).to_owned()).collect()),
-                ["capture", group, ..] => SpanIn::Capture(named.splitn(3, '\u{1f}').nth(2).unwrap_or_default().to_owned(), (*group).to_owned()),
-                _ => return Err(bad(format!("no span {named}"))),
+            let span = match named.split_once(':') {
+                None if named == "source" => SpanIn::Source,
+                None if named == "line" => SpanIn::Line,
+                None if named == "comment" => SpanIn::Comment,
+                Some(("kind", k)) => SpanIn::Kind(k.to_owned()),
+                Some(("capture", rest)) => match rest.split_once(':') {
+                    Some((g, p)) => SpanIn::Capture(p.to_owned(), g.to_owned()),
+                    None => return Err(bad(format!("no span {named:?}"))),
+                },
+                _ => return Err(bad(format!("no span {named:?}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }

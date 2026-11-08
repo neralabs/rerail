@@ -241,9 +241,9 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
    less what needs §5.1.
 2. **E5: cross-file facts stored, as every fact is (0065).** The goal is that a run whose stubs are unchanged
    costs at most 10% more than today's run without them. *A first form (0059) ran the libraries as a separate stage and
-   replayed their rows into each round. It cost more than it saved, and its code is removed.* *Built (0065 step 2): the per-file memo serves typing runs,
-   and the cross-file part and discovery are stored derivations. On the 84 files: 38.7 s cold, 8.0 s warm, 24.9 s
-   after one workspace file is edited.*
+   replayed their rows into each round. It cost more than it saved, and its code is removed.* *Part built: the per-file memo serves typing runs. The
+   whole-part and discovery derivations were built and then removed, because they were special beside the wave.
+   What remains is in 0065 §2 and its order of work.*
 3. **Site directories, stub packages, `py.typed`, `.pth`, user declarations as `.pyi`.** Retire `deps.rs`,
    `declare.rs` and the `declared_ret` facts. *Built: `python/modules.rr`'s layers in §2.2's order, the venv's site
    directory and `.pth` lines (`python/env.rr`); fixtures `world_site` and `world_decl`. `calls.rr` reads no

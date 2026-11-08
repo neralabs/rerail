@@ -1,4 +1,4 @@
-# 0079: Tier 2 is the transducer's own instructions
+# 0087: Tier 2 is the transducer's own instructions
 
 Status: accepted (user, 2026-11-07: "use the transducer pipeline for lowering, not a new code
 generator. You may add instructions if necessary").
@@ -15,9 +15,9 @@ switching on a byte, and writing nodes. It is not a new IR and not a new code ge
 ## Prior work consulted
 
 - **Doc 12 (what is wanted):** one format, the transducer's backends. **Agrees.**
-- **0077 (the tree as a grammar):** the states and arms are data, read by the compiler only.
+- **0085 (the tree as a grammar):** the states and arms are data, read by the compiler only.
   **Kept:** the Bitlex compiler lowers them to instruction words. Nothing executes the tables.
-- **0078 (checks in tier 2):** a check is a block program the token's arm runs. **Kept:** the
+- **0086 (checks in tier 2):** a check is a block program the token's arm runs. **Kept:** the
   `CHECK` instruction runs it 64 bytes at a time.
 - **Doc 17 §5b:** a second body in `native_ir` beside `BlockNative`. **Superseded:** the
   body is the Program's words, lowered like any others.
@@ -32,7 +32,7 @@ switching on a byte, and writing nodes. It is not a new IR and not a new code ge
    | `SPAN n`, `SPAN m=1` | the token's end: `n` bytes on (a one-byte token, a keyword), or its last byte, the stream's next |
    | `SWITCH t` | jumps by the token's byte at table `t`'s offset (the end of the stream has its own target); no target refuses |
    | `WORD s` | the token's text is string `s`, or the file is refused |
-   | `CHECK c` | the token passes check `c` (decision 0078), or the file is refused |
+   | `CHECK c` | the token passes check `c` (decision 0086), or the file is refused |
    | `OPEN k` | opens a node of kind `k` at the token's start |
    | `CLOSE m` | closes the innermost open node at the end of the token before (`m` 0), or of this one (`m` 1) |
    | `LEAF k` | a leaf node of kind `k`, the token |

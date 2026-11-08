@@ -215,7 +215,7 @@ const JSON_CASES: [&[u8]; 12] = [
     b"[1 // c\n]",
 ];
 
-/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0079): the starts
+/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0087): the starts
 /// extract is every token's first byte; the lasts extract is the last byte of each token whose
 /// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
 #[test]
@@ -578,7 +578,7 @@ fn json_state_is_bits() {
 const JSON_STATE_BITS: usize = 4;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
-/// tier 1 began to hand tier 2 its stream (decision 0079): the starts' four ORs, as simdjson's
+/// tier 1 began to hand tier 2 its stream (decision 0087): the starts' four ORs, as simdjson's
 /// structural mask; one OR of the last bytes; and a guard of two (a number starting at a quote)
 /// that a sharper first-byte analysis would drop. The four token-row outputs went.
 const JSON_OPS: usize = 40;
@@ -613,7 +613,7 @@ fn json_loop_keeps_values_in_registers() {
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
 /// 0071) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a
 /// full-block body with folded logic to 178, and one word token with the number check in tier 2
-/// (decision 0078) to 174; the stream's two extracts (decision 0079) to 182, three outputs
+/// (decision 0086) to 174; the stream's two extracts (decision 0087) to 182, three outputs
 /// in place of ten, and two counts. The target is stage 1's 150.
 const JSON_LOOP: usize = 182;
 const JSON_LOOP_STACK: usize = 0;
@@ -767,7 +767,7 @@ arm 18 token 2 to 17 do close close leaf\n\
 arm 18 token 3 to 6 do close close leaf\n\
 ";
 
-/// Tier 2's states and arms are the compiler's (doc 18, decisions 0077 and 0079): `grammar` makes
+/// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0087): `grammar` makes
 /// them and `bitlex_tier2` lowers them to the transducer's words, which tier 2 runs as. Nothing
 /// else reads them, and nothing walks them to parse a file. A file outside this list that reads
 /// them fails here.
@@ -800,7 +800,7 @@ fn only_the_compiler_reads_tier2s_states() {
     assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
 }
 
-/// JSON's number check (doc 18 §4, decision 0078): simdjson's `parse_number` steps as
+/// JSON's number check (doc 18 §4, decision 0086): simdjson's `parse_number` steps as
 /// straight-line operations over the token's window. One `fill` per run (the integer, the
 /// fraction, the exponent), shifts by one byte, and logic; no loop, no other carry. Its size is a
 /// ratchet: lower it as the compiler improves.
@@ -836,7 +836,7 @@ fn json_number_check_equals_the_reference() {
     }
     words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5"].map(<[u8]>::to_vec));
     // Tokens over 64 bytes: the check runs word by word, its carries passed on, as tier 1 runs
-    // over a file; never sent to tree-sitter (decision 0078). Lengths around the word's edges.
+    // over a file; never sent to tree-sitter (decision 0086). Lengths around the word's edges.
     for n in [63, 64, 65, 127, 128, 129, 200, 1000] {
         let digits = vec![b'7'; n];
         words.push([&b"-1"[..], &digits].concat());
@@ -877,7 +877,7 @@ fn a_check_that_needs_a_byte_loop_is_refused() {
     }
 }
 
-// --- Tier 2: the transducer's words (decision 0079) ----------------------------------------------
+// --- Tier 2: the transducer's words (decision 0087) ----------------------------------------------
 
 /// JSON compiled whole: its program, and the compiler's output (labels, fallbacks, machine).
 fn json_compiled() -> (Program, bitlex_compile::Compiled) {
@@ -963,7 +963,7 @@ fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNod
     )
 }
 
-/// JSON's tier 2 is the transducer's words (decision 0079): it reads the stream, switches on
+/// JSON's tier 2 is the transducer's words (decision 0087): it reads the stream, switches on
 /// bytes and writes nodes; it has no word of the tree walker's, and its loops all pass a `TOKEN`
 /// (the verifier's rule, which the program passed to assemble).
 #[test]
@@ -1064,7 +1064,7 @@ fn tree_sitter_tape(grammar: &crate::code_rule_dsl::tape::Grammar, source: &str)
     (parsed.to_bytes().expect("bytes"), error)
 }
 
-/// The tape the two compiled tiers write (decision 0080) equals tree-sitter's byte for byte,
+/// The tape the two compiled tiers write (decision 0088) equals tree-sitter's byte for byte,
 /// for every file that does not go to tree-sitter; a file tree-sitter finds an error in always
 /// goes to it.
 #[test]

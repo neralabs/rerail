@@ -1,4 +1,4 @@
-# 0077: The tree section is a grammar; tier 2 is its state machine
+# 0085: The tree section is a grammar; tier 2 is its state machine
 
 Status: accepted (user, 2026-11-07: "yes, please make that change, then complete all of the
 updates to all of the artifacts, designs and plans that it entails"). The design is
@@ -28,7 +28,7 @@ the states nor the grammar check. It now states each node's content, as tree-sit
 
 1. **The tree section is a grammar:** `node K [nested] = E` and `choice N [supertype S] = …`,
    with fields as `f: X`. The rows keep only the tokens. (A number's syntax: tier 2's `check`, decision
-   0078, not tier-1 masks.)
+   0086, not tier-1 masks.)
 2. **The compiler builds one DFA per level** (the root and each `nested` node), inlining the
    rest, with open, leaf and close actions on each transition, calls for nested nodes, and
    refusals for everything else. LL(1) per level, or the compiler refuses it.

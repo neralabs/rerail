@@ -81,7 +81,7 @@ pub(super) enum StructuralOperation {
     Fork { greedy: bool, target: u16 },
     Goto { target: u16 },
     Emit { label: u16, output: FunctionRef },
-    // Tier 2's words over the token stream (decision 0079, `stream`).
+    // Tier 2's words over the token stream (decision 0087, `stream`).
     Token,
     Switch { table: u16 },
     Span { last: bool, len: u16 },
@@ -437,7 +437,7 @@ pub(super) struct BlockNative {
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
-    /// The token checks tier 2's `CHECK` runs (decision 0078), lowered.
+    /// The token checks tier 2's `CHECK` runs (decision 0086), lowered.
     pub checks: Vec<BlockNative>,
 }
 

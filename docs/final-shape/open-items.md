@@ -1469,9 +1469,9 @@ tokens have no field.
   into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
   is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
-  per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: also over nodes the rules
-  bind to a kind and over another pattern's captures, one scan per distinct text (decision 0081); a node bound to
-  no kind is still refused, and the scan is not chunked (O122).
+  per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: over a node of a kind
+  and over an earlier capture too, each distinct text matched once per batch (decision 0081); a node bound to no kind is still
+  refused, and the scan is per distinct text, not chunked (O122).
   (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
 - `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
@@ -2153,9 +2153,10 @@ Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail
 
 - **A message names no column:** `ruff-c404`, `ruff-c406` and `ruff-perf403` ("message: no column k: v"), and
   `ruff-fly002` ("FLY002_fstring message: no column a").
-- **No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.
-- **Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`
-  (`confusable_word`: `match_all` over a node, O80).
+- ~~**No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.~~ 2026-11-08:
+  `returns` is read back only when the cross-file part derives it (PYI006 runs; the others not rechecked).
+- ~~**Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`~~
+  (2026-11-08: RUF001 to RUF003 lower and run, decision 0081).
 - **Refused:** `ruff-b005`, whose value cycle is unbounded (see above).
 
 Given as one directory to `rerail-engine logic`, the pack does not combine. Leaving out the rules above, and others
@@ -2194,7 +2195,7 @@ What remains:
   68 s that combining takes (sampled): its specialization loop runs `carry` from scratch each round and clones
   every rule. Peak RSS is 2.0 GB at 240 rules, over the 1 GB budget.
 
-**Progress (2026-11-08, decision 0082's dump).** The 58 s was not the loop's size. One program,
+**Progress (2026-11-08, decision 0084's dump).** The 58 s was not the loop's size. One program,
 `ruff-perf401`, never ended: a copy whose head holds a constant at its seeded column (`unset`, -1) was found again
 each round and counted as a change, 8,532 rounds in 40 s at a steady 1,311 rules. Fixed in `hiding::hide`
 (`a_copy_with_a_constant_at_its_seeded_column_ends`); perf401 alone now takes 0.39 s. `check-rr` now also types
@@ -2207,9 +2208,9 @@ the pruned program (`types-failed`), as a run does when it plans. Six rules stil
 - **A span where text is compared (O120):** `ruff-pgh004` (`noqa_all_tail`: `R = ""` over a capture of a comment)
   and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes).
 
-Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O123).
+Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O133).
 
-**Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O123's.
+**Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O133's.
 
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
@@ -2400,9 +2401,9 @@ once, and no measurement on the 9,010-file repository exists yet. A column bound
 measured at full size; and a column of any expression is scanned, or the rule binds its kinds.
 
 
-## O123. The Python pack does not finish within the run cap: its libraries are copied into every program
+## O133. The Python pack does not finish within the run cap: its libraries are copied into every program
 
-Measured 2026-11-08 with decision 0082's profile and dump, on 538 of the pack's programs (O111's six left out),
+Measured 2026-11-08 with decision 0084's profile and dump, on 538 of the pack's programs (O111's six left out),
 over `fixtures/python/calls/project`, load 36 to 75. The run was stopped at 115 s, 116.4 s user CPU, before it
 evaluated anything:
 

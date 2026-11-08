@@ -135,11 +135,11 @@ struct Lowerer {
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
     siblings: Vec<Lit>,
-    /// The context asked for is the text a pattern scans (`match_all`): it keeps the derived atoms that say which
-    /// nodes or spans those are (decision 0081), not inputs alone (`text(w, t)` binds every node).
-    scanned: bool,
     /// The relations the clause being lowered writes: a context leaves their atoms out where it can (`context`).
     heads: BTreeSet<String>,
+    /// A context for a `match_all` over a span (`aggregate`): made of the rule's literals, not inputs alone, so it
+    /// binds the span where the rule does and `span_patterns` finds its containers (decision 0081).
+    span_context: bool,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -268,6 +268,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.findings()?;
     l.projections();
     l.span_patterns()?;
+    l.grammar_names()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
@@ -1425,9 +1426,10 @@ impl Lowerer {
         for term in positions { if let STerm::Var(v) = term { produced.push(v.clone()); } }
         let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
-        self.scanned = true;
+        // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        self.span_context = true;
         let ctx = self.context(std::slice::from_ref(v));
-        self.scanned = false;
+        self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
@@ -1452,41 +1454,49 @@ impl Lowerer {
         Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
     }
 
-    /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source`, `src_line` or `kind(c, "comment")`. Read off the rules, so a printed program (`rr::print`) has them too.
-    /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
-    /// or through another such column (a fixpoint).
-    fn span_patterns(&mut self) -> Result<(), Error> {
-        let mut columns: BTreeMap<(String, usize), SpanIn> = BTreeMap::new();
-        // What binds `x` in `body`: the spans of a document, its lines, comments, nodes of a kind, another pattern's
-        // captures (decision 0081), or a column known to hold one of those.
-        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), SpanIn>| {
-            body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
-                ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
-                ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some(SpanIn::Comment),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some(SpanIn::Kinds([k.clone()].into())),
-                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some(SpanIn::Capture(p.clone(), g.clone())),
-                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).cloned()).flatten()),
-            })
+    /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
+    /// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
+    /// have would make no guest and say nothing.
+    fn grammar_names(&self) -> Result<(), Error> {
+        let at = |rel: &str| match rel {
+            "embed" | "embed_value" => Some(2),
+            "parsed" | "sub_tape" => Some(1),
+            _ => None,
         };
-        // A column's rules agree on what it holds, or each holds nodes of some kinds: then it holds all of them.
-        let join = |each: Vec<SpanIn>| -> Option<SpanIn> {
-            if each.windows(2).all(|w| w[0] == w[1]) {
-                return each.into_iter().next();
-            }
-            let mut kinds = BTreeSet::new();
-            for s in each {
-                match s {
-                    SpanIn::Kinds(k) => kinds.extend(k),
-                    // `kind(c, "comment")` beside other kinds is that kind.
-                    SpanIn::Comment => {
-                        kinds.insert("comment".to_owned());
-                    }
-                    _ => return None,
+        for rule in &self.prog.rules {
+            let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
+            for a in atoms {
+                if let Some(i) = at(&a.rel)
+                    && let Some(Term::Str(g)) = a.args.get(i)
+                    && !crate::code_rule_dsl::language::is_grammar(g)
+                {
+                    return Err(Error::Syntax(format!(
+                        "{}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)",
+                        rule.head.rel
+                    )));
                 }
             }
-            Some(SpanIn::Kinds(kinds))
+        }
+        Ok(())
+    }
+
+    /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
+    /// the same body by `source`, `src_line`, `kind(c, K)` (a comment, or a node of kind K) or another `rx_span`'s
+    /// group (a capture; decision 0081). Read off the rules, so a printed program (`rr::print`) has them too.
+    /// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
+    /// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
+    fn span_patterns(&mut self) -> Result<(), Error> {
+        let mut columns: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
+        let mut rounds = 0;
+        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), BTreeSet<SpanIn>>| -> Option<BTreeSet<SpanIn>> {
+            body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
+                ("source", [_, Term::Var(y)]) if y == x => Some([SpanIn::Source].into()),
+                ("src_line", [_, _, Term::Var(y)]) if y == x => Some([SpanIn::Line].into()),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.clone())].into()),
+                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.clone(), g.clone())].into()),
+                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).cloned()).flatten()),
+            })
         };
         // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
         // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
@@ -1495,31 +1505,32 @@ impl Lowerer {
             for (rel, cols) in &self.prog.decls {
                 if !heads.contains(rel) && !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.natives.contains_key(rel) {
                     for i in 0..cols.len() {
-                        columns.insert((rel.clone(), i), SpanIn::Kinds(BTreeSet::new()));
+                        columns.insert((rel.clone(), i), BTreeSet::new());
                     }
                 }
             }
         }
-        // Kinds only grow, but a column found later can change which atom binds a variable first: the rounds are
-        // bounded.
-        for _ in 0..64 {
+        loop {
             let mut found = BTreeMap::new();
             let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
             for rel in heads {
                 let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
                 for i in 0..rules[0].head.args.len() {
-                    let each: Option<Vec<SpanIn>> = rules.iter().map(|r| match r.head.args.get(i) {
+                    let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
                         _ => None,
                     }).collect();
-                    if let Some(within) = each.and_then(join)
-                        && columns.get(&(rel.clone(), i)) != Some(&within)
-                    {
-                        found.insert((rel.clone(), i), within);
+                    if let Some(each) = each {
+                        let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                        if columns.get(&(rel.clone(), i)) != Some(&all) {
+                            found.insert((rel.clone(), i), all);
+                        }
                     }
                 }
             }
-            if found.is_empty() {
+            rounds += 1;
+            // Sets only grow, and are bounded by the program's patterns and kinds; the bound is a guard.
+            if found.is_empty() || rounds > 64 {
                 break;
             }
             columns.extend(found);
@@ -1530,9 +1541,11 @@ impl Lowerer {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
                 let Some(within) = binder(&rule.body, c, &columns) else {
-                    return not_yet(format!("{}: match_all over ${c}, a node or span the rule does not bind to `source`, `src_line`, a node kind or another pattern's capture (decision 0081: bind it with `kind(${c}, \"…\")`)", rule.head.rel));
+                                        return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
                 };
-                self.prog.rx_spans.insert((within, p.clone()));
+                for w in within {
+                    self.prog.rx_spans.insert((w, p.clone()));
+                }
             }
             // The AST patterns, read off the rules too.
             for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
@@ -1950,7 +1963,7 @@ impl Lowerer {
             }
             vars.iter().all(|v| reach.contains(v))
         };
-        let context = if !self.scanned && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
+        let context = if !self.span_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
             base
         } else if vars.iter().all(|v| bound.contains(v)) {
             first
@@ -2039,7 +2052,7 @@ impl Lowerer {
         // One plain atom: the engine's aggregate reads it.
         if let [Lit::Atom { rel, args, neg: false }] = body
             && test_of(rel).is_none()
-            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "match_all" | "unset")
+            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "match_all" | "match" | "unset")
         {
             let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
             // A variable only the body uses is counted over, not grouped by: a wildcard to the engine.
@@ -2068,8 +2081,8 @@ impl Lowerer {
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
-            // `match_all` binds its groups, not its text: the text comes from the rule.
-            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier" && rel != "match_all")).cloned().collect::<Vec<_>>(),
+            // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
+            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "earlier" | "match_all" | "match"))).cloned().collect::<Vec<_>>(),
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
@@ -2077,10 +2090,10 @@ impl Lowerer {
             // the tested ones alone (`ctx(j)`), it crossed every row of the body (`child(al, a, k)`, every argument of
             // every call) with every j of the rule, 20.6M rows for 4,133 counts on 50 files.
             let shared: Vec<String> = inner.iter().filter(|v| outer.contains(*v)).cloned().collect();
-            // A `match_all` text among them keeps the atoms that say which nodes or spans it is (decision 0081).
-            self.scanned = body.iter().any(|l| matches!(l, Lit::Atom { rel, args, neg: false } if rel == "match_all" && matches!(args.get(1), Some(STerm::Var(s)) if shared.contains(s))));
+            let span_subject = body.iter().any(|l| matches!(l, Lit::Atom { rel, args, .. } if matches!(rel.as_str(), "match_all" | "match") && matches!(args.get(1), Some(STerm::Var(v)) if needed.contains(v))));
+            self.span_context = span_subject;
             let ctx = self.context(&shared);
-            self.scanned = false;
+            self.span_context = false;
             let ctx = ctx?;
             for b in &mut bodies {
                 b.insert(0, Literal::Atom(ctx.clone()));
@@ -2367,6 +2380,12 @@ fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
     for l in lits {
         match l {
             Lit::Atom { rel, args, .. } => {
+                // `match` and `match_all` bind their named groups, which no argument names.
+                if matches!(rel.as_str(), "match" | "match_all")
+                    && let Some(STerm::Str(re)) = args.first()
+                {
+                    out.extend(groups(re));
+                }
                 let skip: &[usize] = RELATION_ARG.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, k)| k);
                 for (k, a) in args.iter().enumerate() {
                     if !(skip.contains(&k) && matches!(a, STerm::Var(_))) {

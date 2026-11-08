@@ -153,10 +153,10 @@ so two parts of §1 and §2 are built differently:
   in the process, so it reuses the prepared program when its store's atoms agree.
 - **Unchanged from §1:** the in-memory memo (`memo::Memo::Held`, by content digest, path and file-local program).
   The stored memo (`memo::Memo::Stored`) keeps 0053's stat index, held plan and manifest.
-- **Base rows (§3) are held back (O109).** A run read from memoised base rows derived other rows than the evaluated
-  run, with typing's `calls.rr`. A run whose cross-file part reads base relations is therefore not memoised, as
-  before. The entries keep the `base` field, and the session test is ignored until O109 closes. A session's run records no manifest, because its sources are not in the tape
-  cache.
+- **Base rows (§3) were held back (O109), and are no longer.** A run read from memoised base rows derived other rows
+  than the evaluated run, with typing's `calls.rr`, while guest hiding dropped host rows. Since O110 fixed that, the
+  two agree, and a run whose cross-file part reads base relations is memoised, in a session and out of one. A
+  session's run records no manifest, because its sources are not in the tape cache.
 
 ## Open
 

@@ -657,7 +657,7 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
 }
 
 /// A check's byte machine as straight-line operations over the token's bytes (doc 18 §4,
-/// decision 0078): no loop over the bytes, as simdjson's `parse_number` has none. Bit `i` is the
+/// decision 0086): no loop over the bytes, as simdjson's `parse_number` has none. Bit `i` is the
 /// token's byte `i`; `within` is the token's bytes. A token of any length runs it 64 bytes at a
 /// time, `prev` and `fill` carrying from word to word, as tier 1 runs over a file. The machine is on one path, so per state:
 ///

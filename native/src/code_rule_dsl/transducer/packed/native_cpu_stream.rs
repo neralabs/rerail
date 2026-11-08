@@ -1,4 +1,4 @@
-//! Tier 2's words on the CPU JIT (decisions 0079, 0080). Cranelift lowers the Program's words as
+//! Tier 2's words on the CPU JIT (decisions 0087, 0088). Cranelift lowers the Program's words as
 //! `native_ir` decodes them, one block per word, as it lowers the tree walker's: `GOTO` is a
 //! jump, `SWITCH` a jump table on the token's byte (simdjson's `switch (*value)`), `RETURN` a
 //! switch over the states that `PUSH` names, and `CHECK` a call of the check's compiled block

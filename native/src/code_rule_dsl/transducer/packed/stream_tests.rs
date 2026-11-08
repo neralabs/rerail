@@ -1,4 +1,4 @@
-//! Tier 2's words (decision 0079), on hand-written programs: what they write, and what the
+//! Tier 2's words (decision 0087), on hand-written programs: what they write, and what the
 //! verifier refuses.
 
 use super::*;
