@@ -48,7 +48,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   for (const stream of readdirSync(rawDirectory).filter(name => /^profile-.*\.jsonl$/.test(name))) {
     if (!files.includes(stream.replace(/\.jsonl$/, ".json"))) throw new Error(`Incomplete SQL capture: missing catalogue for ${stream}`);
   }
-  if (!files.length) throw new Error("No SQL sessions were captured. Build this branch with --features code-rule-profile and select a relational clause.");
+  if (!files.length) throw new Error("No SQL sessions were captured. Set RERAIL_SQL_PROFILE_DIR before opening a SQL session. Workspace profiling also requires --features code-rule-profile.");
   const byText = new Map();
   const queries = [];
   const contexts = new Map();
@@ -116,7 +116,9 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         if (event.kind === "operator" && largest > 0 && event.rows >= thresholds.expandedRows) query.maxExpansion = Math.max(query.maxExpansion, event.rows / largest);
         const scopeKey = context.scope === "relational"
           ? JSON.stringify([context.runPhase, context.ruleId, context.clauseId, context.path, context.stage])
-          : context.scope ? `${context.scope}:${context.statement}${clause ? ` ${clause.ruleId}/${clause.clauseId}` : ""}` : context.runPhase ?? "setup/input/cleanup";
+          : context.scope === "sql-extension"
+            ? JSON.stringify([context.scope, context.operation, context.stage, context.component, context.frame, context.ruleStep, context.relation, context.wave, context.stratum])
+          : context.scope ? `${context.scope}:${context.statement ?? context.stage ?? "session"}${clause ? ` ${clause.ruleId}/${clause.clauseId}` : ""}` : context.runPhase ?? "setup/input/cleanup";
         query.contexts.add(scopeKey);
         if (!query.contextDetails.some(previous => JSON.stringify(previous) === JSON.stringify(context))) query.contextDetails.push(context);
         let scope = contexts.get(scopeKey);

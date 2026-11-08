@@ -7,7 +7,18 @@ use super::super::logic::sql::{
 use super::*;
 use maintenance::Work;
 mod nullable;
+mod targets;
 use nullable::Layout;
+
+pub(super) fn optimize(e: &mut plan::emit::Emitted) {
+    for (s, q) in e.program.steps.iter_mut().zip(&mut e.queries) {
+        if let Some(q) = q
+            && targets::optimize(q)
+        {
+            s.sql = format!("INSERT OR IGNORE INTO new_{} {}", s.output, q.render());
+        }
+    }
+}
 
 fn plain(block: &Select) -> bool {
     let mut plain = true;
@@ -327,6 +338,10 @@ fn order_dependencies(e: &mut plan::emit::Emitted) {
         }
     }
     for step in &mut e.program.steps {
-        step.stratum = positions[ids[&step.output]];
+        // Constant seeds precede their recursive component in the cold kernel. Moving
+        // them into its stratum changes which improvements count before widening.
+        if step.stratum != 0 {
+            step.stratum = positions[ids[&step.output]];
+        }
     }
 }
