@@ -92,6 +92,40 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
   document; the other keyed discovery's answers by the corpus. Both were special mechanisms beside the wave, and
   both replayed rows memo entry by memo entry. The per-file memo for typing runs stays: it is 0052's, unchanged.
 
+### 2a. How a request is answered inside the fixpoint (step 2.1)
+
+A request is a row of a relation the engine answers: `rr_dir_req(dir)`, `rr_file_req(path)` and
+`load(path, module, grammar)`. An answer is rows of produced relations:
+- `dir_entry` for a directory;
+- `file_line` for a file;
+- for a document, `loaded` and the document's rows of every per-file relation the component reads.
+
+```text
+// What `modules.rr` makes one component (each arrow: reads)
+load ← py_resolves ← py_at ← py_file_at ← py_try ← py_want ← py_import
+                                              ↑        dir_entry ← rr_dir_req ← py_try
+py_import (a loaded document's) ← load: the engine's answer, as a new wave
+```
+
+1. **Stratification counts an answer as an edge.** Each produced relation depends on its request relation.
+   So `load` and everything it reads, through a loaded document's imports, form one recursive component.
+   The relations above it (the typing program proper) are higher strata. They run once, after every load.
+2. **The native fixpoint pauses for requests.** After a wave in which a request relation gained rows, `setfix`
+   returns before opening any gate. The runner answers the new rows, adds the produced rows to the produced
+   relations as their delta, and resumes. A produced relation has no rules in the component, and the
+   fixpoint does not write it: the runner does.
+3. **A negation inside the component waits per key.** `!N(t)` becomes `done_N(t), !N(t)`. `done_N(t)` opens in a
+   wave after which nothing N reads changed and no request is unanswered. This is the gate demand already
+   uses (0048, `magic::gate_negations`), keyed by the negated atom's bound arguments. It is sound when `N(t)`
+   reads only requests that `t` determines, which holds for import resolution. A directory is answered whole,
+   and a new document adds new keys, not rows under an old one.
+4. **A document's answer is the per-file part.** The per-file memo gives it by content hash, as for a workspace
+   file. A miss is parsed. Both go through the run's chunk path, and the memo is read in bulk, one statement per
+   batch of documents.
+5. **What goes:** `world::discover`, its rounds, the `world` option, and the discovery runs of the cut program.
+   `World` keeps finding, reading and hashing files under the allowed roots. That is the one place that
+   touches the file system.
+
 ### 3. Types are terms, and instantiation is a fact about a signature
 
 - **A type is an interned term** (03 §13's `type_term`, `type_arg`):
