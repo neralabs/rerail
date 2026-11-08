@@ -85,9 +85,10 @@ impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), k
     child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
 impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
     child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
-// base(c, i, b): class c's i-th base, as written.
+// base(c, i, b): class c's i-th base, as written, on one line: runs of white space one space each (a value
+// handed on is one line of an output; so are `param`'s and `ret`'s annotations).
 .decl base(c: symbol, i: number, b: symbol)
-base(q, i, b) :- pdef(c, _, _, "class"), sym(c, q), field(c, "superclasses", args), child(args, e, i), !kind(e, "keyword_argument"), text(e, b).
+base(q, i, b) :- pdef(c, _, _, "class"), sym(c, q), field(c, "superclasses", args), child(args, e, i), !kind(e, "keyword_argument"), text(e, w), b = @replace_all(w, "\\s+", " ").
 // member(c, x, t): class c defines x, by a definition (t its symbol) or an assignment in its body (t "").
 .decl member(c: symbol, x: symbol, t: symbol)
 member(q, x, t) :- pdef(f, c, x, _), pdef(c, _, _, "class"), sym(c, q), sym(f, t).
@@ -97,10 +98,10 @@ member(q, x, "") :- kind(a, "assignment"), field(a, "left", l), kind(l, "identif
 .decl param(f: symbol, i: number, x: symbol, a: symbol)
 param(q, i, x, "") :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
 param(q, i, x, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"),
-    text(id, x), field(p, "type", t), text(t, a).
+    text(id, x), field(p, "type", t), text(t, w), a = @replace_all(w, "\\s+", " ").
 // ret(f, a): function f's return annotation as written.
 .decl ret(f: symbol, a: symbol)
-ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), text(r, a).
+ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), text(r, w), a = @replace_all(w, "\\s+", " ").
 // module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
 .decl module_file(m: symbol, p: symbol)
 module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).

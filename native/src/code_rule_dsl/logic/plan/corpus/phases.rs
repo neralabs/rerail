@@ -162,7 +162,14 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let mut rows: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
         for export in &declared.exports {
             let text = std::fs::read_to_string(out.join(format!("{export}.csv"))).map_err(|e| Error::Plan(format!("phase {name}: {export}: {e}")))?;
-            rows.insert(export.clone(), text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect());
+            let width = program.decls[export].len();
+            let read: Vec<Vec<String>> = text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
+            // Outputs are lines of tab-separated values, unescaped: a value holding a newline or a tab would come back
+            // as other rows, and be handed on as facts no rule made.
+            if let Some(bad) = read.iter().find(|r| r.len() != width) {
+                return Err(Error::Plan(format!("phase {name}: {export}: a row of {} values, not {width} (a value holds a newline or a tab): {:?}", bad.len(), bad.join("\t"))));
+            }
+            rows.insert(export.clone(), read);
         }
         let _ = std::fs::remove_dir_all(&out);
         let producer: [u8; 32] = Sha256::digest(src.as_bytes()).into();

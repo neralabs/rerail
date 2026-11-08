@@ -1145,6 +1145,10 @@ pub(crate) fn run_with_options(
     db.execute_batch("ATTACH ':memory:' AS x")?;
     #[cfg(not(target_family = "wasm"))]
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    // `x` is this run's: tables an earlier run over the same store read (`table_source`, cached by the store's path
+    // and the table's name) are another run's rows. Without this a second run read the first's cross-file tables:
+    // a cone's loaded documents, there at the first run's end, counted as the workspace's.
+    crate::code_rule_dsl::logic::native::forget_inputs(&db);
     let _: String = db.query_row("PRAGMA x.journal_mode = OFF", [], |r| r.get(0))?;
     db.execute_batch("PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;")?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
