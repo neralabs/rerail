@@ -9196,3 +9196,19 @@ Twelve changed-clause controls require successful execution with different resul
 The complete regression cohort remains pending at this commit.
 Deletion mode, production CLI registration, registry scope, and full migration acceptance remain open.
 No engine code or build changes occur. This step makes no repository performance claim.
+
+### 2026-11-08 — Survey CLI regression cohort recorded
+
+The committed implementation passes all 29 CLI observations and 14 controls.
+The same bytes pass 106 producer cases, 130 analysis cases, 30 discovery cases, and 15 scope cases.
+All 54 reporting cases, four original linter tests, and eight persistent-workspace steps also pass.
+All 100 readers pass in one batched invocation. All 153 tooling tests pass, with 112 subtests.
+
+The 64 cohort commands run with three workers. Every command finishes within its 115-second bound.
+The longest command takes 34.642 seconds wall time. This is not CPU time or a repository performance result.
+No build occurs. The cohort reuses the registered Final-stage-two CLI artifact.
+
+The [CLI acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-acceptance.json.gz) retains full results, source observations, program snapshots, harness snapshots, commands, and its validator.
+It also retains the tooling tally from the recorded command output.
+The earlier red receipts remain unchanged.
+Deletion mode, import cleanup, CLI/registry integration, eleven absent translations, and full migration acceptance remain open.

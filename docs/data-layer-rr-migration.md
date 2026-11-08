@@ -2091,3 +2091,41 @@ retains complete results, request-sharing profiles, builds, program snapshots, a
 The wider graph corpus remains separately recorded in the preceding cohort.
 No full repository cold run occurred.
 Rule 89's CLI and registry work, eleven absent translations, and full migration acceptance remain outstanding.
+
+### 2026-11-08 — Native survey CLI decisions and complete report checks
+
+Rule 89 now implements survey-mode CLI decisions in [survey-cli.rr](rule-syntax/lib/data-layer/survey-cli.rr).
+The host supplies parsed flags and project/installation paths. Native relations derive defaults, public-directory expansion, exclusions, dynamic-import roots, reports, and check status.
+The CLI and direct literal-import helper share the same regex producer.
+Discovery membership remains independent of argument ranking and graph assembly.
+
+The pinned source provides 29 complete CLI observations, including positive findings and check failures.
+Each comparison includes directory spellings, graph files, dynamic roots, every analysis category, output bytes, stderr, and exit status.
+Native inputs contain no expected results, selected graph files, supplied graph, or precomputed dynamic roots.
+Empty CLI directories preserve the source distinction between graph defaults and an empty dynamic-import scan.
+Absolute directory arguments preserve the source's parsed-module candidate path and its fallback behavior.
+
+These cases exposed two earlier defects.
+Filtered report items retained gaps in their positions. Text output then omitted surviving findings despite correct analysis and counts.
+The report bridge now assigns dense positions after exclusion.
+Graph module dictionaries also retained syntax-invalid files. They now require successful parsing while fallback scans still read those files for literal imports.
+
+All 29 CLI cases pass. Twelve changed-clause controls produce different complete results through successful native execution.
+Two further controls require explicit refusal without analysis, report output, or a success status.
+The source module-collision fixture needed a second file order before it distinguished incorrect union behavior. Both source cases remain recorded.
+
+The same committed library bytes pass 106 producer cases, 130 analysis cases, 30 discovery cases, and 15 scope cases.
+They also pass 54 reporting cases, all four original linter tests, and eight persistent-workspace update steps.
+All 100 readers pass in one batched invocation. All 153 tooling tests pass, with 112 subtests.
+The longest of the 64 cohort commands takes 34.642 seconds wall time. This value is not CPU time or a repository benchmark.
+
+The [CLI receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-acceptance.json.gz) retains complete results, source recordings, controls, program bytes, harness bytes, and its validator.
+The initial [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-source.json.gz),
+[failing native case](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-red.json.gz), and
+[integration failures](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-integration-red.json.gz) remain historical evidence.
+The expanded [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-source-v2.json.gz) contains the distinguishing collision order.
+
+This cohort reuses the registered root CLI built from `8ccb4ce4e`, based on Final `2b494d4ef`.
+No engine changes, build, full repository cold run, Python rule execution, or Linear ticket occurs in this delivery.
+Deletion mode, import cleanup, production CLI/registry integration, and remaining default-entry contracts remain open.
+The inventory remains 89 drafts and eleven absent translations. Neither rule 89 nor the 100-rule migration is marked complete.
