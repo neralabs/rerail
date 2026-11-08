@@ -97,6 +97,8 @@ struct State {
     decisions: BTreeMap<(String, String), u64>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
+    /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
+    fallbacks: BTreeMap<String, String>,
     /// Plans by (stratum, kind, plan text).
     plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
@@ -383,6 +385,57 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 }
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
+/// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
+pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
+    if !on() {
+        return;
+    }
+    STATE.lock().unwrap().fallbacks.insert(key.to_owned(), class);
+}
+
+/// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
+/// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
+fn fallbacks(r: &mut String, state: &State) {
+    let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
+        .fallbacks
+        .iter()
+        .map(|(key, class)| {
+            let name = format!("stratum {key}");
+            let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
+            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
+            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
+            let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
+            (cpu, vm, calls, key, class)
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let total: f64 = rows.iter().map(|r| r.0).sum();
+    let _ = writeln!(r, "\n== Fell back to SQLite: {} strata the native engine declined, {total:.2} s CPU of {roots:.2} s", rows.len());
+    if rows.is_empty() {
+        return;
+    }
+    let mut by: BTreeMap<&String, (usize, f64, u64)> = BTreeMap::new();
+    for (cpu, vm, _, _, class) in &rows {
+        let e = by.entry(class).or_default();
+        e.0 += 1;
+        e.1 += cpu;
+        e.2 += vm;
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+    let _ = writeln!(r, "By what the native engine has no step for:");
+    let _ = writeln!(r, "{:>9} {:>7} {:>14}  declined", "cpu s", "strata", "SQLite VM");
+    for (class, (n, cpu, vm)) in by.iter().take(15) {
+        let _ = writeln!(r, "{cpu:>9.3} {n:>7} {vm:>14}  {class}");
+    }
+    let _ = writeln!(r, "Costliest strata (their plans and reasons are under == Plan):");
+    let _ = writeln!(r, "{:>9} {:>6} {:>14}  stratum: declined", "cpu s", "runs", "SQLite VM");
+    for (cpu, vm, calls, key, class) in rows.iter().take(20) {
+        let _ = writeln!(r, "{cpu:>9.3} {calls:>6} {vm:>14}  {}: {class}", short(key, 90));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {
         return;
@@ -613,6 +666,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    fallbacks(&mut r, &state);
     explain(&mut r, &state);
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
     let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
@@ -866,12 +920,18 @@ mod tests {
             let _s = span(|| "xspan".into());
             device("xkernel", 1, 0.002, 0.003, 100);
         }
+        // A stratum that fell back to SQLite, and its span.
+        stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
+        fallback("xsql", "aggregate join (string concatenation)".into());
+        drop(span(|| "stratum xsql".into()));
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
         write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
+        assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
+        assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");

@@ -2047,6 +2047,8 @@ struct Run<'a> {
     native_rels: BTreeSet<String>,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
     why_not: Option<String>,
+    /// What kind of literal the native engine declined (`decline_class`), for the profile's SQLite fallbacks.
+    why_class: Option<String>,
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
@@ -2367,6 +2369,36 @@ fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
 
 /// A plan's step strings, which say whether a replan changed it.
 /// A stratum's name in the profile: its relations, cut at 80 characters.
+/// The kind of literal the native set engine has no step for, as the profile groups SQLite's fallbacks: an
+/// aggregate by its operator, a function by its name (the first one in the literal), a comparison by its operator,
+/// a read by its relation when it is an input, else by who holds it (a relation an earlier SQLite stratum made is
+/// a fallback that brings on the next).
+fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> String {
+    fn first_call(t: &Term) -> Option<&str> {
+        match t {
+            Term::Call(f, args) => Some(args.iter().find_map(first_call).filter(|_| f == "concat" || f == "add").unwrap_or(f.as_str())),
+            _ => None,
+        }
+    }
+    match lit {
+        Literal::Agg { op, .. } => format!("aggregate {}", match op {
+            super::front::AggOp::Count => "count",
+            super::front::AggOp::Min => "min",
+            super::front::AggOp::Max => "max",
+            super::front::AggOp::Sum => "sum",
+            super::front::AggOp::Join { .. } => "join (string concatenation)",
+        }),
+        Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
+        Literal::Atom(a) if native.contains(&a.rel) => format!("{}read of a relation the native engine holds", if a.neg { "negated " } else { "" }),
+        Literal::Atom(a) => format!("{}read of a relation an earlier SQLite stratum made", if a.neg { "negated " } else { "" }),
+        Literal::Cmp { l, op, r } => match first_call(l).or_else(|| first_call(r)) {
+            Some(f) => format!("function @{f}"),
+            None => format!("comparison {op}"),
+        },
+        other => format!("{}", other).split('(').next().unwrap_or("literal").to_owned(),
+    }
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -2917,12 +2949,15 @@ impl Run<'_> {
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
+        self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+            self.why_class = Some("a lattice relation".into());
             return Ok(false);
         }
         if scc.iter().any(|r| prog.natives.contains_key(r)) {
             self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
+            self.why_class = Some("read of a dfs_first relation".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -2961,6 +2996,12 @@ impl Run<'_> {
             let s = &order[k.saturating_sub(1)];
             format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
         };
+        // The same step's kind (`decline_class`).
+        let missing_class = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
+            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
+            let s = &order[k.saturating_sub(1)];
+            if s.mode == Some(Mode::Range) { "a range read inside a document".to_owned() } else { decline_class(&s.lit, prog, native_rels) }
+        };
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
@@ -2969,6 +3010,7 @@ impl Run<'_> {
             drop(span);
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
+                self.why_class = Some(missing_class(self, &r.head, &order, None));
                 return Ok(false);
             };
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
@@ -2991,6 +3033,7 @@ impl Run<'_> {
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
+                    self.why_class = Some(missing_class(self, &r.head, &order, Some(at)));
                     return Ok(false);
                 };
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
@@ -3753,7 +3796,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, why_class: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -3992,6 +4035,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if !ran_native {
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
             super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
+            super::profile::fallback(&skey, run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() }));
             if recursive {outcome.iterations.insert(key,n as usize);}
             for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
                 if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}
