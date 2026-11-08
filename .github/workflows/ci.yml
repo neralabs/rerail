@@ -89,9 +89,11 @@ jobs:
           npm run check:reference
 
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
-  # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
-  # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
-  # engine embeds. Pushes to main always run the Rust jobs.
+  # read conformance/, fixtures/, the packs' rules, the language registry (languages/ and its
+  # generated TS module), the `.rr` library and data-layer rules (docs/rule-syntax/) and the
+  # data-layer port's rules and recordings the replay sample runs (gate/data-layer/); package.json
+  # holds the cargo commands, .gitattributes the LFS objects the engine embeds. Pushes to main
+  # always run the Rust jobs.
   #
   # The filters see only the git diff. The packs' test data is not in git (CONTRIBUTING.md): a change to it is a change
   # to a tool-pack's test-data.lock, which is under packs/**, and a pull request that checks data in adds it there too.
@@ -151,6 +153,8 @@ jobs:
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
+              - 'docs/rule-syntax/**'
+              - 'gate/data-layer/**'
               - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
