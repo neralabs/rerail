@@ -595,14 +595,32 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     // An atom such as field(parent, name, child) connects its node columns. Document equality
     // and comparisons of node attributes do not: enumerating their independent node groups
     // before the remaining candidate predicates creates quadratic or cubic intermediate relations.
+    // An atom with no node column that meets the rest only through the document, with two or more columns of its
+    // own (a document's imports, `la_imp(d, name, symbol)`), is a table per document: joined to the document's
+    // nodes it multiplies them by its rows, so it is a group of its own.
     let independent_node_groups = |atoms: &[&Atom]| {
+        let documents: BTreeSet<&String> = atoms
+            .iter()
+            .filter_map(|a| match (a.rel.as_str(), a.args.as_slice()) {
+                ("docof", [_, Term::Var(d)]) => Some(d),
+                ("node" | "doc", [Term::Var(d), ..]) => Some(d),
+                _ => None,
+            })
+            .collect();
         let mut groups: Vec<BTreeSet<String>> = Vec::new();
         for atom in atoms {
             let Some(columns) = prog.decls.get(&atom.rel) else { continue };
-            let nodes: BTreeSet<String> = atom.args.iter().zip(columns).filter_map(|(term, (_, ty))| {
+            let mut nodes: BTreeSet<String> = atom.args.iter().zip(columns).filter_map(|(term, (_, ty))| {
                 if matches!(ty.as_str(), "node" | "loc" | "span") && let Term::Var(value) = term { Some(value.clone()) } else { None }
             }).collect();
-            if nodes.is_empty() { continue; }
+            if nodes.is_empty() {
+                let own: BTreeSet<String> = atom.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).filter(|v| !documents.contains(v)).collect();
+                let met = atoms.iter().any(|b| !std::ptr::eq(*b, *atom) && b.args.iter().any(|t| matches!(t, Term::Var(v) if own.contains(v))));
+                if own.len() < 2 || met {
+                    continue;
+                }
+                nodes = own;
+            }
             let mut connected = nodes;
             let mut separate = Vec::new();
             for group in groups {
@@ -653,12 +671,32 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 if independent_node_groups(&atoms) > 1 {
                     continue;
                 }
-                if let [a] = atoms[..] {
+                // One plain atom, alone or widened by plain attribute lookups of its nodes (`within(n, b)` and n's
+                // start), narrows nothing: pushed, it would be a copy of the atom with more columns.
+                let plain = |a: &Atom| {
                     let named: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
                     let distinct: BTreeSet<&String> = named.iter().copied().collect();
-                    if a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && distinct.len() == named.len() {
+                    a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && distinct.len() == named.len()
+                };
+                let attribute = |a: &Atom| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node" | "doc") && plain(a);
+                let rest: Vec<&&Atom> = atoms.iter().filter(|a| !attribute(a)).collect();
+                if let [a] = rest[..]
+                    && plain(a)
+                {
+                    let own: BTreeSet<String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect();
+                    // Each lookup reads a node of the atom (its first column for `node`, `docof`, `line`, …).
+                    let of_atom = atoms.iter().filter(|b| attribute(b)).all(|b| {
+                        let key = if b.rel == "node" { b.args.get(1) } else { b.args.first() };
+                        matches!(key, Some(Term::Var(v)) if own.contains(v))
+                    });
+                    if of_atom {
                         continue;
                     }
+                }
+                if let [a] = atoms[..]
+                    && plain(a)
+                {
+                    continue;
                 }
                 // A component that holds a row for every node of the chunk (nothing in it narrows its nodes) is left
                 // when the cross part reads base relations anyway (`push_local_joins`).

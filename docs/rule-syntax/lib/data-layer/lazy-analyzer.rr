@@ -126,9 +126,11 @@ la_native(f, x) :- la_fn(f), sig_param(f, _, nm, _, k, a, _), k != "vararg", k !
 la_ann_head(t, h) :- kind(t, "subscript"), field(t, "value", h).
 la_ann_head(t, h) :- kind(t, "generic_type"), child(t, h, 0).
 la_ann_head(t, t) :- kind(t, k), k != "subscript", k != "generic_type".
+// la_ann_q(d, h, q): annotation head h, in document d, names q through d's imports. The document is h's own:
+// without it every identifier of the repository would meet every import of the same name.
 .decl la_ann_q(d: number, h: node, q: symbol)
-la_ann_q(d, h, q) :- kind(h, "identifier"), text(h, x), la_imp(d, x, q).
-la_ann_q(d, h, cat(m, ".", a)) :- attr_of(h, o, a), kind(o, "identifier"), text(o, x), la_impmod(d, x, m).
+la_ann_q(d, h, q) :- kind(h, "identifier"), docof(h, d), text(h, x), la_imp(d, x, q).
+la_ann_q(d, h, cat(m, ".", a)) :- attr_of(h, o, a), kind(o, "identifier"), docof(h, d), text(o, x), la_impmod(d, x, m).
 
 // ---- module-level names -----------------------------------------------------------------------------------------------
 // la_imp(d, x, q): `from m import a as x` at module level gives x -> "m.a" (imported_names). A relative import
