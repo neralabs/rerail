@@ -1449,7 +1449,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/module-level-caches.rr",
-      "sha256": "0149d4109f3409b2ff9d3e3446495beb7ede0ccd52f435ce433d6914b5998c0a",
+      "sha256": "0a1bf3ecc21ff5d8c7334dacf4e0d02063be065a160aa40bdb2108e3b9d0b674",
       "origin": "authored",
       "upstreamPath": "scripts/lint_module_level_caches.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1722,7 +1722,7 @@
       "legacySha256": "2ba31a57f2ff59881cb6f7dd472ea0cdc10546264dcc80c812943032c0370019",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/module-level-caches.rr",
-      "ruleSha256": "0149d4109f3409b2ff9d3e3446495beb7ede0ccd52f435ce433d6914b5998c0a"
+      "ruleSha256": "0a1bf3ecc21ff5d8c7334dacf4e0d02063be065a160aa40bdb2108e3b9d0b674"
     },
     {
       "check": "connection_caches",

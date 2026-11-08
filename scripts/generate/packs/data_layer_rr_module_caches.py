@@ -250,7 +250,10 @@ mc_allowlisted(key) :- mc_al_entry(_, _, _, _, _, _, key, _).
         text += f'{name}(@place(path, l), c, name, i, sub, message) :- !option("entryPoint", _), mc_result(_, path, l, c, name, "{code}", _, message, i, sub, key, _), !mc_al_failed(), !mc_allowlisted(key).\n'
     text += r'''
 .violation MCInvalidAllowlist(at: span, value: symbol) code "invalid_allowlist" "{value}"
-MCInvalidAllowlist(@place("scripts/allowlists/lint_module_level_caches_allowlist.json", 1), value) :- !option("entryPoint", _), mc_al_error(i, rank, _, value),
+MCInvalidAllowlist(@place("scripts/allowlists/lint_module_level_caches_allowlist.json", 1), value) :- !option("entryPoint", _), mc_al_error(i, rank, kind, value), kind != "KeyError",
+ i = min j : { mc_al_error(j, _, _, _) }, rank = min r : { mc_al_error(i, r, _, _) }.
+.violation MCUncaughtAllowlist(at: span, kind: symbol, value: symbol) code "MC_UNCAUGHT_CONFIG" "{value}"
+MCUncaughtAllowlist(@place("scripts/allowlists/lint_module_level_caches_allowlist.json", 1), "KeyError", value) :- !option("entryPoint", _), mc_al_error(i, rank, "KeyError", value),
  i = min j : { mc_al_error(j, _, _, _) }, rank = min r : { mc_al_error(i, r, _, _) }.
 '''
     return text

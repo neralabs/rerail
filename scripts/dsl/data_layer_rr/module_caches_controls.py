@@ -19,6 +19,7 @@ SPECS = [
     ('entry-signature',None,None,6),
     ('violation-format','format-0',None,None),
     ('severity-counts','counts-2',None,None),
+    ('uncaught-config',None,'allow-missing-name',None),
 ]
 
 
@@ -27,6 +28,8 @@ def disable(source, name):
         result,count=re.subn(r'(?m)^(mc_result\([^\n]*?\)\s*:-)',lambda m:m[0]+' pattern != "'+name+'",',source)
     elif name=='invalid_allowlist':
         result,count=re.subn(r'(?m)^(mc_al_error\(i, 7,[^\n]*?\)\s*:-)',r'\1 1 = 0,',source)
+    elif name=='uncaught-config':
+        result,count=re.subn(r'(?m)^(MCUncaughtAllowlist\([^\n]*?\)\s*:-)',r'\1 1 = 0,',source)
     elif name=='severity-counts':
         result,count=re.subn(r'(?m)^(MCCount\([^\n]*?\)\s*:-)',r'\1 1 = 0,',source)
     else:

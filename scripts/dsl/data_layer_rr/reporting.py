@@ -112,6 +112,12 @@ def run(args):
             actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
                 path=r['path'], line=r['line'], message=r['message'],
                 severity=severities.get(r['clause'], 'info' if modes == ['log'] else 'hard-fail')) for r in native_rows]
+            if case['check']=='module_level_caches':
+                uncaught=[r for r in native_rows if r['code']=='MC_UNCAUGHT_CONFIG']
+                if uncaught:
+                    if len(native_rows)!=1 or uncaught[0]['parameters']['kind']!='KeyError':
+                        raise ValueError('No reporter exception transport for this native result')
+                    actual=dict(error=dict(type='builtins.KeyError',args=dict(kind='tuple',items=[uncaught[0]['parameters']['value']])))
             program = result['programInputs']
             phases = result['phases']
         else:
@@ -146,10 +152,15 @@ def run(args):
                 fact_engine = FactEngine(root=root, fact_store=JsonFactStore(root / 'tmp/lint_fact_store'),
                     extractors=extractors)
                 view = fact_engine.materialize((plugin,))
-                actual = [dict(linter_name=v.linter_name, code=v.code,
-                    path=v.path.relative_to(root).as_posix() if v.path.is_absolute() else v.path.as_posix(),
-                    line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
-                if case['check'] == 'module_level_caches':
+                try:
+                    actual = [dict(linter_name=v.linter_name, code=v.code,
+                        path=v.path.relative_to(root).as_posix() if v.path.is_absolute() else v.path.as_posix(),
+                        line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
+                except KeyError as error:
+                    if case['check']!='module_level_caches':
+                        raise
+                    actual=dict(error=dict(type='builtins.KeyError',args=dict(kind='tuple',items=list(error.args))))
+                if case['check'] == 'module_level_caches' and isinstance(actual,list):
                     for finding in actual:
                         finding['message'] = finding['message'].replace(str(root)+'/', '')
             program, phases = None, None
