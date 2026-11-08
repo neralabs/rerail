@@ -33,6 +33,7 @@ mod prepared;
 mod maintain;
 mod retain;
 mod bridge;
+pub(crate) mod phases;
 mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
@@ -194,6 +195,8 @@ pub(crate) struct Report {
     pub(crate) text: (usize, usize, f64),
     /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
     pub(crate) typing_runs: bridge::Runs,
+    /// The earlier phases this run read (decision 0083 §1), each its own run.
+    pub(crate) phase_runs: Vec<phases::PhaseRun>,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub(crate) memo: (usize, usize),
     /// The cross-file memo (decision 0076): import components found and components derived.
@@ -423,7 +426,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             .chain(prog.rules.iter().map(|r| &r.head.rel))
             // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
             // a repository file a policy reads (`.input r(IO=…)`) is its own.
-            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
+            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(&r.as_str()))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -623,16 +626,20 @@ pub(in crate::code_rule_dsl) static SESSION_TESTS: std::sync::Mutex<()> = std::s
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
+    tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
+}
+
+/// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
+pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(test)]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
-        return ContentStore::open(&path).map(Some);
+        return Some(path);
     }
-    let path = match std::env::var("RERAIL_TAPE_CACHE") {
-        Ok(v) if v == "off" => return Ok(None),
-        Ok(v) => std::path::PathBuf::from(v),
-        Err(_) => std::env::temp_dir().join("rerail-tape-cache.sqlite"),
-    };
-    ContentStore::open(&path).map(Some)
+    match std::env::var("RERAIL_TAPE_CACHE") {
+        Ok(v) if v == "off" => None,
+        Ok(v) => Some(std::path::PathBuf::from(v)),
+        Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
+    }
 }
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
@@ -705,8 +712,10 @@ pub(crate) fn run_with_options(
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
+    // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
+    let (phased, phase_runs) = phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?;
     let add_bridged = |prog: &mut front::Program| {
-        for (rel, rows) in &bridged {
+        for (rel, rows) in bridged.iter().chain(&phased) {
             prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
         }
     };
@@ -2705,7 +2714,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_again) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_again) })
 }
 
 
