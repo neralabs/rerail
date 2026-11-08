@@ -1,6 +1,6 @@
 # 0074: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
-Status: built (2026-11-07; steps 1–4, Python imports; not measured on a large corpus yet)
+Status: built (2026-11-07; steps 1–4, Python imports). Measured on the typing corpus (§7): correct, and no faster.
 
 ## Intro
 
@@ -141,6 +141,36 @@ that is unsound.
   - `logic/plan/corpus/cross_memo.rs`: the split, replay, lookup, storage and checks;
   - `Report::cross`: the components found and derived;
   - test: `corpus::tests::cross_file_rows_are_memoised_per_import_component`.
+
+### 7. Measured on the typing corpus (2026-11-07)
+
+`calls.rr` over the 84-file Jedi corpus with typeshed (267 files, 748 documents with guests), debug build, CPU =
+user + sys, load average 25–75:
+
+| run | memo | CPU | cross part | peak RSS | Jedi agree |
+| --- | --- | ---: | ---: | ---: | ---: |
+| warm, no pragma | off | 55.5 s | 16.2 s | 839 MB | 6,299 |
+| store | 133 components derived, 1.55 M rows stored | 63.2 s | 16.3 s (+2.4 s write) | 1,005 MB | 6,299 |
+| replay | 133 found, 1.55 M rows replayed | 53.8 s | 19.8 s | 1,038 MB | 6,299 |
+| verify (earlier build) | 133 found, all compared | 65.7 s | 21.5 s | 1,026 MB | 6,299 |
+
+- **It is correct.** Verify found no difference in any of the 133 components, and the answers are the same in
+  every run.
+- **It does not pay on typing.** Replay makes the cross part 3.6 s slower, not faster, and peak RSS is past the 1 GB
+  budget.
+  - 122 of the 234 cross-file relations meet the static contract. In the warm run without the memo, the strata made
+    only of them cost about 3.6 s of 16 s: that is the most this declaration could save.
+  - The rest, including the 51-relation stratum that carries types and values (`pv`, `bv`, …), reads lookups over
+    every document by name: `isqmod`, `qknown`, `qopen`, `tsub`, `tsup_open`, and the demand `need_name`. Often
+    under negation, so a row can change when an unrelated file is added. It cannot be declared.
+  - Replay copies 1.55 M rows into tables (`rel :- rel__cross`). The guarded rules still run their joins, and
+    binding and measuring the rows costs 1.7 s.
+- **Fixed on the way** (these surfaced only on a real program): `add` merged `core.rr` into programs that declare
+  their own base relations (O113). Guest documents, string annotations parsed as code, took components of their own.
+  A pragma naming nothing bound an undeclared input. A run that found every component still checked and held its
+  rows (1.9–2.6 s).
+
+What would make it pay is in O114.
 
 ## What the prior work says
 

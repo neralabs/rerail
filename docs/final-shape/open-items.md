@@ -2180,3 +2180,22 @@ derived relation binds no `rr_cross_doc`. The profile names the relations the st
 calls.rr's 234 cross-file relations, once run constants (`py_version`) and projections that keep a node (`kind`,
 `docof`) are read freely. Kept out: `isqmod`, `qknown`, `qopen` (sets over every document, keyed by name), `tsub`,
 `tsup_open` and `need_name` (demand).
+
+## O114. The cross memo is correct on calls.rr but does not pay: what typing's rows depend on is global
+
+Measured 2026-11-07 (decision 0074 §7). Over the 84-file Jedi corpus, replaying 133 components (1.55 M rows) makes
+the cross part 3.6 s slower than deriving it (19.8 s against 16.2 s), and peak RSS reaches 1,038 MB.
+`RERAIL_CROSS_MEMO=verify` passes. The declarable relations (122 of 234) cost about 3.6 s to derive. The expensive
+fixpoint reads lookups over every document by name (`isqmod`, `qknown`, `qopen`, `tsub`, `tsup_open`, the demand
+`need_name`), so it cannot be declared.
+
+Two steps would change that, in order:
+1. **The rules.** Make those lookups closure-local: ask "is q a module" of the modules the closure imports
+   (`rr_cx_imports` joined with `rr_cx_module`), not of every document; derive `tsub` per class from its own bases
+   (0065 §2 already moves `sub` to the workspace side). These are calls.rr's, the Typing branch's to change.
+2. **The engine.** Replay in place, not by copy: a memoised relation's stored rows are read where rules probe them
+   (0065 §2, "read by index as rules probe them"), and a guarded rule is cut to the missing components' documents
+   before its joins, not filtered after them.
+
+**Closure:** with both, a warm replaying run's cross part costs less than a derived one on this corpus, under 1 GB.
+
