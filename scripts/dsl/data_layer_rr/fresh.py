@@ -131,7 +131,11 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='transaction_closures' and case['entry']=='probe':
+                if case['check']=='transaction_callback_wrappers' and case['entry']=='collector':
+                    from callback_wrappers_port import collector_result
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    call=lambda:collector_result(module,values['path'],values['source'],values['tree'],backend if native else None,values.get('check_inline'))
+                elif case['check']=='transaction_closures' and case['entry']=='probe':
                     from transaction_probe import probe
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:probe(module,values,backend if native else None)

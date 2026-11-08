@@ -244,6 +244,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='transaction_callback_wrappers':
+            from callback_wrappers_port import scan
+            return scan(self,entry,module,arguments)
         if check=='transaction_closures':
             from transaction_port import scan
             return scan(self,module,entry,arguments)
