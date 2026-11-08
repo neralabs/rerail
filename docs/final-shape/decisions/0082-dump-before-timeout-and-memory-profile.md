@@ -95,6 +95,15 @@ Both dumps were written, 20 s apart. `stacks.txt` (127 frames in `corpus::hiding
 `spans_charge_memory_and_a_dump_lists_what_is_open` checks the byte counts against 8 MB and 16 MB allocations, and
 a dump's listing of another thread's open span and statement.
 
+## What the dump found
+
+Run on the pack, the dump named what the stacks alone could not: one program, `ruff-perf401`, open in `hide` for
+35 s and 36 GB. Its rounds never ended (O111): a copy whose head holds a constant at the seeded column was found
+again each round and counted as a change. That is fixed in `hiding::hide`. Errors at planning now name their rule
+or fact (`plan::lower`: `rule for p274_noqa_all_tail($R): the string "" stands where an integer goes`), and
+`check-rr` types the pruned program as a run does, so the six rules that fail are found in one 43 s pass, not one
+pack run each. Where the pack's time goes now is O123.
+
 ## What this does not do yet
 
 - **Other threads' CPU off macOS** reads `?`: Linux would read `/proc/self/task/<tid>/stat`.

@@ -367,7 +367,8 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         let _hiding = crate::code_rule_dsl::logic::profile::span(|| {
             format!("bound each program to the documents it shows ({} programs, {} rules; decision 0058)", parsed.len(), parsed.iter().map(|p| p.rules.len()).sum::<usize>())
         });
-        for p in &mut parsed {
+        for (i, p) in parsed.iter_mut().enumerate() {
+            let _one = crate::code_rule_dsl::logic::profile::span(|| format!("program #{i} ({} rules)", p.rules.len()));
             let bound = hiding::bound(p);
             hiding::hide(p, bound);
         }
