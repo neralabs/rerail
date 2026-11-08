@@ -1448,3 +1448,104 @@ Other checks cover global empty summaries, duplicate support, overflow timing, t
 Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-shared-analysis-20261108.tar.gz`.
 It includes final and rejected captures, raw receipts, parity bundles, CPU trials, source changes, and validation logs.
 Task build and temporary directories are removed after archival.
+
+### Cold summaries, shared lookups, and native publication (2026-11-08)
+
+Final Rerail Shape remains merged through `0f0049ec7`. The merge command reports that this branch is already up to date.
+The comparison baseline is `0edfc6227`, which contains the shared uniqueness and scalar-summary work described above.
+The baseline binaries were built from that clean tree before these changes.
+
+#### Findings and root causes
+
+Cold execution still evaluated each original scalar query before constructing retained summaries and contributions.
+This repeated rule evaluation and scanned the same input bags through separate aggregate sites.
+Retained families shared their state, but every member still used a correlated scalar subquery.
+Head validity checks repeated those summary probes again.
+
+Native publication also retained avoidable storage work. An empty patch constructed incoming roots, then inserted every row into another tree.
+Bulk replacements rebuilt keys and indexes even when SQL returned the previous complete row set in canonical order.
+Construction searched the primary map twice and sorted complete rows that unique primary prefixes had already ordered.
+These are storage costs. SQL still computes all rule, reducer, and lattice results.
+
+#### Implemented fixes and shared proofs
+
+The executor-independent scalar analysis now reports a lookup proof for each family.
+A complete grouping key selects at most one summary row, so one left join can supply every compatible member.
+Missing rows retain zero count/sum defaults and absent extrema.
+Raw sum words pass through the join. The public range check remains at each original expression use.
+Computed and aggregate-dependent correlations retain separate probes and their existing dependency maintenance.
+Sharing remains within a retained rule; different rules do not yet share their summaries or probes.
+
+The same analysis provides `initial_evaluation`, which requires independent scalar inputs and pure outer expressions.
+This function has no SQL types, database connection, executor state, or row statistics.
+The SQL adapter adds schedule checks: upstream strata must be complete, and the output must not require lattice folding or opaque producers.
+The ordinary scheduler initializes eligible retained support at that frontier and publishes its result through the existing wave fold.
+It then retains that support for later edits. The original cold scalar evaluation pass is omitted for eligible rules.
+Checked outer expressions, dependent reducers, ordered reducers, and unsupported query shapes retain the established cold path with reasons.
+The independent verification oracle continues to use the original scalar queries.
+
+Walk lowering can add checked rules after cold execution. The planner adds those descriptors when lowering changes the program.
+It preserves already initialized summaries instead of rebuilding their rows.
+Tests cover upstream positive strata, empty groups, duplicate witnesses, checked-expression fallback, and removal of individual supports.
+
+Empty native publications now use validated bulk roots directly.
+An exact ordered-row comparison reuses complete replacement roots without rebuilding keys or indexes.
+Other replacements use one primary-map lookup per row and omit the redundant complete-row sort.
+All paths preserve integer constraints, primary-key checks, stable row IDs, snapshots, and atomic multi-output publication.
+
+`explain()` includes cold admission decisions, actual cold initialization, shared lookup counts, and native publication strategies.
+Family lookup proofs and cold expression decisions include rejection reasons.
+The native logical explain report receives the same family proofs. Native consumers can use the shared analysis functions.
+SQL receipts include retained decisions and per-output publication strategies alongside the existing SQLite plans and counters.
+
+#### Complete-session results
+
+The final captures use the same requests, toolchain, and feature flags as the baseline.
+Both recursive sizes cover six successful edits, two expected failures, recovery, complete snapshots, output deltas, and unrelated-write guards.
+Both scalar sizes preserve duplicate values with distinct supports, extrema retractions, expected failure rollback, and recovery.
+All four final sessions pass independent cold parity and complete receipt coverage.
+
+| Workload | Complete-job SQL before / after | Initial VM before / after | Initial native column reads before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 scalar groups | 98 / 98 | 600,505 / 405,501 | 51,000 / 13,000 |
+| 10,000 scalar groups | 98 / 98 | 5,973,505 / 4,023,501 | 510,000 / 130,000 |
+| 1,000 recursive regions | 100 / 100 | 4,716,101 / 4,716,101 | 233,000 / 233,000 |
+| 10,000 recursive regions | 100 / 100 | 47,124,101 / 47,124,101 | 2,330,000 / 2,330,000 |
+
+Scalar initial VM work decreases by 33%. Native column reads decrease by 75%.
+Initial sorts remain six. The remaining sorts build summary and value indexes and fold the public results.
+Scalar edit work decreases from 1,848 to 1,774 VM instructions, with native column reads decreasing from 67 to 60.
+Recursive SQL work remains unchanged because its improvements are in native storage construction.
+The final reports expose logical analyses on 38 scalar query entries and 15 recursive entries.
+The execution allowance remains 100 for the complete job, including setup, helpers, transactions, failures, verification, and cleanup.
+
+#### CPU observations and remaining costs
+
+Three alternating unprofiled pairs use fresh processes and stores for every workload and size.
+Both builds use Rust 1.95.0, development optimization settings, no debug information, and no incremental compilation.
+Every trial checks outputs, deltas, unrelated-write guards, and scratch reuse where applicable.
+Other work ran on this shared macOS arm64 host, so these observations are not isolated hardware benchmarks.
+
+| Workload | Initial CPU before / after | Edit CPU before / after | Peak RSS before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 scalar groups | 15.46 / 6.48 ms | 2.31 / 2.30 ms | 25.64 / 25.84 MiB |
+| 10,000 scalar groups | 134.83 / 45.45 ms | 2.30 / 2.08 ms | 47.69 / 48.19 MiB |
+| 1,000 recursive regions | 1.101 / 0.920 s | 46.67 / 43.49 ms | 85.97 / 86.14 MiB |
+| 10,000 recursive regions | 11.550 / 9.818 s | 49.16 / 46.33 ms | 638.91 / 639.91 MiB |
+
+The larger scalar initialization is 66% faster in this batch. The larger recursive initialization is 15% faster.
+A separate profiled recursive capture places publication CPU at 8.10 seconds before and 6.91 seconds after.
+Bulk delta storage decreases from 2.06 to 1.72 seconds in those captures.
+The first empty-root-only candidate produced small CPU savings. Complete-root reuse and bulk construction changes produced the larger reduction.
+Native publication remains the largest recursive cost, and retained history still uses about 640 MiB at the larger size.
+Further work should reduce storage transfers and retained duplication across proven equivalent phase outputs.
+Different rules and computed correlations still offer summary-sharing opportunities, but require additional proofs.
+Longer jobs can exceed the unchanged SQL allowance. These changes do not create submission headroom for recursive sessions.
+
+Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cold-summaries-20261108.tar.gz`.
+It contains baseline, intermediate, and final captures, raw receipts, parity bundles, CPU trials, source changes, and validation logs.
+
+Validation passes 161 selected Rust tests, including the scheduler and native storage tests, with one child-process test ignored by design.
+All 38 profiling and report tests pass. The library also compiles with `code-rule-profile` enabled.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+Task build and temporary directories are removed after evidence archival.

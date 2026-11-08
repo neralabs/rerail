@@ -138,3 +138,21 @@ fn logical_aggregates_share_only_the_same_bag_and_keep_dependent_lookups_separat
     assert!(a.rules[0].scalars.inputs[1].dependent);
     assert_eq!(a.rules[0].scalars.families.len(), 2);
 }
+
+#[test]
+fn initial_summary_evaluation_requires_pure_outer_expressions_and_independent_sites() {
+    use scalars::Expression as E;
+    let p = rr::parse(".decl event(k:number,v:number)\n.decl owner(k:number)\n.input event,owner\n.decl out(k:number,n:number,s:number)\nout(k,n,s) :- owner(k), n=count : {event(k,_)}, s=sum v : {event(k,v)}.\n.output out\n").unwrap();
+    let a = ProgramAnalysis::analyze(&p);
+    let scalars = &a.rules[0].scalars;
+    assert!(scalars.families[0].lookup.proven);
+    assert!(scalars.initial_evaluation(&[E::Column(0)]).proven);
+    for expression in [E::Opaque("callback".into()), E::Apply("Add".into(), vec![E::Column(0), E::Integer(1)])] {
+        assert!(!scalars.initial_evaluation(&[expression]).proven);
+    }
+    let mut dependent = scalars.inputs.clone();
+    dependent[0].dependent = true;
+    let dependent = scalars::analyze(dependent);
+    assert!(!dependent.families[0].lookup.proven);
+    assert!(!dependent.initial_evaluation(&[]).proven);
+}

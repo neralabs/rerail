@@ -18,6 +18,6 @@ impl Retained {
         }
     }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"relation":self.output,"support_uniqueness":self.support_uniqueness(),"full_rebuild_grouping_elided":self.support_uniqueness().proven,"incremental_support":"Signed old/new contributions still require reconciliation","rules":self.rules.iter().map(|r|json!({"uniqueness":r.uniqueness.as_ref(),"scalar_summaries":r.scalar_analysis.as_ref()})).collect::<Vec<_>>()})
+        json!({"relation":self.output,"support_uniqueness":self.support_uniqueness(),"full_rebuild_grouping_elided":self.support_uniqueness().proven,"incremental_support":"Signed old/new contributions still require reconciliation","cold_reuse":self.cold_reuse,"cold_initialized":self.cold_initialized,"rules":self.rules.iter().map(|r|json!({"uniqueness":r.uniqueness.as_ref(),"scalar_summaries":r.scalar_analysis.as_ref(),"initial_evaluation":r.initial_evaluation,"shared_summary_lookups":r.reducers.iter().filter(|s|s.shared_lookup_owner()).count()})).collect::<Vec<_>>()})
     }
 }

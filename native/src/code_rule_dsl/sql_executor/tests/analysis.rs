@@ -61,6 +61,10 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
         json!([0, 1, 2, 3])
     );
     assert_eq!(stats["full_rebuild_grouping_elided"], true);
+    assert_eq!(stats["cold_reuse"]["proven"], true);
+    assert_eq!(stats["cold_initialized"], true);
+    assert_eq!(stats["rules"][0]["shared_summary_lookups"], 1);
+    assert_eq!(stats["rules"][0]["scalar_summaries"]["families"][0]["lookup"]["proven"], true);
     for patch in [
         json!([{"name":"event","delete":[[51,17,7]]}]),
         json!([{"name":"event","delete":[[52,17,7]]}]),
@@ -241,4 +245,39 @@ fn catalog_explain_refreshes_when_fact_edits_extend_recursive_plans() {
     let refreshed = rows(&e, "SELECT analysis FROM rr_analysis");
     let refreshed: Value = serde_json::from_str(refreshed[0][0].as_str().unwrap()).unwrap();
     assert_eq!(refreshed, current["executions"][0]);
+}
+
+#[test]
+fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
+    let (_directory, mut e) = executor();
+    bind(&mut e, "event", &["id", "g", "v"], json!([[0, 1, 4], [1, 1, 6], [2, 2, 9]]));
+    bind(&mut e, "owner", &["id", "g"], json!([[0, 1], [1, 1], [2, 2], [3, 3]]));
+    let p = ".decl event(id:number,g:number,v:number)\n.decl owner(id:number,g:number)\n.input event,owner\n.decl copied(id:number,g:number,v:number)\ncopied(id,g,v) :- event(id,g,v).\n.decl filtered(id:number,g:number,v:number)\nfiltered(id,g,v) :- copied(id,g,v), v>4.\n.decl out(g:number,n:number,s:number)\nout(g,n,s) :- owner(_,g), n=count : {filtered(_,g,_)}, s=sum v : {filtered(_,g,v)}.\n.decl checked(g:number,s:number)\nchecked(g,s) :- owner(_,g), n=count : {filtered(_,g,_)}, s=n+1.\n.output out,checked\n";
+    e.run(p.into(), "python".into(), None).unwrap();
+    assert_eq!(rows(&e,"SELECT * FROM out ORDER BY c0"),json!([[1,1,6],[2,1,9],[3,0,0]]));
+    let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
+    let retained = explanation["executions"][0]["retained"].as_array().unwrap();
+    let out = retained.iter().find(|s|s["relation"]=="out").unwrap();
+    assert_eq!(out["cold_initialized"],true);
+    assert_eq!(out["full_rebuild_grouping_elided"],false);
+    let checked = retained.iter().find(|s|s["relation"]=="checked").unwrap();
+    assert_eq!(checked["cold_reuse"]["proven"],false);
+    assert_eq!(checked["cold_initialized"],false);
+    for patch in [
+        json!([{"name":"owner","delete":[[0,1]]}]),
+        json!([{"name":"event","delete":[[1,1,6]],"insert":[[3,1,8]]}]),
+        json!([{"name":"owner","delete":[[1,1]]}]),
+    ] {
+        e.apply_changes(patch.to_string(),None).unwrap();
+        let (_directory, mut oracle) = executor();
+        oracle.cold_oracle=true;
+        for (name, columns) in [("event", &["id","g","v"][..]),("owner", &["id","g"][..])] {
+            bind(&mut oracle,name,columns,rows(&e,&format!("SELECT * FROM {name}")));
+        }
+        oracle.run(p.into(),"python".into(),None).unwrap();
+        for output in ["out","checked"] {
+            let query=format!("SELECT * FROM {output} ORDER BY c0");
+            assert_eq!(rows(&e,&query),rows(&oracle,&query));
+        }
+    }
 }

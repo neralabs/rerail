@@ -13,6 +13,7 @@ pub(super) struct Atom {
 pub(super) struct Rule {
     pub uniqueness: Arc<crate::code_rule_dsl::logic::analysis::keys::Proof>,
     pub scalar_analysis: Arc<crate::code_rule_dsl::logic::analysis::scalars::Analysis>,
+    pub initial_evaluation: crate::code_rule_dsl::logic::analysis::Decision,
     pub contexts: String,
     pub contributions: String,
     pub width: usize,
@@ -177,7 +178,21 @@ pub(super) fn rule(
         sites.push(reducer);
     }
     let scalar_analysis = reducer::combined::plan(&mut sites, &fields_by_name);
-    let uniqueness = crate::code_rule_dsl::logic::sql::properties::projection(q, &input_columns, known).unique();
+    let outer_expressions = expressions(&q.body)
+        .iter()
+        .map(|e| {
+            let mut outer = (*e).clone();
+            outer.visit_mut(&mut |e| {
+                if sites.iter().any(|r| r.original == *e) {
+                    *e = integer(0);
+                }
+            });
+            crate::code_rule_dsl::logic::sql::properties::expression(&outer, &fields_by_name)
+        })
+        .collect::<Vec<_>>();
+    let initial_evaluation = scalar_analysis.initial_evaluation(&outer_expressions);
+    let uniqueness =
+        crate::code_rule_dsl::logic::sql::properties::projection(q, &input_columns, known).unique();
     let mut context = q.clone();
     context.body.distinct = true;
     context.body.columns = q
@@ -209,6 +224,7 @@ pub(super) fn rule(
     let mut rule = Rule {
         uniqueness: Arc::new(uniqueness),
         scalar_analysis: Arc::new(scalar_analysis),
+        initial_evaluation,
         contexts: format!("{prefix}_contexts"),
         contributions: format!("{prefix}_contributions"),
         width,
@@ -221,7 +237,7 @@ pub(super) fn rule(
     let mut evaluation = q.clone();
     replace(&mut evaluation.body, &mut |e| {
         if let Some(reducer) = rule.reducers.iter().find(|r| r.original == *e) {
-            *e = reducer.lookup(&rule);
+            *e = reducer.joined_lookup(&rule);
         }
         if let E::Qualified { alias, column } = e
             && let Some(i) = rule.fields.get(&(alias.clone(), column.clone()))
@@ -286,10 +302,20 @@ impl Rule {
     }
     pub fn evaluation(&self, table: &str) -> Query {
         let mut query = self.evaluation.clone();
+        let mut projections = vec!["rr_input.*".into()];
+        let mut from = format!("{} rr_input", quote(table));
+        for reducer in &self.reducers {
+            reducer.append_join(self, &mut projections, &mut from);
+        }
+        let source = if projections.len() == 1 {
+            quote(table)
+        } else {
+            format!("(SELECT {} FROM {from})", projections.join(","))
+        };
         query.body.from = vec![FromItem::cross(
             Rel::Bound {
                 rel: table.into(),
-                table: quote(table),
+                table: source,
             },
             "rr_context",
         )];
@@ -305,8 +331,7 @@ impl Rule {
         if columns.is_empty() || columns.iter().copied().eq(0..columns.len()) {
             return Ok(());
         }
-        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts)
-        {
+        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts) {
             source.prepare_index(&columns);
             return Ok(());
         }

@@ -7,6 +7,7 @@ use super::super::logic::sql::{
 use super::maintenance::{Delta, Work};
 use super::*;
 mod compose;
+pub(super) mod cold;
 mod fused;
 mod join_tree;
 mod lattice;
@@ -26,6 +27,8 @@ pub(super) struct Retained {
     rules: Vec<Rule>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
+    cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
+    cold_initialized: bool,
 }
 
 impl Retained {
@@ -331,6 +334,7 @@ pub(super) fn planned(
         if !eligible || (!nonmonotone && !native) {
             continue;
         }
+        let cold_reuse = cold::eligibility(run, output, &rules, lattice.is_some());
         let state = Retained {
             output: output.clone(),
             heads: format!("__sql_state_{output}_heads"),
@@ -338,6 +342,8 @@ pub(super) fn planned(
             rules,
             lattice,
             ready: false,
+            cold_reuse,
+            cold_initialized: false,
         };
         crate::code_rule_dsl::logic::profile::decision("retained logical analyses", || state.explain().to_string());
         retained.insert(output.clone(), state);

@@ -27,6 +27,21 @@ impl Version {
         if self.len() != 0 && !replacing {
             return Err(error("bulk construction requires an empty relation"));
         }
+        // SQL commonly emits the previous canonical row order unchanged. Compare
+        // complete values before allocating keys, row-id indexes, or bulk trees.
+        fn unchanged(root: &Link<Row>, rows: &[Vec<Option<i64>>], at: &mut usize) -> bool {
+            let Some(node) = root else {
+                return true;
+            };
+            if !unchanged(&node.left, rows, at) || node.value.values.as_slice() != rows[*at] {
+                return false;
+            }
+            *at += 1;
+            unchanged(&node.right, rows, at)
+        }
+        if replacing && rows.len() == self.len() && unchanged(&self.full, &rows, &mut 0) {
+            return Ok(self.clone());
+        }
         let mut out = self.empty_like();
         out.next = self.next;
         let mut primary = BTreeMap::new();
@@ -47,14 +62,14 @@ impl Version {
                 }
                 return Err(error("invalid bulk integer row"));
             }
-            let pk = values[..self.schema.keys].to_vec();
-            if primary.contains_key(&pk) {
+            let entry = primary.entry(values[..self.schema.keys].to_vec());
+            if matches!(entry, std::collections::btree_map::Entry::Occupied(_)) {
                 if ignore {
                     continue;
                 }
                 return Err(error("duplicate bulk key"));
             }
-            let old_row = Node::get(&self.primary, &pk);
+            let old_row = Node::get(&self.primary, entry.key());
             let id = if let Some(old) = old_row {
                 old.id
             } else {
@@ -70,13 +85,14 @@ impl Version {
                 .map_or_else(|| tree::key(values), |old| old.values.clone());
             let row = Row { id, values };
             ids.push((key([Some(row.id)]), row.clone()));
-            primary.insert(pk, row);
+            entry.or_insert(row);
         }
-        let mut full = primary
+        let full = primary
             .values()
             .map(|r| (r.values.clone(), r.clone()))
             .collect::<Vec<_>>();
-        full.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        // Distinct primary prefixes already order complete tuples. No second sort
+        // is needed, including when the primary key is shorter than the row.
         out.distinct[0] = full
             .iter()
             .enumerate()

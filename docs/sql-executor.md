@@ -207,13 +207,27 @@ Min and max share value multiplicities and retain indexed extrema probes after d
 Empty count and sum remain zero. Empty min and max remain absent.
 Ordered joins, existence tests, nullable contracts, dependent keys, and opaque expressions keep separate summaries with explicit reasons.
 
+A compatible family uses one indexed left join per retained context, including its head checks and projected values.
+Missing groups preserve the original defaults. Exact sum range checks stay at their original expression uses.
+The shared analysis reports the complete grouping key as the proof for a single summary row.
+
+Pure, independent scalar summaries can also produce the first answer during cold execution.
+The scheduler waits for upstream strata, initializes retained support once, and publishes its result through the ordinary wave fold.
+Checked outer expressions, dependent aggregates, opaque producers, and lattice folding retain the ordinary cold path.
+Walk lowering can expose additional checked rules. Those descriptors are planned after lowering without rebuilding already initialized summaries.
+The independent cold verification mode continues to execute the original scalar queries.
+
 Ordinary summaries stay in compact SQLite tables. SQL computes a shared update phase and stages its result in native scratch storage.
 Bulk SQL statements publish those rows in the fact batch's transaction. Host code does not evaluate reducers.
 Recursive wave caches use native versions when they need retained history.
 Logical proofs use shared immutable storage, so copying an execution does not copy each proof.
+Empty native destinations publish validated bulk roots directly. They do not insert every row a second time.
+Identical ordered replacements reuse their complete roots. Other replacements preserve row IDs and share unchanged subtrees.
+Validated unique primary prefixes already order complete rows, so bulk construction omits a second sort.
 
 `lower()` and `run()` include an `analysis` object with relation keys, key inferences, rule uniqueness, and scalar compatibility checks.
-`explain()` adds retained cache choices and recursive operator analyses. It also reports opaque SQL producers.
+`explain()` adds retained cache choices, cold reuse decisions, shared lookup counts, native publication strategies, and recursive operator analyses.
+It also reports opaque SQL producers. Rejected optimizations include their reasons.
 The native planner records the same logical analysis in its existing explain report. SQL applies the optimizations described here.
 SQL profiling receipts include these proofs as `logicalAnalysis` and `logicalAnalyses` context fields.
 The generated Markdown and HTML profiles show them beside each query's SQLite plan and bytecode.

@@ -1,6 +1,7 @@
 //! Group counts, exact sums, and indexed value multiplicities.
 use super::*;
 mod dependencies;
+mod lookup;
 pub(super) mod combined;
 #[derive(Clone, Copy)]
 enum Kind {

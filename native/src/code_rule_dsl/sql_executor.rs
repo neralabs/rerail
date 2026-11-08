@@ -789,8 +789,17 @@ impl CodeRuleSqlExecutor {
                         session::index(&self.db, table, columns).map_err(error)?;
                     }
                 }
-                let waves = schedule::execute_declared(&self.db, &emitted.program, max_waves)
-                    .map_err(error)?;
+                #[cfg(any(test, feature = "headless"))]
+                let retain = !self.cold_oracle;
+                #[cfg(not(any(test, feature = "headless")))]
+                let retain = true;
+                let waves = if retain {
+                    let (waves, initialized) = reductions::cold::execute(&self.db, &mut work, &mut execution, max_waves)?;
+                    initializations = initialized;
+                    waves
+                } else {
+                    schedule::execute_declared(&self.db, &emitted.program, max_waves).map_err(error)?
+                };
                 let mut stats = self
                     .db
                     .prepare("SELECT tbl,rows FROM wave_stats")
@@ -804,13 +813,11 @@ impl CodeRuleSqlExecutor {
                         execution.counts.insert(r, n as u64);
                     }
                 }
-                #[cfg(any(test, feature = "headless"))]
-                let retain = !self.cold_oracle;
-                #[cfg(not(any(test, feature = "headless")))]
-                let retain = true;
                 if retain {
                     let _support = profiling::scope(&self.db, "support preparation");
-                    initializations = walks::prepare(&mut work, &mut execution, None)?;
+                    let walks = walks::prepare(&mut work, &mut execution, None)?;
+                    if !walks.is_empty() { reductions::cold::after_walks(&work, &mut execution)?; }
+                    initializations.extend(walks);
                     let mut potential = execution.inputs.clone();
                     initializations.extend(reductions::prepare(
                         &mut work,
