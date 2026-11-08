@@ -195,18 +195,55 @@ fn eq_swar_form_equals_reference() {
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
 /// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 fn body_of(clif: &str) -> Vec<String> {
-    let lines: Vec<&str> = clif.lines().collect();
-    let start = lines.iter().position(|l| l.trim_start().starts_with("block2")).expect("a body block") + 1;
-    lines[start..]
-        .iter()
-        .take_while(|l| !l.trim_start().starts_with("block"))
-        .map(|l| l.trim().to_owned())
-        .filter(|l| !l.is_empty())
-        .collect()
+    hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
+}
+
+/// The CLIF blocks of the hot loop, each with its instruction lines: the full body (`block2`) and
+/// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
+/// are its extracts' flattening.
+pub(super) fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
+    let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+    for line in clif.lines() {
+        let t = line.trim();
+        if t.starts_with("block") && t.ends_with(':') {
+            let name = t.split(['(', ':']).next().unwrap_or("").to_owned();
+            blocks.push((name, Vec::new()));
+        } else if let Some((_, lines)) = blocks.last_mut()
+            && !t.is_empty()
+        {
+            lines.push(t.to_owned());
+        }
+    }
+    let successors = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .filter(|l| matches!(opcode(l), "brif" | "jump"))
+            .flat_map(|l| l.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")).map(str::to_owned).collect::<Vec<_>>())
+            .collect()
+    };
+    let (mut seen, mut work, mut out) = (vec!["block2".to_owned()], vec!["block2".to_owned()], Vec::new());
+    while let Some(name) = work.pop() {
+        let (_, lines) = blocks.iter().find(|(n, _)| *n == name).expect("a block of the function");
+        for next in successors(lines) {
+            if next != "block4" && !seen.contains(&next) {
+                seen.push(next.clone());
+                work.push(next);
+            }
+        }
+        out.push((name, lines.clone()));
+    }
+    out
+}
+
+/// The sinks' loop-carried values (`native_cpu_block`): a running count per counted output and
+/// a held word per delayed output.
+pub(super) fn sink_params(native: &native_ir::BlockNative) -> usize {
+    native_cpu_block::counted(native).len() + native.output_delays.iter().filter(|&&d| d > 0).count()
 }
 
 /// The CLIF opcode of an instruction line (`v3 = icmp eq v1, v2` → `icmp`).
 fn opcode(line: &str) -> &str {
+    let line = line.split(" ;").next().unwrap_or(line);
     let rhs = line.split_once(" = ").map_or(line, |(_, r)| r);
     rhs.split([' ', '.']).next().unwrap_or("")
 }
@@ -227,6 +264,8 @@ const BODY_OPCODES: &[&str] = &[
     "splat", "vconst", "imul_imm",
     // The packed carried state (decision 0048): a field's bits read with a mask.
     "band_imm",
+    // The extracts' flattening (simdjson's): a position per set bit, eight at a time.
+    "ctz", "istore32", "icmp_imm", "jump",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -238,8 +277,15 @@ fn check_lowering(name: &str, p: &Program) {
     for line in &body {
         assert!(BODY_OPCODES.contains(&opcode(line)), "{name}: `{line}` is not a bit operation");
     }
+    // The loop's branch, and two per extract: more than eight bits in the block, and the loop
+    // over them eight at a time, which steps its count by 8 and loops on itself.
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1, "{name}: the body's only branch is the loop's");
+    assert_eq!(branches, 1 + 2 * native.extracts.len(), "{name}: the body's only branches are the loop's and the flattening's");
+    for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
+        if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
+            assert!(lines.iter().any(|l| opcode(l) == "iadd_imm" && l.split(" ;").next().is_some_and(|l| l.ends_with(", 8"))), "{name}: {block} loops, not eight bits at a time");
+        }
+    }
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
     assert!(!compiled.disassembly.contains(" bl ") && !compiled.disassembly.contains("blr"), "{name}: no calls");
 
@@ -1256,7 +1302,7 @@ fn stage1_loop_keeps_values_in_registers() {
     let block = &p.block_programs()[0];
     // The state is packed: one carried word per 64 state bits (decision 0048).
     let words = state_bits(block).div_ceil(64);
-    assert_eq!(carried_params(&compiled.clif), words, "stage 1's carried state is not packed");
+    assert_eq!(carried_params(&compiled.clif) - sink_params(&native), words, "stage 1's carried state is not packed");
 }
 
 /// Stage 1's loop is simdjson's size (decision 0049): one reduction per 64-bit mask and one

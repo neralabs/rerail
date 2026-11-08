@@ -85,6 +85,7 @@ const OPCODES: &[(u8, &str)] = &[
     (RETURN, "RETURN"),
     (ACCEPT, "ACCEPT"),
     (SPAN, "SPAN"),
+    (EMPTY, "EMPTY"),
 ];
 
 /// How an opcode's operand prints.
@@ -289,6 +290,9 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     }
     for value in &block.extracts {
         let _ = writeln!(out, "  block {at} extract %{value}");
+    }
+    for value in &block.totals {
+        let _ = writeln!(out, "  block {at} total %{value}");
     }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
@@ -768,8 +772,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let program = parts.block_programs.last_mut().expect("pushed");
             let first = line.word()?;
             if first == "output" {
-                if !program.extracts.is_empty() {
-                    return Err(format!("block {at} output after an extract"));
+                if !program.extracts.is_empty() || !program.totals.is_empty() {
+                    return Err(format!("block {at} output after an extract or a total"));
                 }
                 program.outputs.push(line.number("%")?);
                 // `output %v delay d`: its own delay; recorded for every output once one has one
@@ -836,6 +840,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 program.delay = u8::try_from(d).map_err(|_| format!("block {at} delay {d} is more than 63"))?;
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
+            } else if first == "total" {
+                program.totals.push(line.number("%")?);
             } else if first == "table" {
                 let t: usize = line.number("")?;
                 if t != program.tables.len() || !program.ops.is_empty() {

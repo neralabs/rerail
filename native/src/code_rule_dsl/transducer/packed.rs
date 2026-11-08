@@ -322,6 +322,8 @@ const PUSH: u8 = 0x59;
 const RETURN: u8 = 0x5a;
 const ACCEPT: u8 = 0x5b;
 const SPAN: u8 = 0x5c;
+/// Refuses unless one of tier 1's totals is zero: the fallback.
+const EMPTY: u8 = 0x5d;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;

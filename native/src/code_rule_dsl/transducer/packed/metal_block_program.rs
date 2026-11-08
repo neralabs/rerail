@@ -334,7 +334,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
         let (len, groups) = (row.len as usize, row.groups as usize);
         let lanes = groups * GROUP;
         let words = (len + usize::from(n.delay)).div_ceil(64);
-        let outputs = (0..n.outputs.len())
+        let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
             .map(|k| {
                 let at = (row.out_base as usize + k * lanes) * word;
                 let w: Vec<u64> = lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
@@ -350,7 +350,9 @@ pub(in crate::code_rule_dsl) fn run_batch(
                 positions[from..from + count.min(capacity)].to_vec()
             })
             .collect();
-        results.push(BlockRun { outputs, positions });
+        // TEMPORARY (host): replaced by the count carry in the kernel.
+        let totals = n.totals.iter().map(|&k| outputs[k].iter().map(|w: &u64| u64::from(w.count_ones())).sum()).collect();
+        results.push(BlockRun { outputs, positions, totals });
     }
     Ok(BatchRun { files: results, launches, seconds })
 }

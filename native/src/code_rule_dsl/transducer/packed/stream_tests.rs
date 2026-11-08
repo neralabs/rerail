@@ -7,6 +7,10 @@ use super::*;
 /// loop through `TOKEN`.
 const RUN: &str = "program -
   mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 extract %0
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end @0007
@@ -21,19 +25,24 @@ const RUN: &str = "program -
   0007 ACCEPT 0
 ";
 
+/// Tier 1's run as the words read it: the starts (extract 0) and last bytes (extract 1).
+fn tier1(starts: &[u32], lasts: &[u32]) -> block::BlockRun {
+    block::BlockRun { outputs: Vec::new(), positions: vec![starts.to_vec(), lasts.to_vec()], totals: Vec::new() }
+}
+
 #[test]
 fn a_tier2_program_writes_its_nodes() {
     let p = rir::assemble(RUN).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(rir::assemble(&rir::disassemble(&p, None)).expect("round trips").plain_digest(), p.plain_digest());
-    let nodes = run(&p, b"aa a ", &[0, 1, 3], &[]).expect("parses");
+    let nodes = run(&p, b"aa a ", &tier1(&[0, 1, 3], &[])).expect("parses");
     let spans: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
     assert_eq!(spans, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 1, 2, 1), (2, 3, 4, 1)]);
     // A byte no state takes, a token past the file, an unread last byte, an empty stream:
     // refused.
-    assert!(run(&p, b"ab", &[0, 1], &[]).is_err());
-    assert!(run(&p, b"a", &[0, 1], &[]).is_err());
-    assert!(run(&p, b"aa", &[0, 1], &[1]).is_err());
-    assert!(run(&p, b"", &[], &[]).is_err());
+    assert!(run(&p, b"ab", &tier1(&[0, 1], &[])).is_err());
+    assert!(run(&p, b"a", &tier1(&[0, 1], &[])).is_err());
+    assert!(run(&p, b"aa", &tier1(&[0, 1], &[1])).is_err());
+    assert!(run(&p, b"", &tier1(&[], &[])).is_err());
 }
 
 /// The verifier refuses a loop that does not pass a `TOKEN`: here the second switch jumps to

@@ -788,12 +788,9 @@ fn reference_nodes(stmts: &[Stmt], bytes: &[u8], ids: &Ids) -> Option<Vec<IdNode
 
 /// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the
 /// file goes to tree-sitter (a fallback bit, or a word that refuses).
-fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNode>> {
+fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
     let run = p.block_programs()[0].run_files(&[bytes]).remove(0);
-    if fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
-        return None;
-    }
-    let nodes = stream::run(p, bytes, &run.positions[0], &run.positions[1]).ok()?;
+    let nodes = stream::run(p, bytes, &run).ok()?;
     Some(
         nodes
             .into_iter()
@@ -833,7 +830,7 @@ fn corpus_trees_equal_the_evaluator() {
         let program = rir::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
         for bytes in tree_inputs(p, k as u64) {
             let want = reference_nodes(&stmts, &bytes, &ids);
-            let got = tier2_nodes(&program, &compiled.fallbacks, &bytes);
+            let got = tier2_nodes(&program, &bytes);
             if got != want {
                 differ.push(format!("{name}: {:?}: tier 2 {got:?}, the reference {want:?}", String::from_utf8_lossy(&bytes)));
                 break;

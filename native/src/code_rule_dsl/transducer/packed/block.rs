@@ -307,6 +307,10 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
+    /// Values, each also an output, whose set bits each executor counts over the whole stream:
+    /// a total per file (`BlockRun::totals`). Tier 2 reads them (`EMPTY`): the fallback's
+    /// masks are totals, and a file with any bit goes to tree-sitter.
+    pub(super) totals: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -328,12 +332,13 @@ pub(in crate::code_rule_dsl) struct BatchFile<'a> {
     pub(in crate::code_rule_dsl) program: usize,
 }
 
-/// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
-/// order).
+/// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
+/// order), and each total's count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BlockRun {
     pub(super) outputs: Vec<Vec<u64>>,
     pub(super) positions: Vec<Vec<u32>>,
+    pub(super) totals: Vec<u64>,
 }
 
 impl BlockProgram {
@@ -358,14 +363,14 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         // A check: a verified straight-line program with one output, and no checks of its own.
         let checks = self.checks.iter().all(|c| {
             let q = &c.program;
-            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.delay <= 1 && q.checks.is_empty()
+            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.totals.is_empty() && q.delay <= 1 && q.checks.is_empty()
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
             return Err(Error::InvalidTarget(0));
@@ -393,6 +398,14 @@ impl BlockProgram {
         if !self.extracts.is_empty() {
             out.extend_from_slice(&(self.extracts.len() as u32).to_le_bytes());
             for v in &self.extracts {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        // Likewise the totals, tagged.
+        if !self.totals.is_empty() {
+            out.extend_from_slice(b"totals");
+            out.extend_from_slice(&(self.totals.len() as u32).to_le_bytes());
+            for v in &self.totals {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
@@ -434,6 +447,14 @@ impl BlockProgram {
             .collect()
     }
 
+    /// Each total's output index.
+    pub(super) fn total_outputs(&self) -> Vec<usize> {
+        self.totals
+            .iter()
+            .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a total is an output"))
+            .collect()
+    }
+
     /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
     /// sized by its count before it is written (`extract`).
     pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
@@ -442,10 +463,11 @@ impl BlockProgram {
 
     /// `run` over several files at once (`interpret_files`).
     pub(super) fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
-        let extracts = self.extract_outputs();
+        let (extracts, totals) = (self.extract_outputs(), self.total_outputs());
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
+                let totals = totals.iter().map(|&k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()).collect();
                 let positions = extracts
                     .iter()
                     .map(|&k| {
@@ -454,7 +476,7 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
-                BlockRun { outputs, positions }
+                BlockRun { outputs, positions, totals }
             })
             .collect()
     }

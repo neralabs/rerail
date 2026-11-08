@@ -607,7 +607,7 @@ fn json_loop_keeps_values_in_registers() {
     assert_eq!(mvn, 0, "json's loop inverts vectors");
     // The state is packed: one carried word per 64 state bits (decision 0048).
     let bits = super::block_tests::state_bits(&program.block_programs()[0]);
-    assert_eq!(super::block_tests::carried_params(&compiled.clif), bits.div_ceil(64), "json's carried state is not packed");
+    assert_eq!(super::block_tests::carried_params(&compiled.clif) - super::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
@@ -947,13 +947,10 @@ fn json_tier2_files() -> Vec<Vec<u8>> {
 
 /// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the file
 /// goes to tree-sitter (a fallback bit, or a word that refuses).
-fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNode>> {
+fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
     let block = &p.block_programs()[0];
     let run = block.run_files(&[bytes]).remove(0);
-    if fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
-        return None;
-    }
-    let nodes = stream::run(p, bytes, &run.positions[0], &run.positions[1]).ok()?;
+    let nodes = stream::run(p, bytes, &run).ok()?;
     Some(
         nodes
             .into_iter()
@@ -994,7 +991,7 @@ fn json_tier2_nodes_equal_the_reference() {
     let mut parsed = 0;
     for f in &files {
         let want = reference_nodes(&stmts, f);
-        let got = tier2_nodes(&p, &fallbacks, f);
+        let got = tier2_nodes(&p, f);
         assert_eq!(got, want, "{}", String::from_utf8_lossy(f));
         parsed += usize::from(want.is_some());
     }

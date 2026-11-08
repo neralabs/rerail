@@ -195,7 +195,7 @@ impl Emit<'_> {
         self.arm_code.insert((arm, span, pre.clone()), at);
         match span {
             Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
-            Span::Last => self.push("SPAN", 1, Arg::None),
+            Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
         }
         match &pre {
             Pre::None => {}
@@ -270,7 +270,7 @@ impl Emit<'_> {
                 return Err(format!("one-byte tokens sharing byte {b:#04x} with keywords: not compiled yet"));
             }
             let at = self.pc();
-            self.push("SPAN", 1, Arg::None);
+            self.push("SPAN", 1, Arg::Num(LASTS));
             let mut jumps = Vec::new();
             for c in &words {
                 let w = self.string(c.word.as_ref().expect("a keyword"));
@@ -348,7 +348,7 @@ impl Emit<'_> {
             self.push("RETURN", 0, Arg::None);
             return Ok(());
         }
-        self.push("TOKEN", 0, Arg::None);
+        self.push("TOKEN", 0, Arg::Num(STARTS));
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.push("SWITCH", 0, Arg::Table(t as u16));
@@ -415,7 +415,14 @@ impl Emit<'_> {
 }
 
 /// Tier 2's words from the state machine and the token rows.
-pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Result<Lowered, String> {
+/// Tier 1's extracts the words read: every token's first byte (`TOKEN`), and the last byte of
+/// each token whose arm reads it (`SPAN m=1`).
+pub(super) const STARTS: u16 = 0;
+pub(super) const LASTS: u16 = 1;
+
+/// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
+/// each of which must be zero before the first token is taken.
+pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties: u16) -> Result<Lowered, String> {
     let mut e = Emit {
         states,
         arms,
@@ -428,6 +435,9 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Resul
         arm_code: HashMap::new(),
         guards: HashMap::new(),
     };
+    for t in 0..empties {
+        e.push("EMPTY", 0, Arg::Num(t));
+    }
     for s in 0..states.len() {
         e.state(s)?;
     }

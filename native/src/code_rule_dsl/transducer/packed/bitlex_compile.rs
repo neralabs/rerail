@@ -244,13 +244,16 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 check: check_of.get(&r).copied(),
             });
         }
-        let lowered = bitlex_tier2::lower(&states, &arms, &rows)?;
+        let guards = bitlex_tier2::lower(&states, &arms, &rows, 0)?.guards;
         // A guard: a row beginning with a byte the switch gives another row.
-        for &(r, set) in &lowered.guards {
+        for &(r, set) in &guards {
             let bytes = low.class_set(set);
             let g = low.and(token_rows[r].1, bytes)?;
             low.fallbacks.push(g);
         }
+        // The words again, now that the fallback's totals are known: each must be zero.
+        let empties = low.fallback()?.len() as u16;
+        let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties)?;
         if !low.extra.is_empty() {
             return Err("extra kinds in tier 2's words: not compiled yet".into());
         }
@@ -258,6 +261,12 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         tier2 = Some((grammar::text(&states, &arms), checks, lowered.text, takes_last));
     }
     let mut vals: Vec<(String, Val)> = Vec::new();
+    // The words read the fallback's totals (`EMPTY`), so a tree's program always has them.
+    if has_tree && !outputs.contains(&FALLBACK) {
+        for x in low.fallback()? {
+            vals.push((FALLBACK.to_owned(), x));
+        }
+    }
     for name in outputs {
         if *name == FALLBACK {
             for x in low.fallback()? {
@@ -322,6 +331,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         low.program.checks = checks;
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = vec![at[s], at[l]];
+        // The fallback's totals, in `fallback()`'s order: `EMPTY t` reads total `t`.
+        low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
         words = lowered;
         machine = text;
     }
@@ -1052,6 +1063,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     out.output_delays = program.output_delays.clone();
     out.checks = program.checks.clone();
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
+    out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out
 }
 
