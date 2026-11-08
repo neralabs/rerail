@@ -2454,6 +2454,22 @@
           "existing"
         ]
       }
+    },
+    {
+      "id": "internal-single-nested",
+      "check": "transaction_patterns",
+      "entry": "internal-single",
+      "files": [],
+      "arguments": {
+        "connectionName": "conn",
+        "tree": {
+          "pythonAst": "conn.read(conn.write())",
+          "mode": "eval"
+        },
+        "initial": [
+          "existing"
+        ]
+      }
     }
   ]
 }

@@ -75,6 +75,8 @@ def main():
     for i,text in enumerate(['def f(): pass\n','def f(): conn.read()\n','def f(): conn.read(); conn.read()\n']):
         api.append(dict(id='internal-'+str(i),check='transaction_patterns',entry='internal',files=[],arguments=dict(
             connectionName='conn',tree=dict(pythonAst=text,mode='exec'),initial=['existing'])))
+    api.append(dict(id='internal-single-nested',check='transaction_patterns',entry='internal-single',files=[],arguments=dict(
+        connectionName='conn',tree=dict(pythonAst='conn.read(conn.write())',mode='eval'),initial=['existing'])))
     for path_arg,rows in [(args.destination,api),(args.reporters,reports)]:
         path_arg.parent.mkdir(parents=True,exist_ok=True);path_arg.write_text(json.dumps(dict(cases=rows),indent=2,ensure_ascii=False)+'\n')
     print(len(api),'API cases;',len(reports),'reporter cases')

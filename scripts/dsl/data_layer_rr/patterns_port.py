@@ -48,7 +48,9 @@ def probe(module,entry,values):
         owner=module.ConnectionParameterFinder(file_path=values['file_path'],categorized_functions=values.get('categorized_functions',{}))
         owner.visit(values['tree']);return owner.findings
     owner=module.InternalTransactionFinder(conn_param_name=values.get('connectionName'),internal_txn_calls=values.get('initial',[]).copy())
-    for tree in values.get('trees',[values.get('tree')]):owner.visit(tree)
+    for tree in values.get('trees',[values.get('tree')]):
+        if entry=='internal-single':owner._check_call(tree)
+        else:owner.visit(tree)
     return owner.internal_txn_calls
 
 

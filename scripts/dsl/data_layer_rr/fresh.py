@@ -136,7 +136,7 @@ def run(args):
                 module = modules[case['check']]
                 if case['check']=='transaction_patterns':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
-                    if case['entry'] in {'finder','internal'}:
+                    if case['entry'] in {'finder','internal','internal-single'}:
                         from patterns_port import probe
                         call=lambda:probe(module,case['entry'],values)
                     else:call=lambda:getattr(module,case['entry'])(**values)
