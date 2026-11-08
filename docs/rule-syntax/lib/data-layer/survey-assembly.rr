@@ -11,16 +11,16 @@ sgc_occurrence(n, d, file, local, sid) :- sgc_file(d, file), sgs_symbol(n, d, lo
 sgc_first(sid, file, local) :- sgc_occurrence(_, _, file, local, sid), file = min f : { sgc_occurrence(_, _, f, _, sid) }, local = min i : { sgc_occurrence(_, _, file, i, sid) }.
 .decl sgc_last(sid: symbol, n: node, d: number)
 sgc_last(sid, n, d) :- sgc_occurrence(n, d, file, local, sid), file = max f : { sgc_occurrence(_, _, f, _, sid) }, local = max i : { sgc_occurrence(_, _, file, i, sid) }.
-.decl sgc_symbol(n: node, ordinal: number, sid: symbol)
-sgc_symbol(n, ordinal, sid) :- sgc_last(sid, n, _), sgc_first(sid, file, local), ordinal = count : { sgc_first(other, f, i), (f < file ; (f = file, i < local)) }.
+.decl sgc_symbol(n: node, first_file: number, first_local: number, sid: symbol)
+sgc_symbol(n, file, local, sid) :- sgc_last(sid, n, _), sgc_first(sid, file, local).
 .decl sgc_module_first(module: symbol, file: number)
 sgc_module_first(module, file) :- sgs_module(d, _, module), sgc_file(d, file), file = min f : { sgs_module(other, _, module), sgc_file(other, f) }.
-.decl sgc_module(module: symbol, d: number, ordinal: number, path: symbol)
-sgc_module(module, d, ordinal, path) :- sgs_module(d, path, module), sgc_file(d, file), file = max f : { sgs_module(other, _, module), sgc_file(other, f) }, sgc_module_first(module, first), ordinal = count : { sgc_module_first(other_module, earlier_file), earlier_file < first }.
+.decl sgc_module(module: symbol, d: number, first_file: number, path: symbol)
+sgc_module(module, d, first, path) :- sgs_module(d, path, module), sgc_file(d, file), file = max f : { sgs_module(other, _, module), sgc_file(other, f) }, sgc_module_first(module, first).
 .decl sgc_fqname(fq: symbol, sid: symbol)
-sgc_fqname(fq, sid) :- sgc_symbol(n, _, sid), sgs_symbol(n, _, _, _, fq, _, _, _, _, _, _).
+sgc_fqname(fq, sid) :- sgc_symbol(n, _, _, sid), sgs_symbol(n, _, _, _, fq, _, _, _, _, _, _).
 .decl sgc_kind(sid: symbol, k: symbol)
-sgc_kind(sid, k) :- sgc_symbol(n, _, sid), sgs_definition(n, _, _, _, k, _).
+sgc_kind(sid, k) :- sgc_symbol(n, _, _, sid), sgs_definition(n, _, _, _, k, _).
 .decl sgc_defined(module: symbol, name: symbol, ordinal: number, sid: symbol)
 sgc_defined(module, name, i, sid) :- sgc_module(module, d, _, _), sgs_defined(d, name, sid, i).
 .decl sgc_import(module: symbol, k: symbol, name: symbol, target: symbol)
@@ -33,7 +33,10 @@ sgc_method_occurrence(cat(module, "::", owner), name, sid, file, local) :- sgc_o
 .decl sgc_method_first(owner: symbol, name: symbol, file: number, local: number)
 sgc_method_first(owner, name, file, local) :- sgc_method_occurrence(owner, name, _, file, local), file = min f : { sgc_method_occurrence(owner, name, _, f, _) }, local = min i : { sgc_method_occurrence(owner, name, _, file, i) }.
 .decl sgc_method(owner: symbol, name: symbol, ordinal: number, sid: symbol)
-sgc_method(owner, name, ordinal, sid) :- sgc_method_occurrence(owner, name, sid, file, local), file = max f : { sgc_method_occurrence(owner, name, _, f, _) }, local = max i : { sgc_method_occurrence(owner, name, _, file, i) }, sgc_method_first(owner, name, first_file, first_local), ordinal = count : { sgc_method_first(owner, other, f, i), (f < first_file ; (f = first_file, i < first_local)) }.
+// The source ID is determined by module, owner, and name. Repeated definitions
+// keep that ID; sgc_last selects its latest contents separately. No second
+// last-occurrence reduction is needed to reconstruct the method dictionary.
+sgc_method(owner, name, ordinal, sid) :- sgc_method_first(owner, name, first_file, first_local), sgc_method_occurrence(owner, name, sid, first_file, first_local), ordinal = count : { sgc_method_first(owner, other, f, i), (f < first_file ; (f = first_file, i < first_local)) }.
 
 // Direct symbols take precedence over reexports. A reexport cycle without a
 // direct symbol contributes no row, just as the source's visited set returns None.
@@ -45,7 +48,7 @@ sgc_resolved(cat(module, ".", name), sid) :- sgc_import(module, "imported", name
 // direct fqnames only, local definitions block global fallback even if no class
 // remains, and global lookup counts original class occurrences rather than IDs.
 .decl sgc_base_name(owner: symbol, ordinal: number, name: symbol, module: symbol)
-sgc_base_name(owner, i, @replace_all(@replace_all(text, "(?s)\\[.*", ""), "(?s).*\\.", ""), module) :- sgc_symbol(n, _, owner), sgs_base(n, i, text), sgs_definition(n, _, _, _, "class", _), sgs_symbol(n, _, _, _, _, _, _, _, _, _, _), docof(n, d), sgs_module(d, _, module).
+sgc_base_name(owner, i, @replace_all(@replace_all(text, "(?s)\\[.*", ""), "(?s).*\\.", ""), module) :- sgc_symbol(n, _, _, owner), sgs_base(n, i, text), sgs_definition(n, _, _, _, "class", _), docof(n, d), sgs_module(d, _, module).
 .decl sgc_imported_base(owner: symbol, i: number, sid: symbol)
 sgc_imported_base(owner, i, sid) :- sgc_base_name(owner, i, name, module), sgc_import(module, "imported", name, fq), sgc_fqname(fq, sid).
 .decl sgc_base_candidate(owner: symbol, base_ordinal: number, local_ordinal: number, sid: symbol)

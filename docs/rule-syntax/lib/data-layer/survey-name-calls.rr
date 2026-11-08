@@ -1,0 +1,26 @@
+// Source name-call precedence, without modern typing's extra scope precision.
+// These are name references, not just syntactic Call nodes. The raw visitor has
+// already selected which names count and retained their occurrence order.
+#include "data-layer/survey-assembly.rr"
+
+.decl sgn_context(n: node, sid: symbol, module: symbol, owner: symbol)
+sgn_context(n, sid, module, owner) :- sgc_symbol(n, _, _, sid), sgs_definition(n, d, _, _, k, owner), k != "class", sgs_module(d, _, module).
+.decl sgn_query(sid: symbol, ordinal: number, name: symbol)
+sgn_query(sid, i, name) :- sgn_context(n, sid, _, _), sgb_raw_ref(n, i, "name_call", _, _, name).
+.decl sgn_own(sid: symbol, name: symbol, target: symbol)
+sgn_own(sid, name, target) :- sgn_query(sid, _, name), sgn_context(_, sid, module, owner), owner != "", sgc_method(cat(module, "::", owner), name, _, target).
+.decl sgn_local_function(module: symbol, name: symbol, ordinal: number, target: symbol)
+sgn_local_function(module, name, i, target) :- sgc_defined(module, name, i, target), sgc_kind(target, k), (k = "function" ; k = "method").
+.decl sgn_local(module: symbol, name: symbol, target: symbol)
+sgn_local(module, name, target) :- sgn_local_function(module, name, i, target), i = min j : { sgn_local_function(module, name, j, _) }.
+sgn_local(module, name, target) :- sgc_defined(module, name, i, target), !sgn_local_function(module, name, _, _), i = min j : { sgc_defined(module, name, j, _) }.
+.decl sgn_target(sid: symbol, name: symbol, target: symbol)
+sgn_target(sid, name, target) :- sgn_own(sid, name, target).
+sgn_target(sid, name, target) :- sgn_query(sid, _, name), sgn_context(_, sid, module, _), !sgn_own(sid, name, _), sgn_local(module, name, target).
+sgn_target(sid, name, target) :- sgn_query(sid, _, name), sgn_context(_, sid, module, _), !sgn_own(sid, name, _), !sgc_defined(module, name, _, _), sgc_import(module, "imported", name, fq), sgc_resolved(fq, target).
+// An unresolved module import still blocks a function-local import. The source
+// returns immediately from that branch instead of trying the next namespace.
+sgn_target(sid, name, target) :- sgn_query(sid, _, name), sgn_context(n, sid, module, _), !sgn_own(sid, name, _), !sgc_defined(module, name, _, _), !sgc_import(module, "imported", name, _), sgb_local_import(n, name, fq), sgc_resolved(fq, target).
+.decl sgn_call(sid: symbol, ordinal: number, name: symbol, has_target: number, target: symbol, target_kind: symbol)
+sgn_call(sid, i, name, 1, target, k) :- sgn_query(sid, i, name), sgn_target(sid, name, target), sgc_kind(target, k).
+sgn_call(sid, i, name, 0, "", "") :- sgn_query(sid, i, name), !sgn_target(sid, name, _).

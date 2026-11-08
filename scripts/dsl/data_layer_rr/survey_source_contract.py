@@ -65,11 +65,15 @@ CASES = [
     ('graph-generic-spelling', {'a.py': 'class Base: pass\nclass C(Base[int], pkg.Base[Other], factory(Base)): pass\n'}),
     ('graph-reexport-cycles', {'a.py': 'from b import Alias\nfrom c import concrete as Reexport\ndef direct(): pass\n', 'b.py': 'from a import Alias\n', 'c.py': 'from missing import concrete\ndef concrete(): pass\n'}),
     ('name-call-own-priority', {'a.py': 'def target(): pass\nclass C:\n def run(self): target()\n def target(self): pass\n'}),
-    ('name-call-method-before-class', {'a.py': 'class target: pass\nclass One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef run(): target()\n'}),
+    ('name-call-method-before-class', {'a.py': 'class target: pass\nclass One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef target(): pass\ndef run(): target()\n'}),
     ('name-call-imports-and-reexports', {'a.py': 'def target(): pass\nclass C: pass\n', 'bridge.py': 'from a import target as Alias\n', 'entry.py': 'from bridge import Alias\nfrom a import C\ndef run():\n Alias()\n C()\n missing()\n'}),
     ('name-call-local-plain-import', {'a.py': 'def target(): pass\n', 'entry.py': 'def run():\n import a.target as callback\n callback()\n'}),
     ('name-call-unresolved-import-blocks-local', {'a.py': 'def target(): pass\n', 'entry.py': 'from missing import callback\ndef run():\n import a.target as callback\n callback()\n'}),
     ('name-call-bound-parameter', {'a.py': 'def target(): pass\ndef len(): pass\ndef run(target):\n target()\n len([])\n'}),
+    ('name-call-local-class', {'a.py': 'class Target: pass\ndef run(): Target()\n'}),
+    ('name-call-local-before-import', {'a.py': 'def target(): pass\n', 'entry.py': 'def target(): pass\nfrom a import target\ndef run(): target()\n'}),
+    ('name-call-hoisted-import', {'a.py': 'def first(): pass\n', 'b.py': 'def target(): pass\n', 'entry.py': 'def run():\n from a import first as callback\n callback()\ndef later():\n from b import target as callback\n'}),
+    ('name-call-reexport-cycle', {'a.py': 'from b import Alias\n', 'b.py': 'from a import Alias\n', 'entry.py': 'from a import Alias\ndef run(): Alias()\n'}),
 ]
 
 
@@ -141,6 +145,23 @@ def ordered(rows):
     return sorted(rows, key=lambda r: json.dumps(r, sort_keys=True, ensure_ascii=False))
 
 
+def native_rows(diagnostics):
+    """Render ordered dictionary DTOs from native order keys, without graph logic.
+
+    Native relations keep first file/local keys instead of computing a dense
+    global rank with an all-pairs count. Only this test DTO needs list indices.
+    """
+    rows=[dict(r['parameters']) for r in diagnostics]
+    for kind in ['graph_symbol','graph_module']:
+        selected=[r for r in rows if r['kind']==kind]
+        selected.sort(key=lambda r:(r['order_file'],r['order_local'] if kind=='graph_symbol' else 0))
+        for i,row in enumerate(selected):
+            row['ordinal']=i
+            del row['order_file']
+            if kind=='graph_symbol':del row['order_local']
+    return ordered(rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['source', 'native'])
@@ -172,7 +193,7 @@ def main():
         evidence['engineSha256'] = sha(args.engine.read_bytes())
         for case in baseline['cases']:
             native = execute_native(args.engine, args.rule, case['files'], {})
-            rows = ordered([dict(r['parameters']) for r in native['diagnostics']])
+            rows = native_rows(native['diagnostics'])
             evidence['cases'].append(dict(id=case['id'], expected=case['expected'], actual=rows,
                                           passed=rows == case['expected'], programInputs=native['programInputs']))
     evidence['passed'] = all(c.get('passed', True) for c in evidence['cases'])

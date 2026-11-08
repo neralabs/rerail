@@ -3,7 +3,7 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "data-layer/survey-assembly.rr"
+#include "data-layer/survey-name-calls.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"
@@ -32,9 +32,9 @@ RawRef(@place(path, 0), "raw_ref", path, s, i, k, base, has, attr) :- sgb_raw_re
 ExecutionHit(@place(path, 0), "execution_hit", path, s, name) :- sgb_execution(f, name), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
 .violation LocalImport(at: span, kind: symbol, path: symbol, symbol_ordinal: number, name: symbol, target: symbol) code "SURVEY_LOCAL_IMPORT" "import"
 LocalImport(@place(path, 0), "local_import", path, s, name, target) :- sgb_local_import(f, name, target), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
-.violation GraphSymbol(at: span, kind: symbol, ordinal: number, sid: symbol, path: symbol, line: number, symbol_kind: symbol) code "SURVEY_GRAPH_SYMBOL" "symbol"
-GraphSymbol(@place(path, 0), "graph_symbol", i, sid, path, line, k) :- sgc_symbol(n, i, sid), sgs_symbol(n, _, _, _, _, _, _, k, _, line, _), docof(n, d), sgs_module(d, path, _).
-.violation GraphModule(at: span, kind: symbol, ordinal: number, module: symbol, path: symbol) code "SURVEY_GRAPH_MODULE" "module"
+.violation GraphSymbol(at: span, kind: symbol, order_file: number, order_local: number, sid: symbol, path: symbol, line: number, symbol_kind: symbol) code "SURVEY_GRAPH_SYMBOL" "symbol"
+GraphSymbol(@place(path, 0), "graph_symbol", f, i, sid, path, line, k) :- sgc_symbol(n, f, i, sid), sgs_symbol(n, _, _, _, _, _, _, k, _, line, _), docof(n, d), sgs_module(d, path, _).
+.violation GraphModule(at: span, kind: symbol, order_file: number, module: symbol, path: symbol) code "SURVEY_GRAPH_MODULE" "module"
 GraphModule(@place(path, 0), "graph_module", i, module, path) :- sgc_module(module, _, i, path).
 .violation GraphFqname(at: span, kind: symbol, name: symbol, sid: symbol) code "SURVEY_GRAPH_FQNAME" "fqname"
 GraphFqname(@place("", 0), "graph_fqname", name, sid) :- sgc_fqname(name, sid).
@@ -48,3 +48,5 @@ GraphBase(@place("", 0), "graph_base", owner, i, sid) :- sgc_base(owner, i, sid)
 GraphSubclass(@place("", 0), "graph_subclass", owner, sid) :- sgc_subclass(owner, sid).
 .violation GraphResolution(at: span, kind: symbol, name: symbol, sid: symbol) code "SURVEY_GRAPH_RESOLUTION" "resolution"
 GraphResolution(@place("", 0), "graph_resolution", name, sid) :- sgc_resolved(name, sid).
+.violation GraphNameCall(at: span, kind: symbol, owner: symbol, ordinal: number, name: symbol, has_target: number, target: symbol, target_kind: symbol) code "SURVEY_GRAPH_NAME_CALL" "name call"
+GraphNameCall(@place("", 0), "graph_name_call", sid, i, name, has, target, k) :- sgn_call(sid, i, name, has, target, k).

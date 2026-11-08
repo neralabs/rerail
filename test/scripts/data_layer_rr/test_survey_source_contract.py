@@ -1,5 +1,6 @@
 """The native producer contract must compare actual rows and require its full corpus."""
 import contextlib
+import copy
 import io
 import json
 from pathlib import Path
@@ -14,6 +15,28 @@ import replay
 
 
 class SurveySourceContractTests(unittest.TestCase):
+    def test_dictionary_dto_uses_native_order_keys_without_mutating_diagnostics(self):
+        rows=[
+            dict(parameters=dict(kind='graph_symbol',sid='last',order_file=3,order_local=1)),
+            dict(parameters=dict(kind='graph_symbol',sid='first',order_file=0,order_local=9)),
+            dict(parameters=dict(kind='graph_symbol',sid='middle',order_file=3,order_local=0)),
+            dict(parameters=dict(kind='graph_module',module='later',order_file=4)),
+            dict(parameters=dict(kind='graph_module',module='earlier',order_file=1)),
+        ]
+        before=copy.deepcopy(rows)
+        actual=contract.native_rows(rows)
+        self.assertEqual(rows,before)
+        self.assertEqual({r['sid']:r['ordinal'] for r in actual if r['kind']=='graph_symbol'},
+                         dict(first=0,middle=1,last=2))
+        self.assertEqual({r['module']:r['ordinal'] for r in actual if r['kind']=='graph_module'},
+                         dict(earlier=0,later=1))
+        rows[0]['parameters']['order_file']=-1
+        self.assertNotEqual(actual,contract.native_rows(rows))
+
+    def test_dictionary_dto_refuses_missing_native_order_evidence(self):
+        with self.assertRaises(KeyError):
+            contract.native_rows([dict(parameters=dict(kind='graph_symbol',sid='missing',order_file=0))])
+
     def recording(self):
         return dict(format='rerail.survey-source-inventory/v1', sourcePin=contract.PIN,
                     cases=[dict(id=name, files=[dict(path=p, source=t) for p,t in files.items()],
