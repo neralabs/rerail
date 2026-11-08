@@ -122,6 +122,7 @@ fn suite() {
     let mut table: std::collections::BTreeMap<char, [usize; 5]> = std::collections::BTreeMap::new();
     let mut differ_simd: Vec<String> = Vec::new();
     let mut jsonc_takes: Vec<String> = Vec::new();
+    let mut ts_wrong: Vec<String> = Vec::new();
     for path in &paths {
         let bytes = std::fs::read(path).expect("reads");
         let name = base(path);
@@ -150,6 +151,9 @@ fn suite() {
         if a.is_some() && b.is_some() && a != b {
             problems.push(format!("{name}: the two forms' nodes differ"));
         }
+        if (class == 'y' && !t) || (class == 'n' && t) {
+            ts_wrong.push(name.clone());
+        }
         if let Some(s) = s
             && s != a.is_some()
         {
@@ -161,6 +165,7 @@ fn suite() {
         eprintln!("{c}_     {:5}  {:6}  {:6}  {:8}  {:5}", r[0], r[1], r[2], r[3], r[4]);
     }
     eprintln!("step 15 accepts, of the n_ files: {jsonc_takes:?}");
+    eprintln!("tree-sitter-json refuses valid or accepts invalid: {ts_wrong:?}");
     eprintln!("step 14 and simdjson differ on {}: {differ_simd:#?}", differ_simd.len());
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }
@@ -226,7 +231,18 @@ fn median(mut xs: Vec<f64>) -> f64 {
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_bench() {
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
-    let forms = [("14-json", form("14-json")), ("15-jsonc", form("15-jsonc"))];
+    // `RERAIL_FORMS`: other Bitlex files to time, as paths, in place of the two forms.
+    let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
+        Ok(list) => list
+            .split(',')
+            .map(|p| {
+                let name = Path::new(p).file_stem().expect("a name").to_string_lossy().into_owned();
+                let c = compile_step(&name, &std::fs::read_to_string(p).expect("reads"));
+                (name, c)
+            })
+            .collect(),
+        Err(_) => vec![("14-json".to_owned(), form("14-json")), ("15-jsonc".to_owned(), form("15-jsonc"))],
+    };
     let paths = files_in("RERAIL_JSON_CORPUS");
     let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
     use ast_grep_language::LanguageExt;
@@ -362,4 +378,43 @@ fn jsonc_comments_equal_tree_sitter() {
     }
     eprintln!("{} files: {equal} with comments equal to tree-sitter-json; {quoted_refused} with a quote in a comment sent to tree-sitter; {ts_errors} tree-sitter finds an error in", paths.len());
     assert!(problems.is_empty(), "{} differ:\n{}", problems.len(), problems.join("\n"));
+}
+
+/// Each form's shape, printed: tier 1's operations by kind, its carried state, its generated
+/// loop body by opcode, and tier 2's words by opcode, with the machine code's sizes.
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn json_shapes() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let p = &c.program.block_programs()[0];
+        let mut ops: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for op in &p.ops {
+            let k = format!("{op:?}");
+            *ops.entry(k.split(['(', ' ', '{']).next().unwrap_or("").to_owned()).or_default() += 1;
+        }
+        let body = super::block_tests::body_of(&c.parser.tier1.clif);
+        let mut clif: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for l in &body {
+            *clif.entry(super::block_tests::opcode(l).to_owned()).or_default() += 1;
+        }
+        // The disassembly's instruction lines: indented, not an unwind note, not a label.
+        let machine = |asm: &str| asm.lines().filter(|l| l.starts_with("  ") && !l.trim_start().starts_with("unwind") && !l.trim_end().ends_with(':')).count();
+        let mut words: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for w in &c.native.structural {
+            let k = format!("{:?}", w.operation);
+            *words.entry(k.split(['(', ' ', '{']).next().unwrap_or("").to_owned()).or_default() += 1;
+        }
+        eprintln!("== {name}");
+        eprintln!("tier 1: {} operations {ops:?}", p.ops.len());
+        eprintln!("  carried words {}, state bits {}, outputs {}, delay {}", super::block_tests::carried_words(p), super::block_tests::state_bits(p), p.outputs.len(), p.delay);
+        eprintln!("  loop body: {} CLIF instructions {clif:?}", body.len());
+        eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
+        eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
+        eprintln!("  switches {}, strings {}, checks {}", c.native.switches.len(), c.native.strings.len(), p.checks.len());
+        eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
+        if std::env::var("RERAIL_DUMP").is_ok() {
+            eprintln!("{}", c.parser.tier1.disassembly);
+        }
+    }
 }
