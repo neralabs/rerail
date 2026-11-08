@@ -2194,8 +2194,22 @@ What remains:
   68 s that combining takes (sampled): its specialization loop runs `carry` from scratch each round and clones
   every rule. Peak RSS is 2.0 GB at 240 rules, over the 1 GB budget.
 
-**Closure (narrowed):** the combined pack prepared within the run cap and the memory budget: hiding's
-specialization incremental, and the pack's peak memory measured and cut.
+**Progress (2026-11-08, decision 0082's dump).** The 58 s was not the loop's size. One program,
+`ruff-perf401`, never ended: a copy whose head holds a constant at its seeded column (`unset`, -1) was found again
+each round and counted as a change, 8,532 rounds in 40 s at a steady 1,311 rules. Fixed in `hiding::hide`
+(`a_copy_with_a_constant_at_its_seeded_column_ends`); perf401 alone now takes 0.39 s. `check-rr` now also types
+the pruned program (`types-failed`), as a run does when it plans. Six rules still fail, alone as in the pack:
+
+- **Refused at reading:** `ruff-b005` (an unbounded value cycle) and `ruff-perf403` (`match_all` over any
+  expression, O122).
+- **Types:** `ruff-pyi062` (`lit_key`: `$t is a Name and a Kind`) and `ruff-ruf028` (`stmt_level`: `$k is a
+  Kind and a Name`).
+- **A span where text is compared (O120):** `ruff-pgh004` (`noqa_all_tail`: `R = ""` over a capture of a comment)
+  and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes).
+
+Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O123).
+
+**Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O123's.
 
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
@@ -2384,3 +2398,26 @@ once, and no measurement on the 9,010-file repository exists yet. A column bound
 
 **Closure:** containers are matched in one chunked pass over the file's bytes, with matches kept per container,
 measured at full size; and a column of any expression is scanned, or the rule binds its kinds.
+
+
+## O123. The Python pack does not finish within the run cap: its libraries are copied into every program
+
+Measured 2026-11-08 with decision 0082's profile and dump, on 538 of the pack's programs (O111's six left out),
+over `fixtures/python/calls/project`, load 36 to 75. The run was stopped at 115 s, 116.4 s user CPU, before it
+evaluated anything:
+
+| stage | CPU | allocated | what it works on |
+|---|---|---|---|
+| parse each program | 9.4 s | 24.2 GB | 538 printed programs, each with its `#include`d libraries inlined |
+| `hiding::hide`, per program | 19.5 s | 21.2 GB | 353,878 rules: 658 per program, of which a handful are the rule's own |
+| merge the programs | 0.3 s | 0.3 GB | every library relation renamed `p<i>_…`, kept once per program |
+| prune, simplify, demand | 20.6 s | 12.6 GB | `simplify::merge_identical` folds the 538 copies back into one |
+| lower the program | 0.2 s | 0.2 GB | |
+| `file_local::push_local_joins` (the split) | over 50 s, stopped | | no span of its own; `split_explained` |
+
+Peak footprint 3.2 GB, against the 1 GB budget. At 50 programs the run takes 5.6 s, at 100 15.1 s: the passes
+before `simplify`'s merge grow with the copies, and the split grows faster than the rules.
+
+**Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
+include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
+and linear in the rules; the whole pack runs within the cap and the memory budget, measured.

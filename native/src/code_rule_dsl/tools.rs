@@ -191,6 +191,16 @@ pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
 pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
     serde_json::Value::Array(paths.iter().map(|path| {
         match super::logic::rr::read_file(path) {
+            // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
+            // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
+            Ok((program, _)) if let Err(error) = super::logic::rr::print(&program)
+                .map_err(|e| e.to_string())
+                .and_then(|text| super::logic::plan::corpus::combine(&[text.as_str()], "").map_err(|e| e.to_string()))
+                // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
+                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+            {
+                serde_json::json!({"path": path, "status": "types-failed", "error": error})
+            }
             Ok((program, files)) => serde_json::json!({
                 "path": path, "status": "reader-passed", "rules": program.rules.len(),
                 "outputs": program.outputs,
