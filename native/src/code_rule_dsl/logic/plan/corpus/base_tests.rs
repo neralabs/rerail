@@ -1388,6 +1388,32 @@ last_end(e) :- node(d, _, "module", _, _), e = max t : { node(d, _, "function_de
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// serverplan-target-architecture's required shapes: a demanded relation (decision 0048) read with constants alone
+/// (`!ident("g")`). The reader passes no variable on, so its `pre_<i>` is nullary, its body empty or a negation
+/// alone, and takes the presence column the physical form gives every nullary relation.
+#[test]
+fn a_demanded_relation_read_with_constants_alone() {
+    let source = "f = 1\nh = f\n";
+    let dir = corpus("demand-constants-alone", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: loc, s: symbol)
+.decl ident(s: symbol)
+ident(s) :- node(_, n, "identifier", _, _), text(n, s).
+.decl other(s: symbol)
+other("f").
+.decl missing(s: symbol)
+missing("f") :- !ident("f").
+missing("g") :- !ident("g").
+missing("h") :- !other("h"), !ident("h").
+missing("x") :- !other("x"), !ident("x").
+.output missing
+"#;
+    let got = run(&dir, program, &["missing"]);
+    assert_eq!(got, ["g\nx\n"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// internal-dead-code's dynamic imports: two groups of one match (`match_group` twice on `m`), the match's `line` and
 /// `col`, and a disjunction over them (one rule per alternative, each reading the match relations).
 #[test]
