@@ -1593,10 +1593,97 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
-      "sha256": "535bc39381c2d1c58b7017186819a84fedd43e9074fff0ab5aea8422cb7a5e82",
+      "sha256": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "535bc39381c2d1c58b7017186819a84fedd43e9074fff0ab5aea8422cb7a5e82",
+          "after": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
+          "reason": "Adopt ordered class accessors (23af0990d) and restrict native roots to the requested imported classes (378743b6b); exact programs and raw helper parity retained in rr-survey-ordered-members.json.gz"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-assembly.rr",
+      "sha256": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-body.rr",
+      "sha256": "7044d410e4b03c70c81aa498f128a20b250d0be633f4f2bc57cce301cd6de7e4",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-constants.rr",
+      "sha256": "f0e9ab56894f111979878241d7b2719770df30e6239719293395578834d90727",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-edges.rr",
+      "sha256": "d685e7a11257fae07db3995c54712697be8272535e655904c9371dfcddc27f47",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-exports.rr",
+      "sha256": "502aaec544a2ff1cccc500a837d2f691d6f41fe48a378ee4e84f7ff1863aac2c",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-members.rr",
+      "sha256": "0e8e4dc4610858db29c47c4dcf4146e9f88a52bb6d2d8679ac7c31c7d58214b6",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-name-calls.rr",
+      "sha256": "151cdad50398a1669dbb70df4a3c9dc6aec906c9ea3b7d753ab18b7fde2ea7d1",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-reference-targets.rr",
+      "sha256": "a6f6dc56b034fdb16bf5b748f97df9f1556bdae07a5cd82d7a69fba9d1f36c39",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-source.rr",
+      "sha256": "10b2c246f9c6a3a16c9be87d4f1d664b4d1120282b90f520d45114542b52e95b",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/ordered-class-members.rr",
+      "sha256": "4976b4fdcb35591de358c37caa9432c4c3f7aaef9736874b97e5c4bcb8f16b30",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
     }
   ],
   "rules": [

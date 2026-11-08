@@ -1680,3 +1680,11 @@ The [export receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-
 The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`.
 Independent export-file loading, graph scan scope, literal dynamic roots, source-to-consumer integration, and lifecycle acceptance remain open.
 The randomized mixin tie also remains explicit and unresolved. This step does not complete rule 89 or the migration.
+
+The final inventory audit detects a stale `survey-graph.rr` hash from the earlier ordered-accessor change.
+Its current bytes exactly match the archived ordered-member receipt.
+The manifest now records that repair, its two source commits, and its acceptance receipt.
+It also tracks all ten authored survey and ordered-member libraries with their current hashes.
+The twelve raw-graph helper comparisons pass again on the current CLI.
+Inventory passes with eighty-nine drafts and eleven absent translations. These counts are unchanged by the source-producer work.
+The production-source refusal also passes its explicit regression check.
