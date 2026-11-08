@@ -56,7 +56,7 @@ pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 22] = [
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 24] = [
     ("value", &[1]),
     ("text", &[1]),
     ("name", &[1]),
