@@ -16,7 +16,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_components`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -72,6 +72,7 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         ("policy", &["p:sym", "k:int", "json:sym"]),
         ("setting", &["p:sym", "k:int", "key:sym", "text:sym"]),
@@ -284,6 +285,7 @@ impl Writer<'_> {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
                     }
                 }
+                Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
             }
         }
         for (span, text) in &prog.rx_spans {
@@ -542,6 +544,9 @@ impl<'a> Reader<'a> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        for row in self.get("native_components") {
+            prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
             let span = match text(&row[0])?.as_str() {

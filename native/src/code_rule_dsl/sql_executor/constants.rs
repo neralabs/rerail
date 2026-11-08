@@ -9,7 +9,9 @@ pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -
     let e = Arc::make_mut(&mut run.emitted);
     let mut count = 0;
     for (id, (step, query)) in e.program.steps.iter_mut().zip(&mut e.queries).enumerate() {
-        if query.is_some() {
+        // A SQL producer's step has no parsed query either, but it is not immutable: what it
+        // reads changes, and maintenance recomputes it (`maintenance`).
+        if query.is_some() || run.producers.contains_key(&step.output) {
             continue;
         }
         let width = e

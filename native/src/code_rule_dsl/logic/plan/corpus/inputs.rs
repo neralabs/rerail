@@ -14,7 +14,7 @@ struct Failure {
 type ReadResult<T> = std::result::Result<T, Failure>;
 fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
 
-fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
+pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (i, c) in text.char_indices() {
@@ -31,7 +31,7 @@ fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     for part in parts {
         let Some((key, value)) = part.split_once('=') else { return Err(Error::Plan(format!("invalid input parameter: {part}"))); };
         let (key, value) = (key.trim(), value.trim());
-        if !["IO", "filename", "dir", "path", "records", "projection", "at", "artifact"].contains(&key) {
+        if !["IO", "filename", "dir", "path", "records", "projection", "at", "artifact", "query"].contains(&key) {
             return Err(Error::Plan(format!("unsupported input parameter: {key}")));
         }
         let value = if value.starts_with('"') {

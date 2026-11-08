@@ -2186,7 +2186,7 @@ What remains:
 **Closure (narrowed):** the combined pack prepared within the run cap and the memory budget: hiding's
 specialization incremental, and the pack's peak memory measured and cut.
 
-## O112. The shared tape cache holds memo rows whose length does not match
+## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
 "corrupt content store: facts memo length does not match metadata". The default tape cache
@@ -2202,7 +2202,73 @@ fresh store (`RERAIL_TAPE_CACHE`).
 
 **Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.
 
+*Likely writer (2026-11-07, investigate-bend-vs-datalog):* an early version of decision 0076's corpus test
+(`cross_file_rows_are_memoised_per_import_component`) ran an `UPDATE` on `facts_results` for every row with
+`path = 'b.py'` in the shared store, whatever its plan (17 rows then), to plant a bad row. The test now changes only
+its own plan's newest row and restores it.
+
 **Closed (2026-11-07):** a row that does not decode is a miss. `facts_memo` skips a result row whose frame does
 not decode to its length, and a completion row whose counts do not, so only that row's plans are evaluated again.
 `put_facts_memo` overwrites a result row, and a completion row it cannot merge into is replaced instead of failing
 the write (`a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced`). The writer of the bad rows was not found.
+
+## O113. `calls.rr` with `.pragma "cross-memo"` fails in world's final round: no statistics for `docof` (closed 2026-11-07)
+
+Found trying decision 0076 on the typing programs (2026-11-07). With the pragma appended (even naming no relation
+`calls.rr` derives), `python_calls_program_agrees_with_the_runtime` fails in the final round with "no statistics for
+docof.n" (`plan.rs`, an input a rule reads that is not a batch source and was not measured).
+
+- Fixed on the way: `cross_memo::add` merged everything `components.rr` brought with `core.rr`. `calls.rr` declares
+  its own base relations (`docof(n: node, d)`, not `core.rr`'s `loc`), and the merged rules and inputs failed with
+  "table docof may not be dropped". `add` now takes only the `rr_` rules and what they read that the program lacks.
+- Not investigated: which part reads `docof` unmeasured. The likely one is the component sub-program, if a
+  `components.rr` rule that reads `docof` lands in the cross-file part (`rr_cx_imports`' recursive package rule has
+  no node, so the split may not place it per file). The toy corpus test reads `core.rr`'s `docof` and passes.
+- Also seen: the 84-file Jedi benchmark (`dl-small` with typeshed) ran past 10 minutes of wall time at load 50–120
+  without finishing its final round, so the time it would take is unknown.
+
+*Closed:* `add` gives inputs and facts only to relations the program does not declare (calls.rr's `docof` over
+nodes is a rule over `node` after lowering; re-adding `core.rr`'s input left it unmeasured), and a pragma naming no
+derived relation binds no `rr_cross_doc`. The profile names the relations the static contract allows: 122 of
+calls.rr's 234 cross-file relations, once run constants (`py_version`) and projections that keep a node (`kind`,
+`docof`) are read freely. Kept out: `isqmod`, `qknown`, `qopen` (sets over every document, keyed by name), `tsub`,
+`tsup_open` and `need_name` (demand).
+
+## O114. The cross memo is correct on calls.rr but does not pay: what typing's rows depend on is global
+
+Measured 2026-11-07 (decision 0076 §7). Over the 84-file Jedi corpus, replaying 133 components (1.55 M rows) makes
+the cross part 3.6 s slower than deriving it (19.8 s against 16.2 s), and peak RSS reaches 1,038 MB.
+`RERAIL_CROSS_MEMO=verify` passes. The declarable relations (122 of 234) cost about 3.6 s to derive. The expensive
+fixpoint reads lookups over every document by name (`isqmod`, `qknown`, `qopen`, `tsub`, `tsup_open`, the demand
+`need_name`), so it cannot be declared.
+
+Two steps would change that, in order:
+1. **The rules.** Make those lookups closure-local: ask "is q a module" of the modules the closure imports
+   (`rr_cx_imports` joined with `rr_cx_module`), not of every document; derive `tsub` per class from its own bases
+   (0065 §2 already moves `sub` to the workspace side). These are calls.rr's, the Typing branch's to change.
+2. **The engine.** Replay in place, not by copy: a memoised relation's stored rows are read where rules probe them
+   (0065 §2, "read by index as rules probe them"), and a guarded rule is cut to the missing components' documents
+   before its joins, not filtered after them.
+
+**Closure:** with both, a warm replaying run's cross part costs less than a derived one on this corpus, under 1 GB.
+
+
+## O115. A prepared program read back from the store fails its run: "no such table: pre_85"
+
+Found merging final-rerail-shape into investigate-bend-vs-datalog (2026-11-08). On a fresh store,
+`prepared::tests::a_prepared_program_reads_back_from_its_facts_and_its_tape` passes once and fails the second time,
+when the program is read back from the store (decision 0074, rules as facts), with "no such table: pre_85" (a demand
+split's relation, `demand.rs`):
+
+```text
+RERAIL_TAPE_CACHE=/tmp/fresh.sqlite <test binary> --exact …a_prepared_program_reads_back_from_its_facts_and_its_tape   # ok
+RERAIL_TAPE_CACHE=/tmp/fresh.sqlite <test binary> --exact …a_prepared_program_reads_back_from_its_facts_and_its_tape   # fails
+```
+
+The test's round trip (front program, lowered program, file-local split) compares equal, so what differs is
+outside what it compares. In parallel test runs the in-memory cache (16 programs) is evicted, runs read their
+program back, and other corpus tests fail the same way (`cross_file_rows_are_memoised_per_import_component`,
+`a_corpus_runs_memoised_rows_bind_by_name_from_their_frames`); with `--test-threads=1` they pass. Not investigated
+further: the code is final-shape's (0073, 0074).
+
+**Closure:** a program read back from the store runs as the one prepared, with a test that runs twice on one store.

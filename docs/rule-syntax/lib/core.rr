@@ -264,6 +264,12 @@
 // only where a finding must match a script that does this; it reports fewer findings on cycles.
 // Cost: as dfs_first, plus a search in root order for each root whose chain enters a cycle.
 .decl dfs_first_memo(r: node, hit: node, first: number, edge: relation, target: relation, roots: relation)
+// components(d, c, k, edge, own): document d's strongly connected component of the graph edge(d, e) (d depends on
+// e), named by its smallest document c, and the component's key k: the SHA-256 of its documents' digests own(d, h),
+// sorted, then the keys of the components it depends on, sorted. Equal keys mean equal digests over the whole import
+// closure (decision 0076). A document named only by an edge has the empty digest.
+// Cost: linear in the edges (one Tarjan pass; keys bottom up).
+.decl components(d: number, c: number, k: symbol, edge: relation, own: relation)
 .input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
 .input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo
 

@@ -21,6 +21,8 @@
 mod setfix;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
+/// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
+pub(in crate::code_rule_dsl) mod components;
 pub(in crate::code_rule_dsl) mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(test)]

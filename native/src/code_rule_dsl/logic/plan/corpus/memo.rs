@@ -9,7 +9,7 @@
 //! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
 //! it (decision 0053); the document key is in the entry, and an entry under another key is a miss.
 
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
+use crate::content_store::{ContentStore, FactsFrame, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
@@ -24,7 +24,7 @@ pub(super) fn base_key(rel: &str) -> String {
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Entry {
+pub(in crate::code_rule_dsl) struct Entry {
     /// The document key the rows were made under (`doc_keys`): their node ids are `key << 32 | index`.
     pub key: i64,
     /// The document's nodes (for the run's report).
@@ -96,6 +96,25 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
+}
+
+/// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
+/// JSON), and its documents' frames, still compressed, by path. A frame's document key is `frame_key`, its entry
+/// `decode_frame`.
+pub(in crate::code_rule_dsl) fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMap<String, String>, Vec<FactsFrame>)>> {
+    let Some((plan, sources, relations)) = store.corpus_run_of(root)? else { return Ok(None) };
+    let sources: HashSet<i64> = sources.into_iter().collect();
+    Ok(Some((relations.into_iter().collect(), store.facts_frames_of_plan(plan, SCHEMA, &sources)?)))
+}
+
+/// The document key of a frame's entry: its first eight bytes, decompressing no more.
+pub(in crate::code_rule_dsl) fn frame_key(frame: &FactsFrame) -> StoreResult<i64> {
+    Ok(i64::from_le_bytes(frame.head(8)?.try_into().expect("8 bytes")))
+}
+
+/// A frame's entry.
+pub(in crate::code_rule_dsl) fn decode_frame(frame: &FactsFrame) -> StoreResult<Entry> {
+    decode(&frame.bytes()?)
 }
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.

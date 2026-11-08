@@ -25,6 +25,9 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) path: PathBuf,
     pub(super) store: ContentStore,
     pub(super) memo: memo::Held,
+    /// The thread that started it: in tests, which run in parallel in one process, a session is its own test's.
+    #[cfg(test)]
+    owner: std::thread::ThreadId,
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -38,7 +41,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join("session.sqlite");
     let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    *session = Some(Session { path, store, memo: Default::default() });
+    *session = Some(Session { path, store, memo: Default::default(), #[cfg(test)] owner: std::thread::current().id() });
     Ok(())
 }
 
@@ -74,10 +77,18 @@ pub(super) struct Held(MutexGuard<'static, Option<Session>>, bool);
 
 impl Held {
     pub(super) fn as_ref(&self) -> Option<&Session> {
-        self.0.as_ref().filter(|_| !self.1)
+        self.0.as_ref().filter(|s| !self.1 && Self::ours(s))
     }
     pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
-        self.0.as_mut().filter(|_| !self.1)
+        let full = self.1;
+        self.0.as_mut().filter(|s| !full && Self::ours(s))
+    }
+    /// Whether a run on this thread is the session's: always, outside tests.
+    fn ours(_session: &Session) -> bool {
+        #[cfg(test)]
+        return _session.owner == std::thread::current().id();
+        #[cfg(not(test))]
+        true
     }
 }
 
