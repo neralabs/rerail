@@ -875,11 +875,18 @@ fn thread_cpu() -> f64 {
 }
 
 /// This thread's CPU seconds.
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+}
+
+/// This thread's CPU seconds (user + kernel).
+#[cfg(windows)]
+fn thread_cpu() -> f64 {
+    let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
+    (user + kernel).as_secs_f64()
 }
 
 /// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].

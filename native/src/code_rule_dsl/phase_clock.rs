@@ -46,7 +46,7 @@ fn thread_cpu_nanoseconds() -> u64 {
     crate::code_rule_dsl::prof::single_thread_cpu().as_nanos() as u64
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 fn thread_cpu_nanoseconds() -> u64 {
     let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `now` is a valid timespec for the call to fill.
@@ -54,6 +54,12 @@ fn thread_cpu_nanoseconds() -> u64 {
         return 0;
     }
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
+}
+
+#[cfg(windows)]
+fn thread_cpu_nanoseconds() -> u64 {
+    let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
+    (user + kernel).as_nanos() as u64
 }
 
 /// The clocks' totals so far, in nanoseconds.
