@@ -59,3 +59,20 @@ fn a_tier2_program_holds_only_its_words() {
     let bad_return = RUN.replace("  0004 LEAF #2\n", "  0004 PUSH @0002\n");
     assert!(rir::assemble(&bad_return).is_err());
 }
+
+/// Cranelift lowers the same words (`native_cpu_stream`): the compiled function writes the
+/// interpreter's nodes and refuses where it refuses, at the same word.
+#[test]
+fn compiled_words_equal_the_interpreter() {
+    let p = rir::assemble(RUN).unwrap_or_else(|e| panic!("{e}"));
+    let compiled = native_cpu_stream::compile(&native_ir::lower(&p).expect("lowers")).unwrap_or_else(|_| panic!("compiles"));
+    let cases: [(&[u8], &[u32], &[u32]); 5] =
+        [(b"aa a ", &[0, 1, 3], &[]), (b"ab", &[0, 1], &[]), (b"a", &[0, 1], &[]), (b"aa", &[0, 1], &[1]), (b"", &[], &[])];
+    for (bytes, starts, lasts) in cases {
+        let want = run(&p, bytes, starts, lasts).map_err(|r| r.pc);
+        assert_eq!(compiled.run(bytes, starts, lasts).map_err(|r| r.pc), want, "{}", String::from_utf8_lossy(bytes));
+    }
+    // A tree walker's program is not tier 2's.
+    let walker = rir::assemble("program -\n  mode set=0 query=0\n  0000 STOP 0\n").expect("assembles");
+    assert!(native_cpu_stream::compile(&native_ir::lower(&walker).expect("lowers")).is_err());
+}

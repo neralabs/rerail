@@ -437,6 +437,8 @@ pub(super) struct BlockNative {
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
+    /// The token checks tier 2's `CHECK` runs (decision 0052), lowered.
+    pub checks: Vec<BlockNative>,
 }
 
 /// An instruction of a block body.
@@ -524,6 +526,7 @@ impl BlockNative {
             extracts: program.extract_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
+            checks: program.checks.iter().map(|c| BlockNative::lower(&c.program)).collect(),
         }
     }
 
@@ -588,6 +591,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
+            checks: self.checks.iter().map(BlockNative::planes_form).collect(),
         }
     }
 }

@@ -102,12 +102,15 @@ arm 18 token 2 to 17 do close close leaf                # `,` after a string val
 
 ## 4. The stream and the kinds
 
-- **The stream** is tier 1's one extraction: every token start, and the last byte of each
-  token whose end the next start does not give (a word before a space). The compiler knows
-  which token kinds have an end entry, so a transition reads one or two entries, never searches.
-- **The token's kind** is its row's, or from its bytes: a punctuation byte is its kind; a word
-  starting `t`, `f` or `n` is compared once with `true`, `false`, `null` (one 32-bit compare,
-  and its length from the end entry); an escape's second byte picks its kind or refuses.
+- **The stream** is two of tier 1's extracts, as simdjson's structural indexes: every
+  token's first byte, and the last byte of each token whose row does not give its end (a
+  one-byte token ends after its byte; a keyword-only row's word gives its length). The
+  compiler knows which rows take a last byte, so an arm's `SPAN` reads the next one, never
+  searches (decision 0053).
+- **The token's kind** is its first byte, as simdjson's `switch (*value)`: a `SWITCH` on it.
+  A word starting `t`, `f` or `n` is switched on byte by byte and then compared once with
+  `true`, `false`, `null` (`WORD`, one load and compare, its length from its last byte); an
+  escape's second byte picks its kind or refuses.
 - **A number's syntax** is tier 2's, as simdjson's `parse_number` (decision 0052): `check number = G`
   is a grammar over the token's bytes. The compiler makes it a byte state machine (8 states,
   `parse_number`'s steps), then straight-line operations over the token's window, a `fill`

@@ -924,6 +924,24 @@ fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec
     )
 }
 
+/// JSON files for tier 2: the cases, small files of every kind and error, nesting, and tokens
+/// longer than a 64-byte block.
+fn json_tier2_files() -> Vec<Vec<u8>> {
+    let mut files: Vec<Vec<u8>> = JSON_CASES.iter().map(|c| c.to_vec()).collect();
+    let long = "9".repeat(150);
+    files.extend(
+        [
+            "[]", "{}", "[[]]", "[{}]", "{\"a\":[]}", " 1 ", "true", "null", "[true,false,null]", "\"\"", "\"\\n\"", "\"a\\\"b\"",
+            "\"\\x\"", "[1,]", "{\"a\"}", "{\"a\":}", "[1 2]", "-", "1.", "1.e5", "-0.0e-0", "01", "tru", "truex", "[nul]",
+            "{\"a\":1,\"b\":{\"c\":[1,{\"d\":null}]}}", "  [ 1 , 2 ]  \n", "[\"a\" , \"b\"]",
+        ]
+        .map(|s| s.as_bytes().to_vec()),
+    );
+    files.push(format!("[{long}, -{long}.{long}e-{long}]").into_bytes());
+    files.push(format!("{{\"{long}\": \"{long}\\t{long}\"}}").into_bytes());
+    files
+}
+
 /// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the file
 /// goes to tree-sitter (a fallback bit, or a word that refuses).
 fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNode>> {
@@ -969,18 +987,7 @@ fn json_tier2_nodes_equal_the_reference() {
     let (p, compiled) = json_compiled();
     let fallbacks = compiled.fallbacks;
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let mut files: Vec<Vec<u8>> = JSON_CASES.iter().map(|c| c.to_vec()).collect();
-    let long = "9".repeat(150);
-    files.extend(
-        [
-            "[]", "{}", "[[]]", "[{}]", "{\"a\":[]}", " 1 ", "true", "null", "[true,false,null]", "\"\"", "\"\\n\"", "\"a\\\"b\"",
-            "\"\\x\"", "[1,]", "{\"a\"}", "{\"a\":}", "[1 2]", "-", "1.", "1.e5", "-0.0e-0", "01", "tru", "truex", "[nul]",
-            "{\"a\":1,\"b\":{\"c\":[1,{\"d\":null}]}}", "  [ 1 , 2 ]  \n", "[\"a\" , \"b\"]",
-        ]
-        .map(|s| s.as_bytes().to_vec()),
-    );
-    files.push(format!("[{long}, -{long}.{long}e-{long}]").into_bytes());
-    files.push(format!("{{\"{long}\": \"{long}\\t{long}\"}}").into_bytes());
+    let files = json_tier2_files();
     let mut parsed = 0;
     for f in &files {
         let want = reference_nodes(&stmts, f);
@@ -989,4 +996,24 @@ fn json_tier2_nodes_equal_the_reference() {
         parsed += usize::from(want.is_some());
     }
     assert!(parsed > files.len() / 2, "{parsed} of {} parsed", files.len());
+}
+
+/// JSON's tier 2 on Cranelift (`native_cpu_stream`, the words lowered as `native_ir` decodes
+/// them): over the stream tier 1 writes, the same nodes as the words' interpreter, and a refusal
+/// at the same word. A compiled `CHECK` runs the compiled check.
+#[test]
+fn json_tier2_on_cranelift_equals_the_interpreter() {
+    let (p, _) = json_compiled();
+    let native = native_ir::lower(&p).expect("lowers");
+    let compiled = native_cpu_stream::compile(&native).unwrap_or_else(|_| panic!("compiles"));
+    let block = &p.block_programs()[0];
+    let mut refused = 0;
+    for f in json_tier2_files() {
+        let run = block.run_files(&[&f]).remove(0);
+        let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+        let want = stream::run(&p, &f, starts, lasts).map_err(|r| r.pc);
+        refused += usize::from(want.is_err());
+        assert_eq!(compiled.run(&f, starts, lasts).map_err(|r| r.pc), want, "{}", String::from_utf8_lossy(&f));
+    }
+    assert!(refused > 3, "{refused} refused");
 }

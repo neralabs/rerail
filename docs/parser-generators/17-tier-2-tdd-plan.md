@@ -102,7 +102,10 @@ contents' and words' last bytes.
 
 **5b. The words (decision 0053).** Tier 2 is the transducer's own instruction words, with new
 ones for the stream, lowered by its own pipeline: the words' interpreter, `native_ir`, and
-Cranelift's lowering of `native_ir`. There is no second IR and no new code generator. Per
+Cranelift's lowering of `native_ir`. There is no second IR and no new code generator. On
+Cranelift (`native_cpu_stream`) each word is a block, `SWITCH` a jump table, `RETURN` a
+switch over the states `PUSH` names, and `CHECK` a call of the check's compiled block program
+over the token copied after zeros (a block program reads the byte before its first). Per
 state:
 
 - `TOKEN` takes the next token, and `SWITCH` jumps by its first byte;
@@ -138,6 +141,8 @@ again at the known widths: at most one second pass.
   `TOKEN`; `json_tier2_is_transducer_words` (done): no word of the tree walker's.
 - `json_tier2_nodes_equal_the_reference` (done, the words' interpreter): the reference
   parser's nodes on cases, nesting, every kind, long numbers and strings.
+- `json_tier2_on_cranelift_equals_the_interpreter` (done): the compiled words write the
+  interpreter's nodes and refuse at the same word.
 - `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and Cranelift.
 - `json_widths_speculated_once`: a second pass only where the guess was wrong.
 - `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in

@@ -61,7 +61,9 @@ switching on a byte, and writing nodes. It is not a new IR and not a new code ge
    every loop is the loop over the stream. A `CHECK` runs over the token's 64-byte words inside
    the instruction; nothing runs over bytes.
 6. **The backends are the transducer's:** an interpreter of the words, then the new
-   instructions in `native_ir` and in Cranelift's lowering, then Metal.
+   instructions in `native_ir` and in Cranelift's lowering, then Metal. Cranelift's is
+   `native_cpu_stream`: a block per word, a jump table per `SWITCH`; a `CHECK` calls the check's
+   compiled block program.
 
 ## Consequences
 

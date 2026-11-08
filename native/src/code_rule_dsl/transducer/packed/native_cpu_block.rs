@@ -54,6 +54,12 @@ pub(super) struct CompiledBlock {
 }
 
 impl CompiledBlock {
+    /// The function's address and its delay, for a caller in compiled code (tier 2's `CHECK`,
+    /// `native_cpu_stream`): it takes `(bytes, rows, nrows, out)` as `Entry`.
+    pub(super) fn entry(&self) -> (*const u8, u8) {
+        (self.entry as *const u8, self.delay)
+    }
+
     /// Every output's words over `bytes`; bits past the end are zero.
     pub(super) fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
         self.extract(bytes).outputs
@@ -184,7 +190,7 @@ impl CompiledBlock {
 
 /// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,
 /// and the byte before the stream is 0x00.
-const FRONT: usize = 16;
+pub(super) const FRONT: usize = 16;
 
 
 /// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`
