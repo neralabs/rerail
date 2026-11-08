@@ -3,13 +3,15 @@ import re
 from data_layer_rr_delegation_source import source_relations
 from data_layer_rr_delegation_paths import acceptance_paths
 from data_layer_rr_delegation_async import async_relations
+from data_layer_rr_delegation_surfaces import surface_relations
+from data_layer_rr_delegation_legacy import legacy_relations
 
 
 def async_sync_delegation(source,target,header):
     text=header('async_sync_delegation',target)+'#include "python/print.rr"\n'
     text=re.sub(r'^\.scope include .*$', '.scope include "**/*.py"',text,flags=re.M)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude',text,flags=re.M)
-    return text+configuration()+helpers()+analysis()+source_relations()+acceptance_paths(source)+async_relations()
+    return text+configuration()+helpers()+analysis()+source_relations()+acceptance_paths(source)+async_relations()+surface_relations()+legacy_relations()
 
 
 def configuration():
