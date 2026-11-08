@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 fn annotation_constants_keep_python_values_and_stay_inside_annotations() {
     let rows = finding_contract(r#"
 def f(a: 1_000.00, b: list[b'\xff'], c: 0x10,
-      d: 123456789012345678901234567890, e: 2e309, z: 1j,
+      d: 123456789012345678901234567890, hexed: 0x123456789012345678901234567890,
+      e: 2e309, z: 1j,
       yes: True, none: None, dots: ...): pass
 outside = 777
 "#, r#"
@@ -21,7 +22,8 @@ Constant(n, value) :- annotation_constant_repr(n, value).
 "#);
     let actual: BTreeSet<_> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
     assert_eq!(actual, BTreeSet::from([
-        "1000.0", "b'\\xff'", "16", "123456789012345678901234567890", "inf", "1j",
+        "1000.0", "b'\\xff'", "16", "123456789012345678901234567890",
+        "94522879687365475552814062743484560", "inf", "1j",
         "True", "None", "Ellipsis",
     ]));
 }
