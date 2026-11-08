@@ -1768,7 +1768,7 @@ impl Lowerer {
                     STerm::Var(v) => Ok(v.clone()),
                     _ => Err(Error::Syntax("bfs_walk: edge and roots are relations, by name".to_owned())),
                 };
-                let rel = self.bfs_walk(&name(edge)?, &name(roots)?);
+                let rel = self.bfs_walk(&name(edge)?, &name(roots)?)?;
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(ordinal)?], neg, gated: false }));
             }
             ("dfs_first", [r, hit, first, edge, target]) | ("dfs_first_memo", [r, hit, first, edge, target, _]) => {
@@ -1798,9 +1798,19 @@ impl Lowerer {
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
     }
 
-    fn bfs_walk(&mut self, edge: &str, roots: &str) -> String {
+    fn bfs_walk(&mut self, edge: &str, roots: &str) -> Result<String, Error> {
         let rel = format!("rr_bfs_{edge}_{roots}");
-        if self.prog.natives.contains_key(&rel) { return rel; }
+        if self.prog.natives.contains_key(&rel) { return Ok(rel); }
+        let edges = self.prog.decls.get(edge).ok_or_else(|| Error::Syntax(format!("bfs_walk: undeclared edge relation {edge}")))?;
+        let demands = self.prog.decls.get(roots).ok_or_else(|| Error::Syntax(format!("bfs_walk: undeclared roots relation {roots}")))?;
+        if edges.len() != 3 || edges[2].1 != "int" {
+            return Err(Error::Syntax("bfs_walk: edge must have two vertex columns and one numeric order column".to_owned()));
+        }
+        let vertex = |t: &str| matches!(t, "sym" | "int" | "node");
+        let same = |a: &str, b: &str| a == b || matches!((a,b), ("node","int") | ("int","node"));
+        if demands.len() != 1 || !vertex(&edges[0].1) || !same(&edges[0].1, &edges[1].1) || !same(&edges[0].1, &demands[0].1) {
+            return Err(Error::Syntax("bfs_walk: roots must be unary and all vertices must share one scalar domain".to_owned()));
+        }
         let v = |n: &str| Term::Var(n.to_owned());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
         self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("r"), v("hit"), v("ordinal")], neg: false, gated: false },
@@ -1809,7 +1819,7 @@ impl Lowerer {
         let cols = vec![("r".to_owned(), ty(0)), ("hit".to_owned(), ty(1)), ("ordinal".to_owned(), "int".to_owned())];
         self.prog.decls.insert(rel.clone(), cols);
         self.prog.natives.insert(rel.clone(), Native::BfsWalk { edge: edge.to_owned(), roots: roots.to_owned() });
-        rel
+        Ok(rel)
     }
 
     /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):

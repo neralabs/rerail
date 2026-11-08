@@ -29,8 +29,9 @@ sg_ancestor(c, b) :- sg_ancestor(c, a), sg_base(a, b, _).
 sg_subclass(c, sub) :- option_item("subclassBases", i, c), option_item("subclassTargets", i, sub).
 .decl sg_method(c: symbol, name: symbol, sid: symbol)
 sg_method(c, name, sid) :- option_item("methodClasses", i, c), option_item("methodNames", i, name), option_item("methodSymbols", i, sid).
-cm_root(c) :- sg_class(c).
-cm_root(c) :- sg_method(c, _, _).
+// This public entry asks only for its imported classes. Other helper entries do
+// not demand class walks; base vertices are reached through the shared adjacency.
+cm_root(c) :- option("entryPoint", "_resolve_dynamic_import_roots"), option_item("importedFqNames", _, fq), sg_resolved(fq, c), sg_class(c).
 cm_edge(c, b, i) :- sg_base(c, b, i).
 cm_method(c, name, i, sid) :- option_item("methodClasses", i, c), option_item("methodNames", i, name), option_item("methodSymbols", i, sid).
 cm_name(sid, name) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _).

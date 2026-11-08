@@ -6,6 +6,22 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn bfs_walk_rejects_mixed_domains_and_malformed_relation_shapes() {
+    for declarations in [
+        ".decl e(a: symbol, b: number, i: number)\n.decl r(a: symbol)",
+        ".decl e(a: symbol, b: symbol)\n.decl r(a: symbol)",
+        ".decl e(a: symbol, b: symbol, i: number)\n.decl r(a: symbol, b: symbol)",
+        ".decl e(a: symbol, b: symbol, i: symbol)\n.decl r(a: symbol)",
+    ] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("bfs-invalid.rr");
+        std::fs::write(&path, format!("{declarations}\n.decl out(a: symbol, b: symbol, i: number)\nout(a,b,i) :- bfs_walk(a,b,i,e,r).\n.output out\n")).unwrap();
+        let error = read_file(&path).unwrap_err().to_string();
+        assert!(error.contains("bfs_walk:"), "{error}");
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
 fn bfs_walk_is_typed_demanded_and_survives_program_facts() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("bfs-walk");
     std::fs::create_dir_all(&root).unwrap();
