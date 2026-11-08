@@ -26,9 +26,9 @@ now in the program: outputs at their delays, extracts and totals as tier-1 rows,
 stream each word reads, and the node table (§4.2, §6). A guard refuses any generated
 function that calls out or loops over single bytes (§6).
 
-The ladder (§9) checks that this is not JSON's alone. It is thirteen languages, from
-one keyword to JSON with comments, each a Bitlex file, each parsed with no Rust
-between the bytes and the nodes.
+The ladder (§9) checks that this is not JSON's alone. It is thirteen made-up
+languages, from one keyword to nested records with comments, each a Bitlex file,
+each parsed with no Rust between the bytes and the nodes.
 
 ## 1. The path
 
@@ -370,40 +370,42 @@ state S':  ',' -> leaf ...            ; S without its close
 - A state gets no extra arm where its ways on differ, or where a nested level may
   end or go on. An extra there sends the file to tree-sitter.
 - A state gets no extra arm where its tokens begin with the extra's first bytes.
-  Inside a string, a `/` starts the string's content; tier 1 makes no comment
-  there anyway.
+  Inside a text, a comment's first byte starts the text's content; tier 1 makes no
+  comment there anyway.
 
-## 9. The ladder: one keyword to JSON with comments
+## 9. The ladder: thirteen languages, one keyword to nested data with comments
 
 The ladder is thirteen Bitlex files, in
-`native/src/code_rule_dsl/transducer/packed/bitlex_ladder/`. Each step adds one
-construct to the step before:
+`native/src/code_rule_dsl/transducer/packed/bitlex_ladder/`. The languages are made
+up, so that no step is a known format. Each step adds one construct to the step
+before:
 
-| step | the language | what is new |
+| step | a document | what is new |
 |---|---|---|
-| 1 | `true` | a token, a required keyword |
-| 2 | `true` or `false` | a choice |
-| 3 | `true, false` | a one-byte token, a repetition |
-| 4 | and `null` | a third keyword |
-| 5 | `[true, null]` | brackets |
-| 6 | `[[true], []]` | a nested node, a supertype |
-| 7 | strings | the string state, a prefix XOR |
-| 8 | escapes | simdjson's escaped bytes |
-| 9 | integers | a `check` over a token's bytes |
-| 10 | numbers | the full number check |
-| 11 | objects | fields: all of JSON |
-| 12 | `//` comments | an extra |
-| 13 | `/* */` comments | JSON with comments |
+| 1 | `vrai` | a token, a required keyword |
+| 2 | `vrai` or `fausse` | a choice |
+| 3 | `vrai; fausse; vrai` | a one-byte token, a repetition |
+| 4 | and `nul` | a third keyword |
+| 5 | `(vrai; nul)` | brackets |
+| 6 | `((vrai); (); nul)` | a nested node, a supertype |
+| 7 | `(#a b#; ##)` | texts: a string state, a prefix XOR |
+| 8 | `#a ^# b#` | escapes by a caret |
+| 9 | `(1; ~20; 0)` | a `check` over a token's bytes |
+| 10 | `(3,14; ~1e~5)` | a decimal comma, an exponent |
+| 11 | `<#a# = (1; vrai); #b# = <>>` | records of entries, with fields |
+| 12 | `(1; -- un` ⏎ `2)` | line comments: an extra |
+| 13 | `<#a# = 1 {- un -}>` | block comments |
 
 The test (`bitlex_ladder_tests`) knows no language. Each step's documents are drawn
-from its own tree grammar, keyword lists and checks, with extras between tokens.
-Each is then changed by a byte. On every document these give the same nodes, or all
+from its own tree grammar, keyword lists and checks, with extras between tokens:
+80 the reference accepts, and some it refuses. Each is then copied with one byte
+changed, dropped or doubled. On every document these give the same nodes, or all
 refuse:
 
-- the reference: the evaluator and its tree parser;
+- the reference: the evaluator and its tree parser, which run Bitlex without the
+  compiler;
 - the interpreters: tier 1, then the words;
-- the compiled path: the two Cranelift functions;
-- tree-sitter-json, on each file a JSON step accepts.
+- the compiled path: the two Cranelift functions.
 
 Tier 1 on Cranelift and on Metal's generated code equals its interpreter. Each step
 also has the promised shape:
@@ -411,6 +413,12 @@ also has the promised shape:
 - tier 1's block body branches only for its loop and the extracts' flattening;
 - tier 2 loops only over tokens, and over 64-byte blocks inside a `check`;
 - neither function calls anything.
+
+The test prints, per step, the grammar's sentences and the mutated copies apart,
+and why the reference refused each sentence it refused. Steps 1 to 11 refuse only
+the empty file, a blank one, and texts with a newline in them (the language forbids
+that). Steps 12 and 13 also refuse their samples that hold a `#` in a comment or one
+comment kind's opener in the other: the lexer sends those to tree-sitter.
 
 What it found, fixed:
 

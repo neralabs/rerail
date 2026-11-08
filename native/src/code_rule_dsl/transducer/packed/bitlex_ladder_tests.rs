@@ -1,19 +1,25 @@
-//! The Bitlex ladder: languages from one keyword to JSON, a step at a time, each parsed by its
-//! Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the nodes.
+//! The Bitlex ladder: thirteen languages, from one keyword to a data language with nested
+//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
+//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
+//! nodes.
 //!
-//! Each step adds one construct to the one before: a keyword, a choice of keywords, a list,
-//! brackets, nesting, strings, escapes, integers, numbers, objects. No step's code knows its
-//! language: the documents are drawn from the step's own tree grammar, its tokens' keywords and
-//! checks, and then mutated a byte at a time.
+//! The languages are made up, so that no step is a known format: records are `< >`, lists
+//! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
+//! escapes, the booleans are `vrai` and `fausse`, nothing is `nul`, a number has a tilde for minus
+//! and a decimal comma (`~3,14e~2`), and comments are `-- …` and `{- … -}`.
+//!
+//! Each step adds one construct to the one before. No step's test code knows its language: the
+//! documents are drawn from the step's own tree grammar, its tokens' keywords and checks, and
+//! then mutated a byte at a time.
 //!
 //! For each step and document, the same nodes (or the same refusal, where the file goes to
 //! tree-sitter) from:
 //!
-//! 1. the reference: the evaluator and tree parser of `tools/bitlex`;
+//! 1. the reference: the evaluator and tree parser of `tools/bitlex`, which run Bitlex without
+//!    the compiler;
 //! 2. the interpreters: tier 1's block program, then tier 2's words;
 //! 3. the compiled path, `native_cpu_stream::Parser`: one Cranelift function per tier, tier 2
-//!    reading tier 1's buffers as written;
-//! 4. for the JSON steps, tree-sitter-json, on every file the step accepts.
+//!    reading tier 1's buffers as written.
 //!
 //! Tier 1 on Cranelift and on Metal (generated MSL) equals its interpreter bit for bit. And each
 //! step has the shape the compiler promises: tier 1's body has no branch but the loop's and the
@@ -176,16 +182,12 @@ impl Lang {
         }
         // An extra (a comment): line and block comments, with bytes that look like other tokens.
         if self.extras.iter().any(|e| e == k) {
-            let text = if rng.below(8) == 0 {
-                // Ones a lexer may send to tree-sitter: a quote, or one kind's opener in the other.
-                *rng.pick(&["// a, [1] \"x", "/* \" */", "/* // */", "// /* x"])
-            } else {
-                *rng.pick(&["// c", "//", "// a, [1] x", "/* c */", "/**/", "/***/", "/* a * b / c */", "/* [ */", "/*\n\n*/"])
-            };
+            let (clean, odd) = COMMENTS.split_at(COMMENTS.len() - 4);
+            let text = if rng.below(8) == 0 { rng.pick(odd).0 } else { rng.pick(clean).0 };
             return text.as_bytes().to_vec();
         }
         let n = if long { 60 + rng.below(100) } else { 1 + rng.below(6) };
-        (0..n).flat_map(|_| rng.pick(&["a", "Z", "0", " ", "_", ".", "/", "é", "{", ","]).as_bytes().to_vec()).collect()
+        (0..n).flat_map(|_| rng.pick(&["a", "Z", "0", " ", "_", ".", "-", "é", "<", ";", "(", "{"]).as_bytes().to_vec()).collect()
     }
 
     /// Bytes a check's grammar matches: each class name a byte of the class.
@@ -220,16 +222,34 @@ impl Lang {
     }
 }
 
+/// Comment samples, and whether each runs to the end of its line. The last four hold what the
+/// lexer sends to tree-sitter: a hash (the text quote), or one kind's opener in the other.
+const COMMENTS: [(&str, bool); 13] = [
+    ("-- c", true),
+    ("--", true),
+    ("-- a; (1) x", true),
+    ("{- c -}", false),
+    ("{--}", false),
+    ("{---}", false),
+    ("{- a - b } c -}", false),
+    ("{- ( -}", false),
+    ("{-\n\n-}", false),
+    ("-- #x", true),
+    ("{- # -}", false),
+    ("{- -- -}", false),
+    ("-- {- x", true),
+];
+
 /// A step's documents: sentences of its grammar with random white space between tokens (and a
 /// space where two would run together), then each with one byte changed, dropped or doubled, and
-/// the empty file and one space.
-fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> Vec<Vec<u8>> {
+/// the empty file and one space. With how many come before the mutations.
+fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Vec<u8>>, usize) {
     let mut rng = Rng(0x1add_e700 ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     let root = Gram::Sym(lang.root.clone());
     let (mut accepted, mut rejected) = (0, 0);
     for _ in 0..600 {
-        if accepted >= 60 {
+        if accepted >= 80 {
             break;
         }
         let mut tokens = Vec::new();
@@ -251,15 +271,16 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> Vec<Vec
             }
             tokens = with;
         }
+        let mut line = false;
         for t in tokens {
             // A line comment ends at the line's end.
-            let line = doc.windows(2).rposition(|w| w == b"//").is_some_and(|p| !doc[p..].contains(&b'\n') && !doc[..p].ends_with(b"*") && doc[..p].iter().filter(|&&b| b == b'"').count() % 2 == 0);
             let space = if line { "\n" } else { *rng.pick(&["", "", " ", "\n", " \t "]) };
+            line = COMMENTS.iter().any(|(c, l)| *l && c.as_bytes() == &t[..]);
             let joins = doc.last().is_some_and(u8::is_ascii_alphanumeric) && t.first().is_some_and(u8::is_ascii_alphanumeric);
             doc.extend(if joins && space.is_empty() { " " } else { space }.as_bytes());
             doc.extend(t);
         }
-        doc.extend(rng.pick(&["", "\n", " "]).as_bytes());
+        doc.extend(if line { "\n" } else { *rng.pick(&["", "\n", " "]) }.as_bytes());
         // Sentences the reference accepts, and some it does not (a sample token its lexer
         // refuses, say): the mutations below make many more of those.
         if accepts(&doc) {
@@ -279,7 +300,7 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> Vec<Vec
         }
         let at = rng.below(d.len() as u64) as usize;
         match rng.below(3) {
-            0 => d[at] = *rng.pick(b"[]{},:\"\\ \nae9-.+tE"),
+            0 => d[at] = *rng.pick(b"<>();=#^ \nav9~,eE-{}"),
             1 => {
                 d.remove(at);
             }
@@ -287,12 +308,8 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> Vec<Vec
         }
         out.push(d);
     }
-    out
+    (out, valid)
 }
-
-/// A node by names: kind, field, start, end, size (supertypes are the reference's and the
-/// compiler's; tree-sitter's nodes do not carry them).
-type Named = (String, String, usize, usize, usize);
 
 /// Nodes as ids: kind, field, supertypes (sorted), start, end, size.
 type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
@@ -306,37 +323,6 @@ fn as_ids(nodes: Vec<stream::Node>) -> Vec<IdNode> {
             (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
         })
         .collect()
-}
-
-/// tree-sitter-json's nodes of `bytes`, or `None` where it finds an error.
-fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&grammar).expect("tree-sitter-json");
-    let tree = parser.parse(bytes, None)?;
-    if tree.root_node().has_error() {
-        return None;
-    }
-    fn walk(n: tree_sitter::Node<'_>, field: Option<&str>, out: &mut Vec<Named>) -> usize {
-        let at = out.len();
-        out.push((n.kind().to_owned(), field.unwrap_or("").to_owned(), n.start_byte(), n.end_byte(), 0));
-        let mut size = 1;
-        let mut c = n.walk();
-        if c.goto_first_child() {
-            loop {
-                size += walk(c.node(), c.field_name(), out);
-                if !c.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-        out[at].4 = size;
-        size
-    }
-    let mut out = Vec::new();
-    walk(tree.root_node(), None, &mut out);
-    Some(out)
 }
 
 /// A step compiled: its program, tier 1 and tier 2 on Cranelift, and its kinds' names by id.
@@ -364,6 +350,19 @@ fn compile_step(name: &str, source: &str) -> Compiled {
     Compiled { stmts, ids, program, native, parser }
 }
 
+/// Why the reference sends `bytes` to tree-sitter: its first error, or why the tree does not
+/// parse.
+fn refusal(c: &Compiled, bytes: &[u8]) -> String {
+    match ::bitlex::eval::Ev::run(&c.stmts, bytes, &HashMap::new()) {
+        Err(e) => e,
+        Ok(out) if !out.errors.is_empty() => out.errors[0].split(" at ").next().unwrap_or("").to_owned(),
+        Ok(out) => match out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, bytes.len())) {
+            Some(Err(e)) => e.split(" at byte").next().unwrap_or("").to_owned(),
+            _ => "no tree".to_owned(),
+        },
+    }
+}
+
 /// The reference's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
 fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     let out = ::bitlex::eval::Ev::run(&c.stmts, bytes, &HashMap::new()).ok()?;
@@ -382,23 +381,6 @@ fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
             })
             .collect(),
     )
-}
-
-/// Ids back to names, for comparing with tree-sitter.
-fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
-    let names: HashMap<u16, String> = c.ids.0.borrow().iter().map(|(n, &i)| (i, n.clone())).collect();
-    nodes
-        .iter()
-        .map(|n| {
-            let field = if n.1 == 0 { String::new() } else { names[&n.1].trim_start_matches("field ").to_owned() };
-            (names[&n.0].clone(), field, n.3, n.4, n.5)
-        })
-        .collect()
-}
-
-/// The steps whose documents are JSON documents (a list of values at the top is not).
-fn json_step(name: &str) -> bool {
-    !(name.starts_with("03-") || name.starts_with("04-"))
 }
 
 /// The step's shape: tier 1's body branches only for its loop and its extracts' flattening;
@@ -420,8 +402,9 @@ fn check_shape(name: &str, c: &Compiled) {
 }
 
 /// Every step: the reference's nodes equal the interpreters' and the compiled path's on every
-/// document; tier 1 compiled equals its interpreter; JSON steps equal tree-sitter-json where they
-/// accept; each step parses some documents and sends some to tree-sitter.
+/// document; tier 1 compiled equals its interpreter; each step parses some documents and sends
+/// some to tree-sitter. Printed per step: the grammar's sentences and the mutated copies apart,
+/// and why the reference refused each sentence it refused.
 #[test]
 fn every_step_parses_as_the_reference() {
     let mut differ: Vec<String> = Vec::new();
@@ -429,9 +412,12 @@ fn every_step_parses_as_the_reference() {
         let c = compile_step(name, source);
         check_shape(name, &c);
         let lang = Lang::of(&c.stmts);
-        let (mut parsed, mut fell, mut sitter, mut with_extras) = (0usize, 0usize, 0usize, 0usize);
+        let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
+        let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
+        let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        for bytes in documents(&lang, seed(name), &|b| reference(&c, b).is_some()) {
+        let (docs, before) = documents(&lang, seed(name), &|b| reference(&c, b).is_some());
+        for (i, bytes) in docs.into_iter().enumerate() {
             let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
             let want = reference(&c, &bytes);
             let run = c.program.block_programs()[0].run_files(&[&bytes]).remove(0);
@@ -448,24 +434,29 @@ fn every_step_parses_as_the_reference() {
                 differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
                 break;
             }
+            let bucket = if i < before { &mut sentences } else { &mut mutations };
+            bucket[usize::from(want.is_none())] += 1;
             match &want {
                 Some(nodes) => {
                     parsed += 1;
                     with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
-                    if json_step(name) {
-                        let ts = tree_sitter_json(&bytes);
-                        let ours = named(&c, nodes);
-                        if ts.as_ref() != Some(&ours) {
-                            differ.push(format!("{}:\n  ours {ours:?}\n  tree-sitter {ts:?}", show()));
-                            break;
-                        }
-                        sitter += 1;
+                }
+                None => {
+                    fell += 1;
+                    if i < before {
+                        *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
                     }
                 }
-                None => fell += 1,
             }
         }
-        eprintln!("{name}: {parsed} parsed ({sitter} equal to tree-sitter-json, {with_extras} with extras), {fell} to tree-sitter, {} words", c.native.structural.len());
+        eprintln!(
+            "{name}: {} words. sentences: {} parsed, {} refused {reasons:?}. mutated: {} parsed, {} refused. {with_extras} parsed with extras",
+            c.native.structural.len(),
+            sentences[0],
+            sentences[1],
+            mutations[0],
+            mutations[1]
+        );
         if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
             differ.push(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
         }
@@ -481,7 +472,7 @@ fn every_step_on_metal_equals_the_interpreter() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let steps = steps();
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
-    let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some())).collect();
+    let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
     let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
     let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().flat_map(|(p, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
     let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
