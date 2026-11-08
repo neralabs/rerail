@@ -1441,6 +1441,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-result-usage.rr",
+      "sha256": "d200b5b56458d08bce713d95b119205b8080e449f5321a038e0c02b6cd4ffd28",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lazy_result_usage.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1679,8 +1686,9 @@
       "batch": 3,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-lazy-result-usage.json",
       "legacySha256": "c221f7bbf5c4c5f9c8fcfa55a10ed4fd72f4ffbff4986eb72985aaba8dc623df",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-result-usage.rr",
+      "ruleSha256": "d200b5b56458d08bce713d95b119205b8080e449f5321a038e0c02b6cd4ffd28"
     },
     {
       "check": "swallowed_exceptions",

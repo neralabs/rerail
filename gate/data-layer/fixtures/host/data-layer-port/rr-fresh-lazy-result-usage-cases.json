@@ -1,0 +1,4519 @@
+{
+  "cases": [
+    {
+      "id": "method-select_one-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-select_one-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-select_one_or_raise-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-select_one_or_raise-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-first-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-first-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-one-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-one-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-one_or_none-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def one_or_none(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-one_or_none-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def one_or_none(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-execute-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-execute-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-_execute-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def _execute(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-_execute-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def _execute(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-get-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def get(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "method-get-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def get(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-UserQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class UserQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-UserQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class UserQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-CrossBranchTable-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class CrossBranchTable:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-CrossBranchTable-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class CrossBranchTable:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-TransactionService-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class TransactionService:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-TransactionService-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class TransactionService:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-Service-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class Service:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-Service-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class Service:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-query-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class query:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-query-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class query:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-AsyncQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class AsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-AsyncQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class AsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-__LazyTable-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class __LazyTable:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-__LazyTable-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class __LazyTable:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-_AsyncQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class _AsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-_AsyncQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class _AsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-_LazyQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class _LazyQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-_LazyQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class _LazyQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-LazyishQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class LazyishQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-LazyishQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class LazyishQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-PreAsyncQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class PreAsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-PreAsyncQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class PreAsyncQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-BaseDeferredQuery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class BaseDeferredQuery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-BaseDeferredQuery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class BaseDeferredQuery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-DeferredInsertFromQueryBuilder-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class DeferredInsertFromQueryBuilder:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-DeferredInsertFromQueryBuilder-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class DeferredInsertFromQueryBuilder:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-Cursor-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class Cursor:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-Cursor-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class Cursor:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-MigrationExecutorProtocol-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MigrationExecutorProtocol:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-MigrationExecutorProtocol-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MigrationExecutorProtocol:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-𝑸uery-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class 𝑸uery:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "class-𝑸uery-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class 𝑸uery:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-0-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self):\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-0-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self):\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-1-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> None:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-1-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> None:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-2-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> list [ Row ]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-2-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> list [ Row ]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-3-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row | None:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-3-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row | None:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-4-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> \"Row\":\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-4-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> \"Row\":\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-5-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> LazyResult[Row]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-5-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> LazyResult[Row]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-6-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> pkg.LazySeq[Row]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-6-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> pkg.LazySeq[Row]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-7-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> DeferredFuture[Row]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-7-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> DeferredFuture[Row]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-8-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> NotLazyResultish:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-8-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> NotLazyResultish:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-9-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> \"DeferredFuture[Row]\":\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-9-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> \"DeferredFuture[Row]\":\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-10-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> tuple[Row, ...]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-10-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> tuple[Row, ...]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-11-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Callable[[A, B], C]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-11-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Callable[[A, B], C]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-12-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Literal[\"é\", b\"\\u0041\"]:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "return-12-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Literal[\"é\", b\"\\u0041\"]:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-0-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-0-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-1-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        ...\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-1-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        ...\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-2-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        (...)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-2-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        (...)\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-3-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"doc\"\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-3-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"doc\"\n        pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-4-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"doc\"\n        ...\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-4-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"doc\"\n        ...\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-5-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return None\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-5-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return None\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-6-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        raise NotImplementedError\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-6-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        raise NotImplementedError\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-7-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return self.select_one_lazy()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-7-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return self.select_one_lazy()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-8-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return self.execute_lazy()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-8-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return self.execute_lazy()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-9-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        execute_lazy = 1\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-9-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        execute_lazy = 1\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-10-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"execute_lazy\"\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-10-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        \"execute_lazy\"\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-11-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        def nested():\n            return execute_lazy()\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-11-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        def nested():\n            return execute_lazy()\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-12-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return object.other_lazy()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-12-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return object.other_lazy()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-13-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        class Nested:\n            execute_lazy = 1\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "body-13-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        class Nested:\n            execute_lazy = 1\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-execute_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-execute_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-select_one_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def select_one_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-select_one_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def select_one_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-other_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one-other_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-execute_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-execute_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-select_one_or_raise_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def select_one_or_raise_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-select_one_or_raise_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def select_one_or_raise_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-other_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-select_one_or_raise-other_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one_or_raise(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-execute-execute_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-execute-execute_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-execute-other_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-execute-other_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def execute(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-execute_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-execute_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def execute_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-first_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def first_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-first_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def first_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-other_lazy-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "sibling-first-other_lazy-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def first(self) -> Row:\n        return Row()\n    @decorator\n    async def other_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-0-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @legacy_sync\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-0-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @legacy_sync\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-1-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @legacy_async()\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-1-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @legacy_async()\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-2-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @pkg.abstractmethod\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-2-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @pkg.abstractmethod\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-3-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @pkg.legacy_sync()(1)\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-3-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @pkg.legacy_sync()(1)\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-4-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @other\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-4-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @other\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-5-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @(legacy_sync)\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-5-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @(legacy_sync)\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-6-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    @legacy_sync[0]\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-6-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    @legacy_sync[0]\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-0-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(Protocol):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-0-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(Protocol):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-1-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(typing.Protocol[T]):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-1-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(typing.Protocol[T]):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-2-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(abc.ABC):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-2-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(abc.ABC):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-3-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction((Protocol)):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-3-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction((Protocol)):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-4-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(Base[Protocol]):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-4-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(Base[Protocol]):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-5-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(object):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-5-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(object):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-6-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(ProtocolFactory()):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-6-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(ProtocolFactory()):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-7-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(Protocol | Other):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-7-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(Protocol | Other):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-8-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction(metaclass=Protocol):\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "base-8-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction(metaclass=Protocol):\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "annotation-reference-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class UserQuery:\n    def execute(self, x: execute_lazy) -> Row:\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "annotation-reference-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class UserQuery:\n    def execute(self, x: execute_lazy) -> Row:\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-reference-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class UserQuery:\n    @decorate(execute_lazy)\n    def execute(self) -> Row:\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "decorator-reference-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class UserQuery:\n    @decorate(execute_lazy)\n    def execute(self) -> Row:\n        return 1\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "nested-functions-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        def one() -> Row:\n            return 1\n        return 2\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "nested-functions-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        def one() -> Row:\n            return 1\n        return 2\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "nested-classes-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        class InnerQuery:\n            def one(self) -> Row: return 1\n        return 2\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "nested-classes-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        class InnerQuery:\n            def one(self) -> Row: return 1\n        return 2\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "conditional-sibling-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    if flag:\n        def execute_lazy(self): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "conditional-sibling-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n    if flag:\n        def execute_lazy(self): pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "duplicate-methods-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def one(self) -> A: return 1\n    def one(self) -> B: return 2\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "duplicate-methods-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def one(self) -> A: return 1\n    def one(self) -> B: return 2\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "async-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    async def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "async-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    async def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "module-level-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "def one() -> Row: return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/module.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "module-level-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "def one() -> Row: return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-0-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sqlite/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/sqlite/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-0-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "impl/sqlite/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-0-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "impl/sqlite/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-1-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "data_layer/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "data_layer/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-1-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "data_layer/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-1-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "data_layer/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-2-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "_internal/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "_internal/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-2-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "_internal/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-2-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "_internal/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-3-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "api/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "api/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-3-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "api/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-3-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "api/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-4-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "other/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "other/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-4-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "other/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-4-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "other/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-5-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2055_lazy_result/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2055_lazy_result/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-5-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2055_lazy_result/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-5-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2055_lazy_result/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-6-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2070_batching/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2070_batching/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-6-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2070_batching/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-6-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2070_batching/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-7-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/tests/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/tests/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-7-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/tests/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-7-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/tests/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-8-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/test/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/test/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-8-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/test/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-8-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/test/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-9-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/test_m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/test_m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-9-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/test_m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-9-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/test_m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-10-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/context_test_value/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/context_test_value/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-10-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/context_test_value/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-10-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/context_test_value/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-11-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/__pycache__/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/__pycache__/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-11-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/__pycache__/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-11-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/__pycache__/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-12-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/.git/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/.git/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-12-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/.git/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-12-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/.git/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-13-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l2050_transaction/tmp/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l2050_transaction/tmp/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-13-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/tmp/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-13-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l2050_transaction/tmp/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-14-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l１２３４_unic/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l１２３４_unic/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-14-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l１２３４_unic/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-14-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l１２３４_unic/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "scope-15-file",
+      "check": "lazy_result_usage",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "l123_foo/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "l123_foo/m.py"
+        },
+        "_source": "pass\n",
+        "root": {
+          "path": ""
+        },
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-15-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l123_foo/m.py",
+          "relative": true
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "scope-15-scan",
+      "check": "lazy_result_usage",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "l123_foo/m.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "skip-0",
+      "check": "lazy_result_usage",
+      "entry": "should_skip",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "test_m.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-1",
+      "check": "lazy_result_usage",
+      "entry": "should_skip",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "m.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-2",
+      "check": "lazy_result_usage",
+      "entry": "should_skip",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "contest_/m.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-3",
+      "check": "lazy_result_usage",
+      "entry": "should_skip",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "tests/x.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "skip-4",
+      "check": "lazy_result_usage",
+      "entry": "should_skip",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "x/l2070_batching/a.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "disabled-collector",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "disabled": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    }
+  ]
+}

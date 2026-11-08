@@ -108,6 +108,9 @@ def run(args):
         if 'transaction_patterns' in modules:
             from patterns_port import install
             install(backend, modules['transaction_patterns'])
+        if 'lazy_result_usage' in modules:
+            from lazy_results_port import install
+            install(backend, modules['lazy_result_usage'])
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
                 check, name, passive = original_codes[frame.f_code]
@@ -134,7 +137,13 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='transaction_patterns':
+                if case['check']=='lazy_result_usage':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='collector':
+                        from lazy_results_port import collector_result
+                        call=lambda:collector_result(module,values,backend if native else None)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='transaction_patterns':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry'] in {'finder','internal','internal-single'}:
                         from patterns_port import probe
