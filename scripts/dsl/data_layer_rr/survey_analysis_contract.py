@@ -56,6 +56,9 @@ def source_result(source,case):
         scans=[]
         for file in case['files']:
             path=root/file['path'];path.parent.mkdir(parents=True,exist_ok=True);path.write_text(file['source'],encoding='utf-8')
+        by_path={file['path']:file for file in case['files']}
+        for logical in case.get('scanPaths',by_path):
+            file=by_path[logical];path=root/logical
             scans.append(model._scan_symbol_tree(root,path,ast.parse(file['source'])))
         graph=model.SymbolGraph(root)
         graph._add_scanned_modules(scans)

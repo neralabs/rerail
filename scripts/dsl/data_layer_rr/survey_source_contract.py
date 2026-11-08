@@ -197,11 +197,12 @@ def check_target_contracts(cases):
             raise ValueError(f'The source fixture no longer covers {label}: {module}/{name}')
 
 
-def source_rows(source, files):
+def source_rows(source, files, scan_paths=None):
     sys.path[:0] = [str(source), str(source / 'scripts')]
     model = importlib.import_module('lint_lib.symbol_graph')
     rows, scans = [], []
-    for path, text in files.items():
+    for path in files if scan_paths is None else scan_paths:
+        text = files[path]
         module, info, symbols = model._scan_symbol_tree(Path('/survey'), Path('/survey') / path, ast.parse(text))
         scans.append((module,info,symbols))
         rows.append(dict(kind='module', path=path, module=module))

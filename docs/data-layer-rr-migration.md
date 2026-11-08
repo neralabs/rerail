@@ -1839,3 +1839,21 @@ The named directory producer works through existing generic engine capabilities.
 The [scope-transport receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-workspace-transport.json.gz) retains exact programs, outputs, and the failing/working request shapes.
 The [scope target](data-layer-survey-graph.md#discovery-and-facade-scope-target) defines the next implementation boundary.
 Rule 89's production default still refuses execution until that boundary and its acceptance tests are complete.
+## 2026-11-08 — Workspace scope regression before repair
+
+Merge `7a846bfca` adopts committed Final `0f0049ec7` without conflicts.
+The root CLI build took 41.588 seconds. Its frozen SHA starts `577a9499b4465294`.
+The artifact registration checks the adopted commit, source trees, and executable bytes.
+
+Fourteen new source cases keep ordered graph inputs separate from facade resources.
+They compare complete producer rows and complete dead-code category lists.
+The first native case fails in both layers before repair.
+Loaded files retain absolute paths, which prevent ordered graph assembly.
+An unscanned facade also contributes a definition to the raw inventory.
+The [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-source.json.gz)
+and [native failure](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-red.json.gz) retain this evidence.
+
+Seventeen harness tests pass, with 41 subtests.
+Their guards reject lost positives, resource leakage, changed scan scope, incomplete records, and source execution during native comparisons.
+The new cases supply ordered scan paths. They do not certify production discovery or persistent workspace updates.
+

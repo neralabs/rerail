@@ -1,0 +1,12 @@
+// Ordered graph demand is separate from the facade resource demand.
+// The caller supplies sgs_scan_path. Directory discovery belongs to the caller.
+#include "data-layer/survey-assembly.rr"
+
+.decl sgs_scan_path(path: symbol, ordinal: number)
+.decl sgs_facade_directory(path: symbol)
+sgs_facade_directory("data_layer").
+.decl sgs_facade_path(path: symbol)
+sgs_facade_path(cat(directory, "/", name)) :- sgs_facade_directory(directory), dir_entry(directory, name, 0), suffix(".py", name).
+load(path, cat("survey:", path), "python") :- sgs_scan_path(path, _).
+load(path, cat("survey:", path), "python") :- sgs_facade_path(path).
+sgc_file(d, i) :- sgs_scan_path(path, i), sgs_module(d, path, _).
