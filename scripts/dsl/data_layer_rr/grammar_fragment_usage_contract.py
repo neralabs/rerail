@@ -46,7 +46,7 @@ class Contract:
 
     def value(self, value):
         root=self.item.funcargs.get('tmp_path') if self.item else None
-        if isinstance(value,str) and root is not None and value==str(root):return '$ROOT'
+        if isinstance(value,str) and root is not None:value=value.replace(str(root),'$ROOT')
         if type(value).__name__ == 'FactEngine':
             return dict(type='FactEngine',root=self.value(value.root))
         if type(value).__name__ == 'StructuredLinterResult':

@@ -1524,6 +1524,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_callable_constructors.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-fragment-usage.rr",
+      "sha256": "784aa3dfcc3dfe1fdbfa06c9bedc98379bf70f5b9eb63b03cf1cf4c38ea10c4c",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_grammar_fragment_usage.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -1865,8 +1872,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-fragment-usage.json",
       "legacySha256": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-fragment-usage.rr",
+      "ruleSha256": "784aa3dfcc3dfe1fdbfa06c9bedc98379bf70f5b9eb63b03cf1cf4c38ea10c4c"
     },
     {
       "check": "grammar_allowlist_burndown",
