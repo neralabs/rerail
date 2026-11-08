@@ -159,7 +159,15 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='regex_sql_parsing':
+                if case['check']=='grammar_render_methods':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='body_source':
+                        call=lambda:module.RenderBodyAnalyzer('x.py',[],'Fragment')._get_source(**values)
+                    elif case['entry']=='configured_scan':
+                        from grammar_render_methods_port import configured_scan
+                        call=lambda:configured_scan(module,values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='regex_sql_parsing':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='checker':call=lambda:module.RegexSqlParsingChecker().check_file(**values)
                     else:call=lambda:getattr(module,case['entry'])(**values)

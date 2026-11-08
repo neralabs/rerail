@@ -58,6 +58,11 @@ GRMValue(@place("", 0), name) :- option("entryPoint", "RenderMethodVisitor._get_
 GRMValue(@place("", 0), "") :- option("entryPoint", "RenderMethodVisitor._get_call_name_recursive"), !grm_dotted(0, _).
 GRMTrue(@place("", 0)) :- option("entryPoint", e), (e = "RenderMethodVisitor._is_string_expr" ; e = "RenderBodyAnalyzer._is_string_expr"), grm_string_expr(0).
 GRMTrue(@place("", 0)) :- option("entryPoint", "RenderBodyAnalyzer._is_string_literal"), grm_literal(0).
+// The external test host transports the original syntax, without running ast.unparse.
+// Its wrapper has one outer call. Format its callee through the shared native printer.
+.decl grm_outer_call(c: node)
+grm_outer_call(c) :- kind(c, "call"), docof(c, d), doc_role(d, "primary"), !inside(c, _, "call").
+GRMValue(@place("", 0), text) :- option("entryPoint", "RenderBodyAnalyzer._get_source"), grm_outer_call(c), call_function_text(c, text).
 .decl grm_line_index(i: number)
 grm_line_index(to_number(line)-1) :- option("lineno", line), to_number(line) > 0.
 grm_line_index(count+to_number(line)-1) :- option("lineno", line), to_number(line) <= 0, count = count : { option_item("sourceLines", _, _) }.

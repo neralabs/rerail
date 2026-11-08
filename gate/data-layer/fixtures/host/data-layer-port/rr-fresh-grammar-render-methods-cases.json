@@ -1333,6 +1333,534 @@
           "path": "impl/case.py"
         }
       }
+    },
+    {
+      "id": "native-canonical-source-0",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "1  +  2",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-1",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(one + two) * three",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-2",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "one - (two - three)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-3",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(one ** two) ** three",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-4",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "one ** two ** three",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-5",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(one if test else two) if other else three",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-6",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "call(  value , named = other, **options )",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-7",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "factory(1).run(value)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-8",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "items[one:two:three]",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-9",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "items[(one, two)]",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-10",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "items[one, two]",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-11",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(one,)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-12",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "[one, *items]",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-13",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{one, two}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-14",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{\"a\": one, **options}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-15",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(lambda value=1, /, *, key=2: value + key)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-16",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "[value for value in values if value]",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-17",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{value for value in values}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-18",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{key: value for key, value in pairs}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-19",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(value for value in values)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-20",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "not (a and b)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-21",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "a or b and c",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-22",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "a is not b",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-23",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "a < b <= c",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-24",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(await call())",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-25",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(yield value)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-26",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(yield from values)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-27",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "(value := 42)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-28",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "\"double quotes\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-29",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "\"a\\nb\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-30",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "b\"a\\x00b\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-31",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "\"\u00e9\u03b1\u03b2\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-32",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "0xffffffffffffffffffffffffffff",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-33",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "1e309",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-34",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "2.0j",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-35",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "f\"value={value!r:>{width}}\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-36",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "f\"{value=}\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "native-canonical-source-37",
+      "check": "grammar_render_methods",
+      "entry": "body_source",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "\"a\" \"b\"",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "static-allowlist-only",
+      "check": "grammar_render_methods",
+      "entry": "configured_scan",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value), f\"{value}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "ALLOWLISTED_STATIC_CLASSES": {
+          "frozenset": [
+            "Fragment"
+          ]
+        },
+        "LEGACY_ALLOWLISTED_CLASSES": {
+          "frozenset": []
+        }
+      }
+    },
+    {
+      "id": "legacy-allowlist-top",
+      "check": "grammar_render_methods",
+      "entry": "configured_scan",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value), f\"{value}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "ALLOWLISTED_STATIC_CLASSES": {
+          "frozenset": []
+        },
+        "LEGACY_ALLOWLISTED_CLASSES": {
+          "frozenset": [
+            "Fragment"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy-inner-inherits-outer",
+      "check": "grammar_render_methods",
+      "entry": "configured_scan",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        class Inner(SqlRenderable):\n            def render(self):\n                return f\"{value}\"\n        return \"ok\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "ALLOWLISTED_STATIC_CLASSES": {
+          "frozenset": []
+        },
+        "LEGACY_ALLOWLISTED_CLASSES": {
+          "frozenset": [
+            "Inner"
+          ]
+        }
+      }
     }
   ]
 }

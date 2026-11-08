@@ -562,5 +562,174 @@
         "registry['imported_contract']"
       ]
     ]
+  },
+  {
+    "source": "consume(a or b and c)\n(a or b and c).method()\n",
+    "calls": [
+      [
+        "consume(a or (b and c))",
+        "consume"
+      ],
+      [
+        "(a or (b and c)).method()",
+        "(a or (b and c)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a and not b)\n(a and not b).method()\n",
+    "calls": [
+      [
+        "consume(a and (not b))",
+        "consume"
+      ],
+      [
+        "(a and (not b)).method()",
+        "(a and (not b)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(not a and b)\n(not a and b).method()\n",
+    "calls": [
+      [
+        "consume(not a and b)",
+        "consume"
+      ],
+      [
+        "(not a and b).method()",
+        "(not a and b).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a and (b or c))\n(a and (b or c)).method()\n",
+    "calls": [
+      [
+        "consume(a and (b or c))",
+        "consume"
+      ],
+      [
+        "(a and (b or c)).method()",
+        "(a and (b or c)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a or (b or c))\n(a or (b or c)).method()\n",
+    "calls": [
+      [
+        "consume(a or (b or c))",
+        "consume"
+      ],
+      [
+        "(a or (b or c)).method()",
+        "(a or (b or c)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume((a or b) or c)\n((a or b) or c).method()\n",
+    "calls": [
+      [
+        "consume((a or b) or c)",
+        "consume"
+      ],
+      [
+        "((a or b) or c).method()",
+        "((a or b) or c).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a or b or c)\n(a or b or c).method()\n",
+    "calls": [
+      [
+        "consume(a or b or c)",
+        "consume"
+      ],
+      [
+        "(a or b or c).method()",
+        "(a or b or c).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a and b and c)\n(a and b and c).method()\n",
+    "calls": [
+      [
+        "consume(a and b and c)",
+        "consume"
+      ],
+      [
+        "(a and b and c).method()",
+        "(a and b and c).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a and b and not c)\n(a and b and not c).method()\n",
+    "calls": [
+      [
+        "consume(a and b and (not c))",
+        "consume"
+      ],
+      [
+        "(a and b and (not c)).method()",
+        "(a and b and (not c)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a and b and c and d and (e < f))\n(a and b and c and d and (e < f)).method()\n",
+    "calls": [
+      [
+        "consume(a and b and c and d and (e < f))",
+        "consume"
+      ],
+      [
+        "(a and b and c and d and (e < f)).method()",
+        "(a and b and c and d and (e < f)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(a or b or c or (d < e))\n(a or b or c or (d < e)).method()\n",
+    "calls": [
+      [
+        "consume(a or b or c or (d < e))",
+        "consume"
+      ],
+      [
+        "(a or b or c or (d < e)).method()",
+        "(a or b or c or (d < e)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(v0 and v1 and v2 and v3 and v4 and v5 and v6 and v7 and v8 and v9 and v10 and v11 and v12 and v13 and v14 and v15 and v16 and v17 and v18 and v19 and v20 and v21 and not final)\n(v0 and v1 and v2 and v3 and v4 and v5 and v6 and v7 and v8 and v9 and v10 and v11 and v12 and v13 and v14 and v15 and v16 and v17 and v18 and v19 and v20 and v21 and not final).method()\n",
+    "calls": [
+      [
+        "consume(v0 and v1 and v2 and v3 and v4 and v5 and v6 and v7 and v8 and v9 and v10 and v11 and v12 and v13 and v14 and v15 and v16 and v17 and v18 and v19 and v20 and v21 and (not final))",
+        "consume"
+      ],
+      [
+        "(v0 and v1 and v2 and v3 and v4 and v5 and v6 and v7 and v8 and v9 and v10 and v11 and v12 and v13 and v14 and v15 and v16 and v17 and v18 and v19 and v20 and v21 and (not final)).method()",
+        "(v0 and v1 and v2 and v3 and v4 and v5 and v6 and v7 and v8 and v9 and v10 and v11 and v12 and v13 and v14 and v15 and v16 and v17 and v18 and v19 and v20 and v21 and (not final)).method"
+      ]
+    ]
+  },
+  {
+    "source": "consume(v0 or v1 or v2 or v3 or v4 or v5 or v6 or v7 or v8 or v9 or v10 or v11 or v12 or v13 or v14 or v15 or v16 or v17 or v18 or v19 or v20 or v21 or left < right)\n(v0 or v1 or v2 or v3 or v4 or v5 or v6 or v7 or v8 or v9 or v10 or v11 or v12 or v13 or v14 or v15 or v16 or v17 or v18 or v19 or v20 or v21 or left < right).method()\n",
+    "calls": [
+      [
+        "consume(v0 or v1 or v2 or v3 or v4 or v5 or v6 or v7 or v8 or v9 or v10 or v11 or v12 or v13 or v14 or v15 or v16 or v17 or v18 or v19 or v20 or v21 or (left < right))",
+        "consume"
+      ],
+      [
+        "(v0 or v1 or v2 or v3 or v4 or v5 or v6 or v7 or v8 or v9 or v10 or v11 or v12 or v13 or v14 or v15 or v16 or v17 or v18 or v19 or v20 or v21 or (left < right)).method()",
+        "(v0 or v1 or v2 or v3 or v4 or v5 or v6 or v7 or v8 or v9 or v10 or v11 or v12 or v13 or v14 or v15 or v16 or v17 or v18 or v19 or v20 or v21 or (left < right)).method"
+      ]
+    ]
   }
 ]

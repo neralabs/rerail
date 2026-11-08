@@ -97,6 +97,31 @@ def main():
     api.append(dict(id='unicode-read-failure',check=CHECK,entry='scan_file',files=[dict(path='impl/case.py',bytesHex='ff')],arguments=dict(file_path=dict(path='impl/case.py'))))
     for path in ['impl/outside.py','impl/common/l2100_sql_grammar/tests/case.py','impl/common/l2100_sql_grammar/test/case.py','impl/common/l2100_sql_grammar/test_case.py']:
         reporters.append(dict(id='scope-'+path,check=CHECK,files=[dict(path=path,source=wrapped('return SF.static(value)'))]))
+    expressions=[
+        '1  +  2', '(one + two) * three', 'one - (two - three)', '(one ** two) ** three',
+        'one ** two ** three', '(one if test else two) if other else three',
+        'call(  value , named = other, **options )', 'factory(1).run(value)',
+        'items[one:two:three]', 'items[(one, two)]', 'items[one, two]',
+        '(one,)', '[one, *items]', '{one, two}', '{"a": one, **options}',
+        '(lambda value=1, /, *, key=2: value + key)',
+        '[value for value in values if value]', '{value for value in values}',
+        '{key: value for key, value in pairs}', '(value for value in values)',
+        'not (a and b)', 'a or b and c', 'a is not b', 'a < b <= c',
+        '(await call())', '(yield value)', '(yield from values)', '(value := 42)',
+        '"double quotes"', '"a\\nb"', 'b"a\\x00b"', '"éαβ"',
+        '0xffffffffffffffffffffffffffff', '1e309', '2.0j',
+        'f"value={value!r:>{width}}"', 'f"{value=}"', '"a" "b"',
+    ]
+    for index,expression in enumerate(expressions):
+        api.append(dict(id='native-canonical-source-'+str(index),check=CHECK,entry='body_source',files=[],
+            arguments=dict(node=dict(pythonAst=expression,mode='eval'))))
+    for name,static,legacy,body in [
+        ('static-allowlist-only',['Fragment'],[], 'return SF.static(value), f"{value}"'),
+        ('legacy-allowlist-top',[],['Fragment'],'return SF.static(value), f"{value}"'),
+        ('legacy-inner-inherits-outer',[],['Inner'],'class Inner(SqlRenderable):\n    def render(self):\n        return f"{value}"\nreturn "ok"'),
+    ]:
+        api.append(dict(id=name,check=CHECK,entry='configured_scan',files=[dict(path='impl/case.py',source=wrapped(body))],
+            arguments=dict(file_path=dict(path='impl/case.py'),ALLOWLISTED_STATIC_CLASSES=dict(frozenset=static),LEGACY_ALLOWLISTED_CLASSES=dict(frozenset=legacy))))
     for name,value in [('api',dict(format='rerail.rr-fresh-contract-cases/v1',cases=api)),('reporter',dict(cases=reporters))]:
         file='rr-fresh-grammar-render-methods-cases.json' if name=='api' else 'rr-grammar-render-methods-reporter-cases.json'
         (FIXTURES/file).write_text(json.dumps(value,indent=2,ensure_ascii=True)+'\n');print(name,len(value['cases']))

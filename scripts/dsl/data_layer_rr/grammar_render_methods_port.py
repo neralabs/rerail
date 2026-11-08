@@ -6,6 +6,9 @@ from ast_transport import visit_columns
 
 
 def install(suite,module):
+    from ast_sources import Sources
+    parsed_sources=Sources(ast.parse)
+    suite.replace(ast,'parse',parsed_sources.parse)
     configuration=suite.native('grammar_render_methods','configuration',[])
     for row in configuration:
         if row['code']=='GRM_METADATA' and row['parameters']['key']!='autofix':
@@ -48,6 +51,12 @@ def install(suite,module):
             suite.replace(getattr(module,cls),method,factory(cls,method))
     def line_source(visitor,lineno):return scalar('RenderBodyAnalyzer._get_line_source',dict(lineno=str(lineno),sourceLines=visitor.source_lines))
     suite.replace(module.RenderBodyAnalyzer,'_get_line_source',line_source)
+    def expression_source(visitor,node):
+        raw=parsed_sources.segment(node)
+        source='async def __transport():\n    return (\n'+raw+'\n    )()\n'
+        rows=native('RenderBodyAnalyzer._get_source',[dict(path='transport.py',source=source)])
+        return next((r['parameters']['value'] for r in rows if r['code']=='GRM_VALUE'),'<unknown>')
+    suite.replace(module.RenderBodyAnalyzer,'_get_source',expression_source)
     def scan(root,files):
         documents=[];paths=[]
         for value in files:
@@ -73,3 +82,15 @@ def install(suite,module):
             print(f'Warning: Could not parse {file_path}: {error}',file=sys.stderr);return []
         return scan(module.PROJECT_ROOT,(file_path,))
     suite.replace(module,'scan_file',scan_file)
+
+
+def configured_scan(module,values):
+    """Apply caller-supplied configuration in the test host, then restore it."""
+    names=['ALLOWLISTED_STATIC_CLASSES','LEGACY_ALLOWLISTED_CLASSES']
+    previous={name:getattr(module,name) for name in names}
+    try:
+        for name in names:
+            if name in values:setattr(module,name,values[name])
+        return module.scan_file(values['file_path'])
+    finally:
+        for name,value in previous.items():setattr(module,name,value)
