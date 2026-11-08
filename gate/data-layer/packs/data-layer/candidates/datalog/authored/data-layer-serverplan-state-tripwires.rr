@@ -1118,17 +1118,17 @@ spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), match("(?s:.*)(?:^apply_.*_effect
 spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _),
     child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, x, _), spt_flow_pure_lazy_ref(x).
 spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), suffix("sql_builder", x).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params),
     node(_, x, "identifier", _, _), text(x, "runtime_refs").
 // `has {regex: RuntimeBuilderSpec}` under the parameters: a node below them, or a comment (a token whose text starts
 // `#`, of the parameters or of a node below them).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params),
     node_text(x, s), contains("RuntimeBuilderSpec", s).
 spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), node(_, ps, "parameters", _, _),
     token(ps, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), inside(x, ps, spt_flow_k_params),
     token(x, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
-spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), has(f, c, spt_flow_k_fdef), spt_flow_compiledstep_call(c).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), inside(c, f, spt_flow_k_fdef), spt_flow_compiledstep_call(c).
 .decl spt_flow_flsrc(d: number)
 spt_flow_flsrc(d) :- doc(d, p, _), match("(?s:.*)(?:(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\.py$))(?s:.*)", p).
 spt_flow_flsrc(d) :- spt_flow_flsrc_fn(f), node(d, f, _, _, _).

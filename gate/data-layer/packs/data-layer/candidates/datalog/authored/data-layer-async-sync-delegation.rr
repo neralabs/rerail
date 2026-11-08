@@ -282,9 +282,9 @@ sync_delegation_safe_call(c) :- node(_, c, "call", _, _), field(c, "function", g
     (text(g, "JSONResponse") ; text(g, "_attach_auto_api_hook_registry") ; text(g, "cast")).
 // f calls a `_lazy` function and nothing but lazy and safe calls (`has stopBy end`: nested functions too).
 .decl sync_delegation_lazy_only(f: node)
-sync_delegation_lazy_only(f) :- sync_delegation_fn(f, _, _), has(f, c, asd_fdef), sync_delegation_lazy_call(c), !sync_delegation_eager(f).
+sync_delegation_lazy_only(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), sync_delegation_lazy_call(c), !sync_delegation_eager(f).
 .decl sync_delegation_eager(f: node)
-sync_delegation_eager(f) :- sync_delegation_fn(f, _, _), has(f, c, asd_fdef), node(_, c, "call", _, _), !sync_delegation_safe_call(c).
+sync_delegation_eager(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _), !sync_delegation_safe_call(c).
 
 // b5-common-5: the exempt paths and names.
 .decl sync_delegation_exempt(f: node)
@@ -567,7 +567,7 @@ wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "typed_default_par
 
 // A call `x._raise_async_not_supported(…)` anywhere below f (`has stopBy end`, nested functions included).
 .decl wrapper_shape_unsupported(f: node)
-wrapper_shape_unsupported(f) :- node(_, f, "function_definition", _, _), has(f, c, asd_fdef), node(_, c, "call", _, _),
+wrapper_shape_unsupported(f) :- node(_, f, "function_definition", _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _),
     field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), node(_, a, "identifier", _, _),
     text(a, "_raise_async_not_supported").
 
@@ -612,7 +612,7 @@ wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), (asd_deco(
     node_text(t, x), (contains("LazyResult", x) ; contains("LazySeq", x) ; contains("ServerPlan", x)).
 // A `…_lazy` definition returning LazyResult that calls a grammar_*_lazy builder.
 wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t),
-    node_text(t, x), contains("LazyResult", x), has(g, c, asd_fdef), node(_, c, "call", _, _), field(c, "function", h),
+    node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h),
     node(_, h, "identifier", _, _),
     (text(h, "grammar_effect_lazy") ; text(h, "grammar_row_lazy") ; text(h, "grammar_rows_lazy") ; text(h, "grammar_value_lazy")).
 
@@ -637,9 +637,9 @@ wrapper_shape_resolves("async", x, z) :- wrapper_shape_named_call(x, "run_in_leg
 wrapper_shape_resolves(mode, x, z) :- wrapper_shape_legacy_lambda(mode, x, st, z), st = min t : { wrapper_shape_legacy_lambda(mode, x, t, _) }.
 .decl wrapper_shape_legacy_lambda(mode: symbol, x: node, start: number, z: node)
 wrapper_shape_legacy_lambda("sync", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_sync", args),
-    has(args, lam, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+    inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
 wrapper_shape_legacy_lambda("async", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_async", args),
-    has(args, lam, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+    inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
 .decl wrapper_shape_argk(kind: symbol)
 wrapper_shape_argk("argument_list").
 .decl wrapper_shape_named_call(x: node, fnm: symbol, args: node)
@@ -747,7 +747,7 @@ legacy_valid(o, nm) :- legacy_last_rebind(o, nm, x), x != nm, legacy_valid(o, x)
 // o holds an identifier named nm (`has stopBy end`), and nm is valid there.
 .decl legacy_lazy_ok(o: node, nm: symbol)
 legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(d, o, "module", _, _), node(d, i, "identifier", _, _), text(i, nm).
-legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(_, o, "class_definition", _, _), has(o, i, asd_class), node(_, i, "identifier", _, _), text(i, nm).
+legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(_, o, "class_definition", _, _), inside(i, o, asd_class), node(_, i, "identifier", _, _), text(i, nm).
 
 // missing-lazy: a top-level wrapper whose module has no valid <base>_lazy; a method of a Connection /
 // SessionHandle / VersionHandle class with none in its class.

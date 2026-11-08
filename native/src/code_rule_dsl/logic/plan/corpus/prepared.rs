@@ -139,7 +139,7 @@ mod tests {
         let (from, first) = run();
         assert_eq!(from, "prepared");
         assert_eq!(first.len(), 3, "{first:?}");
-        super::super::prepared_cache().lock().unwrap().clear();
+        super::super::with_prepared(|kept| kept.clear());
         let (from, second) = run();
         assert_eq!(from, "store", "the program is read from the store");
         assert_eq!(second, first);

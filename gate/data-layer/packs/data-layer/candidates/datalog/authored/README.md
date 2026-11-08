@@ -44,9 +44,10 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   (`cpython_syntax_error`, below).
 
   The base relations the file reads are inputs whether or not it says `.input`. `in_scope` and `out_scope` are
-  read, never derived (the replay changes them per event). The tree is read through `inside(n, a, set)` and
-  `has(a, n, set)` (both: `a` is a strict ancestor of `n` whose kind is in `set`) and `nearest(n, a, set)` (the
-  nearest such `a`; `nearest(n, _, set)`: `n` has one), `set` a relation of kind facts the file declares
+  read, never derived (the replay changes them per event). The tree is read through `inside(n, a, set)` (`a` is a
+  strict ancestor of `n` whose kind is in `set`), `has(a, n, set)` (`n` is a strict descendant of `a` whose kind is in
+  `set`) and `nearest(n, a, set)` (the nearest such ancestor `a` of `inside`; `nearest(n, _, set)`: `n` has one),
+  `set` a relation of kind facts the file declares
   (`.decl lazy_loop_calls(kind: symbol)`, `lazy_loop_calls("call").`).
 - The report gate `report_when_gt(k)` is given by the converter, read, never derived, like `in_scope`: one row `k`
   where the policy, as the run configures it, has `report_when: {count: {gt: k}}` (the only form the compiler

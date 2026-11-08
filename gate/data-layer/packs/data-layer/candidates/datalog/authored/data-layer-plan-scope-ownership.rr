@@ -181,9 +181,9 @@ workflow_build(a, t) :- node(_, a, "assignment", _, _), field(a, "left", x), nod
 // contains-Any on the `type` node (neither an identifier nor a string itself): a descendant identifier, string
 // or concatenated_string whose text contains Any.
 .decl workflow_any(t: node)
-workflow_any(t) :- workflow_build(_, t), has(t, x, workflow_type), node(_, x, "identifier", _, _), text(x, s), contains("Any", s).
-workflow_any(t) :- workflow_build(_, t), has(t, x, workflow_type), node(_, x, "string", _, _), node_text(x, s), contains("Any", s).
-workflow_any(t) :- workflow_build(_, t), has(t, x, workflow_type), node(_, x, "concatenated_string", _, _), node_text(x, s), contains("Any", s).
+workflow_any(t) :- workflow_build(_, t), inside(x, t, workflow_type), node(_, x, "identifier", _, _), text(x, s), contains("Any", s).
+workflow_any(t) :- workflow_build(_, t), inside(x, t, workflow_type), node(_, x, "string", _, _), node_text(x, s), contains("Any", s).
+workflow_any(t) :- workflow_build(_, t), inside(x, t, workflow_type), node(_, x, "concatenated_string", _, _), node_text(x, s), contains("Any", s).
 .decl workflow_callable(t: node, s: symbol)
 workflow_callable(t, s) :- workflow_build(_, t), node_text(t, s), match("(?s).*Callable\\s*\\[\\s*\\[.*", s), !workflow_any(t).
 .decl workflow_class(a: node, c: symbol)
@@ -229,7 +229,7 @@ lifecycle_text(x, s) :- node(_, x, "concatenated_string", _, _), value(x, s), va
 lifecycle_word(x) :- lifecycle_text(x, s),
     (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
 .decl lifecycle_mentions(c: node)
-lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), lifecycle_word(x).
+lifecycle_mentions(c) :- node(_, c, "call", _, _), inside(x, c, lifecycle_call), lifecycle_word(x).
 violation("data-layer-plan-scope-ownership", "lifecycle-reflection", "PSO007", p, l) :-
     node(_, c, "call", _, _), field(c, "function", f), lifecycle_reflect(f), lifecycle_mentions(c),
     node(d, c, _, _, _), doc(d, p, _), (p = "conform/versioned_plan_scope_helpers.py" ; p = "data_layer_testing/versioning/query_helpers.py" ; p = "l2000_connection/connection_callback_results.py" ; p = "l2000_connection/connection_plan_workflows.py" ; p = "l2000_connection/plan_scopes.py" ; p = "l7000_versioned_schema/versioned_connection.py" ; p = "l9900_auto_api/_versioning_helpers.py"), plan_scope_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
@@ -239,9 +239,9 @@ violation("data-layer-plan-scope-ownership", "lifecycle-reflection", "PSO007", p
 .decl base_versioned_call(kind: symbol)
 base_versioned_call("call").
 .decl base_versioned_mention(c: node)
-base_versioned_mention(c) :- has(c, x, base_versioned_call), node(_, x, "identifier", _, _), text(x, s), contains("Versioned", s).
-base_versioned_mention(c) :- has(c, x, base_versioned_call), node(_, x, "string", _, _), node_text(x, s), contains("Versioned", s).
-base_versioned_mention(c) :- has(c, x, base_versioned_call), node(_, x, "concatenated_string", _, _), node_text(x, s), contains("Versioned", s).
+base_versioned_mention(c) :- inside(x, c, base_versioned_call), node(_, x, "identifier", _, _), text(x, s), contains("Versioned", s).
+base_versioned_mention(c) :- inside(x, c, base_versioned_call), node(_, x, "string", _, _), node_text(x, s), contains("Versioned", s).
+base_versioned_mention(c) :- inside(x, c, base_versioned_call), node(_, x, "concatenated_string", _, _), node_text(x, s), contains("Versioned", s).
 violation("data-layer-plan-scope-ownership", "base-versioned-name", "PSO009", p, l) :-
     node(d, c, "call", _, _), base_versioned_mention(c), doc(d, p, _), suffix("connection_plan_workflows.py", p),
     plan_scope_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
@@ -263,10 +263,10 @@ invent_mention(x, "CtePublicationContract") :- node(_, x, "concatenated_string",
 .decl invent_candidate(c: node)
 invent_candidate(c) :- node(_, c, "call", _, _), node_text(c, s), contains("imported_contract", s), contains("CtePublicationContract", s).
 .decl invent_function(c: node)
-invent_function(c) :- invent_candidate(c), field(c, "function", f), node(d, f, _, fb, fe), has(c, x, invent_call), node(d, x, _, xb, xe), fb <= xb, xe <= fe,
+invent_function(c) :- invent_candidate(c), field(c, "function", f), node(d, f, _, fb, fe), inside(x, c, invent_call), node(d, x, _, xb, xe), fb <= xb, xe <= fe,
     invent_mention(x, "imported_contract").
 .decl invent_cte(c: node)
-invent_cte(c) :- invent_candidate(c), has(c, x, invent_call), invent_mention(x, "CtePublicationContract").
+invent_cte(c) :- invent_candidate(c), inside(x, c, invent_call), invent_mention(x, "CtePublicationContract").
 violation("data-layer-plan-scope-ownership", "invent-contract", "PSO013", p, l) :-
     invent_candidate(c), invent_function(c), invent_cte(c), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
 
