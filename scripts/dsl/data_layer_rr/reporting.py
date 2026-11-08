@@ -107,6 +107,8 @@ def run(args):
                 native_rows=ordered(native_rows)
             if case['check']=='lazy_result_usage':
                 native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['parameters']['exit_order'],-r['parameters']['entry_order']))
+            if case['check']=='module_level_caches':
+                native_rows=sorted(native_rows,key=lambda r:(r['path'],r['line'],r['code'],r['parameters'].get('visit',0),r['parameters'].get('suborder',0)))
             actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
                 path=r['path'], line=r['line'], message=r['message'],
                 severity=severities.get(r['clause'], 'info' if modes == ['log'] else 'hard-fail')) for r in native_rows]
@@ -130,6 +132,8 @@ def run(args):
                 module = modules[case['check']]
                 if case['check'] == 'lazy_result_usage':
                     module.BASELINE_FILE = root / 'scripts/lazy_result_baseline.json'
+                if case['check'] == 'module_level_caches':
+                    module.ALLOWLIST_FILE = root / 'scripts/allowlists/lint_module_level_caches_allowlist.json'
                 if case['check'] == 'serverplan_grammar_surface':
                     from scripts.lint_lib.serverplan_facts import serverplan_fact_extractors
                     module.ROOT = root
@@ -145,9 +149,12 @@ def run(args):
                 actual = [dict(linter_name=v.linter_name, code=v.code,
                     path=v.path.relative_to(root).as_posix() if v.path.is_absolute() else v.path.as_posix(),
                     line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
+                if case['check'] == 'module_level_caches':
+                    for finding in actual:
+                        finding['message'] = finding['message'].replace(str(root)+'/', '')
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
-        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage'}:
+        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches'}:
             last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code', 'async_sync_boundary': 'code', 'plan_scope_ownership':'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)

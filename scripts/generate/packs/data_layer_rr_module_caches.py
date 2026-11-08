@@ -155,6 +155,11 @@ mc_selected(d) :- !mc_graph(), mc_path(d, path), !option("entryPoint", _), mc_tr
 
 def assignments():
     return r'''
+.decl mc_outer_function(f: node)
+mc_outer_function(f) :- mc_function(f, _), mc_ancestor(f, outer), mc_function(outer, _).
+mc_outer_function(f) :- mc_function(f, _), mc_ancestor(f, outer), mc_lambda(outer).
+.decl mc_class_depth(f: node, depth: number)
+mc_class_depth(f, count : { mc_ancestor(f, c), mc_class(c, _) }) :- mc_function(f, _).
 .decl mc_all_caps(name: symbol)
 mc_all_caps(name) :- mc_assignment(_, _, name, _, _), contains("_", name), !prefix("_", name), !mc_upper_changes(name).
 .decl mc_cache_like(name: symbol)
@@ -175,6 +180,10 @@ mc_issue(a, name, pattern, severity, cat("Module-level ", description, " -- use 
  mc_assignment(a, _, name, v, sub), !mc_in_frame(a), name != "__all__", !mc_all_caps(name),
  mc_position(a, d, _, _, _), mc_path(d, path), !prefix("impl/common/l1000_cache/", path), !prefix("l1000_cache/", path),
  mc_assignment_kind(v, name, pattern, severity, description).
+mc_issue(f, name, "lru_cache", 3, cat("Module-level `@", decorator, "` on `", name, "()` -- use `data_layer.cache` or add an explicit local-only exception"), sub) :-
+ mc_function(f, name), !mc_outer_function(f), mc_class_depth(f, 0), mc_decorator(f, d, sub), mc_cache_decorator(d, decorator).
+mc_issue(f, cat(cls, ".", name), "lru_cache", 2, cat("`@", decorator, "` on `", cls, ".", name, "()` -- use `data_layer.cache` or add an explicit local-only exception"), sub) :-
+ mc_function(f, name), !mc_outer_function(f), mc_class_depth(f, 1), mc_ancestor(f, c), mc_class(c, cls), mc_decorator(f, d, sub), mc_cache_decorator(d, decorator).
 '''
 
 
@@ -182,6 +191,8 @@ def outputs():
     return r'''
 .decl mc_severity_name(severity: number, name: symbol)
 mc_severity_name(1, "INFO"). mc_severity_name(2, "WARNING"). mc_severity_name(3, "CRITICAL").
+.violation MCCount(at: span, severity: number, name: symbol, value: number) code "MC_SEVERITY_COUNT" "{name}: {value}"
+MCCount(@place("", 0), severity, name, count : { option_item("severityValues", i, value), value = to_string(severity) }) :- option("entryPoint", "_counts_by_severity"), mc_severity_name(severity, name).
 .decl mc_result(n: node, path: symbol, line: number, column: number, name: symbol, pattern_type: symbol, severity: number, message: symbol, visit: number, suborder: number, key: symbol, formatted: symbol)
 mc_result(n, path, l, c, name, pattern, severity, message, i, sub, key, formatted) :- mc_issue(n, name, pattern, severity, message, sub),
  mc_position(n, d, l, c, i), mc_path(d, path), mc_selected(d), mc_severity_name(severity, sev),
@@ -201,6 +212,7 @@ mc_al_entry(i, path, pattern, name, classification, reason, key, cat(key, "::", 
 mc_al_display(value) :- option("allowlistDisplayPath", value).
 mc_al_display("scripts/allowlists/lint_module_level_caches_allowlist.json") :- !option("allowlistDisplayPath", _).
 .decl mc_al_error(i: number, rank: number, kind: symbol, value: symbol)
+mc_al_error(-3, 0, "ValueError", detail) :- input_error("scripts/allowlists/lint_module_level_caches_allowlist.json", kind, detail), kind != "missing".
 mc_al_error(-2, 0, "ValueError", cat(path, " must contain a JSON object")) :- mc_al_root_type(kind), kind != "object", mc_al_display(path).
 mc_al_error(-1, 0, "ValueError", cat(path, " must contain an 'entries' list")) :- mc_al_entries_type(kind), kind != "array", mc_al_display(path).
 mc_al_error(i, 0, "ValueError", "Allowlist entries must be objects") :- mc_al_item_type(i, kind), kind != "object".

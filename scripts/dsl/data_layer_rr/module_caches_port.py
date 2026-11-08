@@ -93,6 +93,40 @@ def graph(suite, rel_path, tree):
     return suite.native('module_level_caches','collector',[dict(path='l0000_transport/ast.py',source='pass\n')],options)
 
 
+def collector_result(module, values, suite=None):
+    """Replay the unchanged event protocol on a supplied tree, or send its complete syntax to native."""
+    from scripts.lint_lib.ast_collectors import AstTraversalContext
+    tree, path, source = values['tree'], values['rel_path'], values.get('source','')
+    if suite:
+        return raw(graph(suite,path,tree))
+    collector = module.ModuleLevelCachesCollector(path)
+    parents, children, pending = {tree:None}, {}, [tree]
+    while pending:
+        n = pending.pop()
+        children[n] = tuple(ast.iter_child_nodes(n))
+        for c in children[n]:
+            parents[c] = n
+        pending.extend(reversed(children[n]))
+    context = AstTraversalContext(Path(path),source,parents,children)
+    collector.start_file(Path(path),source,context)
+    pending = [(tree,False)]
+    while pending:
+        n, leaving = pending.pop()
+        if leaving:
+            collector.on_exit_node(n,context)
+            handler = getattr(collector,'on_exit_'+type(n).__name__,None)
+            if handler:
+                handler(n,context)
+        else:
+            collector.on_node(n,context)
+            handler = getattr(collector,'on_'+type(n).__name__,None)
+            if handler:
+                handler(n,context)
+            pending.append((n,True))
+            pending.extend((c,False) for c in reversed(children[n]))
+    return collector.finish_file()
+
+
 def install(suite, module):
     def scan_codebase(root, *, include_tests=False, dirs=None):
         root = Path(root)
@@ -137,6 +171,28 @@ def install(suite, module):
         except (OSError,UnicodeDecodeError):
             return []
         return scan_file_content(rel_path,abs_path,source)
+    def factory(root):
+        from scripts.lint_lib.ast_collectors import AstEventCollector
+        def construct(path, source):
+            try:
+                relative = path.relative_to(root).as_posix()
+            except ValueError:
+                relative = path.as_posix()
+            class Collector(AstEventCollector):
+                def __init__(self):
+                    self.tree = None
+                def on_node(self, node, context):
+                    if self.tree is None:
+                        while context.parent(node) is not None:
+                            node = context.parent(node)
+                        self.tree = node
+                def finish_file(self):
+                    return raw(graph(suite,relative,self.tree or ast.Module(body=[],type_ignores=[])))
+            return Collector()
+        return {module.MODULE_LEVEL_CACHES_EXTRACTOR.extractor_id:construct}
+    def counts(violations):
+        rows = suite.native('module_level_caches','_counts_by_severity',[],dict(severityValues=[str(int(v.severity)) for v in violations]))
+        return {r['parameters']['name']:r['parameters']['value'] for r in sorted(rows,key=lambda r:-r['parameters']['severity'])}
     suite.replace(module.Violation,'allowlist_key',property(lambda self:self._native_key))
     suite.replace(module.Violation,'format',lambda self:self._native_format)
     suite.replace(module.AllowlistEntry,'match_key',property(lambda self:self._native_key))
@@ -145,5 +201,6 @@ def install(suite, module):
             ('_load_allowlist_index',lambda:{e._native_key:e for e in load()}),
             ('_collect_files',lambda root,dirs,include_tests:select(suite,Path(root),dirs,include_tests)),
             ('_facts_for_files',lambda root,file_pairs:raw(for_files(suite,module,Path(root),file_pairs))),
-            ('scan_file_content',scan_file_content),('_scan_file',scan_file)]:
+            ('scan_file_content',scan_file_content),('_scan_file',scan_file),
+            ('module_level_caches_fact_extractors',factory),('_counts_by_severity',counts)]:
         suite.replace(module,name,value)

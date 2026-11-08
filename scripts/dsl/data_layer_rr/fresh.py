@@ -111,6 +111,9 @@ def run(args):
         if 'lazy_result_usage' in modules:
             from lazy_results_port import install
             install(backend, modules['lazy_result_usage'])
+        if 'module_level_caches' in modules:
+            from module_caches_port import install
+            install(backend, modules['module_level_caches'])
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
                 check, name, passive = original_codes[frame.f_code]
@@ -137,7 +140,16 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='lazy_result_usage':
+                if case['check']=='module_level_caches':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='collector':
+                        from module_caches_port import collector_result
+                        call=lambda:collector_result(module,values,backend if native else None)
+                    elif case['entry']=='_load_allowlist_entries':
+                        module.ALLOWLIST_FILE=values['allowlist_path']
+                        call=lambda:module._load_allowlist_entries()
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='lazy_result_usage':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='collector':
                         from lazy_results_port import collector_result

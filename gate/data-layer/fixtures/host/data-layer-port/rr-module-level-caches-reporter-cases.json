@@ -1,0 +1,1174 @@
+{
+  "cases": [
+    {
+      "id": "value-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = dict()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = dict(x=1)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = dict(*[])\n"
+        }
+      ]
+    },
+    {
+      "id": "value-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = {1:2}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = {**{}}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = set()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = set([])\n"
+        }
+      ]
+    },
+    {
+      "id": "value-8",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = {1}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-9",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = []\n"
+        }
+      ]
+    },
+    {
+      "id": "value-10",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = list()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-11",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = list([])\n"
+        }
+      ]
+    },
+    {
+      "id": "value-12",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "value-13",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = [x for x in xs]\n"
+        }
+      ]
+    },
+    {
+      "id": "value-14",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = builtins.dict()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-15",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = OrderedDict()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-16",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = WeakKeyDictionary()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-17",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = pkg.CustomCache(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-18",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = make_cache()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-19",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-20",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = _ObjectCache()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-21",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = IdentityTokenCache()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-22",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = WeakLocalMetadataCache()\n"
+        }
+      ]
+    },
+    {
+      "id": "value-23",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(register_with_manager=False)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-24",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(register_with_manager=0)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-25",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(register_with_manager=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-26",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(**{\"register_with_manager\":False})\n"
+        }
+      ]
+    },
+    {
+      "id": "value-27",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(register_with_manager=False, register_with_manager=True)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-28",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = ObjectCache(register_with_manager=True, register_with_manager=False)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-29",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = (ObjectCache)(register_with_manager=False)\n"
+        }
+      ]
+    },
+    {
+      "id": "value-30",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = {\n # comment\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-31",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = [\n # comment\n]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nvalues = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nCACHE = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nCACHE_VALUES = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_CACHE = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n__all__ = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nx_Y = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n漢字_文 = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nÄ_B = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-8",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nä_b = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-9",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\ncache = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-10",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nholder = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-11",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nmemo = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-12",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nPOOL = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-13",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\ntokens = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-14",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nregistry = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-15",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nTOKENS = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-16",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nregiſtry = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "name-17",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nnot_related = [None]\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "x = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "x = []\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "tokens=[None]\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "CACHE={}\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "Cache={}\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "cache = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "x={} # cache\n"
+        }
+      ]
+    },
+    {
+      "id": "trigger-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "x={} # CACHE\n"
+        }
+      ]
+    },
+    {
+      "id": "target-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\na = b = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n(a, b) = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nobj.cache = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n(a) = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\na: dict[str, int] = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_CACHE = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-no-value",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder: dict[str,int]\n"
+        }
+      ]
+    },
+    {
+      "id": "augassign",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder += {}\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-assignment",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nif flag:\n    _holder={}\ntry:\n    a=[]\nexcept Exception:\n    b=set()\n"
+        }
+      ]
+    },
+    {
+      "id": "nonmodule-assignment",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\nclass C:\n    x={}\ndef f():\n    y={}\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@lru_cache()\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@functools.cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@functools.lru_cache(maxsize=None)\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@other.cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@functools.sub.cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@cache()()\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@decorator(cache)\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-8",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n@functools.cache[0]\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-decorators",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "@cache\n@lru_cache()\n@cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "class-methods",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "class C:\n    @cache\n    def f(self): return 1\n    @functools.lru_cache()\n    async def g(self): return 2\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-callables",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "def outer():\n    @cache\n    def inner(): return 1\n    class C:\n        @cache\n        def f(self): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-class",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "class Outer:\n    class Inner:\n        @cache\n        def f(self): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "conditional-class",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "if flag:\n    class C:\n        @cache\n        def f(self): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-columns",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "if flag: 变量 = {}; cache = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "infrastructure",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_cache/a.py",
+          "source": "# cache\n_holder={}\n@cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "legacy-infrastructure",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "impl/common/l1000_cache/a.py",
+          "source": "# cache\n_holder={}\n@cache\ndef f(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-0",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "_internal/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "other/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-5",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l１２３４_layer/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l123_foo/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/tests/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-8",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/test_a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-9",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/conform/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-10",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/benchmarks/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-11",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/examples/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-12",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/.pytest_cache/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-13",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/node_modules/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-14",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/.venv/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-15",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/tmp/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-16",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/browser_build/a.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-missing",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-empty",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{}"
+        }
+      ]
+    },
+    {
+      "id": "allow-valid",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \"local_metadata_memo\", \"reason\": \"Reviewed cache.\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-ordered",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"z\", \"classification\": \"local_metadata_memo\", \"reason\": \"Reviewed cache.\"}, {\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"a\", \"classification\": \"local_metadata_memo\", \"reason\": \"Reviewed cache.\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-missing-reason",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \"local_metadata_memo\", \"reason\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-blank-classification",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \"\\u001c \", \"reason\": \"Reviewed cache.\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-nonobject",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "[]"
+        }
+      ]
+    },
+    {
+      "id": "allow-bad-entries",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": {}}"
+        }
+      ]
+    },
+    {
+      "id": "allow-bad-item",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [false]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-duplicate",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \"local_metadata_memo\", \"reason\": \"Reviewed cache.\"}, {\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \"local_metadata_memo\", \"reason\": \"Another reason.\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "allow-whitespace",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"name\": \"_holder\", \"classification\": \" retained \", \"reason\": \"  retained\\n \"}]}"
+        }
+      ]
+    }
+  ]
+}
