@@ -577,9 +577,24 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     })))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's own store, so that another test's collection in the shared default store does not evict its rows.
+    pub(in crate::code_rule_dsl) static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Held by a test that starts the process's session (`session::start`) and by one whose runs must not see it: every
+/// run uses a live session's store.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) static SESSION_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
+    #[cfg(test)]
+    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+        return ContentStore::open(&path).map(Some);
+    }
     let path = match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => return Ok(None),
         Ok(v) => std::path::PathBuf::from(v),
@@ -1358,6 +1373,7 @@ pub(crate) fn run_with_options(
             let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
             memo_hits += hits.len();
             db.execute_batch("BEGIN")?;
+            let mut replay: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
             for entry in hits {
                 nodes += entry.nodes as usize;
                 own_totals.add(&Own::taken(&entry.rows));
@@ -1376,25 +1392,32 @@ pub(crate) fn run_with_options(
                         col.extend(values.iter().skip(c).step_by(*width).copied());
                     }
                 }
+                // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
                 for (rel, (width, values)) in entry.rows {
                     if values.is_empty() || !split.exports.contains(&rel) {
                         continue;
                     }
-                    let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
-                    let marks = vec!["?"; width].join(", ");
-                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
-                    let mut inserted = 0;
-                    for row in values.chunks(width) {
-                        inserted += insert.execute(rusqlite::params_from_iter(row.iter()))?;
+                    let cols = replay.entry(rel).or_insert_with(|| vec![Vec::new(); width]);
+                    for (c, col) in cols.iter_mut().enumerate() {
+                        col.extend(values.iter().skip(c).step_by(width).copied());
                     }
-                    let columns = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
-                    let rows = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), columns);
-                    totals.add_rows(&rel, inserted, rows.as_ref(), &types);
                 }
                 for (rel, (columns, lines)) in entry.lines {
                     outputs.entry(rel.clone()).or_default().extend(lines);
                     node_columns.insert(rel, columns);
                 }
+            }
+            for (rel, cols) in std::mem::take(&mut replay) {
+                let width = cols.len();
+                let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
+                let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+                let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
+                let table = format!("rr_replay_{rel}");
+                modules.bind(&db, &table, Arc::clone(&rows))?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {} FROM {table}", crate::code_rule_dsl::logic::sql::ident(&rel), names.join(", ")), [])?;
+                // The rows are released; the table stays registered, empty, for the next batch.
+                modules.bind(&db, &table, crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width]))?;
+                totals.add_rows(&rel, inserted, rows.as_ref(), &types);
             }
             db.execute_batch("COMMIT")?;
         }
@@ -2955,6 +2978,8 @@ uses(n, f) :- imp(n, q), def(f, q).
             crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
         };
         let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
         let uses = || std::fs::read_to_string(out.join("uses.csv")).unwrap();
         let text = program("uses", "");

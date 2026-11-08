@@ -90,6 +90,7 @@ mod tests {
     /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
     #[test]
     fn a_session_reruns_what_an_edit_changed() {
+        let _session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();
