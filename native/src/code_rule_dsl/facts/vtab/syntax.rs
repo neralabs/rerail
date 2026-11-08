@@ -1490,7 +1490,9 @@ impl Batch {
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let guest = d.guest.as_deref().filter(|_| core);
             let error = match dialect {
-                Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => core_rr::verdict(&d.facts, dialect),
+                Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => {
+                    core_rr::verdict(&d.facts, dialect).map_err(|raised| python_syntax::failure(&d.path, &raised))?
+                }
                 _ => None,
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
@@ -1565,7 +1567,7 @@ impl Batch {
                 extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &mut rows.text, &mut string)?;
                 tree.document(&p, dialect, python == Some(tag), &mut string);
                 fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
-                cpython.document(&p, dialect, python == Some(tag), &mut string);
+                cpython.document(&p, &d.path, dialect, python == Some(tag), &mut string)?;
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape.

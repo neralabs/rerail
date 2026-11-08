@@ -69,11 +69,91 @@ fn syntax_errors_are_ast_parses() {
         ("x = f\"\"\"\n\\x{1}\n\"\"\"\n", Some((3, "(unicode error) 'unicodeescape' codec can't decode bytes in position 1-2: truncated \\xXX escape"))),
         ("f\"a{{b\\x\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 1-2: truncated \\xXX escape"))),
         ("b\"ab\\x4\"\n", Some((1, "(value error) invalid \\x escape at position 2"))),
+        // A printable ASCII character no token starts is an operator to CPython's tokenizer: its parser fails there.
+        ("x = $\n", Some((1, "invalid syntax"))),
+        ("x = ?\n", Some((1, "invalid syntax"))),
+        ("x = `a`\n", Some((1, "invalid syntax"))),
+        ("x = 1 if ? else 2\n", Some((1, "invalid syntax"))),
+        ("x = !\n", Some((1, "invalid syntax"))),
+        ("x = a!b\n", Some((1, "invalid syntax"))),
+        ("def f():\n    $\n", Some((2, "invalid syntax"))),
+        ("x = $\ny = '\n", Some((2, "unterminated string literal (detected at line 2)"))),
+        ("x = (\n$\n", Some((1, "'(' was never closed"))),
+        ("x = (1,\n2 $ 3)\n", Some((2, "invalid syntax"))),
+        ("print $\n", Some((1, "invalid syntax"))),
+        ("print [1]\nx = $\n", Some((1, "Missing parentheses in call to 'print'. Did you mean print(...)?"))),
+        ("  $\n", Some((1, "unexpected indent"))),
+        ("if x:\n$\n", Some((2, "expected an indented block after 'if' statement on line 1"))),
+        ("if x:\n  pass\nelif y:\n$\n", Some((4, "expected an indented block after 'elif' statement on line 3"))),
+        ("for a in b:\n  pass\nelse:\n$\n", Some((4, "expected an indented block after 'else' statement on line 3"))),
+        ("try:\n  pass\nexcept* E:\n$\n", Some((4, "expected an indented block after 'except*' statement on line 3"))),
+        ("try:\n  pass\nfinally:\n$\n", Some((4, "expected an indented block after 'finally' statement on line 3"))),
+        ("async def f():\n$\n", Some((2, "expected an indented block after function definition on line 1"))),
+        ("@d\ndef f():\n$\n", Some((3, "expected an indented block after function definition on line 2"))),
+        ("class A(\n  B):\n$\n", Some((3, "expected an indented block after class definition on line 1"))),
+        ("async with a:\n$\n", Some((2, "expected an indented block after 'with' statement on line 1"))),
+        ("match x:\n  case 1:\n  $\n", Some((3, "expected an indented block after 'case' statement on line 2"))),
+        ("def f():\n  if x:\n  $\n", Some((3, "expected an indented block after 'if' statement on line 2"))),
+        ("if x:\n# c\n$\n", Some((3, "expected an indented block after 'if' statement on line 1"))),
+        ("if x:\n\n?\n", Some((3, "expected an indented block after 'if' statement on line 1"))),
+        ("while x:\n`\n", Some((2, "expected an indented block after 'while' statement on line 1"))),
+        ("if x: $\n", Some((1, "invalid syntax"))),
+        ("x = \x7f\n", Some((1, "invalid non-printable character U+007F"))),
+        ("f'{$}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("f'{?}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("f'{`}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("f'{ $}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("f'{\n$}'\n", Some((2, "f-string: expecting a valid expression after '{'"))),
+        ("f'{(x $)}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("f'{x:{$}}'\n", Some((1, "f-string: expecting a valid expression after '{'"))),
+        ("x = 1\nf'{$}'\n", Some((2, "f-string: expecting a valid expression after '{'"))),
+        ("f'{x $}'\n", Some((1, "f-string: expecting '=', or '!', or ':', or '}'"))),
+        ("f'{x$}'\n", Some((1, "f-string: expecting '=', or '!', or ':', or '}'"))),
+        ("f'{$}' '\n", Some((1, "unterminated string literal (detected at line 1)"))),
+        ("f'{x:$}'\n", None),
+        // A format spec's escape raises no SyntaxError (below) unless the parser failed before it.
+        ("x y\nf\"{x:\\x}\"\n", Some((1, "invalid syntax"))),
+        ("f\"{x:\\\\x}\"\n", None),
+        ("rf\"{x:\\x}\"\n", None),
     ];
     let mut wrong = Vec::new();
     for (source, want) in cases {
-        let got = syntax_error(source).map(|e| (e.line, e.msg));
-        if got.as_ref().map(|(l, m)| (*l, m.as_str())) != *want {
+        let got = syntax_error(source).map(|e| e.map(|e| (e.line, e.msg)));
+        if got.as_ref().map(|e| e.as_ref().map(|(l, m)| (*l, m.as_str()))) != Ok(*want) {
+            wrong.push(format!("{source:?}: CPython {want:?}, engine {got:?} [Ruff: {}]", super::syntax::explain(source)));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// `ast.parse`'s `UnicodeDecodeError` for an escape a format spec's text cannot decode (no `SyntaxError`: the parser's
+/// action lets the codec's error through), its `str`, as CPython 3.13.18 gives it (on nera-port-4). It is raised in
+/// the first pass, before a later tokenizer error, and before the escapes of the f-string's own text, which CPython
+/// decodes at the f-string's end.
+#[test]
+fn format_spec_escapes_raise_unicode_decode_error() {
+    let cases: &[(&str, &str)] = &[
+        ("f\"{x:\\x}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"{x!r:{y}\\x}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"{x:\\x}\"\ny = '\n", "position 0-1: truncated \\xXX escape"),
+        ("print [1]\nf\"{x:\\x}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("x = (f\"{x:\\x}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"\\x{x:\\x}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"{x:{y:\\x}}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"{f'{y:\\x}'}\"\n", "position 0-1: truncated \\xXX escape"),
+        ("f\"{x:a\\x}{y}\"\n", "position 1-2: truncated \\xXX escape"),
+        ("f\"\"\"{x:\n\\x}\"\"\"\n", "position 1-2: truncated \\xXX escape"),
+        ("f\"{x:é\\x}\"\n", "position 10-11: truncated \\xXX escape"),
+        ("f\"{x:\\u12}\"\n", "position 0-3: truncated \\uXXXX escape"),
+        ("f\"{x:\\U0011ffff}\"\n", "position 0-9: illegal Unicode character"),
+        ("f\"{x:\\N}\"\n", "position 0-1: malformed \\N character escape"),
+        ("f\"{x:\\N{BAD}}\"\n", "position 0-6: unknown Unicode character name"),
+    ];
+    let mut wrong = Vec::new();
+    for (source, want) in cases {
+        let want = super::syntax::Raised { class: "UnicodeDecodeError", message: format!("'unicodeescape' codec can't decode bytes in {want}") };
+        let got = syntax_error(source);
+        if got.as_ref() != Err(&want) {
             wrong.push(format!("{source:?}: CPython {want:?}, engine {got:?}"));
         }
     }

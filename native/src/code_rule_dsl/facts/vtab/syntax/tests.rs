@@ -569,9 +569,26 @@ fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
     shaped(&store, vec![doc.clone()], &ast).unwrap();
     let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
-    assert!(verdict.is_some());
+    assert!(matches!(verdict, Ok(Some(_))));
     shaped(&store, vec![doc.clone()], &ast).unwrap();
     assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
+
+/// Where `ast.parse` raises no `SyntaxError` (a format spec's escape it cannot decode raises `UnicodeDecodeError`),
+/// W's worker fails its batch: so does a batch reading CPython's verdict or facts of that document.
+#[test]
+#[cfg(feature = "python-syntax-error")]
+fn a_raising_ast_parse_fails_the_batch() {
+    let store = ContentStore::open(&temp("python-raises")).unwrap();
+    for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
+        let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
+        let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
+        let Err(error) = shaped(&store, vec![doc], &projection) else { panic!("{read}: the batch fails") };
+        assert!(error.to_string().contains("a.py: CPython's ast.parse raises UnicodeDecodeError: 'unicodeescape' codec"), "{read}: {error}");
+    }
+    let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
+    let text = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    assert!(shaped(&store, vec![doc], &text).is_ok(), "a text read needs no verdict");
 }
 
 /// Literal values and positions are one demanded producer; a names-only rule must not build either table.
