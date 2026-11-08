@@ -239,6 +239,79 @@ load average was 40–125, so compare the cross part:
   the rows about found documents only at the end. So the cross part costs what deriving everything does. Cutting a
   guarded rule to the missing documents before its joins is what that case needs (O114).
 
+### 9. Rows read by key, a guard on the first node, and a warm run that does little (2026-11-08, O114)
+
+**Where the rows are.** A component's rows were a zstd blob, found by a name binding. A run made three store
+calls per component and decoded every blob, so finding 133 components was a loop of statements. The rows are now in two
+store tables, each row cascading from a source (like the facts memo):
+- `cross_components(digest, source_id)`: a component's descriptor digest (the plan, its key, its documents' keys) to
+  the source holding that descriptor.
+- `cross_rows(source_id, rel, seq, c0..c7)`, clustered by `(source_id, rel)`.
+
+A run makes two queries, each one statement over JSON arrays of keys, so SQLite plans each whole:
+
+```sql
+-- every component, found by its digest: a primary-key probe each
+SELECT x.digest, x.source_id FROM json_each(?1) j JOIN cross_components x ON x.digest = j.value;
+-- every found component's rows of the relations still read: a key range per (source, relation)
+SELECT r.rel, r.c0, …, r.c7, r.source_id
+  FROM json_each(?1) s CROSS JOIN json_each(?2) n
+  CROSS JOIN cross_rows r ON r.source_id = s.value AND r.rel = n.value;
+```
+
+`CROSS JOIN` fixes the order. Left to choose, SQLite read every row of a source and tested each against all 281
+names: 2.18 M rows took 33 s. A test pins both plans with `EXPLAIN QUERY PLAN`. When every component is found,
+the run first drops the memoised rules, then reads only the relations whose copies something still reads: 365 K
+rows, not 4.02 M. The rows become in-memory columns that the engine reads in place.
+
+**The guard, earlier.** A guarded rule now tests `!rr_cross_doc` on every node that its same-document atoms join to
+the head's node, not only on the head's node. A guest shares its host's component, so each test admits the same
+rows. The planner applies each test as soon as its node is bound:
+
+```
+rr_in_annotation_0_fret($f, $k, $v) :- rr_in_annotation_0_retval($f, $r), pv($r, $k, $v),
+    $rr_xd = @doc($f), !rr_cross_doc($rr_xd), $rr_xd1 = @doc($r), !rr_cross_doc($rr_xd1)
+```
+
+**The per-file memo, which now stores on this corpus.**
+- Rows of a guest (an annotation's tree) belong to its host file (O109 had held them back).
+- A memo hit's exports are written with one `INSERT … SELECT` per relation, not one statement per row. That was
+  455 K statements for each large relation, and 12.4 s of a warm run.
+- A run read wholly from the memo now plans with tree counts (O117).
+
+**Measured** on the 84-file Jedi corpus (267 files, 748 documents), `calls_cx` with both memos on, one debug
+build. CPU is user + sys of the main thread; the load average was 60–90:
+
+| run | CPU | cross part | local part | stats | peak RSS | Jedi agree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| prime (both memos stored) | 99.1 s | 56.5 s | 30.5 s | 10.6 s | 917 MB | 6,299 |
+| warm (133 found, 267 files from the memo) | 13.2 s | 2.3 s | 5.0 s | 4.3 s | 841 MB | 6,299 |
+| one file edited (92 found, 41 derived) | 53.8 s | 42.2 s | 5.8 s | 4.4 s | 1,029 MB | 6,299 |
+| one file edited, both memos off | 57.0 s | 29.9 s | 23.3 s | 2.2 s | 847 MB | 6,299 |
+
+The warm run's answers equal the prime's. The edited run's answers equal the run with both memos off.
+
+- **Warm: 13.2 s, against 53.7 s before (§8).** What is left:
+  - the per-file memo's replay (5.0 s);
+  - measuring the replayed base relations' statistics (4.3 s, in Rust);
+  - the components' closure, `rr_cx_reach` (1.2 s);
+  - parsing the store's entries.
+- **One file edited: the cross memo does not pay.** The cross part is 42.2 s, against 29.9 s with the memo off.
+  - The guarded fixpoint costs a little less: 12.5 s against 15.4 s.
+  - Storing the 41 components' rows costs 6.9 s, and replaying 2.18 M rows costs 3.5 s.
+  - The edited file is imported widely. The 41 components that reach it hold most of the calls, so most of the work
+    is still derived.
+  - Peak RSS is just over the 1 GB budget.
+
+**What an edit needs next: early cutoff.** A component's key is a digest of its files' bytes (`rr_cx_own`). A
+comment changes the bytes, so every importer misses, even when no row the cross part reads has changed. Keying a
+file by what the cross part reads of it would keep the 41 keys, so all 133 components would be found:
+- the file's export rows and base rows;
+- node ids, which do not move for an edit at the end of a file.
+
+Whether those rows stay the same for typical edits has to be measured first. For example, the module node's end
+moves with every edit.
+
 ## What the prior work says
 
 - **The spike has no cross-file evidence.** It ran "no data-flow, call-graph or cross-file analysis

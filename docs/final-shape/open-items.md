@@ -2262,9 +2262,12 @@ Two steps would change that, in order:
   every run.
 
 Still open:
-- Reading stored rows in place: decoding and binding 4 M rows is 5.9 s of the 7.8 s.
-- Cutting a guarded rule to the missing documents before its joins, for a run where only some components are found.
-  Measured: one edited file misses 41 of 133 components, and the cross part is 39.3 s, no less than deriving it all.
+- ~~Reading stored rows in place~~: done (0076 §9). The rows are in `cross_rows`, read by one query of key ranges, and only the
+  relations still read are loaded. A warm run's cross part is 2.3 s and the whole run is 13.2 s.
+- ~~Cutting a guarded rule before its joins~~: done in part (0076 §9). Each same-document node is guarded. The
+  edited corpus still costs more with the memo than without it (42.2 s against 29.9 s): the 41 components that
+  miss hold most of the work, and storing them costs 6.9 s. The next step is early cutoff, a component key made from
+  what the cross part reads of each file, not from its bytes.
 - Whether `calls.rr` itself becomes `calls_cx.rr`. That is Typing's to decide: the closed world shrinks to the
   reader's closure, and the agreement is the same on both oracles.
 - Finding importer-shaped rows statically, so the check is not only `verify` over an edited corpus.
@@ -2315,3 +2318,22 @@ brought final-shape's guest hiding (O110) and lowering changes, which put more g
   from 74 to 58 relations but not its time (23.4 s, against 22.6 s, under load). It was not kept.
 - Whether every host copy is needed is final-shape's to judge (hiding.rs). A copy whose rows are all guest-only
   could still be specialised. `RERAIL_DUMP_CROSS=<file>` writes the cross-file rules for that analysis.
+
+
+## O117. A run read wholly from the per-file memo planned its cross-file part with no tree counts
+
+Found 2026-11-08, once the per-file memo stored on the Jedi corpus. `calls.rr` read all 267 files from the memo
+and never finished (killed after 20 minutes). The cause: the planner's tree counts (kinds, edges, documents and
+constant postings) come only from evaluated chunks, so every `kind(n, "identifier")` looked empty, and `rpvar`'s
+cross-file join began with `kind($pr, 1025) , kind($r, 1025)`, a cross product. `RDL_WAVE_TRACE` now names each
+probe's component, head and planned joins, and `RERAIL_DUMP_STATS` prints what the cross part plans with. Those found it.
+
+**Fixed:**
+- Each chunk mix's measured counts are stored under the file-local program, named in the run's manifest.
+- Memo hits, grouped by file type, add their mix's counts scaled by their nodes (falling back to their types',
+  then the last measured mix).
+- On the fixture, a memo read plans with 52 kinds over 1,493 nodes, as the evaluated run does. On Jedi, every warm
+  and edited run finished, with answers equal to the evaluated runs.
+
+**Closure:** met. Still open: storing exact per-file counts in the memo entry, in place of a mix's scaled ones.
+
