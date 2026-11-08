@@ -1513,7 +1513,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-str-params.rr",
-      "sha256": "84236583da839e04852038d0d798ea6c7884b045cc1a4612482ddf395dd3751e",
+      "sha256": "c149c1a3d479ae5df8b3ed92dce487487125da7f93ded6daaaaf1ad53559088d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_str_params.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1842,7 +1842,7 @@
       "legacySha256": "7a8a088b745e9b5abd434e56c38dcdad832bd7ad5b2533144554c3d82aabd446",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-str-params.rr",
-      "ruleSha256": "84236583da839e04852038d0d798ea6c7884b045cc1a4612482ddf395dd3751e"
+      "ruleSha256": "c149c1a3d479ae5df8b3ed92dce487487125da7f93ded6daaaaf1ad53559088d"
     },
     {
       "check": "grammar_callable_constructors",

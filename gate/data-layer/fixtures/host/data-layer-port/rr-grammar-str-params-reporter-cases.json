@@ -1,0 +1,1088 @@
+{
+  "cases": [
+    {
+      "id": "annotation-0",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-1",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | None):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-2",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None | str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-3",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: int | str | bytes):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-4",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | (int | bytes)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-5",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: int | (str | bytes)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-6",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (int | str) | bytes):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-7",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: list[str]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-8",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: typing.Optional[str]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-9",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Annotated[str, \"tag\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-10",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \"str\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-11",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \"left|str|right\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-12",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Literal[\"left|str|right\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-13",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Literal[\"str\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-14",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Any):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-15",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-16",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: strange):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-17",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-18",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \uff33\uff54\uff52):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-19",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \uff53\uff54\uff52):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-20",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str or int):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-21",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str if flag else int):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-22",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | Callable[[int], bytes]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-23",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (lambda: str)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-24",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-25",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None | \"str\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-26",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | (lambda: int)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-27",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (str, int)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-28",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: tuple[str | None]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-29",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | 1e309):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-30",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | b\"x\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-31",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | 0xffffffffffffffffffffffff):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-ordinary",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-self-str-skipped",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self: str, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-self-posonly",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, /, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-posonly-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str, /):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-mixed-posonly",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, ignored: str, /, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-kwonly-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, *, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-vararg-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, *value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-kwarg-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, **value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-positional-cls-flagged",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(cls: str, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-untyped-init-empty",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-multiple-params",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str, other: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "signature-default-value",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str = \"v\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicates",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value, self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "two-calls",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value), str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "concat",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) + str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-three",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) + str(self._value) + str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-multiple-args",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value, self._value) + str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "subtraction",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) - str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-call",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return wrapper(str(self._value)) + \"x\"\n"
+        }
+      ]
+    },
+    {
+      "id": "call-dotted",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return builtins.str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-parentheses",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return (str)((self)._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-keyword",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(value=self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-starred",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(*self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-kwstar",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(**self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-nested-slot",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value.other)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-other-receiver",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(other._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-nonunderscore",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self.value)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-other-slot",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._other)\n"
+        }
+      ]
+    },
+    {
+      "id": "keyword-before-starred",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(value=f\"{x}\", *[self._value])\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-helper",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        def helper():\n            return str(self._value)\n        return helper()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-lambda",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return lambda: str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-nongrammar",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        class Inner:\n            def helper(self):\n                return str(self._value)\n        return None\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-grammar",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        class Inner(SqlBase):\n            def render(self):\n                return str(self._other)\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "dict-field-order",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return {0: str(self._value), str(self._value): 1}\n"
+        }
+      ]
+    },
+    {
+      "id": "conditional-field-order",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) if str(self._value) else \"x\"\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-slot",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return \uff53\uff54\uff52(\uff53\uff45\uff4c\uff46._\uff56\uff41\uff4c\uff55\uff45)\n"
+        }
+      ]
+    },
+    {
+      "id": "no-init-wildcard",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def render(self):\n        return str(self.public), str(self._unknown)\n"
+        }
+      ]
+    },
+    {
+      "id": "typed-init-excludes",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value), str(self._unknown)\n"
+        }
+      ]
+    },
+    {
+      "id": "empty-init-excludes",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self):\n        pass\n    def render(self):\n        return str(self._unknown)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-init-wildcard",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    async def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-render-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    async def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "only-async-render-no-base",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    async def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "decorated-render",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    @decorator(str(self._value))\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "render-default",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self, x=str(self._value)):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "render-return-annotation",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self) -> str(self._value):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "render-before-init",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def render(self):\n        return str(self._value)\n    def __init__(self, value: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "two-inits",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str): pass\n    def __init__(self, value: str): pass\n    def render(self): return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-init-ignored",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    if condition:\n        def __init__(self, value: str): pass\n    def render(self): return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-render-not-grammar",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, value: str): pass\n    if condition:\n        def render(self): return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-allowlist-SqlQuotedIdentifier",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlQuotedIdentifier(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-allowlist-SqlFragment",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlFragment(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-allowlist-SqlTypeRef",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlTypeRef(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-allowlist-ViewDefinition",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class ViewDefinition(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "class-allowlist-SqlExplain",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlExplain(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "param-allowlist",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlCreateTriggerStmt(SqlBase):\n    def __init__(self, timing: str, event: str, value: str): pass\n    def render(self): return str(self._timing), str(self._event), str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "param-allowlist-without-init",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlCreateTriggerStmt(SqlBase):\n    def render(self):\n        return str(self._timing)\n"
+        }
+      ]
+    },
+    {
+      "id": "base-SqlBase",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-_SqlBase",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(_SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-pkg.SqlBase",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(pkg.SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-NotSql",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(NotSql):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-SqlBase[T]",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase[T]):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-(SqlBase)",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G((SqlBase)):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "base-_SqlBase[T]",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(_SqlBase[T]):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "class-name-only",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class SqlSomething:\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "render-fallback",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(Unrelated):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "helper-method-excluded",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def helper(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-nested-inherits",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        async def helper():\n            return str(self._value)\n        return helper()\n"
+        }
+      ]
+    },
+    {
+      "id": "syntax-with-trigger",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str:\n"
+        }
+      ]
+    },
+    {
+      "id": "bom",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "\ufeffclass G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/outside.py",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/outside.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/test/case.py",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/tests/case.py",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/test_case.py",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test_case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/__init__.py",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/__init__.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ]
+    },
+    {
+      "id": "multi-file-sorted",
+      "check": "grammar_str_params",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/z.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) + str(self._value)\n"
+        }
+      ]
+    }
+  ]
+}

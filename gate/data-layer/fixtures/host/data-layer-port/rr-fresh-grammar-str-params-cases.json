@@ -1,0 +1,1889 @@
+{
+  "cases": [
+    {
+      "id": "annotation-0",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-1",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | None):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-2",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None | str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-3",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: int | str | bytes):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-4",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | (int | bytes)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-5",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: int | (str | bytes)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-6",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (int | str) | bytes):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-7",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: list[str]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-8",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: typing.Optional[str]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-9",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Annotated[str, \"tag\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-10",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \"str\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-11",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \"left|str|right\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-12",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Literal[\"left|str|right\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-13",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Literal[\"str\"]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-14",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Any):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-15",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-16",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: strange):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-17",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: Str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-18",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \uff33\uff54\uff52):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-19",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: \uff53\uff54\uff52):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-20",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str or int):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-21",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str if flag else int):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-22",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | Callable[[int], bytes]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-23",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (lambda: str)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-24",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-25",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: None | \"str\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-26",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | (lambda: int)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-27",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: (str, int)):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-28",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: tuple[str | None]):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-29",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | 1e309):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-30",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | b\"x\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-31",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str | 0xffffffffffffffffffffffff):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-ordinary",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-self-str-skipped",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self: str, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-self-posonly",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, /, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-posonly-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str, /):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-mixed-posonly",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, ignored: str, /, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-kwonly-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, *, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-vararg-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, *value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-kwarg-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, **value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-positional-cls-flagged",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(cls: str, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-untyped-init-empty",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-multiple-params",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str, other: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "signature-default-value",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str = \"v\"):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "duplicates",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value, self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "two-calls",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value), str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) + str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-three",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) + str(self._value) + str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-multiple-args",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value, self._value) + str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "subtraction",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) - str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-call",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return wrapper(str(self._value)) + \"x\"\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-dotted",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return builtins.str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-parentheses",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return (str)((self)._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-keyword",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(value=self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-starred",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(*self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-kwstar",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(**self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-nested-slot",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value.other)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-other-receiver",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(other._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-nonunderscore",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self.value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "call-other-slot",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._other)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "keyword-before-starred",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(value=f\"{x}\", *[self._value])\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-helper",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        def helper():\n            return str(self._value)\n        return helper()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-lambda",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return lambda: str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-nongrammar",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        class Inner:\n            def helper(self):\n                return str(self._value)\n        return None\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-grammar",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        class Inner(SqlBase):\n            def render(self):\n                return str(self._other)\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "dict-field-order",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return {0: str(self._value), str(self._value): 1}\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "conditional-field-order",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value) if str(self._value) else \"x\"\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "unicode-slot",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return \uff53\uff54\uff52(\uff53\uff45\uff4c\uff46._\uff56\uff41\uff4c\uff55\uff45)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "no-init-wildcard",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def render(self):\n        return str(self.public), str(self._unknown)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "typed-init-excludes",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: SqlIdentifier):\n        pass\n    def render(self):\n        return str(self._value), str(self._unknown)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "empty-init-excludes",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self):\n        pass\n    def render(self):\n        return str(self._unknown)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "async-init-wildcard",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    async def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "async-render-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    async def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "only-async-render-no-base",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G:\n    async def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "decorated-render",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    @decorator(str(self._value))\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "render-default",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self, x=str(self._value)):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "render-return-annotation",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self) -> str(self._value):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "render-before-init",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def render(self):\n        return str(self._value)\n    def __init__(self, value: str): pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "two-inits",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str): pass\n    def __init__(self, value: str): pass\n    def render(self): return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-init-ignored",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    if condition:\n        def __init__(self, value: str): pass\n    def render(self): return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-render-not-grammar",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G:\n    def __init__(self, value: str): pass\n    if condition:\n        def render(self): return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-allowlist-SqlQuotedIdentifier",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlQuotedIdentifier(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-allowlist-SqlFragment",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlFragment(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-allowlist-SqlTypeRef",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlTypeRef(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-allowlist-ViewDefinition",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class ViewDefinition(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-allowlist-SqlExplain",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlExplain(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "param-allowlist",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlCreateTriggerStmt(SqlBase):\n    def __init__(self, timing: str, event: str, value: str): pass\n    def render(self): return str(self._timing), str(self._event), str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "param-allowlist-without-init",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlCreateTriggerStmt(SqlBase):\n    def render(self):\n        return str(self._timing)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-SqlBase",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-_SqlBase",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(_SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-pkg.SqlBase",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(pkg.SqlBase):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-NotSql",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(NotSql):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-SqlBase[T]",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase[T]):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-(SqlBase)",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G((SqlBase)):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-_SqlBase[T]",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(_SqlBase[T]):\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "class-name-only",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class SqlSomething:\n    def __init__(self, value: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "render-fallback",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(Unrelated):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "helper-method-excluded",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def helper(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "async-nested-inherits",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        async def helper():\n            return str(self._value)\n        return helper()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-with-trigger",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str:\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "bom",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\ufeffclass G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "test-folder",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/test/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/test/case.py"
+        }
+      }
+    },
+    {
+      "id": "tests-folder",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/tests/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/tests/case.py"
+        }
+      }
+    },
+    {
+      "id": "test-filename",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/test_case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/test_case.py"
+        }
+      }
+    },
+    {
+      "id": "dunder-filename",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/__init__.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/__init__.py"
+        }
+      }
+    },
+    {
+      "id": "wrong-extension",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.pyi",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.pyi"
+        }
+      }
+    },
+    {
+      "id": "gate-empty",
+      "check": "grammar_str_params",
+      "entry": "lint_source",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        },
+        "source": "pass\n"
+      }
+    },
+    {
+      "id": "gate-present",
+      "check": "grammar_str_params",
+      "entry": "lint_source",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        },
+        "source": "str"
+      }
+    },
+    {
+      "id": "actual-empty",
+      "check": "grammar_str_params",
+      "entry": "lint_source",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        },
+        "source": "str"
+      }
+    },
+    {
+      "id": "missing-file",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "impl/missing.py"
+        }
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "check": "grammar_str_params",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "bytesHex": "ff"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "cli-empty",
+      "check": "grammar_str_params",
+      "entry": "cli",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": []
+      }
+    },
+    {
+      "id": "cli-check-positive",
+      "check": "grammar_str_params",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ]
+      }
+    },
+    {
+      "id": "cli-report-positive",
+      "check": "grammar_str_params",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": []
+      }
+    },
+    {
+      "id": "cli-summary-duplicates",
+      "check": "grammar_str_params",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value, self._value) + str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check",
+          "--summary"
+        ]
+      }
+    },
+    {
+      "id": "cli-shallow-discovery",
+      "check": "grammar_str_params",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test_case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/__init__.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/nested/case.py",
+          "source": "class G(SqlBase):\n    def __init__(self, value: str):\n        pass\n    def render(self):\n        return str(self._value)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ]
+      }
+    }
+  ]
+}

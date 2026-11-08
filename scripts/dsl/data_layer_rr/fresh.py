@@ -109,6 +109,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'grammar_str_params' in modules:
+            from grammar_str_params_port import install
+            install(backend,modules['grammar_str_params'])
         if 'grammar_render_methods' in modules:
             from grammar_render_methods_port import install
             install(backend,modules['grammar_render_methods'])
@@ -136,6 +139,9 @@ def run(args):
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
                 check, name, passive = original_codes[frame.f_code]
+                if check=='grammar_str_params' and name=='cli_main':
+                    report.setdefault('hostProtocolCalls',[]).append(dict(test=backend.item.nodeid,entry=name,code=frame.f_code.co_name))
+                    return
                 if not passive:
                     report['semanticFallbacks'].append(check + ':' + name)
                     raise AssertionError('Original detector invoked: ' + check + ':' + name)
@@ -159,7 +165,13 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='grammar_render_methods':
+                if case['check']=='grammar_str_params':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='cli':
+                        from grammar_str_params_port import cli_probe
+                        call=lambda:cli_probe(module,values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='grammar_render_methods':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='body_source':
                         call=lambda:module.RenderBodyAnalyzer('x.py',[],'Fragment')._get_source(**values)
@@ -252,7 +264,7 @@ def run(args):
                         action = lambda: owner.analyze(values['tree'])
                     def call():
                         return analyzed_state(owner, action())
-                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods'}:
+                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params'}:
                     backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:getattr(module,case['entry'])(**values)
                 elif native:
@@ -268,7 +280,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods'}:
+                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

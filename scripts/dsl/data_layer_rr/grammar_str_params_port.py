@@ -41,3 +41,14 @@ def install(suite,module):
         return scan(module.ROOT,(filepath,))
     suite.replace(module,'lint_source',lint_source)
     suite.replace(module,'lint_file',lambda filepath:lint_source(filepath,filepath.read_text()))
+
+
+def cli_probe(module,values):
+    """Keep argument parsing and output as host protocol around native file analysis."""
+    previous_root,previous_args=module.ROOT,sys.argv
+    try:
+        module.ROOT=values['root']
+        sys.argv=['lint_grammar_str_params.py',*values['args']]
+        return module.cli_main()
+    finally:
+        module.ROOT=previous_root;sys.argv=previous_args
