@@ -257,8 +257,16 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
         };
         let pre = format!("pre_{ri}");
-        out.decls.insert(pre.clone(), vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect());
-        let pre_atom = Atom { rel: pre, args: vars.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
+        // A reader that passes no variable on (its reads are of constants) makes `pre_<i>` nullary: in the physical
+        // form the split runs on (`sql::program::physical`), one presence column holding 1.
+        let (cols, args): (Vec<(String, String)>, Vec<Term>) = if vars.is_empty() {
+            out.nullary.insert(pre.clone());
+            (vec![("__presence".to_owned(), "int".to_owned())], vec![Term::Int(1)])
+        } else {
+            (vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect(), vars.iter().map(|v| Term::Var(v.clone())).collect())
+        };
+        out.decls.insert(pre.clone(), cols);
+        let pre_atom = Atom { rel: pre, args, neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
         let mut body = vec![Literal::Atom(pre_atom.clone())];
         for l in cut {

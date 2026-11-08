@@ -1368,6 +1368,52 @@ deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// connection-structural-boundaries' first and last classes: `min`/`max` over an input atom with a constant column
+/// (`node(d, _, "function_definition", t, _)`). The input is read without its constant columns, and the aggregated
+/// column is its place among those read (the last one was read past the row).
+#[test]
+fn min_and_max_over_an_input_with_a_constant_column() {
+    let source = "x = 1\ndef f(): pass\ndef g():\n    return 2\n";
+    let dir = corpus("min-max-constant-column", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl first_def(s: number)
+first_def(s) :- node(d, _, "module", _, _), s = min t : { node(d, _, "function_definition", t, _) }.
+.decl last_end(e: number)
+last_end(e) :- node(d, _, "module", _, _), e = max t : { node(d, _, "function_definition", _, t) }.
+.output first_def, last_end
+"#;
+    let got = run(&dir, program, &["first_def", "last_end"]);
+    assert_eq!(got, [format!("{}\n", source.find("def f").unwrap()), format!("{}\n", source.find("2\n").unwrap() + 1)]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// serverplan-target-architecture's required shapes: a demanded relation (decision 0048) read with constants alone
+/// (`!ident("g")`). The reader passes no variable on, so its `pre_<i>` is nullary, its body empty or a negation
+/// alone, and takes the presence column the physical form gives every nullary relation.
+#[test]
+fn a_demanded_relation_read_with_constants_alone() {
+    let source = "f = 1\nh = f\n";
+    let dir = corpus("demand-constants-alone", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: loc, s: symbol)
+.decl ident(s: symbol)
+ident(s) :- node(_, n, "identifier", _, _), text(n, s).
+.decl other(s: symbol)
+other("f").
+.decl missing(s: symbol)
+missing("f") :- !ident("f").
+missing("g") :- !ident("g").
+missing("h") :- !other("h"), !ident("h").
+missing("x") :- !other("x"), !ident("x").
+.output missing
+"#;
+    let got = run(&dir, program, &["missing"]);
+    assert_eq!(got, ["g\nx\n"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// internal-dead-code's dynamic imports: two groups of one match (`match_group` twice on `m`), the match's `line` and
 /// `col`, and a disjunction over them (one rule per alternative, each reading the match relations).
 #[test]
