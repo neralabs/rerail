@@ -2875,6 +2875,12 @@ impl Run<'_> {
                     let mut a = a.clone();
                     a.args[col] = Term::Wild;
                     let (sc, toks) = atom(&a, None, &mut slots)?;
+                    // An input is read without its constant columns (`atom`): the column's place among those read.
+                    let col = if scc.contains(&a.rel) || native_rels.contains(&a.rel) {
+                        col
+                    } else {
+                        col - a.args[..col].iter().filter(|t| matches!(t, Term::Int(_) | Term::Str(_))).count()
+                    };
                     let name = if *op == AggOp::Min { "min" } else { "max" };
                     lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }

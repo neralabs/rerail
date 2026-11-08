@@ -1368,6 +1368,26 @@ deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// connection-structural-boundaries' first and last classes: `min`/`max` over an input atom with a constant column
+/// (`node(d, _, "function_definition", t, _)`). The input is read without its constant columns, and the aggregated
+/// column is its place among those read (the last one was read past the row).
+#[test]
+fn min_and_max_over_an_input_with_a_constant_column() {
+    let source = "x = 1\ndef f(): pass\ndef g():\n    return 2\n";
+    let dir = corpus("min-max-constant-column", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl first_def(s: number)
+first_def(s) :- node(d, _, "module", _, _), s = min t : { node(d, _, "function_definition", t, _) }.
+.decl last_end(e: number)
+last_end(e) :- node(d, _, "module", _, _), e = max t : { node(d, _, "function_definition", _, t) }.
+.output first_def, last_end
+"#;
+    let got = run(&dir, program, &["first_def", "last_end"]);
+    assert_eq!(got, [format!("{}\n", source.find("def f").unwrap()), format!("{}\n", source.find("2\n").unwrap() + 1)]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// internal-dead-code's dynamic imports: two groups of one match (`match_group` twice on `m`), the match's `line` and
 /// `col`, and a disjunction over them (one rule per alternative, each reading the match relations).
 #[test]
