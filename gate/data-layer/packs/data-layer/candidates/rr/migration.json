@@ -1461,7 +1461,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
-      "sha256": "7645ebaf5289ae03db187e630b9791fa7bc1ab7cd9bd85a90b83e3c4bd4838f6",
+      "sha256": "9949944414704bc8f79717978e8f8bfb6b51523447f2ce822d548fbbe49da7ba",
       "origin": "authored",
       "upstreamPath": "scripts/lint_render_fstrings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1752,7 +1752,7 @@
       "legacySha256": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
-      "ruleSha256": "7645ebaf5289ae03db187e630b9791fa7bc1ab7cd9bd85a90b83e3c4bd4838f6"
+      "ruleSha256": "9949944414704bc8f79717978e8f8bfb6b51523447f2ce822d548fbbe49da7ba"
     },
     {
       "check": "render_raw_strings",

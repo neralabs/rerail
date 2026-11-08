@@ -1,0 +1,453 @@
+{
+  "format": "rerail.render-fstrings-contract-cases/v1",
+  "cases": [
+    {
+      "id": "plain",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n return f\"SELECT {value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "async",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class SQL:\n async def render_select(self):\n  return f\"{self.value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nonrender",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def renderable():\n return f\"{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "render-prefix",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render_():\n return f\"{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-functions",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render_outer():\n def render_inner():\n  return f\"inner {value}\"\n def other():\n  return f\"other {value}\"\n return f\"outer {value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-classes",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class Outer:\n def render_a(self):\n  class Inner:\n   def render_b(self):\n    return f\"inner {value}\"\n  return f\"outer {value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "siblings",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):return f\"a{x}\"\nclass B:\n def render_other(self):return f\"b{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "decorators",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n @deco(f\"deco{x}\")\n def render(self,x=f\"arg{v}\")->f\"ret{t}\":return f\"body{v}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "class-decorators",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "@deco(f\"outside{x}\")\nclass A:\n @deco(f\"inside{x}\")\n def render(self):return f\"body{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return lambda:f\"lambda {x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "class-base",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n class C(base(f\"base{x}\")):\n  value=f\"body{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "conditional",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "if enabled:\n def render():\n  if value:return f\"yes{x}\"\n  return f\"no{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "format-spec",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"{value:>10}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "empty-format",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"{value:}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "dynamic-format",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"{value:>{width}.{precision}f}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-fstring",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"{f'inner {x}':>{width}}tail\"\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return \"plain\" f\"a{x}\" f\"b{y}\" \"tail\"\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent-no-field",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"a\" \"b\"\n"
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "debug",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"{ x = }{x=!r}{x=:>8}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "escaped",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"left\\n{{braces}} {x} \\N{SNOWMAN}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return rf\"left\\n{{braces}}{x}right\"\n"
+        }
+      ]
+    },
+    {
+      "id": "multiline",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"\"\"top\n{x:\n>{w}}tail\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "long-ascii",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "boundary-50",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "long-unicode",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nul",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f\"before\\x00xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "source-triggers",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def \uff52\uff45\uff4e\uff44\uff45\uff52():return F\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "canonical-name",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class \uff21:\n def \uff52\uff45\uff4e\uff44\uff45\uff52(self):return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "clean",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):return value.render()\n"
+        }
+      ]
+    },
+    {
+      "id": "outside",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "value=f\"outside{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "syntax-error",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render(:\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-0",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test_a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/sub/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tmp/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-5",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/.venv/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-6",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/__pycache__/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-7",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/conform/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-8",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/other/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-9",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-10",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/a.txt",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "multi-file",
+      "check": "render_fstrings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/z.py",
+          "source": "class A:\n def render(self):return f\"SELECT {x:>{w}}\"\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "def render():return f\"a{x}\" f\"b{y}\"\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/empty.py",
+          "source": "x=1\n"
+        }
+      ]
+    }
+  ]
+}

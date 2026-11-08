@@ -29,7 +29,10 @@ All four text columns share one native parse for each demanded prepared file bat
 The generic `project.rr` input supplies the caller's root spelling once per run, without path resolution or a directory scan.
 These generic extensions use the modern engine's existing relation and demand interfaces.
 The typed JSON reader preserves member order, exposes shape and JSON projections, and shares one decoded document across selectors.
-The manifest records all 19 extension files, including the dependency lock, with exact hashes.
+The decoded-literal producer also exposes `str_part_offset`, the existing piece start as an absolute UTF-8 byte offset.
+Rules can join those positions to format-specification spans. No additional parse or rule-specific detector is required.
+Valid scalar escapes use the shared Python value decoder, including Unicode character names.
+The manifest records all 20 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
 If the local Final shape branch advances, the audit rejects acceptance until this branch includes its new commits.
@@ -74,7 +77,14 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **78 target drafts and 22 absent translations**. None has full acceptance yet.
+The current inventory contains **79 target drafts and 21 absent translations**. None has full acceptance yet.
+The 79th draft, `render_fstrings`, passes all five unchanged original tests and their ten API/property observations.
+Its 165 supplemental API cases include 92 detector positives and three expected exceptions.
+All 44 reporter cases pass, including 33 positives. Eight independent controls cover detector and helper outputs.
+The rule preserves outermost render context, nested format-specification findings, decoded previews, counts, and report formatting.
+API file admission differs from reporter discovery. Both follow the recorded source behavior.
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-render-fstrings-native-contracts.json.gz) retains complete observations, controls, regressions, commands, and its validator.
+Production registration, CLI/enforcement, shared registry/scope assertions, and persistent workspace acceptance remain open.
 The 78th draft, `module_level_caches`, uses the root engine through `f0571b1e7`.
 Its original suite has eight unchanged tests and seventeen complete API and property observations.
 The supplemental corpus has 278 API cases, including 157 detector positives and eight expected exceptions.
