@@ -172,6 +172,73 @@ user + sys, load average 25–75:
 
 What would make it pay is in O114.
 
+### 8. Made to pay: closure-local rules, replay without deriving (2026-11-08, O114)
+
+**The program.** `typing/programs/calls_cx.rr` is `calls.rr` with every cross-file lookup a function of the reader's
+import closure. `fixtures/python/calls/make_cx.py` writes it from `calls.rr`, naming each text it replaces, so it
+follows `calls.rr`'s edits.
+- `components.rr` gives each document its closure, `rr_cx_reach(d, e)`, and the modules the closure holds,
+  `rr_cx_sees(d, q)`. The engine adds `components.rr` to any program that reads an `rr_cx_` relation.
+- The lookups read through the closure. For example, a name's binding is found in the modules the reader's
+  closure holds, not in every module with that name:
+
+  ```
+  // calls.rr: any module named q, anywhere in the run
+  pv(n, k, v) :- qn(n, q), qv(q, k, v).
+  // calls_cx.rr: the module m that binds it, if the reader's document reaches m's
+  pv(n, k, v) :- qn(n, q), qv(m9, q, k, v), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+  ```
+- Lookups that some reader asked for are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class
+  asked. `found` is not cut to the names readers ask for.
+- Closed-world `self`, and an annotation's subclasses, reach the subclasses in the reader's closure, not every
+  importer's.
+- Generics' heads are made for every subscript argument. A star import binds every public name of its module.
+  An instance attribute's assignment is keyed by the assignment.
+- Two engine fixes this needed. A memoised relation is never demand-split (0048). Every module imports
+  `builtins`, which was a missing edge.
+
+**Soundness, checked.** `RERAIL_CROSS_MEMO=verify` over an edited corpus is the test of the contract's dynamic half.
+The rows are stored over the full corpus; then half its files are cut to their imports, and the run is verified.
+A component whose closure is unchanged is found, and its stored rows are compared with rows derived without its
+importers' bodies.
+- The first pass found rows that existed only because an importer asked for them: generics, star imports,
+  instance attributes, and the benchmark's own spans. Those are the last four fixes above.
+- After them, 82 of 135 components were found and all 82 matched.
+
+**What changed in the engine.**
+- `.pragma "cross-memo" "*"` declares every relation the static contract admits: 280 of 283 for `calls_cx`, which
+  is 4.02 M rows over 133 components.
+- The guard `$d = @doc($n)` has a native step. Before, it sent every memoised stratum to the SQL kernel.
+- When every component is found, only the copies run, plus what other relations read.
+- The plan digest leaves out empty fact entries and the file system's answers (`world`). With the empty entries
+  in, a store run's rows were never found again. With the answers in, a file added anywhere missed every component.
+
+**Measured** on the 84-file Jedi corpus (267 files, 748 documents), debug builds. The `calls_cx` memo-off row
+comes from the build before the last four rule fixes; every other row is from the last build. CPU is user + sys; the
+load average was 40–125, so compare the cross part:
+
+| run | CPU | cross part | peak RSS | Jedi agree |
+| --- | ---: | ---: | ---: | ---: |
+| `calls.rr`, memo off | 100.2 s | 35.7 s | 849 MB | 6,299 |
+| `calls_cx`, memo off | 83.2 s | 37.6 s | 847 MB | 6,299 |
+| `calls_cx`, store (133 derived, 4.02 M rows) | 116.2 s | 48.7 s (7.8 s writing) | 846 MB | 6,299 |
+| `calls_cx`, replay (133 found) | 53.7 s | 7.8 s (5.9 s reading rows) | 837 MB | 6,299 |
+| edited corpus, memo off | 66.9 s | 26.6 s | 844 MB | 4,166 |
+| edited corpus, replay (135 found) | 44.3 s | 5.2 s | 838 MB | 4,166 |
+| one file edited (92 found, 41 derived and stored) | 87.7 s | 39.3 s (4.8 s writing) | 945 MB | 6,299 |
+
+- **It pays.** A replay's cross part is about a fifth of a derived one: 7.8 s against 35.7 s for `calls.rr`. The
+  answers are the same, and every run is under 1 GB.
+- `calls_cx` derived costs about what `calls.rr` does on today's engine.
+  - Its lookups through the closure cost more join work: subclasses of `object` fan out, and `fv` is per reader.
+  - `calls.rr`'s own fixpoint grew across the final-rerail-shape merge, from 53 relations and 8.1 s to 74
+    relations and 20.9 s (O116).
+- What a replay still spends is reading and binding 4 M rows (5.9 s). The next step is reading them in place.
+- **An edit does not pay yet.** One comment added to a widely imported file (`l1100_exceptions/exceptions.py`)
+  misses the 41 components that reach it. The guarded rules then run their joins over every replayed row and drop
+  the rows about found documents only at the end. So the cross part costs what deriving everything does. Cutting a
+  guarded rule to the missing documents before its joins is what that case needs (O114).
+
 ## What the prior work says
 
 - **The spike has no cross-file evidence.** It ran "no data-flow, call-graph or cross-file analysis

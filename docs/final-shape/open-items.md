@@ -2252,6 +2252,23 @@ Two steps would change that, in order:
 
 **Closure:** with both, a warm replaying run's cross part costs less than a derived one on this corpus, under 1 GB.
 
+**2026-11-08: met, with `calls_cx.rr` (decision 0076 §8).**
+- Step 1 is done in a parallel program, which `make_cx.py` writes from `calls.rr`. 280 of 283 cross-file relations
+  are declarable.
+- Verify over an edited corpus found four more kinds of importer-shaped rows, and they are fixed: generics, star
+  imports, instance attributes, and the benchmark's spans. After the fixes, all 82 found components matched.
+- Step 2 is done in part. The guard has a native step, and a run with every component found runs only the copies.
+- A replay's cross part is 7.8 s against 35.7 s for `calls.rr` derived, at 837 MB, with Jedi agreement 6,299 in
+  every run.
+
+Still open:
+- Reading stored rows in place: decoding and binding 4 M rows is 5.9 s of the 7.8 s.
+- Cutting a guarded rule to the missing documents before its joins, for a run where only some components are found.
+  Measured: one edited file misses 41 of 133 components, and the cross part is 39.3 s, no less than deriving it all.
+- Whether `calls.rr` itself becomes `calls_cx.rr`. That is Typing's to decide: the closed world shrinks to the
+  reader's closure, and the agreement is the same on both oracles.
+- Finding importer-shaped rows statically, so the check is not only `verify` over an edited corpus.
+
 
 ## O115. A prepared program read back from the store fails its run: "no such table: pre_85"
 
@@ -2272,3 +2289,14 @@ program back, and other corpus tests fail the same way (`cross_file_rows_are_mem
 further: the code is final-shape's (0073, 0074).
 
 **Closure:** a program read back from the store runs as the one prepared, with a test that runs twice on one store.
+
+
+## O116. `calls.rr`'s cross-file fixpoint grew threefold across the final-rerail-shape merge
+
+Measured 2026-11-08 on the 84-file Jedi corpus with the memo off. Before the merge (`da0a634c0`), the fixpoint
+stratum was 53 relations and 8.1 s of native joins. After it (`61dc0cd80` onward), it is 74 relations and 20.9 s,
+about three times the join work. The Jedi agreement is the same, 6,299. `calls.rr` did not change. The merge
+brought final-shape's guest hiding (O110) and lowering changes, which put more guest-annotation copies
+(`rr_in_annotation_*`) and `base` into that stratum. Not investigated further: the code is final-shape's.
+
+**Closure:** the cause is named, and the fixpoint's cost is back near 8 s or the growth is shown to be needed.
