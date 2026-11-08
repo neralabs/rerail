@@ -41,6 +41,49 @@ fn plain(block: &Select) -> bool {
     plain
 }
 
+/// Acyclic positive CTEs can use set relations when their consumer is DISTINCT.
+/// Scalar/aggregate consumers can observe bag multiplicity, so they keep the fallback.
+fn positive_ctes(query: &Query) -> bool {
+    fn positive(block: &Select) -> bool {
+        if !plain(block) {
+            return false;
+        }
+        let mut calls = false;
+        for expression in block
+            .columns
+            .iter()
+            .map(|(e, _)| e)
+            .chain(&block.predicates)
+            .chain(block.from.iter().flat_map(|i| match &i.join {
+                Join::On(on) => on.iter(),
+                Join::Cross => [].iter(),
+            }))
+        {
+            expression.visit(&mut |e| calls |= matches!(e, E::Call { .. } | E::Function { .. }));
+        }
+        !calls
+    }
+    if !query.body.distinct || !positive(&query.body) {
+        return false;
+    }
+    let mut preceding = BTreeSet::new();
+    for cte in &query.ctes {
+        if cte.arms.len() != 1
+            || !positive(&cte.arms[0])
+            || cte.arms[0]
+                .from
+                .iter()
+                .any(|i| matches!(&i.relation,Rel::Cte(name) if !preceding.contains(name)))
+        {
+            return false;
+        }
+        if !preceding.insert(cte.name.clone()) {
+            return false;
+        }
+    }
+    true
+}
+
 fn rewrite(block: &mut Select, names: &BTreeMap<String, (String, Layout)>) {
     rewrite_scoped(block, names, &BTreeMap::new());
 }
@@ -158,18 +201,19 @@ pub(super) fn prepare(
             || q.reads()
                 .iter()
                 .any(|r| r.program_relation() == Some(step.output.as_str()))
-            || q.ctes.iter().any(|c| {
-                !["seed", "walk", "near"].iter().any(|p| {
-                    c.name
-                        .strip_prefix(p)
-                        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-                }) || c.arms.iter().any(|a| {
-                    !plain(a)
-                        && a.from
-                            .iter()
-                            .any(|i| i.relation == Rel::Cte(c.name.clone()))
+            || !positive_ctes(q)
+                && q.ctes.iter().any(|c| {
+                    !["seed", "walk", "near"].iter().any(|p| {
+                        c.name
+                            .strip_prefix(p)
+                            .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+                    }) || c.arms.iter().any(|a| {
+                        !plain(a)
+                            && a.from
+                                .iter()
+                                .any(|i| i.relation == Rel::Cte(c.name.clone()))
+                    })
                 })
-            })
         {
             continue;
         }

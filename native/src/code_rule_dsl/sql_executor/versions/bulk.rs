@@ -18,7 +18,7 @@ impl Drop for Reuse<'_> {
 }
 
 impl Version {
-    fn loaded(&self, rows: Vec<Vec<Option<i64>>>, ignore: bool, replacing: bool) -> Result<Self> {
+    pub(super) fn loaded(&self, rows: Vec<Vec<Option<i64>>>, ignore: bool, replacing: bool) -> Result<Self> {
         if self.len() != 0 && !replacing {
             return Err(error("bulk construction requires an empty relation"));
         }

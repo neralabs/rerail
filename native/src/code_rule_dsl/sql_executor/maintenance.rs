@@ -64,48 +64,6 @@ impl Work<'_> {
             )
             .map_err(error)
     }
-    pub fn replace_keys(&self, table: &str, keys: &str, width: usize, query: &str) -> Result<()> {
-        let equal = (0..width)
-            .map(|i| format!("r.c{i}=k.c{i}"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        let cols = (0..width)
-            .map(|i| format!("c{i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        if self.preparing
-            && let Some(store) = self.versions
-            && let Some(old) = store.available(table)
-            && old.len() >= 512
-            && store.scratch_len(keys) >= old.len().div_ceil(2)
-        {
-            let op = self.profiler.map(|p| {
-                p.operation(
-                    "bulk relational storage",
-                    ("sql-extension", 0),
-                    0,
-                    vec![("old".into(), old.len() as i64)],
-                )
-            });
-            store.select_available(self.db,table,&format!("SELECT r.* FROM {} r WHERE NOT EXISTS(SELECT 1 FROM {} k WHERE {equal}) UNION ALL {query}",quote(table),quote(keys)),false,true)?;
-            if let Some(op) = op {
-                op.finish_unobserved();
-            }
-            return Ok(());
-        }
-        self.db
-            .execute(
-                &format!(
-                    "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",
-                    quote(table),
-                    quote(keys)
-                ),
-                [],
-            )
-            .map_err(error)?;
-        self.insert(table, query, false)?;
-        Ok(())
-    }
     pub fn table(&mut self, width: usize) -> Result<String> {
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
         self.allocate(

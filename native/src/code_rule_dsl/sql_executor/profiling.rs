@@ -13,6 +13,8 @@ pub(super) fn scope(db: &Database, stage: &str) -> Scope {
                 "filePublication"
             } else if matches!(stage, "compile" | "lower" | "create_index") {
                 "connectionSetup"
+            } else if stage == "verification snapshot" {
+                "verification"
             } else if stage == "reset" {
                 "cleanup"
             } else {

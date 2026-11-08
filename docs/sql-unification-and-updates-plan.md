@@ -931,5 +931,107 @@ Sparse work limits, failure recovery, projection views, and session reset also p
 4. Extend the single initial schedule to unsupported mixed shapes, with cold-oracle comparisons for each new shape.
    Keep the fallback visible until those checks pass.
 
-The task-owned build targets and `/tmp/rerail-sql-*` artifacts are removed at the user's request after validation.
+The preceding cleanup removed its build targets and `/tmp/rerail-sql-*` artifacts at the user's request.
 This includes the historical artifact paths above. The measurements and identities remain in this plan.
+
+
+### Continuation: SQL phases and complete-state parity (2026-11-08)
+
+The goal remains active. The complete-job allowance is still 100, and the current captures do not meet it.
+The four remaining items above retain their original scope.
+
+#### Implemented changes
+
+The fold now uses one SQL statement with materialized CTEs for candidates, merged values, frontiers, and widening counters.
+A tagged result stream returns all affected outputs.
+Native code validates every patch before it publishes any root.
+A failing expression or invalid later output cannot leave an earlier output changed.
+Materialized expressions execute once even when several outputs use them.
+Improvement-cache patches also use this mechanism.
+SQL phases can return their own key sets alongside row patches.
+Improvement queries now compute those keys directly, without separate key-table inserts.
+
+Private frame inputs, outputs, frontiers, counters, and improvement caches now use read-only eponymous modules.
+Their native owners can replace roots without CREATE or DROP statements.
+Forks and rollback preserve the access mode, schema, binding cell, and row IDs.
+Native index preparation also works for these read-only bindings.
+Writable context caches and physical scratch tables still need further conversion.
+
+Acyclic positive CTEs with arbitrary names now participate in the initial retained schedule.
+The final SELECT must use DISTINCT. The new path excludes function calls, scalar subqueries, aggregates, and recursive CTEs.
+Bag-sensitive and other unsupported shapes retain the existing fallback.
+Cold-oracle checks compare initial rows, positive frontiers, widening counters, rollback, and sparse edits at two input sizes.
+
+The shared report now accepts evidence from the SQL-session parity adapter.
+The headless probe captures complete explicit facts, derived relations, and widening counters after every operation.
+The independent oracle rebuilds from current facts through the original cold kernel in a separate, unprofiled process.
+The adapter compares full states, reported output deltas, expected failures, rollback, recovery, and final queries.
+Decimal strings preserve exact integer cells.
+
+The bundle pins request bytes, runner bytes, both observations, and every raw capture file through SHA-256 digests.
+Successful SQL receipts bind each complete-state checkpoint to its request and row count.
+Missing checkpoints, altered files, incorrect deltas, and truncated queries prevent acceptance.
+Snapshot, stored-fact, and file-edit requests need separate replay support. The current probe rejects them.
+Verification reads have a separate inventory phase and remain part of the fixed allowance.
+
+#### Current evidence
+
+The new request includes an instruction-limit failure, a wave-limit failure, six successful edits, and nine complete-state checkpoints.
+Its counts are not directly interchangeable with the preceding request, which lacked the failure probes and full-state reads.
+The 5,000-edge baseline contains 1,190 submitted statements.
+Fold fusion reduces that count to 954. Improvement fusion and private read-only roots reduce it further to 914.
+The next change computes improvement keys inside the phase statement.
+It reduces the two sizes to 847 and 843 statements.
+Both final captures pass full-state parity and receipt coverage.
+Both still fail the unchanged 100-execution allowance.
+
+The final captures contain 90 setup statements each.
+They contain 816 relational-evaluation statements and nine verification reads each.
+Transaction and cleanup paths account for the remaining size-dependent difference.
+These are unoptimized development captures. No new CPU or memory improvement claim follows from them.
+The initial run now uses 141 statements, compared with 198 at the start.
+Initial VM work increases from 3,341,880 to 3,460,361 instructions at 5,000 edges.
+At 50,000 edges, it increases from 32,375,880 to 33,565,361 instructions.
+The computed-key stream and CTE materialization trade extra VM work for fewer submissions and native helper roots.
+Final unprofiled CPU and memory measurements remain necessary.
+
+The larger capture attributes 499 edit statements to rule caches, 65 to recursive updates, and 58 to fused phases.
+Another 62 statements cover API publication, control updates, and transaction work.
+Setup includes 61 CREATE VIRTUAL TABLE statements, 19 CREATE TEMP TABLE statements, nine DROP statements, and one PRAGMA.
+These counts identify the remaining fusion and storage targets.
+
+The focused phase, storage, CTE, and recursive checks pass.
+The broader SQL, virtual-table, and profiler selection passes 120 tests, with one child-process test ignored by design.
+All 24 reporter and parity tests pass.
+Both optimized scale regressions pass, including the 100,000-edge lattice case.
+The library compiles with `code-rule-profile` enabled.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+The complete profiling gate passes 38 Node tests and 82 Python tests.
+That gate also exposed a stale vocabulary-test path from the merge.
+The test now reads the retained D SQL baseline, with its comparison role stated explicitly.
+Tests include native function evaluation counts, atomic publication, read-only binding rollback, and sparse CTE maintenance.
+
+#### Completion audit and next implementation
+
+| Requirement | Current state | Evidence still required |
+| --- | --- | --- |
+| Fuse context, contribution, head, and fold execution | Fold and improvement phases are fused. Context, contribution, and head queries remain separate. | Full operator or frame fusion, complete parity, bounded warm work, and captures within 100 executions. |
+| Reduce private schema and control setup | Read-only frame roots avoid DDL. Remaining caches and scratch tables still incur setup. | Conversion of remaining private storage and batched control publication, including teardown measurements. |
+| Add shared SQL-session parity | The adapter verifies explicit fact workloads, including failure and recovery. Other publication methods remain unsupported. | Broader replay support where required, plus final accepted captures after the engine meets its budget. |
+| Extend initial execution for unsupported mixed shapes | Positive acyclic CTEs now retain state. Other shapes keep an explicit fallback. | Further checked shape families with independent cold comparisons and sparse-work evidence. |
+
+The next planner change must combine context transitions, signed contributions, head counts, and folds within a shared SQL phase.
+The computed-key phase API now supports sparse patches without helper statements for each table.
+Independent operators can then share a frame statement while SQL preserves their preceding-wave inputs.
+Scalar reducers and registered lattice functions must retain their existing semantics and failure behavior.
+A native evaluator hidden behind one function call would not satisfy this requirement.
+Inactive rules and unused scalar groups must not evaluate checked expressions earlier than the cold kernel.
+Warm lookups must retain their prefix indexes and bounded candidate work.
+
+Remaining writable caches can become read-only native bindings after their SQL writes become phase outputs.
+Control-table creation must move out of repeated edit paths. Wave diagnostics can publish in batches.
+All setup, diagnostics, verification, failure cleanup, and teardown statements must remain visible in the final capture.
+
+The requests are reproducible through `benchmark/sql-executor.py --session-request REGIONS OUTPUT.json`.
+The shared verifier runs through `scripts/profiling/sql-session.mjs VERIFIER REQUEST.json OUTPUT_DIRECTORY`.
+A successful goal audit still requires complete accepted runs at both 1,000 and 10,000 regions.

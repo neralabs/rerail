@@ -32,17 +32,17 @@ fn snapshot(
         .map(|(r, t)| (r.clone(), store.version_at(scope, t)))
         .collect()
 }
-pub(super) fn keys(w: &mut Work<'_>, target: &str, d: &Delta, width: usize) -> Result<()> {
+fn key_queries(d: &Delta, width: usize) -> Vec<String> {
     let cols = names("", width);
-    for (table, n) in [(&d.plus, d.inserted), (&d.minus, d.deleted)] {
-        if n == 0 {
-            continue;
-        }
-        w.insert(
-            target,
-            &format!("SELECT {cols} FROM {}", quote(table)),
-            true,
-        )?;
+    [(&d.plus, d.inserted), (&d.minus, d.deleted)]
+        .into_iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(table, _)| format!("SELECT {cols} FROM {}", quote(table)))
+        .collect()
+}
+pub(super) fn keys(w: &mut Work<'_>, target: &str, d: &Delta, width: usize) -> Result<()> {
+    for query in key_queries(d, width) {
+        w.insert(target, &query, true)?;
     }
     Ok(())
 }
@@ -88,7 +88,7 @@ impl Frame {
                 (format!("{prefix}_i{id}"), r.clone()),
                 (format!("{prefix}_d{id}"), format!("delta_{r}")),
             ] {
-                store.create(
+                store.create_readonly(
                     w.db,
                     &table,
                     versions::Schema::integers(spec.width, spec.keys),
@@ -97,7 +97,7 @@ impl Frame {
                 inputs.insert(key, table);
             }
             let table = format!("{prefix}_r{id}");
-            store.create(
+            store.create_readonly(
                 w.db,
                 &table,
                 versions::Schema::integers(spec.width, spec.keys),
@@ -105,7 +105,7 @@ impl Frame {
             store.restrict_indexes(&table, &spec.indexes)?;
             published.insert(r.clone(), table);
             let table = format!("{prefix}_f{id}");
-            store.create(
+            store.create_readonly(
                 w.db,
                 &table,
                 versions::Schema::integers(spec.width, spec.keys),
@@ -114,7 +114,7 @@ impl Frame {
             frontiers.insert(r.clone(), table);
             if spec.widening() {
                 let table = format!("{prefix}_q{id}");
-                store.create(
+                store.create_readonly(
                     w.db,
                     &table,
                     versions::Schema::integers(spec.keys + 1, spec.keys),
@@ -122,7 +122,7 @@ impl Frame {
                 store.restrict_indexes(&table, &[])?;
                 input_counters.insert(r.clone(), table);
                 let table = format!("{prefix}_c{id}");
-                store.create(
+                store.create_readonly(
                     w.db,
                     &table,
                     versions::Schema::integers(spec.keys + 1, spec.keys),
@@ -273,13 +273,12 @@ impl Frame {
                 continue;
             }
             let d = delta(w, &before, &store.version(&op.result))?;
-            let affected = w.table(spec.keys)?;
-            keys(w, &affected, &d, spec.keys)?;
+            let mut queries = key_queries(&d, spec.keys);
             let previous = &self.inputs[r];
             let current = store.version(previous);
             if !op.comparison.same(&current) {
                 let d = delta(w, &op.comparison, &current)?;
-                keys(w, &affected, &d, spec.keys)?;
+                queries.extend(key_queries(&d, spec.keys));
             }
             op.comparison = current;
             let improve = if spec.lattice {
@@ -291,7 +290,13 @@ impl Frame {
             } else {
                 "p.c0 IS NULL".into()
             };
-            w.replace_keys(&op.improvements,&affected,spec.keys,&format!("SELECT c.* FROM {affected} k CROSS JOIN {} c LEFT JOIN {} p ON {} WHERE {} AND ({improve})",quote(&op.result),quote(previous),same("p","c",spec.keys),same("c","k",spec.keys)))?;
+            if !queries.is_empty() {
+                let mut phase = phase::Phase::default();
+                let affected = phase.relation(spec.keys, &queries.join(" UNION "));
+                let values=phase.relation(spec.width,&format!("SELECT c.* FROM {affected} k CROSS JOIN {} c LEFT JOIN {} p ON {} WHERE {} AND ({improve})",quote(&op.result),quote(previous),same("p","c",spec.keys),same("c","k",spec.keys)));
+                phase.patch_computed(store, &op.improvements, &affected, &values)?;
+                phase.execute(w)?;
+            }
             let d = delta(w, &old_improvements, &store.version(&op.improvements))?;
             keys(w, &touched[r], &d, spec.keys)?;
             if enabled != op.active && store.version(&op.improvements).len() > 0 {

@@ -421,7 +421,9 @@ The latter counts native version-diff traversal, which SQLite instruction counts
 
 Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
 Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
-Arbitrary checked CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
+Acyclic positive CTEs can use arbitrary names when the final SELECT uses DISTINCT.
+This path currently excludes function calls, scalar subqueries, and aggregate consumers.
+Bag-sensitive CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
 Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
 The schedule preserves dependency gates across components, constant seeds, frontiers, and widening counters.
 Preparation reports `initial_execution: "retained"` for this path and `"cold"` for the established fallback.
@@ -457,6 +459,34 @@ The benchmark probe reuses this profiler when capture is active, preserving SQLi
 
 The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
 The existing complete-job execution allowance and missing-parity checks remain visible in the report.
+
+The headless verifier supplies complete-state parity for explicit fact requests:
+
+```sh
+cargo build --profile profiling --no-default-features --features headless,lang-python,lang-rr --example sql-session-verify
+python3 benchmark/sql-executor.py --session-request 1000 /tmp/request.json
+node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/request.json /tmp/sql-session-1000
+```
+
+The output directory must be fresh. The command writes the report before it enforces acceptance.
+It exits unsuccessfully when parity, capture coverage, or the fixed 100-execution allowance fails.
+The independent cold kernel runs in a separate process without SQL capture.
+Every checkpoint includes all explicit facts, derived relations, and widening counters.
+The adapter also compares output deltas, failed-operation rollback, recovery, and final queries.
+Integer cells use decimal strings, so JavaScript does not round them.
+Snapshot and file publication need separate replay support. The verifier rejects those requests.
+
+`steps` supplies changes, optional limits, and an optional expected error class.
+The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.
+The report records verification reads in their own phase. Those reads still count against the complete-job allowance.
+The parity bundle pins the request, runner, observations, and SQL receipts through SHA-256 digests.
+
+An existing bundle can reproduce acceptance with this command:
+
+```sh
+node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-session-1000/raw /tmp/sql-session-report --parity /tmp/sql-session-1000/parity
+```
+
 
 `RERAIL_PROFILE=/tmp/logic-profile` also records compiler search, CPU spans, and the logical rule plans.
 The SQL request tool writes the standard logic reports and places shared SQL traces in the `sql` subdirectory.

@@ -106,7 +106,8 @@ pub(super) fn index(
             "index columns must be distinct valid positions".into(),
         ));
     }
-    if super::super::facts::vtab::bound_source(db, relation).is_some_and(|s| s.writable()) {
+    if let Some(source) = super::super::facts::vtab::bound_source(db, relation) {
+        source.prepare_index(&columns.iter().map(|c| *c as usize).collect::<Vec<_>>());
         return Ok(());
     }
     let suffix = columns

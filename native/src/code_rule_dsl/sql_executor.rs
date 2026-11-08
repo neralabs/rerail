@@ -21,6 +21,7 @@ mod indexes;
 mod live;
 mod maintenance;
 mod overlay;
+mod phase;
 mod profiling;
 mod recursive;
 mod reductions;
@@ -28,6 +29,8 @@ mod scratch;
 mod temporal;
 mod updates;
 mod versions;
+#[cfg(feature = "headless")]
+mod verification;
 mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
@@ -72,7 +75,7 @@ pub struct CodeRuleSqlExecutor {
     scratch: scratch::Pool,
     versions: versions::Store,
     next_trace: usize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "headless"))]
     cold_oracle: bool,
 }
 
@@ -102,7 +105,7 @@ impl CodeRuleSqlExecutor {
             scratch: scratch::Pool::default(),
             versions: versions::Store::default(),
             next_trace: 0,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "headless"))]
             cold_oracle: false,
         })
     }
@@ -865,7 +868,7 @@ impl CodeRuleSqlExecutor {
             }
             drop(projections_scope);
             work.rewind(projection_mark)?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "headless"))]
             let native_initial = if self.cold_oracle {
                 None
             } else {
@@ -877,7 +880,7 @@ impl CodeRuleSqlExecutor {
                     &emitted.program,
                 )?
             };
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "headless")))]
             let native_initial = temporal::initial::run(
                 &mut work,
                 &self.versions,
@@ -905,9 +908,9 @@ impl CodeRuleSqlExecutor {
                         execution.counts.insert(r, n as u64);
                     }
                 }
-                #[cfg(test)]
+                #[cfg(any(test, feature = "headless"))]
                 let retain = !self.cold_oracle;
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "headless")))]
                 let retain = true;
                 if retain {
                     let _support = profiling::scope(&self.db, "support preparation");
@@ -966,7 +969,7 @@ impl CodeRuleSqlExecutor {
         self.generated.extend(execution.objects.iter().cloned());
         self.executions.push(execution);
         serde_json::to_string(
-            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
+            &json!({"waves": waves, "outputs": outputs, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
         )
         .map_err(error)
     }

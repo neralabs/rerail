@@ -3,8 +3,10 @@ use super::super::facts::vtab::Modules;
 use super::*;
 use parking_lot::RwLock;
 use std::cell::RefCell;
+mod bindings;
 mod bulk;
 pub(super) mod fork;
+mod patch;
 mod probes;
 mod scan;
 mod tree;
@@ -418,6 +420,7 @@ impl super::super::facts::vtab::RowCells for tree::Cells {
 }
 struct Mutable {
     id: usize,
+    sql_writable: bool,
     state: RwLock<Arc<Version>>,
     undo: Arc<RwLock<Vec<Undo>>>,
 }
@@ -496,7 +499,7 @@ impl Source for Mutable {
         self.state.read().row_id(row)
     }
     fn writable(&self) -> bool {
-        true
+        self.sql_writable
     }
     fn write(
         &self,
@@ -507,6 +510,12 @@ impl Source for Mutable {
         _ignore: bool,
     ) -> rusqlite::Result<i64> {
         use rusqlite::ffi;
+        if !self.sql_writable {
+            return Err(constraint(
+                ffi::SQLITE_READONLY,
+                "native SQL slot is read-only",
+            ));
+        }
         let mut state = self.state.write();
         let previous = old.and_then(|id| Node::get(&state.ids, &[Some(id)]).cloned());
         let Some(values) = values else {
@@ -600,6 +609,7 @@ struct Undo {
 }
 struct Slot {
     schema: Arc<Schema>,
+    sql_writable: bool,
     owners: BTreeSet<usize>,
 }
 #[derive(Default)]
@@ -692,7 +702,7 @@ impl Store {
         let new = self.new_scope()?;
         for (name, table) in self.scope_tables(old) {
             let version = table.state.read().as_ref().clone();
-            let fork = self.allocate((new, name.clone()), version);
+            let fork = self.allocate((new, name.clone()), version, table.sql_writable);
             self.tables.borrow_mut().insert((new, name.clone()), fork);
             self.slots
                 .borrow_mut()
@@ -703,7 +713,7 @@ impl Store {
         }
         Ok(new)
     }
-    fn allocate(&self, key: TableKey, version: Version) -> Arc<Mutable> {
+    fn allocate(&self, key: TableKey, version: Version, sql_writable: bool) -> Arc<Mutable> {
         let id = self.next.get();
         self.next.set(id + 1);
         for undo in self.undo.write().iter_mut() {
@@ -711,6 +721,7 @@ impl Store {
         }
         Arc::new(Mutable {
             id,
+            sql_writable,
             state: RwLock::new(Arc::new(version)),
             undo: self.undo.clone(),
         })
@@ -774,6 +785,7 @@ impl Store {
                 .entry(name.clone())
                 .or_insert_with(|| Slot {
                     schema: table.state.read().schema.clone(),
+                    sql_writable: table.sql_writable,
                     owners: BTreeSet::new(),
                 })
                 .owners
@@ -829,59 +841,6 @@ impl Store {
                 .or_insert_with(|| state.clone());
         }
         *state = Arc::new(version);
-        Ok(())
-    }
-    pub fn create(&self, db: &rusqlite::Connection, name: &str, mut schema: Schema) -> Result<()> {
-        if schema.columns.is_empty()
-            || schema.keys == 0
-            || schema.keys > schema.columns.len()
-            || schema.nullable.len() != schema.columns.len()
-            || schema.columns.iter().collect::<BTreeSet<_>>().len() != schema.columns.len()
-        {
-            return Err(error("invalid versioned integer schema"));
-        }
-        for flag in schema.nullable.iter_mut().take(schema.keys) {
-            *flag = false;
-        }
-        self.fork_version(db, name, Version::empty(Arc::new(schema)))
-    }
-    pub fn fork(&self, db: &rusqlite::Connection, old: &str, new: &str) -> Result<()> {
-        self.fork_version(db, new, self.version(old))
-    }
-    pub fn fork_version(
-        &self,
-        db: &rusqlite::Connection,
-        name: &str,
-        version: Version,
-    ) -> Result<()> {
-        if self.contains(name) {
-            return Err(error("versioned table already exists"));
-        }
-        if self
-            .slots
-            .borrow()
-            .get(name)
-            .is_some_and(|s| *s.schema != *version.schema)
-        {
-            return Err(error("native SQL slot changed schema"));
-        }
-        let schema = version.schema.clone();
-        let scope = self.scope.get();
-        let key = (scope, name.into());
-        let table = self.allocate(key.clone(), version);
-        self.modules
-            .bind(db, name, table.clone())
-            .map_err(|e| error(format!("{name}: native SQL slot: {e}")))?;
-        self.tables.borrow_mut().insert(key, table);
-        self.slots
-            .borrow_mut()
-            .entry(name.into())
-            .or_insert_with(|| Slot {
-                schema,
-                owners: BTreeSet::new(),
-            })
-            .owners
-            .insert(scope);
         Ok(())
     }
     pub fn remove(&self, db: &rusqlite::Connection, name: &str) -> Result<()> {

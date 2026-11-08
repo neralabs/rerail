@@ -9,6 +9,7 @@ mod updates;
 mod temporal;
 mod profiling;
 mod initial;
+mod cte;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

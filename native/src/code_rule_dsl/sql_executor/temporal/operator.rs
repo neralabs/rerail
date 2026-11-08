@@ -231,7 +231,7 @@ impl Operator {
             pending.insert(name.clone(), p);
         }
         let improvements = format!("{result}_improve");
-        store.create(
+        store.create_readonly(
             w.db,
             &improvements,
             versions::Schema::integers(spec.width, spec.keys),
