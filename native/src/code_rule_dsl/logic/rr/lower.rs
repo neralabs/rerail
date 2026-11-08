@@ -55,7 +55,7 @@
 //! `!split_dot(q, _, x)`).
 
 mod core;
-pub(in crate::code_rule_dsl) use self::core::is_core;
+pub(in crate::code_rule_dsl) use self::core::{drop_unread_core, is_core};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -262,15 +262,16 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.declare_core()?;
     l.projections();
     l.span_patterns()?;
-    // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
-    // are no relations of the program.
+    // The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
+    // does not derive them (`next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are no
+    // relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
     let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
-    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
+    let rewritten: Vec<&str> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).collect();
+    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
     }
-    l.unused_core();
     l.kind_sets()?;
     l.unit();
     lower_boolean_relations(&mut l.prog);

@@ -970,8 +970,10 @@ fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 /// The authored overlay (module doc): rule `rule`'s authored program over its converted one. `clauses`: the policy's
 /// clause ids; `keep`: the clauses this run keeps (the replay's, per event). The merged program, with only what
 /// `violation` reaches, and the clauses the authored program derives (kept or not).
-pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
+pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
     let err = |m: String| Err(format!("authored {rule}: {m}"));
+    // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
+    super::rr::drop_unread_core(&mut authored);
     if !authored.policies.is_empty() || !authored.settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }

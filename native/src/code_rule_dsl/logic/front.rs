@@ -833,14 +833,15 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 }
 
 /// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
-/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.)
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) `match_all` and
+/// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
     for rule in &prog.rules {
         let mut read = rule.body.iter().filter_map(|l| match l {
             Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
             _ => None,
         });
-        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel)) {
+        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !matches!(a.rel.as_str(), "match_all" | "match_group")) {
             return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
         }
     }

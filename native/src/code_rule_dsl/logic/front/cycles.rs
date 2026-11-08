@@ -753,8 +753,10 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
                         let ints = columns(prog, rel, "int");
                         let counts: Vec<Option<usize>> = if counted { ints.iter().copied().map(Some).chain([None]).collect() } else { vec![None] };
                         let mut ks: Vec<Key> = columns(prog, rel, way.ty()).into_iter().flat_map(|c| counts.iter().map(move |&n| (Some(c), n))).collect();
-                        // A count alone moves the same whatever the way: tried once.
-                        if counted && way == Move::Later {
+                        // A count alone moves the same whatever the way: tried once, and only for a relation with no
+                        // node to place it (one with a node keeps its count at a place: a position whose node
+                        // changes is no bound).
+                        if counted && way == Move::Later && ks.is_empty() {
                             ks.extend(ints.into_iter().map(|n| (None, Some(n))));
                         }
                         (rel.as_str(), ks)

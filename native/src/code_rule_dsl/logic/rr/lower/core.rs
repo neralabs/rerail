@@ -1,7 +1,8 @@
 //! core.rr's relations in a program: core.rr is every program's prelude (decision 0043), as the libraries read it.
 //!
 //! - **Declarations.** `rr::program` reads core.rr before every file, so a file's program has all of core.rr's
-//!   declarations; it keeps those it reads, derives or outputs (`unused_core`). A file may not declare or derive a
+//!   declarations, and a program that includes core.rr reads core.rr's shape (`syntax::Projection::of`); the
+//!   inputs it does not read are neither bound nor planned. A file may not declare or derive a
 //!   core.rr relation (decision 0047, `rr::read_file`). A relation read and not declared, which core.rr declares,
 //!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
 //!   text's own declaration replaces core.rr's: a converted program's `syntax_error(d: number)` (the tape has an
@@ -44,8 +45,8 @@ pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = Laz
         .collect()
 });
 
-/// The core relations `rewrite` lowers.
-const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
+/// The core relations `rewrite` lowers: where the program does not derive one, no relation of the program.
+pub(super) const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
 
 /// Whether core.rr declares `rel`.
 pub(in crate::code_rule_dsl) fn is_core(rel: &str) -> bool {
@@ -179,24 +180,24 @@ impl Lowerer {
         }
         Ok(())
     }
+}
 
-    /// core.rr's relations the program neither reads, derives nor outputs, as core.rr declares them: the prelude's
-    /// declarations and inputs, which are no relations of this program.
-    pub(super) fn unused_core(&mut self) {
-        let prog = &self.prog;
-        let used: BTreeSet<String> = prog
-            .rules
-            .iter()
-            .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
-            .map(|a| a.rel.clone())
-            .chain(prog.facts.keys().cloned())
-            .chain(prog.outputs.iter().cloned())
-            .collect();
-        let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(*rel) && prog.decls.get(*rel).is_none_or(|own| own == *cols)).map(|(rel, _)| rel.clone()).collect();
-        for rel in unused {
-            self.prog.decls.remove(&rel);
-            self.prog.inputs.retain(|i| *i != rel);
-        }
+/// Takes out core.rr's relations `prog` neither reads, derives nor outputs, declared as core.rr declares them: the
+/// prelude's declarations and inputs, which are no relations of the program. The converter's overlay reads an
+/// authored file so (`logic::convert::overlay`), its declarations checked against the converter's.
+pub(in crate::code_rule_dsl) fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) {
+    let used: BTreeSet<String> = prog
+        .rules
+        .iter()
+        .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
+        .map(|a| a.rel.clone())
+        .chain(prog.facts.keys().cloned())
+        .chain(prog.outputs.iter().cloned())
+        .collect();
+    let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(*rel) && prog.decls.get(*rel).is_none_or(|own| own == *cols)).map(|(rel, _)| rel.clone()).collect();
+    for rel in unused {
+        prog.decls.remove(&rel);
+        prog.inputs.retain(|i| *i != rel);
     }
 }
 

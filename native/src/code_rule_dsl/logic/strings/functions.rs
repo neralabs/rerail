@@ -59,7 +59,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
 
 /// The SQL name of function `name`: its own, or `rr_<name>` where SQLite has a function of that name, which
 /// other SQL on the same connection may read with SQLite's meaning.
-fn sql_name(name: &'static str) -> &'static str {
+pub(in crate::code_rule_dsl) fn sql_name(name: &'static str) -> &'static str {
     match name {
         "lower" => "rr_lower",
         "max" => "rr_max",
@@ -69,9 +69,10 @@ fn sql_name(name: &'static str) -> &'static str {
     }
 }
 
-/// A function's name as SQL names it, its arguments and its result, if `name` is one of these.
+/// A function's name, its arguments and its result, if `name` is one of these: the name `eval` and the native
+/// engine's `func` step take; SQL calls it `sql_name`.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
-    FUNCTIONS.iter().find(|(n, _, _)| *n == name).map(|&(n, args, ret)| (sql_name(n), args, ret))
+    FUNCTIONS.iter().find(|(n, _, _)| *n == name).copied()
 }
 
 /// Registers every function on `db`.
@@ -304,8 +305,8 @@ pub(in crate::code_rule_dsl) fn convert(s: &str, to: &str, seps: &str) -> String
     }
 }
 
-/// `s` as a JSON string literal, quotes included, as Python's `json.dumps` writes it by default: non-ASCII as
-/// `\uXXXX` (surrogate pairs above U+FFFF).
+/// `s` as a JSON string literal, quotes included, as W's signed-list stages write an element (SQLite's
+/// `json_quote`/`json_group_array`, as `plan`'s SQL gives it): `"`, `\` and controls escaped, non-ASCII kept.
 pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -317,12 +318,7 @@ pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || (c as u32) > 0x7e => {
-                let mut units = [0u16; 2];
-                for u in c.encode_utf16(&mut units) {
-                    out.push_str(&format!("\\u{u:04x}"));
-                }
-            }
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }

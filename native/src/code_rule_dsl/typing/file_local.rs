@@ -736,7 +736,7 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
     let docof = prog.inputs.iter().any(|r| r == "docof");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
-    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
+    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "int".to_owned());
     let (mut located, mut blocked) = (Vec::new(), Vec::new());
     let mut rules = std::mem::take(&mut prog.rules);
     for rel in &targets {
@@ -760,10 +760,12 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             let doc = match doc {
                 Some(d) => d,
                 None => {
+                    // Through `docof`, or `node` where the program declares it (one that declares neither, as a
+                    // program of a few base relations may, is not located).
                     let Some(node) = positive().find_map(|a| a.args.iter().enumerate().find_map(|(c, t)| match t {
                         Term::Var(v) if node_typed(&a.rel, c) => Some(v.clone()),
                         _ => None,
-                    })) else {
+                    })).filter(|_| docof || decls.contains_key("node")) else {
                         break;
                     };
                     let d = "__located_d".to_owned();

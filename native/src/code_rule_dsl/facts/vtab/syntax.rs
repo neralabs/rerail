@@ -823,6 +823,10 @@ struct Extra {
     tape_line: bool,
     line_count: bool,
     text: bool,
+    /// `text` of the `source` and `src_line` spans: core.rr's programs make it where a rule reads a copy of such a
+    /// span's text (`Projection::wants_span_text`), T's wherever `text` is read.
+    source_text: bool,
+    line_text: bool,
     line: bool,
     end_line: bool,
     col: bool,
@@ -867,7 +871,7 @@ struct Found {
 type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
 
 impl Extra {
-    fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape) -> Self {
+    fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
         let read = |rel: &str| reads.contains(rel);
         Self {
             source: read("source"),
@@ -876,6 +880,8 @@ impl Extra {
             tape_line: read("tape_line"),
             line_count: read("line_count"),
             text: read("text"),
+            source_text: read("text") && source_text,
+            line_text: read("text") && line_text,
             line: read("line"),
             end_line: read("end_line"),
             col: read("col"),
@@ -912,13 +918,13 @@ impl Extra {
         self.line && self.spans()
     }
 
-    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col` (its start's byte column).
+    /// A span's rows in `text` (into `text`, with `text_too`), `line`, `end_line` and `col` (its start's byte column).
     #[allow(clippy::too_many_arguments)]
-    fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+    fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text_too: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
         if self.docof {
             self.docofs.push([sp, sp >> 32]);
         }
-        if self.text {
+        if self.text && text_too {
             text.push([sp, string(body) as i64]);
         }
         if self.line_rows() {
@@ -1050,7 +1056,7 @@ impl Extra {
                         let c = span(COMMENT | k);
                         let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
                         let col = start - f.lines.start(f.lines.line(start));
-                        self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, text, string);
+                        self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, true, text, string);
                         if self.node_text {
                             self.node_texts.push([c, string(whole) as i64]);
                         }
@@ -1073,14 +1079,14 @@ impl Extra {
             let sp = span(0);
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
-            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, text, string);
+            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, self.source_text, text, string);
             made.push((sp, 0..source.len(), None));
         }
         if self.src_line {
             for (i, r) in physical.iter().enumerate() {
                 let (l, sp) = (i + 1, span(i as u32 + 1));
                 self.src_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], self.line_text, text, string);
                 made.push((sp, r.clone(), Some(l)));
             }
         }
@@ -1088,7 +1094,7 @@ impl Extra {
             for (i, r) in physical_lines(source, false).into_iter().enumerate() {
                 let (l, sp) = (i + 1, span(LF | (i as u32 + 1)));
                 self.src_lines_lf.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
                 made.push((sp, r, Some(l)));
             }
         }
@@ -1097,7 +1103,7 @@ impl Extra {
                 let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
                 let r = f.lines.start(i)..f.lines.end(i);
                 self.tape_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
                 made.push((sp, r, Some(l)));
             }
         }
@@ -1128,7 +1134,7 @@ impl Extra {
                     let m = id(p)?;
                     self.matches[k].rows.push([*sp, m]);
                     let (first, last, col) = place(r, line, found.range());
-                    self.span(m, first, last, col, found.as_str(), text, string);
+                    self.span(m, first, last, col, found.as_str(), true, text, string);
                     if !groups {
                         continue;
                     }
@@ -1138,7 +1144,7 @@ impl Extra {
                         let g = id(p)?;
                         self.matches[k].group_rows.push([*sp, m, string(name) as i64, g]);
                         let (first, last, col) = place(r, line, group.range());
-                        self.span(g, first, last, col, group.as_str(), text, string);
+                        self.span(g, first, last, col, group.as_str(), true, text, string);
                     }
                 }
             }
@@ -1336,7 +1342,8 @@ impl Batch {
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
-        let mut extra = Extra::new(reads, matches, shape);
+        let span_text = [crate::code_rule_dsl::logic::front::SpanIn::Source, crate::code_rule_dsl::logic::front::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
+        let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
         let mut fstrings = fstring::FStrings::new(reads, markers);
         let mut cpython = cpython::CPython::new(reads);
