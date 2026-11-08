@@ -248,6 +248,7 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
+mod native_cpu_tier2;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -266,6 +267,15 @@ mod value;
 pub(in crate::code_rule_dsl) mod block;
 #[cfg(test)]
 mod block_tests;
+// The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
+mod bitlex_compile;
+#[cfg(test)]
+mod bitlex_compile_tests;
+// Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
+mod block_monoid;
+mod block_plan;
+#[cfg(test)]
+mod block_plan_tests;
 mod value_packing;
 mod value_prefix;
 

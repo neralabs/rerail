@@ -196,6 +196,20 @@ fn key(path: &Path) -> PathBuf {
     }
 }
 
+/// The file's exclusive lock, without waiting. WASI has no file locks; the browser build is the only process on
+/// its in-memory filesystem, so the lock is always free there.
+fn try_lock(file: &File) -> Result<(), TryLockError> {
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = file;
+        Ok(())
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        file.try_lock()
+    }
+}
+
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
@@ -253,13 +267,21 @@ impl Atoms {
         }
     }
 
+    /// Shared scratch databases borrow the arena; only its owner stores atom segments.
+    fn owns(&self, connection: &Connection) -> bool {
+        match (&self.path, connection.path()) {
+            (Some(owner), Some(path)) => *owner == key(Path::new(path)),
+            _ => false,
+        }
+    }
+
     /// Registers the `atoms` virtual table on `connection` and, for a database on disk, the commit
     /// hook that refuses a commit writing it while atoms are pending that the transaction did not
     /// append.
     pub(crate) fn install(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = Atoms::for_connection(connection);
         vtab::install(connection, &atoms)?;
-        if atoms.path.is_some() {
+        if atoms.owns(connection) {
             // SAFETY: the handle is only read by the hooks, which run on this connection.
             let handle = unsafe { connection.handle() } as usize;
             let flushed = Arc::clone(atoms.flushed.lock().entry(handle).or_default());
@@ -372,7 +394,7 @@ impl Atoms {
             std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(sidecar(path, suffix))
         };
         let file = open("-atoms.lock")?;
-        match file.try_lock() {
+        match try_lock(&file) {
             Ok(()) => {}
             Err(TryLockError::Error(error)) => return Err(error.into()),
             Err(TryLockError::WouldBlock) => {
@@ -384,7 +406,7 @@ impl Atoms {
                 loop {
                     std::thread::sleep(pause);
                     pause = (pause * 2).min(Duration::from_millis(20));
-                    match file.try_lock() {
+                    match try_lock(&file) {
                         Ok(()) => break,
                         Err(TryLockError::Error(error)) => return Err(error.into()),
                         Err(TryLockError::WouldBlock) if Instant::now() < deadline => {}
@@ -428,7 +450,8 @@ impl Atoms {
         }
         let connection = reader.as_ref().expect("opened above");
         let from = self.state.read().stored;
-        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 ORDER BY first")?;
+        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 ORDER BY first")
+            .map_err(|error| StoreError::Corrupt(format!("{}: reading atom segments: {error}", path.display())))?;
         let segments = statement
             .query_map([from as i64], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -455,6 +478,9 @@ impl Atoms {
     pub(crate) fn write_pending(&self, connection: &Connection) -> StoreResult<usize> {
         if self.path.is_none() {
             return Ok(0);
+        }
+        if !self.owns(connection) {
+            return Err(StoreError::Invalid("atom segments must be written on the arena's owning database".to_owned()));
         }
         // SAFETY: a read of the connection's transaction state on its own thread.
         let state = unsafe { ffi::sqlite3_txn_state(connection.handle(), c"main".as_ptr()) };
@@ -544,7 +570,7 @@ impl Atoms {
             .read(true)
             .write(true)
             .open(sidecar(path, "-atoms.want"))
-            .is_ok_and(|file| matches!(file.try_lock(), Err(TryLockError::WouldBlock)));
+            .is_ok_and(|file| matches!(try_lock(&file), Err(TryLockError::WouldBlock)));
         *wanted = (Some(Instant::now()), seen);
         seen
     }
@@ -552,7 +578,18 @@ impl Atoms {
     /// Appends the pending atoms in a transaction of their own on `connection`, unless it is inside
     /// a transaction (its commit will) or another writer holds the database now (a later one will).
     pub(crate) fn flush(&self, connection: &Connection) -> StoreResult<()> {
-        if !self.pending() || !connection.is_autocommit() {
+        if !self.pending() {
+            return Ok(());
+        }
+        if !self.owns(connection) {
+            // The caller can be the corpus runner's scratch connection. Under contention
+            // a flush becomes due there, but scratch deliberately has no atom_segment.
+            // Do not hold the reader mutex: committed() acquires the lease mutex first.
+            let owner = Connection::open_with_flags(self.path.as_ref().expect("pending disk atoms"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+            return self.flush(&owner);
+        }
+        if !connection.is_autocommit() {
             return Ok(());
         }
         if let Err(error) = connection.execute_batch("BEGIN IMMEDIATE") {

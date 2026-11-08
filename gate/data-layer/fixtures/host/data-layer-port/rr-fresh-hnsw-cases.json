@@ -1,0 +1,660 @@
+{
+  "cases": [
+    {
+      "id": "hnsw-symbol",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "scored_pairs_query = 1\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-normalized-symbol",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "\uff53\uff43\uff4f\uff52\uff45\uff44\uff3f\uff50\uff41\uff49\uff52\uff53\uff3f\uff51\uff55\uff45\uff52\uff59 = 1\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-normalized-attribute",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x.\uff53\uff43\uff4f\uff52\uff45\uff44\uff3f\uff50\uff41\uff49\uff52\uff53\uff3f\uff51\uff55\uff45\uff52\uff59\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-normalized-render",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "source": "def \uff52\uff45\uff4e\uff44\uff45\uff52():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "algorithm.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-spaced-import",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "source": "from impl . sqlite.connection import X\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "algorithm.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-import-multiple-backends",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "source": "from impl.sqlite.sql_dialect import X\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "algorithm.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-duplicate-symbols",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "scored_pairs_query; scored_pairs_query\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-multiple-states",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"in_beam route_partition\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-fstring-repeated",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"json {a} json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-fstring-format",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"json {a:json}\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-nested-fstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"{f'json {a}'}\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-fstring-multiline",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"\"\"json\n{a}\njson\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-plain-concat",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = (\"js\" \"on\")\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-parenthesized-fragment",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "source": "((SqlFragment)).build(\"x\")\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "algorithm.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-normalized-fragment",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "source": "\uff33\uff51\uff4c\uff26\uff52\uff41\uff47\uff4d\uff45\uff4e\uff54.build(\"x\")\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "algorithm.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-generated",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "rust_bridge/generated_hnsw.py",
+          "source": "import json\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "rust_bridge/generated_hnsw.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-class-docstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "class C:\n    \"json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-function-docstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "def f():\n    \"json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-module-docstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "\"json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-byte-literal",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = b\"json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-invalid-python2",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "import json\nprint \"legacy\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-bom",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "\ufeffimport json\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-surrogate",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"\\ud800json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-relative-deleted-missing",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+            "relative": true
+          }
+        ]
+      },
+      "cwd": "fixture"
+    },
+    {
+      "id": "hnsw-absolute-deleted-missing",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
+          }
+        ]
+      },
+      "cwd": "fixture"
+    },
+    {
+      "id": "hnsw-outside-cwd-missing",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-relative-deleted-existing",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+          "source": "import json\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+            "relative": true
+          }
+        ]
+      },
+      "cwd": "fixture"
+    },
+    {
+      "id": "hnsw-future-import",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "from __future__ import json\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-surrogate-docstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "\"\\ud800json route_partition\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-surrogate-fstrings",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"\\ud800json{x}json\\udfff\"\ny = f\"{x:json\\ud800}\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-surrogate-adjacent",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"\\ud800js\" \"on\\udfff route_partition\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-word-boundaries",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"\u00b2json json\u00b2 json_\u00b2 route_partition\u00b2 json_ sqljson\u00b2 \\N{LATIN SMALL LETTER J}son\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-escaped-continuation",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"js\\\non route_\\\npartition\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-surrogate-state-only",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = \"\\ud800route_partition\\udfffroute_partition\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-nested-format-spec",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"{a:{b:json}}\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-fstring-comment",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"\"\"{a # } : ignored\n}json\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hnsw-fstring-triple-expression",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/a.py",
+          "source": "x = f\"{call('''}''')}json\"\n"
+        }
+      ],
+      "arguments": {
+        "paths": [
+          {
+            "path": "sql_table_hnsw/a.py"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
-const SCHEMA: u32 = 3;
+const SCHEMA: u32 = 4;
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,12 +27,16 @@ pub(super) struct Entry {
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
     /// Per file-local output: its node columns and its lines.
     pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
+    /// Per base relation the cross-file part reads: the relation's columns, those it holds, and its rows of them,
+    /// flat (decision 0063).
+    pub base: BTreeMap<String, (Vec<String>, Vec<usize>, Vec<i64>)>,
 }
 
-/// Each path's document key: from its hash, in `1..2^31` (so `key << 32` stays positive), the next free one on a
-/// collision. A key is in each entry, so a key a collision moved only misses the memo.
-pub(super) fn doc_keys(paths: &[String]) -> Vec<i64> {
-    const SPAN: u64 = (1 << 31) - 1;
+/// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
+/// so a key a collision moved only misses the memo. Guests (decision 0055) take `2^30..2^31`, so every key's
+/// `key << 32` stays positive.
+pub(in crate::code_rule_dsl) fn doc_keys(paths: &[String]) -> Vec<i64> {
+    const SPAN: u64 = (1 << 30) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
     paths
         .iter()
@@ -62,24 +66,40 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of the file-local program: its rules, declarations, facts, inputs and outputs as lowered.
+/// A digest of the file-local program: its rules, declarations, inputs and outputs as lowered, and the facts of the
+/// relations its rules read (a file's rows depend on no others: the answers a round of `world` gives the cross-file
+/// part change none of them).
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
+    let read: std::collections::BTreeSet<&str> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().filter(|(rel, _)| read.contains(rel.as_str())).collect();
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v1\0");
-    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, program.facts, program.inputs, program.outputs).as_bytes());
+    hash.update(b"rerail.corpus-local-program/v2\0");
+    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
     hash.finalize().into()
+}
+
+/// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
+/// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
+pub(super) fn off() {
+    if !cfg!(feature = "tape-cache") {
+        unreachable!("the corpus memo is off in a build without `tape-cache`");
+    }
 }
 
 /// The stored source of `text`, stored if it is not.
 pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
-    match store.source_by_hash(HashKey::sha256(text.as_bytes()))? {
+    off();
+    let hash = HashKey::sha256(text.as_bytes());
+    // Held (O95): a source the run finds is pinned with it, as one it stores is.
+    match store.held_source_by_hash(hash)? {
         Some(id) => Ok(id),
-        None => store.put_source(text.as_bytes(), &[]),
+        None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
 }
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+    off();
     let set = plan(program);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
     match memo.results.get(&set.plans[0]) {
@@ -90,10 +110,78 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 
 /// Memoises `entry` as the document's at `path`.
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+    off();
     let set = plan(program);
     let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
     Ok(())
+}
+
+/// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
+/// rows are under the session store's atoms and live as long as the session.
+#[derive(Clone, Copy)]
+pub(super) enum Memo<'a> {
+    Stored(&'a ContentStore),
+    Held(&'a Held),
+}
+
+/// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
+pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
+
+/// A file's content as the memo knows it: its stored source, or (held) its digest.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Content {
+    Stored(SourceId),
+    Held([u8; 32]),
+}
+
+impl Content {
+    /// The stored source, which a run's manifest names (decision 0053).
+    pub(super) fn stored(self) -> Option<SourceId> {
+        match self {
+            Content::Stored(id) => Some(id),
+            Content::Held(_) => None,
+        }
+    }
+}
+
+/// The most entries a session holds: past it, the memo starts again empty (its entries are a cache).
+const HELD_ENTRIES: usize = 4096;
+
+impl Memo<'_> {
+    /// `text` as the memo knows it.
+    pub(super) fn content(self, text: &str) -> StoreResult<Content> {
+        match self {
+            Memo::Stored(store) => source(store, text).map(Content::Stored),
+            Memo::Held(_) => Ok(Content::Held(Sha256::digest(text.as_bytes()).into())),
+        }
+    }
+
+    pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+        match (self, content) {
+            (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
+            (Memo::Held(held), Content::Held(digest)) => {
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+        match (self, content) {
+            (Memo::Stored(store), Content::Stored(id)) => remember(store, id, path, key, program, entry),
+            (Memo::Held(held), Content::Held(digest)) => {
+                let mut held = held.lock().expect("the session memo");
+                if held.len() >= HELD_ENTRIES {
+                    held.clear();
+                }
+                held.insert((digest, path.to_owned(), *program), Entry { key, ..entry.clone() });
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
@@ -129,6 +217,22 @@ fn encode(entry: &Entry) -> Vec<u8> {
         put(&mut out, lines.len() as u64);
         for line in lines {
             text(&mut out, line);
+        }
+    }
+    put(&mut out, entry.base.len() as u64);
+    for (rel, (have, held, values)) in &entry.base {
+        text(&mut out, rel);
+        put(&mut out, have.len() as u64);
+        for c in have {
+            text(&mut out, c);
+        }
+        put(&mut out, held.len() as u64);
+        for c in held {
+            put(&mut out, *c as u64);
+        }
+        put(&mut out, values.len() as u64);
+        for v in values {
+            out.extend_from_slice(&v.to_le_bytes());
         }
     }
     out
@@ -172,6 +276,17 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         let lines = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
         entry.lines.insert(rel, (columns, lines));
     }
+    for _ in 0..r.u64()? {
+        let rel = r.text()?;
+        let have = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
+        let held = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
+        let n = r.u64()? as usize;
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            values.push(i64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes")));
+        }
+        entry.base.insert(rel, (have, held, values));
+    }
     if r.at != bytes.len() {
         return Err(StoreError::Invalid("a corpus memo entry has trailing bytes".into()));
     }
@@ -193,7 +308,7 @@ mod tests {
         let keys = doc_keys(&paths);
         assert_eq!(keys, doc_keys(&paths));
         assert_eq!(doc_keys(&paths[1..]), keys[1..], "a key does not depend on the other paths");
-        assert!(keys.iter().all(|&k| (1..1 << 31).contains(&k)));
+        assert!(keys.iter().all(|&k| (1..1 << 30).contains(&k)));
         assert_eq!(document_of(keys[0] << 32 | 9), keys[0]);
         assert_eq!(document_of(keys[1]), keys[1]);
     }

@@ -122,6 +122,11 @@ fn option_values(document: &serde_json::Value) -> Vec<(usize, String, serde_json
     out
 }
 
+thread_local! {
+    /// Compiled rule files by their text (`convert`).
+    static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<crate::code_rule_dsl::model::CompiledCodeRule>>> = Default::default();
+}
+
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
 /// `violation(rule, clause, code, path, line)`, under the rule's authored file (`authored()`) where it has one. An
 /// error is the authored file's.
@@ -162,10 +167,22 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     let text = if relational.is_empty() && document == original { text } else { document.to_string() };
     // Only relational clauses report: nothing is left to compile.
     let reports = document["clauses"].as_array().into_iter().flatten().any(|c| c.get("define").is_none());
-    let compiled = match reports.then(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())) {
+    // A rule file compiles once per test process: the replay converts the same rule for each of its events, and
+    // compiling builds every matcher of the rule (most of the replay's CPU before). Only `adjust` differs per event.
+    // A rule that does not compile as the oracle configured it is a configuration the replay cannot run.
+    let compiled = match reports.then(|| {
+        COMPILED.with(|cache| -> Result<std::sync::Arc<crate::code_rule_dsl::model::CompiledCodeRule>, String> {
+            if let Some(c) = cache.borrow().get(text.as_str()) {
+                return Ok(c.clone());
+            }
+            let c = CodeRuleDslRuntime::compile(text.clone(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?.inner;
+            cache.borrow_mut().insert(text.clone(), c.clone());
+            Ok(c)
+        })
+    }) {
         Some(Ok(c)) => Some(c),
-        Some(Err(e)) if configured => return Err(Failure::Config(format!("{id} does not compile so configured: {}", e.reason))),
-        Some(Err(e)) => panic!("{id}: {e:?}"),
+        Some(Err(e)) if configured => return Err(Failure::Config(format!("{id} does not compile so configured: {e}"))),
+        Some(Err(e)) => panic!("{id}: {e}"),
         None => None,
     };
     let mut e = Emitter::new(GrammarDialect::Python);
@@ -242,7 +259,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
         .map(|c| (c, Err(Gap("relational (SQL stages)".into()))))
         .collect();
-    for clause in compiled.iter().flat_map(|c| &c.inner.clauses) {
+    for clause in compiled.iter().flat_map(|c| &c.clauses) {
         if adjust.keep.as_ref().is_some_and(|keep| !keep(&clause.id)) {
             continue;
         }
@@ -360,7 +377,7 @@ fn rule_files() -> Vec<PathBuf> {
 /// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
 /// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
 fn log_codes(check: &str) -> Vec<String> {
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
     let code_of = |name: &str| {
         text.lines()
@@ -376,6 +393,13 @@ fn log_codes(check: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
+/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`gate/data-layer/packs/data-layer/candidates/rr`) read
+/// `core.rr` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
+fn hand_dir() -> PathBuf {
+    std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
+}
+
 /// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
 /// it lowers and the check has no authored file (`authored()`, which follows the oracle's configurations: on
 /// layer-violations, missing-async-pairs, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions
@@ -387,7 +411,20 @@ fn hand_written(check: &str) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() || (overlay.exists() && std::env::var_os("RERAIL_REPLAY_HAND_WRITTEN").is_none()) {
         return None;
     }
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    // Read and printed once per check: the replay asks for each of the check's events.
+    thread_local! {
+        static PRINTED: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> = Default::default();
+    }
+    if let Some(text) = PRINTED.with(|p| p.borrow().get(check).cloned()) {
+        return text;
+    }
+    let text = hand_written_once(check);
+    PRINTED.with(|p| p.borrow_mut().insert(check.to_owned(), text.clone()));
+    text
+}
+
+fn hand_written_once(check: &str) -> Option<String> {
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;
     }
@@ -999,6 +1036,11 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
+        // `RERAIL_REPLAY_PROFILE=<dir>`: each event's run profiled into <dir>/e<k> (`logic::profile`), to be summed.
+        if let Ok(profiles) = std::env::var("RERAIL_REPLAY_PROFILE") {
+            crate::code_rule_dsl::logic::profile::set(true);
+            crate::code_rule_dsl::logic::profile::set_directory(&std::path::Path::new(&profiles).join(format!("e{k}")));
+        }
         let mut got = match finding_keys(&program, &dir) {
             Ok(got) => got,
             Err(e) => {
@@ -1484,7 +1526,53 @@ fn measure_all(corpus: &Path, rules: &str) {
     } else {
         rules.split(',').map(str::to_owned).collect()
     };
-    let texts: Vec<String> = ids.iter().map(|id| std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()).collect();
+    // A check's hand-written rule (`docs/rule-syntax/data-layer`), where it lowers, replaces its converted one, as in
+    // the replay (`RERAIL_MEASURE_HAND=off`: the converted rules only).
+    // `RERAIL_MEASURE_HAND=only`: the hand-written rules alone, including the checks the pack has no rule for; `skip`: the
+    // converted rules of the other checks. A run binds one shape of base relations (`core.rr`'s, or T's), so the two
+    // sets are two runs.
+    let mode = std::env::var("RERAIL_MEASURE_HAND").unwrap_or_default();
+    let hand = mode != "off";
+    let texts: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
+            let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
+            let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
+            let written = id.strip_prefix("data-layer-").filter(|c| hand && !skipped(c)).and_then(|c| hand_written(&c.replace('-', "_")));
+            if written.is_some() {
+                println!("HAND {id}");
+            }
+            match (mode.as_str(), written) {
+                ("only", w) => w,
+                ("skip", Some(_)) => None,
+                (_, Some(w)) => Some(w),
+                _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()),
+            }
+        })
+        .flatten()
+        .collect();
+    let mut texts = texts;
+    // The hand-written rules of checks the pack has no rule for.
+    if hand && mode != "skip" && rules == "*" {
+        let dir = hand_dir();
+        let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        // `x.tables.rr` and `x.symbols.rr` are tables a policy includes, not checks.
+        }).filter(|c| !c.contains('.') && !ids.contains(&format!("data-layer-{c}"))).filter(|c| !std::env::var("RERAIL_HAND_SKIP").unwrap_or_default().split(',').any(|s| s.trim() == c)).collect();
+        extra.sort();
+        for c in extra {
+            // Repository inputs are read (`corpus::inputs`), `input_error` rows included.
+            match hand_written(&c.replace('-', "_")) {
+                Some(t) => {
+                    println!("HAND {c} (no converted rule)");
+                    texts.push(t);
+                }
+                None => {}
+            }
+        }
+    }
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
@@ -1495,7 +1583,7 @@ fn measure_all(corpus: &Path, rules: &str) {
     let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     println!(
         "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
-        ids.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+        programs.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
     );
     for (name, user, sys, rss, statements) in &r.phases {
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);

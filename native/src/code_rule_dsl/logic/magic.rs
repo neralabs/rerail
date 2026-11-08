@@ -41,7 +41,7 @@ impl Default for Options {
 }
 
 /// What `magic_adorn` did (T's `magic_report`).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) adornments: Vec<String>,
     pub(in crate::code_rule_dsl) magic_rules: usize,
@@ -53,7 +53,7 @@ pub(in crate::code_rule_dsl) struct Report {
 
 /// A gated negation's gate: `done` copies `src` (the negated relation's demand) once `quiet` is quiet, after the
 /// gates in `deps`; `src` is `None` for a unit gate (`done_N(0)`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) struct Gate {
     pub(in crate::code_rule_dsl) src: Option<String>,
     pub(in crate::code_rule_dsl) rel: String,
@@ -130,6 +130,7 @@ pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program,
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
             || prog.lattice.contains_key(rel)
+            || prog.natives.contains_key(rel)
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)

@@ -176,7 +176,8 @@ frame lengths, so it runs before the write transaction. Three places run passes:
   second of each wake when either of these hold:
   - the store is above its soft limit (as before);
   - corpus collection is due.
-- **A corpus run** marks collection due when it writes a new manifest. A thread of its own then runs passes while
+- **A corpus run** marks collection due when it writes a new manifest. A warm run also resumes collection that remains due.
+  A thread of its own then runs passes while
   the cross-file part runs, until two in a row find nothing or 200 ms have gone, and the run joins it before it
   returns. The manifest is written first, so the run's own sources are live before any pass. `RERAIL_CORPUS_GC=off`
   skips the passes. `RERAIL_CORPUS_HISTORY_MB` sets the high-water mark; the low-water mark is three quarters of it.
@@ -195,13 +196,23 @@ Two in a row, because a pass keeps the rows created in its own generation. Its s
 
 A store with nothing due, under the soft limit, runs no pass at all, so an idle store costs nothing.
 
-### 6. Races cost a cache miss, never a wrong result
+### 6. Active readers defer collection
 
-A pass deletes only what no kept manifest or other root reaches, and only rows created before its generation (the
-existing guard). A run's manifest is written only at its end. If a tape the run is using goes before then, because
-it was older than the pass's generation and only an evicted manifest named it, the next lookup misses and the file is
-parsed and evaluated again. A row being replayed is read in full before the replay,
-so it can't disappear halfway. The memo's correctness never depends on a row staying.
+A generation check does not protect an active run. Before it publishes its manifest, a collector can delete a source
+whose id the run already holds. Publishing memo results with that id then fails a foreign-key check.
+Reusing an id after deletion also makes an unprotected lookup unsafe.
+
+A corpus run now holds a shared file lease before its first source or stat lookup. It releases the lease after
+publishing memo rows, stats, and its manifest. A standalone cached parse holds a lease through tape publication.
+Readers can run together. Each collector tries an exclusive lease before deciding which manifests to keep or deleting rows.
+If a reader holds a lease, the pass returns without clearing `corpus_state.due`. A later run or maintenance pass resumes it.
+Continuous overlapping readers can delay collection until a gap.
+
+The lease uses a stable sidecar at the database's canonical path, so symbolic aliases and separate processes share it.
+The sidecar must not be unlinked while the store is in use. Closing its handle or exiting the process releases the lock.
+There are no persistent reader pins to expire after a crash. All processes sharing the cache must use this protocol.
+Lease release also explicitly unlocks the file. A subprocess can inherit its descriptor before exec; closing only the parent's
+handle can leave that inherited lock held until exec or process exit.
 
 ### 7. Atoms: rebuilt past a limit, not collected
 
@@ -246,6 +257,11 @@ blob that names an atom would have to be rewritten under an exclusive lock.
 | `rerail-engine gc` | `bin/rerail-engine.rs` | on `tapes-full.sqlite` |
 | the server's wake | `workspace/storage.rs` | the storage tests |
 
+Follow-up validation (2026-11-07): 226 corpus, rule-language, SQL executor, and content-store tests pass together in parallel,
+twice, with four ignored tests and the separate syntax census excluded. Collection stays enabled.
+New tests cover concurrent readers publishing memo rows and roots, pending collection resuming on a warm run,
+symbolic aliases, process exit, and inherited lock descriptors.
+
 Measured (load 50–60):
 
 - **s200 copy, every file edited before each of 6 runs, 3 MB high-water mark** (one version is about 2 MB). The
@@ -265,8 +281,7 @@ The replay is unchanged (3988 273 266 0), and the `content_store` tests pass (10
 - **The atom epoch (§7) isn't built.** It waits until an arena first approaches 64 MB. The full corpus holds 26 MB.
 - **Memo rows from before 0053** (memo schema 2, 18,020 rows and about 2 MB on the full-corpus store) were never
   named by a manifest. So they stay until their sources go.
-- **An older binary's collector** (one built before 0053) ignores `corpus_live`, so it would collect corpus tapes.
-  That costs a cold run, never a wrong result.
+- **An older binary's collector** can ignore `corpus_live` or active reader leases. Shared-cache safety requires updated readers and collectors.
 - **The marks** (512 and 384 MB) and the protected count (2 runs) are starting values. They should be revisited with a
   measured development workflow.
 - The bound covers what corpus runs keep. The workspace server's snapshots keep their own roots, as before.

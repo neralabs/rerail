@@ -282,7 +282,7 @@ describe("semantic acceptance", () => {
           writeFileSync(join(root, file.path), file.source);
         }
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", ...files.map(file => file.path)], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
         await native.enableStorageAsync(root, contentStorePath());
         native.addCodeRule(packageCodeRule());
@@ -318,11 +318,11 @@ describe("semantic acceptance", () => {
         mkdirSync(join(root, "pkg"));
         writeFileSync(join(root, "pkg", "a.py"), "value = 1\n");
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "pkg/a.py"], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "first"], { cwd: root });
         await first.enableStorageAsync(root, contentStorePath());
         writeFileSync(join(root, "pkg", "a.py"), "value = 2\n");
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "pkg/a.py"], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "second"], { cwd: root });
         await second.enableStorageAsync(root, contentStorePath());
         second.addCodeRule(compile([clause("fresh", { regex: "2" })]));

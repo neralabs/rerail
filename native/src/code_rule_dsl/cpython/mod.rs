@@ -1,5 +1,5 @@
 //! CPython's own facts about Python source, computed natively: no Python process runs. Ruff's parser
-//! (`ruff_python_parser`, a git dependency at 0.16.4) reads the text as CPython's grammar does, and these modules give
+//! (`ruff_python_parser` 0.0.10 from crates.io, Ruff's 0.16.4) reads the text as CPython's grammar does, and these modules give
 //! what CPython's `ast` module would answer, for CPython 3.13 (`VERSION`), the version W's `pythonAst` worker required
 //! and nera-data-layer's `.python-version` names:
 //!

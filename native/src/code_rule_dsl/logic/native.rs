@@ -19,14 +19,17 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+/// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
+pub(in crate::code_rule_dsl) mod dfs_first;
+pub(in crate::code_rule_dsl) mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, live, materialize, open, reprobe, run, step_counts, table_source};
+    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, forget_derived, live, materialize, open, release, reprobe, run, step_counts, table_source, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -126,7 +129,7 @@ pub(in crate::code_rule_dsl) fn declare(name: &str, lattice: Arc<dyn Lattice>) {
     lattices.push((name.to_owned(), lattice));
 }
 
-fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
     LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
 }
@@ -284,7 +287,7 @@ fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val:
     };
     let mut rows = 0usize;
     {
-        let mut ins = conn.prepare(&format!("INSERT INTO {out_table} VALUES (?1, ?2)"))?;
+        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES (?1, ?2)", crate::code_rule_dsl::logic::sql::table(&out_table)))?;
         for (&k, &v) in keys.iter().zip(&val) {
             if v != BOT { ins.execute((k, v))?; rows += 1; }
         }

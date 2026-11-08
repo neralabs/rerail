@@ -13,7 +13,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::field_atom;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, tape_tag};
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Domain {
     Int,
     Node,
@@ -223,7 +223,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
             .iter()
             .enumerate()
             .map(|(c, (_, t))| match t.as_str() {
-                "int" | "flat" => Ok(Some(Domain::Int)),
+                "int" | "flat" | "min" | "max" => Ok(Some(Domain::Int)),
                 "node" => Ok(Some(Domain::Node)),
                 "sym" if input => Ok(Some(base_domain(rel, c).unwrap_or(Domain::Name))),
                 "sym" => Ok(None),
@@ -255,6 +255,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
 }
 
 /// A program lowered for one dialect.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Lowered {
     pub(in crate::code_rule_dsl) program: Program,
     pub(in crate::code_rule_dsl) domains: Domains,
@@ -273,6 +274,18 @@ impl Constants<'_> {
     fn of(&self, s: &str, d: Domain) -> Result<i64> {
         Ok(match d {
             Domain::Name => self.names[s],
+            // `"sql:select"`: a kind of another grammar, as a guest's are (decision 0058 §2).
+            Domain::Kind | Domain::Field if let Some((label, name)) = super::corpus::qualified(s) => {
+                let dialect = crate::code_rule_dsl::language::dialect_by_label(label).expect("a registry label");
+                let (Some(tag), kinds) = (tape_tag(dialect), dialect.kinds()) else { return Ok(-1) };
+                match d {
+                    Domain::Kind => match kinds.kind_id(name) {
+                        0 => -1,
+                        code => i64::from(kind_atom(tag, code)),
+                    },
+                    _ => kinds.field_id(name).map_or(-1, |code| i64::from(field_atom(tag, code))),
+                }
+            }
             Domain::Kind => match self.kinds.kind_id(s) {
                 0 => -1,
                 code => i64::from(kind_atom(self.tag, code)),

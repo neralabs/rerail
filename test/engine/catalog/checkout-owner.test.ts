@@ -21,7 +21,7 @@ async function repository(path: string): Promise<string> {
   await mkdir(path, { recursive: true });
   await writeFile(join(path, "README.md"), "seed\n");
   git(path, "init", "--quiet");
-  git(path, "add", ".");
+  git(path, "add", "--", "README.md");
   git(path, "commit", "--quiet", "-m", "seed");
   return await realpath(path);
 }

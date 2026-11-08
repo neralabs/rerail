@@ -1,0 +1,5 @@
+{
+  "title": "File permissions",
+  "rule": "bandit-b103-set-bad-file-permissions",
+  "note": "B103 reads the literal mode passed to os.chmod: one that gives group or others write or execute (0o777) is a finding, 0o600 is not. Like Bandit, it reads only integer literals, so a mode built from stat flags is not checked."
+}

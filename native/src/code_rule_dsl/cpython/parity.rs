@@ -270,7 +270,7 @@ fn string_annotation_parity() {
                 .map(|((_, shown), s)| {
                     let s = s.as_ref()?;
                     let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
-                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, None).ok()??;
+                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file).ok()??;
                     let found = string_annotations(&tape).ok()?;
                     Some(found.iter().filter(|a| a.outer.is_none()).map(|a| (a.start, a.end, !a.tree.is_error(), if a.tree.is_error() { Vec::new() } else { annotation_names(&a.tree) })).collect())
                 })

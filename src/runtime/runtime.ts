@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, truncate } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { constants, realpathSync } from "node:fs";
+import { lstat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
@@ -17,24 +18,27 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { SteerRuleSchema } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, type RewoundEdit, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
 } from "../engine/code-rule/code-rule.js";
 import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
-import { missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
+import { firstRepositoryAuditEnabled, missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../engine/audit/audit-control-schema.js";
 import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { realpathSync } from "node:fs";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { keepPrivate } from "../engine/storage/private-files.js";
+import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
+import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
+import { recordCheckout } from "../engine/catalog/repository-registry.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
@@ -45,6 +49,7 @@ import { restorableRule, type DroppedEvents, type RuleMutation } from "./session
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
   ContentItem,
@@ -161,6 +166,23 @@ function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<Ledger
   return [...pending.values()];
 }
 
+/**
+ * The session's secret calls still awaiting their result, and the results already stored without their output, as the
+ * ledger records them: a result that arrives after the runtime state was rebuilt is judged by its call all the same.
+ */
+function secretCallsOf(ledger: readonly LedgerEntry[]): { calls: Set<string>; results: Set<string> } {
+  const calls = new Set<string>();
+  const results = new Set<string>();
+  for (const entry of ledger) {
+    if (entry.type === "secret-call") calls.add(entry.toolCallId);
+    else if (entry.type === "secret-result") {
+      calls.delete(entry.toolCallId);
+      results.add(entry.eventId);
+    }
+  }
+  return { calls, results };
+}
+
 
 const PrimitiveSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 const ContentRefSchema = z
@@ -219,9 +241,15 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("rule-match"), ruleId: z.string(), turn: z.number().int().nonnegative() }),
   z.object({
     type: z.literal("policy-call"), toolCallId: z.string(), toolName: z.string(), paths: z.array(z.string()),
-    preimages: z.record(z.string(), z.object({ text: z.string().optional(), readError: z.string().optional() })).optional(),
+    preimages: z.record(z.string(), z.object({
+      text: z.string().optional(),
+      readError: z.string().optional(),
+      withheld: z.object({ sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),
+    })).optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
+  z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
+  z.object({ type: z.literal("secret-result"), toolCallId: z.string(), eventId: z.string() }),
 ]);
 
 type LedgerEntry =
@@ -232,12 +260,55 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, { text?: string; readError?: string }>> }
-  | { type: "policy-result"; toolCallId: string };
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>> }
+  | { type: "policy-result"; toolCallId: string }
+  | { type: "secret-call"; toolCallId: string }
+  | { type: "secret-result"; toolCallId: string; eventId: string };
 
 export function compactValidated<T>(value: unknown): T {
   // Zod has already validated this value; the round-trip removes explicit undefined keys for exact optional types.
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
+ * A ledger entry as it is written to disk: a sample's text and a delivery's content are scrubbed of secrets
+ * (`scrubSecrets`), and a code-rule call's preimages take their ledger form (`ledgerPreimage`). The session keeps the
+ * original in memory, so matching and steers see it. Other entries are written as they are; `entry` itself when
+ * nothing changed.
+ */
+function ledgerEntryForDisk(entry: LedgerEntry): LedgerEntry {
+  if (entry.type === "sample") {
+    const text = scrubSecrets(entry.item.text);
+    return text === entry.item.text ? entry : { ...entry, item: { ...entry.item, text } };
+  }
+  if (entry.type === "delivery") {
+    const content = scrubSecrets(entry.delivery.content);
+    return content === entry.delivery.content ? entry : { ...entry, delivery: { ...entry.delivery, content } };
+  }
+  if (entry.type === "policy-call" && entry.preimages !== undefined) {
+    const { preimages } = entry;
+    const stored = Object.entries(preimages).map(([path, preimage]) => [path, ledgerPreimage(preimage)] as const);
+    return stored.every(([path, preimage]) => preimage === preimages[path]) ? entry : { ...entry, preimages: Object.fromEntries(stored) };
+  }
+  return entry;
+}
+
+/**
+ * One line of an existing session ledger as `rerail scrub` rewrites it: an entry this build reads, in its disk form
+ * (`ledgerEntryForDisk`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
+ */
+export function scrubbedLedgerLine(line: string): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const parsed = LedgerEntrySchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const entry = compactValidated<LedgerEntry>(parsed.data);
+  const stored = ledgerEntryForDisk(entry);
+  return stored === entry ? undefined : JSON.stringify(stored);
 }
 
 class MutableContentSource implements ContentSource {
@@ -432,19 +503,19 @@ interface RuntimeSessionState {
   yieldWaits: number;
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
+  /**
+   * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
+   * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
+   */
+  secretCalls: Set<string>;
+  /** The results stored without their output (`withheldOutput`): their samples are recorded without text too. */
+  withheldResults: Set<string>;
   closed: boolean;
 }
 
 async function readLines(path: string): Promise<JsonlReadResult> {
-  let content: string;
-  try {
-    content = await readFile(path, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { values: [], appendState: { prefix: "", truncateTo: null } };
-    }
-    throw error;
-  }
+  let content = await readLedgerFile(path, dirname(path));
+  if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
 
   const appendState: JsonlAppendState = { prefix: "", truncateTo: null };
   if (content.length > 0 && !content.endsWith("\n")) {
@@ -467,16 +538,62 @@ async function readLines(path: string): Promise<JsonlReadResult> {
   };
 }
 
+/** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */
 async function appendJsonLine(path: string, value: unknown, state: JsonlAppendState): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true, mode: 0o700 });
-  if (state.truncateTo !== null) await truncate(path, state.truncateTo);
-  await appendFile(path, `${state.prefix}${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
+  await makeLedgerFolder(dirname(path));
+  const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+  try {
+    if (state.truncateTo !== null) await handle.truncate(state.truncateTo);
+    await handle.appendFile(`${state.prefix}${JSON.stringify(value)}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
   state.prefix = "";
   state.truncateTo = null;
 }
 
 function sessionDirectory(root: string, sessionId: string): string {
   return join(root, createHash("sha256").update(sessionId).digest("hex"));
+}
+
+/**
+ * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
+ * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
+ * written down; the call itself is kept.
+ */
+function withheldOutput(output: unknown): Withheld & { bytes?: number } {
+  let text: string | undefined;
+  try {
+    text = typeof output === "string" ? output : JSON.stringify(output);
+  } catch {
+    // An output JSON cannot hold (the session store encodes those another way) is left without a size.
+  }
+  return {
+    ...WITHHELD_OUTPUT,
+    reason: "the call names a secret-like path, so Rerail does not store what it returned",
+    ...(text === undefined ? {} : { bytes: Buffer.byteLength(text) }),
+  };
+}
+
+const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out of Git.\n*\n";
+
+/**
+ * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
+ * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
+ * repository's own ignores. Only a root inside a `.rerail` folder is Rerail's alone: a custom one
+ * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is. In Rerail's own folder the file is
+ * rewritten whenever it holds anything else, or is no regular file: a repository that commits one with `!*` would
+ * otherwise have the person's next `git add -A` commit their prompts and pre-edit source.
+ */
+async function ignoreInGit(storageRoot: string): Promise<void> {
+  if (basename(dirname(storageRoot)) !== ".rerail") return;
+  const path = join(storageRoot, ".gitignore");
+  const stats = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (stats?.isFile() === true && await readLedgerFile(path, storageRoot) === SESSION_RECORDS_GITIGNORE) return;
+  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -534,11 +651,6 @@ export interface RerailRuntimeOptions {
   databasePath?: string;
   /** The folder whose start state gates this runtime (`startGate`); each session's own folder decides its rules. */
   workspaceRoot: string;
-  /**
-   * False for callers without the daemon token: their sessions only attach to checkouts already recorded, and
-   * nothing is recorded, set up or imported for them. Defaults to true.
-   */
-  trusted?: boolean;
   /** Defaults for checkouts without saved audit settings; saved settings win. */
   auditSettings?: Partial<CheckoutAuditSettings>;
   /** Delivers a completed background code-rule result without waiting for another host event. */
@@ -583,7 +695,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
-  readonly #trusted: boolean;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** Kept past disposal for late receipts, with the repository each session was attributed to. */
   readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
@@ -613,7 +724,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
-    this.#trusted = options.trusted ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
       ...auditorOptions,
       // `workspaceRoot` is the session folder `openSession` resolved once.
@@ -880,8 +990,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (!sources.has(violation.ruleId)) sources.set(violation.ruleId, sourceOf);
     }
     if (violations.length === 0) return undefined;
-    // Its lead says the findings belong to steps the agent has already moved past.
-    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId));
+    // Its lead says the findings belong to steps the agent has already moved past. Their paths are the session
+    // folder's, so a file there that links to a secret is judged as one.
+    const sensitive = checkoutPathBoundary(state.checkout.cwd).sensitive;
+    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId), sensitive);
     const digest: AdapterDelivery = {
       sessionId: state.descriptor.sessionId,
       requested: "steer",
@@ -1079,8 +1191,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    await makeLedgerFolder(directory);
+    keepPrivate(directory);
+    await ignoreInGit(this.#storageRoot);
     const ledgerPath = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(ledgerPath);
     const ledger = validatedLedger(values);
@@ -1098,6 +1211,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
     // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
     const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
+    const secrets = secretCallsOf(ledger);
     const opened: RuntimeSessionState = {
       descriptor: session,
       checkout,
@@ -1132,6 +1246,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
+      secretCalls: secrets.calls,
+      withheldResults: secrets.results,
       closed: false,
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
@@ -1364,7 +1480,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // itself, and a boundary that finds the evaluator still opening has queued for the drain, one that finds it open
     // uses the bridge.
     state.codeRuleOpening = false;
-    if (auditor.audit !== undefined) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
+    if (auditor.audit !== undefined && firstRepositoryAuditEnabled()) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
     return bridge;
   }
 
@@ -1450,7 +1566,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * The audit at session start: one repository audit per checkout it reaches, each claimed before it starts.
-   * Internal testing: the automatic first full-repository scan, log-only.
+   * Internal testing: the automatic first full-repository scan, log-only, off unless {@link firstRepositoryAuditEnabled}.
    */
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     const claimed = new Set<string>();
@@ -1486,12 +1602,24 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
+    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
+      // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
+      await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
+      state.secretCalls.add(event.toolCallId);
+    }
+    const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
       kind: event.kind,
-      payload: event,
+      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
+      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
     }, state.descriptor);
+    if (withheld) {
+      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+      state.secretCalls.delete(event.toolCallId);
+      state.withheldResults.add(event.eventId);
+    }
     await this.#append(state, { type: "event", eventId: event.eventId });
     state.processed.add(event.eventId);
   }
@@ -1522,7 +1650,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       },
     };
     state.source.append(item);
-    await this.#append(state, { type: "sample", item });
+    // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
+    await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;
     if (registry === undefined) return;
     const matches = registry.match(sample, { turn: state.turn });
@@ -1720,22 +1849,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The checkout the session starts in, from its folder resolved once here. A trusted caller records it. A caller
-   * without the daemon token is refused unless that resolved folder is in a recorded,
-   * started checkout: the check and every later use share one resolution, so a folder swapped after a caller's own
-   * check gains nothing.
+   * The checkout the session starts in, from its folder resolved once here, and recorded: the check and every later
+   * use share one resolution, so a folder swapped after a caller's own check gains nothing.
    */
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = realpathSync(session.cwd);
-    const { database } = this.#catalogs;
-    const known = this.#trusted ? recordCheckout(database, cwd) : lookupCheckout(database, cwd);
+    const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    const eligibility = this.#catalogs.refresh(start.checkoutRoot);
-    if (!this.#trusted && (eligibility === "unrecorded" || eligibility === "stopped")) {
-      throw new RangeError("session cwd is not in a started checkout");
-    }
+    this.#catalogs.refresh(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 
@@ -1782,6 +1905,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #append(state: RuntimeSessionState, entry: LedgerEntry): Promise<void> {
-    await appendJsonLine(state.ledgerPath, entry, state.ledgerAppendState);
+    await appendJsonLine(state.ledgerPath, ledgerEntryForDisk(entry), state.ledgerAppendState);
   }
 }

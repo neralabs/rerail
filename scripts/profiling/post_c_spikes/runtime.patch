@@ -1,0 +1,382 @@
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs b/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
+index a4ad818c..904b787e 100644
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
+@@ -71,18 +71,18 @@ pub(super) fn save(
+         let definition=statement.graph.iter().find_map(|cte|cte.strip_prefix(&format!("{}(",stage.name)).and_then(|s|s.split_once(") AS ")));
+         serde_json::json!({"name":stage.name,"sql":stage.sql,"slot":statement.ownership.slot(i),"members":statement.ownership.members(i),"index":stage.index,"temporary":stage.temporary,"relationId":node.map(|n|n.id),"class":node.map(|n|format!("{:?}",n.class)),"columns":definition.map(|d|d.0),"body":definition.map(|d|d.1)})
+     }).collect();
+-    let mut versions = store
+-        .db
+-        .prepare("SELECT fid,lang,hex(digest) FROM file ORDER BY fid")?;
+-    let versions = versions
+-        .query_map([], |r| {
+-            Ok((
+-                r.get::<_, i64>(0)?,
+-                r.get::<_, i64>(1)?,
+-                r.get::<_, String>(2)?,
+-            ))
+-        })?
+-        .collect::<Result<Vec<_>>>()?;
++    let versions = store
++        .versions
++        .lock()
++        .iter()
++        .map(|(&fid, &(lang, digest))| {
++            let hex = digest
++                .iter()
++                .map(|byte| format!("{byte:02X}"))
++                .collect::<String>();
++            (fid, i64::from(lang), hex)
++        })
++        .collect::<Vec<_>>();
+     let generation = serde_json::to_string(&versions).expect("source versions");
+     let mut manifest = statement
+         .producers
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs b/native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs
+index 08f03d90..048d623f 100644
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs
+@@ -300,6 +300,14 @@ impl Corpus {
+             let plans: Vec<_> = active.iter().map(|&i| plans[i]).collect();
+             return Self::select_group(state, lang, &ids, &plans, covered, paths);
+         }
++        #[cfg(feature = "code-rule-profile")]
++        if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some() {
++            *state.writer.versions.lock() = state
++                .files
++                .values()
++                .map(|file| (file.fid, (file.lang, file.digest)))
++                .collect();
++        }
+         // Keep bind counts bounded, without issuing a query for each file or rule.
+         for files in files.chunks(16_384) {
+             let fids: Vec<_> = files.iter().map(|(_, file)| file.fid).collect();
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
+index bf508590..ee598657 100644
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
+@@ -877,6 +877,7 @@ fn prepare_decoded(
+         .iter()
+         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
+         .find(|d| d.property == Property::Node && d.scope == "all_nodes");
++    let required_indexes = indexed.clone();
+     for demand in ctes
+         .iter()
+         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
+@@ -912,6 +913,17 @@ fn prepare_decoded(
+         .map(|(name, _)| name.clone())
+         .collect();
+     let (levels, uses) = waves::analyze(&ctes, &barrier_names, &query);
++    // Repeated output arms share one WITH scope. They are one SQL reader,
++    // rather than a reason to cut a cheap selector into another physical table.
++    let mut duplicate_output_uses = HashMap::<String, usize>::new();
++    for packet in &queries {
++        let mut seen = BTreeSet::new();
++        for name in waves::identifiers(packet) {
++            if !seen.insert(name) {
++                *duplicate_output_uses.entry(name.to_owned()).or_default() += 1;
++            }
++        }
++    }
+     let mut span_scopes: std::collections::BTreeMap<usize, BTreeSet<String>> =
+         std::collections::BTreeMap::new();
+     let mut child_scopes: std::collections::BTreeMap<usize, BTreeSet<(u16, String)>> =
+@@ -988,7 +1000,13 @@ fn prepare_decoded(
+         );
+         // Keep small shared sets in one statement. Cut before repeated dependencies
+         // multiply beyond SQLite's preparation limits; each physical table resets the cost.
+-        let shared = indexed.contains(name) || (uses[name] > 1 && cost >= 32);
++        // A cheap selector with one logical reader stays in that SQL pipeline.
++        // Decoder population can read it again at its real barrier; retain cuts
++        // for shared or expensive selectors so preparation remains bounded.
++        let readers = uses[name].saturating_sub(*duplicate_output_uses.get(name).unwrap_or(&0));
++        let shared = required_indexes.contains(name)
++            || (indexed.contains(name) && (readers > 1 || cost >= 32))
++            || (uses[name] > 1 && cost >= 32);
+         expansion.insert(name.as_str(), if shared { 1 } else { cost });
+         let cte = if shared {
+             render::owned(cte, name)
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/store.rs b/native/src/code_rule_dsl/matcher/anchors/sql/store.rs
+index defbf6b4..e3a2ed74 100644
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/store.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/store.rs
+@@ -29,6 +29,8 @@ pub(super) fn kind_token(code: u32) -> String {
+ }
+
+ pub(super) struct Store {
++    #[cfg(feature = "code-rule-profile")]
++    pub(super) versions: parking_lot::Mutex<std::collections::BTreeMap<i64, (u32, [u8; 32])>>,
+     #[cfg(feature = "code-rule-profile")]
+     pub(super) graph: parking_lot::Mutex<super::graph::Graph>,
+     #[cfg(feature = "code-rule-profile")]
+@@ -83,6 +85,8 @@ impl Store {
+             }),
+         )?;
+         Ok(Self {
++            #[cfg(feature = "code-rule-profile")]
++            versions: Default::default(),
+             #[cfg(feature = "code-rule-profile")]
+             graph: parking_lot::Mutex::default(),
+             #[cfg(feature = "code-rule-profile")]
+diff --git a/native/src/code_rule_dsl/relational.rs b/native/src/code_rule_dsl/relational.rs
+index 78a2d31d..82c007c1 100644
+--- a/native/src/code_rule_dsl/relational.rs
++++ b/native/src/code_rule_dsl/relational.rs
+@@ -748,7 +748,12 @@ impl<'a> Session<'a> {
+             .iter()
+             .filter(|(_, last)| **last == self.next)
+         {
+-            release_owned(&self.db, name, &self.plan.stages)?;
++            release_owned(
++                &self.db,
++                name,
++                &self.plan.stages,
++                self.plan.syntax.as_deref(),
++            )?;
+             self.tables.remove(name);
+         }
+         self.next += 1;
+@@ -931,7 +936,27 @@ impl<'a> Session<'a> {
+         Ok(findings)
+     }
+ }
+-fn release_owned(db: &Database, name: &str, stages: &[Stage]) -> Result<()> {
++fn release_owned(
++    db: &Database,
++    name: &str,
++    stages: &[Stage],
++    syntax: Option<&syntax::Spec>,
++) -> Result<()> {
++    let source = syntax.is_some_and(|spec| {
++        spec.name == name
++            || spec.edges.as_deref() == Some(name)
++            || spec.ownership.as_deref() == Some(name)
++    });
++    let completed = stages.iter().any(|stage| {
++        stage.name == name
++            && stage
++                .reachability
++                .as_ref()
++                .is_some_and(|reach| reach.syntax.is_some())
++    });
++    if source || completed {
++        return table::unregister(db, name).map_err(sql_error);
++    }
+     if let Some(stage) = stages.iter().find(|s| s.name == name)
+         && !stage.deferred.is_empty()
+     {
+@@ -964,7 +989,14 @@ impl Drop for Session<'_> {
+             return;
+         }
+         for name in &self.tables {
+-            if release_owned(&self.db, name, &self.plan.stages).is_err() {
++            if release_owned(
++                &self.db,
++                name,
++                &self.plan.stages,
++                self.plan.syntax.as_deref(),
++            )
++            .is_err()
++            {
+                 return;
+             }
+         }
+diff --git a/native/src/code_rule_dsl/relational/syntax.rs b/native/src/code_rule_dsl/relational/syntax.rs
+index 53452d46..f974fc54 100644
+--- a/native/src/code_rule_dsl/relational/syntax.rs
++++ b/native/src/code_rule_dsl/relational/syntax.rs
+@@ -755,15 +755,6 @@ pub(in crate::code_rule_dsl) fn compiler_schema(
+         .collect()
+ }
+
+-fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
+-    declarations(spec)?
+-        .into_iter()
+-        .map(|(name, declaration)| {
+-            db.execute_batch(&declaration).map_err(sql_error)?;
+-            Ok(name)
+-        })
+-        .collect()
+-}
+ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
+     let selected = facts.select(&spec.exclude_kinds, false)?;
+     let mut result = Vec::new();
+@@ -869,6 +860,41 @@ impl Source for Union {
+         self.sources[i].column(r - self.offsets[i], c, ctx)
+     }
+ }
++/// Executable empty relation. Compiler-only schemas deliberately cannot run.
++struct Empty {
++    columns: Arc<super::schema::Columns>,
++    meter: Arc<Meter>,
++}
++impl Source for Empty {
++    fn columns(&self) -> Vec<String> {
++        self.columns.iter().map(|c| c.name.clone()).collect()
++    }
++    fn column_types(&self) -> Vec<String> {
++        self.columns
++            .iter()
++            .map(|c| c.declared_type.clone())
++            .collect()
++    }
++    fn len(&self) -> usize {
++        0
++    }
++    fn estimated_matches(&self, _: usize, _: bool) -> usize {
++        0
++    }
++    fn indexed(&self, _: usize) -> bool {
++        false
++    }
++    fn lookup(&self, _: usize, _: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
++        Ok(Some(Vec::new()))
++    }
++    fn column(&self, _: usize, _: usize, _: &mut Context) -> rusqlite::Result<()> {
++        Err(rusqlite::Error::InvalidQuery)
++    }
++    fn charge(&self, n: usize) -> rusqlite::Result<()> {
++        self.meter.charge(n)
++    }
++}
++
+ pub(super) type Files = Vec<(String, Arc<Facts>)>;
+ pub(super) fn load(
+     db: &Connection,
+@@ -884,7 +910,17 @@ pub(super) fn load(
+     names.extend(spec.edges.iter().cloned());
+     names.extend(spec.ownership.iter().cloned());
+     if files.is_empty() {
+-        schema(db, spec)?;
++        for (name, columns) in compiler_schema(db, spec)? {
++            super::table::register(
++                db,
++                &name,
++                Arc::new(Empty {
++                    columns,
++                    meter: Arc::clone(&meter),
++                }),
++            )
++            .map_err(sql_error)?;
++        }
+         return Ok(names);
+     }
+     let mut families: Vec<Vec<Nodes>> = (0..names.len()).map(|_| Vec::new()).collect();
+diff --git a/native/src/code_rule_dsl/relational/table.rs b/native/src/code_rule_dsl/relational/table.rs
+index 94a3f246..2ab81dcc 100644
+--- a/native/src/code_rule_dsl/relational/table.rs
++++ b/native/src/code_rule_dsl/relational/table.rs
+@@ -8,8 +8,8 @@ use rusqlite::{
+     Connection, Result,
+     types::Value,
+     vtab::{
+-        Context, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig,
+-        VTabConnection, VTabCursor, VTabKind,
++        Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,
++        VTabCursor,
+     },
+ };
+ use std::{
+@@ -23,12 +23,11 @@ struct Shared {
+     source: Arc<dyn Source>,
+     stats: Arc<Counters>,
+ }
+-type Registration = Arc<parking_lot::Mutex<Option<Shared>>>;
++type Registration = Shared;
+ #[repr(C)]
+ struct Table {
+     base: rusqlite::ffi::sqlite3_vtab,
+     shared: Shared,
+-    registration: Registration,
+ }
+ fn quote(s: &str) -> String {
+     format!("\"{}\"", s.replace('"', "\"\""))
+@@ -45,19 +44,15 @@ pub(super) fn register(
+         return Err(failure("invalid native table name"));
+     }
+     let stats = Arc::new(Counters::default());
+-    let module = CString::new(format!("native_source_{name}"))
+-        .map_err(|_| failure("invalid module name"))?;
+-    const MODULE: Module<Table> = Module::read_only_module();
+-    let registration = Arc::new(parking_lot::Mutex::new(Some(Shared {
++    let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
++    const MODULE: Module<Table> = Module::eponymous_only_module();
++    let registration = Shared {
+         source,
+         stats: Arc::clone(&stats),
+-    })));
++    };
+     db.create_module(module.as_c_str(), &MODULE, Some(registration))?;
+-    db.execute_batch(&format!(
+-        "CREATE VIRTUAL TABLE {} USING {}",
+-        quote(name),
+-        quote(module.to_str().unwrap())
+-    ))?;
++    // Resolve xConnect before an authored-query authorizer is installed.
++    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
+     Ok(stats)
+ }
+ // SAFETY: SQLite's base is first; auxiliary data and cursors own Arc references.
+@@ -74,10 +69,7 @@ unsafe impl<'a> VTab<'a> for Table {
+     ) -> Result<(Cow<'static, CStr>, Self)> {
+         db.config(VTabConfig::Innocuous)?;
+         let registration = aux.ok_or_else(|| failure("missing native row source"))?;
+-        let shared = registration
+-            .lock()
+-            .clone()
+-            .ok_or_else(|| failure("native row source was released"))?;
++        let shared = registration.clone();
+         let sql = CString::new(format!(
+             "CREATE TABLE x({})",
+             shared
+@@ -95,7 +87,6 @@ unsafe impl<'a> VTab<'a> for Table {
+             Self {
+                 base: rusqlite::ffi::sqlite3_vtab::default(),
+                 shared,
+-                registration: Arc::clone(registration),
+             },
+         ))
+     }
+@@ -240,14 +231,6 @@ impl Cursor {
+             .map_or(self.range.start, |r| r[self.position])
+     }
+ }
+-impl<'a> CreateVTab<'a> for Table {
+-    const KIND: VTabKind = VTabKind::Default;
+-    fn destroy(&self) -> Result<()> {
+-        // Disconnect can reconnect through the module. DROP releases its ownership.
+-        self.registration.lock().take();
+-        Ok(())
+-    }
+-}
+ // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
+ unsafe impl VTabCursor for Cursor {
+     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
+@@ -343,3 +326,26 @@ unsafe impl VTabCursor for Cursor {
+         Ok(self.row() as i64 + 1)
+     }
+ }
++
++/// Release an eponymous binding without a schema write or a retained row source.
++pub(super) fn unregister(db: &Connection, name: &str) -> Result<()> {
++    let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
++    // SAFETY: the live connection owns its module. SQLite releases its auxiliary
++    // data and keeps any already-open cursor's Arc ownership intact.
++    let code = unsafe {
++        rusqlite::ffi::sqlite3_create_module_v2(
++            db.handle(),
++            name.as_ptr(),
++            std::ptr::null(),
++            std::ptr::null_mut(),
++            None,
++        )
++    };
++    if code != rusqlite::ffi::SQLITE_OK {
++        return Err(rusqlite::Error::SqliteFailure(
++            rusqlite::ffi::Error::new(code),
++            None,
++        ));
++    }
++    Ok(())
++}

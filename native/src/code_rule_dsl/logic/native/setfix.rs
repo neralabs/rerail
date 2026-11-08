@@ -17,7 +17,7 @@
 //!
 //! The spec has one item per line, tokens separated by spaces. Symbols and SQL are hex, so they can hold anything:
 //!   name <component name>
-//!   rel <table> <types>                        types: one char per column, `i` (int or node) or `s` (symbol)
+//!   rel <table> <types> [empty]                types: one char per column, `i` (int or node) or `s` (symbol)
 //!   rule <head rel> <src rel> <edge table|-> <edge types|-> key <slot..> ; ecols <slot..> ; pat <tok..> ; head <tok..>
 //!   probe <head rel> <delta rel> <hex SQL>     the SQL's columns are the head's
 //!   seed <head rel> <hex join>                 a native join run once, in the first wave
@@ -57,6 +57,11 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// at the run's next boundary; its symbol is -1, which matches nothing.
 pub struct Interner { atoms: Arc<crate::content_store::atoms::Atoms>, buf: String, failed: Option<String> }
 impl Interner {
+    /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
+    /// so it must not hold the registered cursor's lock across SQLite execution.
+    fn for_loading(shared: &RwLock<Self>) -> Self {
+        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
+    }
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
@@ -87,6 +92,15 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None }));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
+}
+
+/// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
+pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
+    let shared = symbols(conn)?;
+    let mut cursor = Interner::for_loading(&shared);
+    let ids = texts.into_iter().map(|text| cursor.id(text)).collect();
+    cursor.check()?;
+    Ok(ids)
 }
 
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`@dot`: `a.b`, `"" . b` is `b`) over `conn`'s symbols: the planner's SQL holds symbols
@@ -196,6 +210,7 @@ impl Rel {
     fn add_multi(&mut self, cols: &[usize]) {
         if self.idx.iter().any(|ix| ix.cols == cols) { return; }
         let mut ix = Index { cols: cols.to_vec(), table: HashTable::new(), next: Vec::with_capacity(self.n) };
+        charge(Unit::IndexEntry, self.n as u64);
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
@@ -262,8 +277,10 @@ struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, p
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
 enum Body { Sql(String), Join(JoinRule) }
 /// `whole`: a join probe's plan for the wave whose delta is its whole relation (the relation was empty before it), in
-/// any literal order, reading that relation in full.
-struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule> }
+/// any literal order, reading that relation in full. `wkey`: its spec, the same for each probe of one rule: in a wave
+/// the store does not change, so a whole plan run once derives what each of its rule's probes would (it is not run
+/// again).
+struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<String> }
 
 pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
@@ -299,16 +316,22 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     }
 }
 
+use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
+
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
-    let mut st = conn.prepare(&format!("SELECT {} FROM {table}", cols.join(", ")))?;
+    let mut st = conn.prepare(&format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
     let mut rows = st.query([])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         let mut row = Vec::with_capacity(types.len());
-        for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms)?); }
+        for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         out.push(row);
     }
+    drop(rows);
+    // The roofline's work: the statement's VM steps, and each row entered in a component relation or edge map.
+    charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
+    charge(Unit::IndexEntry, out.len() as u64);
     Ok(out)
 }
 
@@ -317,7 +340,7 @@ fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(f
 
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let symbols = symbols(conn)?;
-    let mut syms = symbols.write().unwrap();
+    let mut syms = Interner::for_loading(&symbols);
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -326,15 +349,23 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "name" => name = toks[1].to_string(),
             "rel" => {
                 let mut rel = Rel::new(toks[1], toks[2].as_bytes());
-                // `rel <table> <types> empty`: the table was made this run and nothing wrote it (no statement).
-                if toks.get(3) != Some(&"empty") {
+                let mut empty = false;
+                let mut t = 3;
+                while t < toks.len() {
+                    match toks[t] {
+                        "empty" => { empty = true; t += 1; }
+                        other => return Err(err(format!("rel: unknown token {other}"))),
+                    }
+                }
+                // `empty`: the table was made this run and nothing wrote it (no statement).
+                if !empty {
                     for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                 }
                 rel.stored = rel.n;
                 rels.push(rel);
             }
-            "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None }),
-            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
+            "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None, wkey: None }),
+            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None, wkey: None }),
             "nowrite" => write = false,
             "gate" => {
                 let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
@@ -344,7 +375,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "join" => {
                 let (head, delta) = (num(toks[1])?, num(toks[2])?);
                 let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
-                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole });
+                let wkey = toks.get(4).map(|w| w.to_string());
+                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole, wkey });
             }
             "rule" => {
                 let (head, src) = (num(toks[1])?, num(toks[2])?);
@@ -464,17 +496,27 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 row.clear();
                 // A function with no value (`rx_group` with no match) gives no row, as the SQL strata's inserts.
                 if vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
-                for (v, &ty) in vals.iter().zip(&types) { row.push(read_value(ValueRef::from(v), ty, &mut syms)?); }
+                for (v, &ty) in vals.iter().zip(&types) {
+                    row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
+                }
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }
         }
         // Join probes, natively; seed joins in the first wave only.
+        let mut wholes_run: Vec<&str> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
             if p.delta == SEED { if seeded { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
-            let j = match &p.whole { Some(w) if p.delta != SEED && store.rels[p.delta].lo == 0 => w, _ => j };
+            let j = match (&p.whole, &p.wkey) {
+                (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
+                    if wholes_run.contains(&k.as_str()) { skips += 1; continue; }
+                    wholes_run.push(k);
+                    w
+                }
+                _ => j,
+            };
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
@@ -581,7 +623,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             while id < rel.n {
                 let end = (id + per).min(rel.n);
                 let holes = vec![format!("({})", vec!["?"; rel.k].join(", ")); end - id].join(", ");
-                conn.execute(&format!("INSERT INTO {} VALUES {holes}", rel.table), rusqlite::params_from_iter(rel.data[id * rel.k..end * rel.k].iter()))?;
+                conn.execute(&format!("INSERT INTO {} VALUES {holes}", crate::code_rule_dsl::logic::sql::table(&rel.table)), rusqlite::params_from_iter(rel.data[id * rel.k..end * rel.k].iter()))?;
                 new_rows += end - id;
                 id = end;
             }
@@ -670,12 +712,26 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
         "sql" => Body::Sql(unhex(body)?),
         "join" => {
             let symbols = Arc::clone(&comp.store.read().unwrap().syms);
-            let mut syms = symbols.write().unwrap();
+            let mut syms = Interner::for_loading(&symbols);
             let j = parse_join(conn, &unhex(body)?, &mut syms)?;
             syms.check()?;
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
+        }
+        // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics.
+        "whole" => {
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = Interner::for_loading(&symbols);
+            let j = parse_join(conn, &unhex(body)?, &mut syms)?;
+            syms.check()?;
+            let mut store = comp.store.write().unwrap();
+            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
+            drop(store);
+            let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
+            p.whole = Some(j);
+            p.wkey = Some(body.to_owned());
+            return Ok(());
         }
         other => return Err(err(format!("unknown probe kind {other}"))),
     };
@@ -812,7 +868,14 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     id
 }
 
+/// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).
+#[cfg(target_family = "wasm")]
+fn thread_cpu() -> f64 {
+    crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64()
+}
+
 /// This thread's CPU seconds.
+#[cfg(not(target_family = "wasm"))]
 fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
@@ -919,6 +982,36 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
+/// Drops native relations `tables` of `conn`'s run: no later stratum reads them (`plan::last_reads`), so their rows
+/// and the indexes the waves kept are freed now, not when the run ends.
+pub fn release(conn: &Connection, tables: &[String]) {
+    let at = scope(conn);
+    let mut derived = DERIVED.lock().unwrap();
+    for t in tables {
+        derived.remove(&(at, t.clone()));
+    }
+}
+
+/// Drops the indexes of native relations `tables` that stay to the run's end (outputs, kept relations) but that no
+/// later stratum reads: their rows are read once more, in order, and their per-column indexes were most of their
+/// size. A relation shared with a reader still open keeps them.
+pub fn unindex(conn: &Connection, tables: &[String]) {
+    let at = scope(conn);
+    let mut derived = DERIVED.lock().unwrap();
+    for t in tables {
+        if let Some(rel) = derived.get_mut(&(at, t.clone())).and_then(Arc::get_mut) {
+            rel.chains = Vec::new();
+            *rel.idx.get_mut().unwrap() = HashMap::default();
+        }
+    }
+}
+
+/// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
+pub fn forget_derived(conn: &Connection) {
+    let at = scope(conn);
+    DERIVED.lock().unwrap().retain(|(s, _), _| *s != at);
+}
+
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
@@ -950,7 +1043,7 @@ pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
     }
     // One statement: the rows come from `set_derived` (a scan of the native relation), not one INSERT each.
     let cols: Vec<String> = (0..rel.k).map(|i| format!("c{i}")).collect();
-    conn.execute(&format!("INSERT INTO {table} SELECT {} FROM set_derived WHERE rel = ?1", cols.join(", ")), [table])?;
+    conn.execute(&format!("INSERT INTO {} SELECT {} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::table(table), cols.join(", ")), [table])?;
     Ok((rel.len() - rel.stored) as i64)
 }
 
@@ -1059,6 +1152,7 @@ impl InRel {
                 // hash table of every row.
                 Csr { lead, ..empty(!sorted, sorted) }
             } else {
+                charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
@@ -1078,8 +1172,41 @@ static INPUTS: LazyLock<Mutex<HashMap<(String, String), Arc<InRel>>>> = LazyLock
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
     let path = conn.path().unwrap_or_default().to_owned();
-    INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
-    STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+    let changing = CHANGING.lock().unwrap().get(&path).cloned();
+    let Some(changing) = changing else {
+        INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
+        STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+        return;
+    };
+    // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
+    // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
+    let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
+    INPUTS.lock().unwrap().retain(|(p, spec), _| {
+        if *p != path {
+            return true;
+        }
+        let parts: Vec<&str> = spec.splitn(4, ':').collect();
+        matches!(parts.as_slice(), ["b", table, ..] if unhex(table).is_ok_and(|sel| !reads_changing(&sel)))
+    });
+    STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
+}
+
+/// Relations whose rows change between the native runs on `conn` (`keep_inputs`): while set, `forget_inputs` keeps
+/// every other base input loaded, with its indexes.
+static CHANGING: LazyLock<Mutex<HashMap<String, std::collections::BTreeSet<String>>>> = LazyLock::new(Default::default);
+
+/// Runs on `conn` that read the same inputs but for `changing` (the bounded rounds: each round rebinds only its
+/// `__prev` inputs) keep the others loaded; `None` ends it, and the next `forget_inputs` drops everything.
+pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSet<String>>) {
+    let path = conn.path().unwrap_or_default().to_owned();
+    match changing {
+        Some(c) => {
+            CHANGING.lock().unwrap().insert(path, c);
+        }
+        None => {
+            CHANGING.lock().unwrap().remove(&path);
+        }
+    }
 }
 
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
@@ -1103,11 +1230,11 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
             return Ok(rel);
         }
     }
-    let mut st = conn.prepare(&format!("SELECT {cols} FROM {table}"))?;
+    let mut st = conn.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(&table)))?;
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
     while let Some(r) = q.next()? {
-        for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
+        for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
     let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new() });
@@ -1148,8 +1275,17 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
         None
     } else {
         let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(eqs[0]);
-        let cands: Vec<usize> = src.lookup(c, &[v]).unwrap_or_else(|| (0..src.len()).collect());
-        Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+        // The roofline's work: each candidate's filter values read.
+        match src.lookup(c, &[v]) {
+            Some(cands) => {
+                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
+                Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+            }
+            None => {
+                charge(Unit::Value, (src.len() * eqs.len()) as u64);
+                Some(src.filter_eq(&eqs))
+            }
+        }
     };
     Some(View { src, cols, ids, eqs })
 }
@@ -1158,13 +1294,48 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
 /// reads are loaded by one statement the first time any input of the run needs them (a table scan, `NOT INDEXED`,
 /// so every column is in the table's row order), and every filtered or projected input over it is then a view
 /// (`View`). A column's index is built on its first lookup. A table holding a non-integer value is not one.
-struct Stored { columns: Vec<String>, n: std::sync::OnceLock<usize>, values: Vec<std::sync::OnceLock<Vec<i64>>>, index: Vec<std::sync::OnceLock<Vec<u32>>> }
+struct Stored {
+    columns: Vec<String>,
+    n: std::sync::OnceLock<usize>,
+    values: Vec<std::sync::OnceLock<Vec<i64>>>,
+    index: Vec<std::sync::OnceLock<Vec<u32>>>,
+    /// Each column's count of distinct values, from its index (for SQL's estimates).
+    distinct: Vec<std::sync::OnceLock<usize>>,
+    /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
+    /// the table never changes, so an order costs no insert). One serves every search whose columns are its prefix.
+    orders: Mutex<Vec<(Vec<usize>, Arc<Vec<u32>>)>>,
+}
 impl Stored {
+    fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
+        let k = columns.len();
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default() }
+    }
+    fn distinct(&self, c: usize) -> usize {
+        *self.distinct[c].get_or_init(|| {
+            let (ids, col) = (self.index(c), self.col(c));
+            1 + ids.windows(2).filter(|w| col[w[0] as usize] != col[w[1] as usize]).count()
+        })
+    }
+    /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
+    fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
+        let mut orders = self.orders.lock().unwrap();
+        let fits = |o: &[usize]| o.len() >= cols.len() && { let mut p = o[..cols.len()].to_vec(); p.sort_unstable(); p == cols };
+        if let Some((o, ids)) = orders.iter().find(|(o, _)| fits(o)) { return (o.clone(), Arc::clone(ids)); }
+        let mut by = cols.to_vec();
+        by.sort_by_key(|&c| std::cmp::Reverse(self.distinct(c)));
+        let cols_v: Vec<&[i64]> = by.iter().map(|&c| self.col(c)).collect();
+        let mut ids: Vec<u32> = (0..self.n.get().copied().unwrap_or(0) as u32).collect();
+        ids.sort_by(|&a, &b| cols_v.iter().map(|v| v[a as usize].cmp(&v[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        let ids = Arc::new(ids);
+        orders.push((by.clone(), Arc::clone(&ids)));
+        (by, ids)
+    }
     fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
         self.index[c].get_or_init(|| {
             let col = self.col(c);
+            charge(Unit::IndexEntry, col.len() as u64);
             let mut ids: Vec<u32> = (0..col.len() as u32).collect();
             ids.sort_by_key(|&r| col[r as usize]);
             ids
@@ -1182,7 +1353,7 @@ impl Stored {
         if missing.is_empty() { return true; }
         let names: Vec<&str> = missing.iter().map(|&c| self.columns[c].as_str()).collect();
         let read = || -> rusqlite::Result<Option<Vec<Vec<i64>>>> {
-            let mut st = conn.prepare(&format!("SELECT {} FROM {table} NOT INDEXED", names.join(", ")))?;
+            let mut st = conn.prepare(&format!("SELECT {} FROM {} NOT INDEXED", names.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
             let mut values = vec![Vec::new(); missing.len()];
             let mut q = st.query([])?;
             while let Some(r) = q.next()? {
@@ -1190,6 +1361,8 @@ impl Stored {
                     match r.get_ref(i)? { ValueRef::Integer(x) => v.push(x), _ => return Ok(None) }
                 }
             }
+            drop(q);
+            charge(Unit::VmStep, st.get_status(rusqlite::StatementStatus::VmStep) as u64);
             Ok(Some(values))
         };
         let Ok(Some(values)) = read() else { return false };
@@ -1203,7 +1376,22 @@ impl Stored {
 impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
     fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
-    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
+    fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        let one = self.len().div_ceil(self.distinct(c).max(1));
+        if batch { one * 8 } else { one }
+    }
+    fn composite(&self) -> bool { true }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
+        let (on, order) = self.order(&cols);
+        let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
+        let cmp = |r: u32| by.iter().map(|&(v, x)| v[r as usize].cmp(&x)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal);
+        let lo = order.partition_point(|&r| cmp(r).is_lt());
+        let hi = order.partition_point(|&r| cmp(r).is_le());
+        let mut out: Vec<usize> = order[lo..hi.max(lo)].iter().map(|&r| r as usize).collect();
+        out.sort_unstable();
+        Some(out)
+    }
     /// For SQL over its vtab and a view's constant filters (`lookup`); a join probes the sorted index in place
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
@@ -1220,14 +1408,13 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let k = columns.len();
-    let t = Stored { columns, n: std::sync::OnceLock::new(), values: values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() };
+    let t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
     let _ = t.n.set(n);
     Arc::new(t)
 }
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
     let need: Vec<&str> = columns.iter().map(String::as_str).collect();
     stored_table(conn, schema, name, &need)
 }
@@ -1242,9 +1429,9 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
         Some(t) => t?,
         None => {
             // The columns' names, from the statement (prepared, not run).
-            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
             let k = columns.len();
-            let t = Arc::new(Stored { columns, n: std::sync::OnceLock::new(), values: (0..k).map(|_| std::sync::OnceLock::new()).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() });
+            let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
             t
         }
@@ -1271,8 +1458,19 @@ enum Step {
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     Count { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, out: usize, bind: bool },
+    /// `out = min col : { atom }` (`max` when `max`): the least (greatest) value of column `col` over the atom's
+    /// matching rows; no rows, no binding.
+    Extreme { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: usize, out: usize, bind: bool, max: bool },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
+    /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
+    /// interned; no value (NULL), no binding.
+    Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
+    /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
+    Doc { a: Key, b: Key, eq: bool },
+    /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
+    /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
+    Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
 }
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
@@ -1293,16 +1491,17 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         let toks: Vec<&str> = line.split_whitespace().collect();
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
         match toks[0] {
-            "pos" | "neg" | "count" => {
-                let (neg, count) = (toks[0] == "neg", toks[0] == "count");
-                let atoks = if count { &toks[2..toks.len() - 1] } else { &toks[2..] };
+            "pos" | "neg" | "count" | "min" | "max" => {
+                let (neg, count, extreme) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "min" | "max"));
+                // `min <src> <atom tokens> <column> <out>`: the aggregated column's token is `_`.
+                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else { &toks[2..] };
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
                 for (col, t) in atoks.iter().enumerate() {
                     match tok(t, syms)? {
                         None => {}
                         Some(k) if is_bound(&bound, k) => keys.push((col, k)),
                         Some(Key::Slot(s)) => {
-                            if neg || count { return Err(err(format!("unbound v{s} in a negated or counted atom"))); }
+                            if neg || count || extreme { return Err(err(format!("unbound v{s} in a negated or aggregated atom"))); }
                             match binds.iter().find(|&&(_, b)| b == s) { Some(&(c0, _)) => tests.push((col, c0)), None => binds.push((col, s)) }
                         }
                         Some(Key::Const(_)) => unreachable!(),
@@ -1332,7 +1531,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                     t => return Err(err(format!("bad source {t}"))),
                 };
-                if count {
+                if extreme {
+                    let col = num(toks[toks.len() - 2])?;
+                    let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
+                    let bind = !is_bound(&bound, Key::Slot(o));
+                    grow(&mut bound, o); bound[o] = true;
+                    steps.push(Step::Extreme { src, keys, tests, col, out: o, bind, max: toks[0] == "max" });
+                } else if count {
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad count")) };
                     let bind = !is_bound(&bound, Key::Slot(o));
                     grow(&mut bound, o); bound[o] = true;
@@ -1362,6 +1567,37 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
                 steps.push(Step::Lt { a, b, or_eq: toks[0] == "le" });
+            }
+            "func" => {
+                // `func <name> <out> <args…>`
+                let Some((name, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(toks[1]) else { return Err(err(format!("no function {}", toks[1]))) };
+                let args: Vec<Key> = toks[3..].iter().map(|t| tok(t, syms)).collect::<Result<Option<Vec<_>>>>()?.ok_or_else(|| err("a function of `_`"))?;
+                if args.len() != kinds.len() || args.iter().any(|&a| !is_bound(&bound, a)) { return Err(err(format!("{name} of unbound or missing arguments"))); }
+                let Some(Key::Slot(o)) = tok(toks[2], syms)? else { return Err(err("a function's value into a constant")) };
+                let bind = !is_bound(&bound, Key::Slot(o));
+                grow(&mut bound, o); bound[o] = true;
+                steps.push(Step::Func { name, kinds, args, out: o, bind });
+            }
+            "test" => {
+                // `test <op> <s> <pattern> <0|1>`
+                use crate::code_rule_dsl::logic::strings;
+                let Some(&op) = strings::TESTS.iter().find(|&&t| t == toks[1]) else { return Err(err(format!("no text test {}", toks[1]))) };
+                let (Some(s), Some(p)) = (tok(toks[2], syms)?, tok(toks[3], syms)?) else { return Err(err("a text test of `_`")) };
+                if !is_bound(&bound, s) || !is_bound(&bound, p) { return Err(err(format!("{op} of an unbound slot"))); }
+                let matcher = match p {
+                    Key::Const(c) => {
+                        let patterns: Vec<String> = syms.name(c).split(strings::SET_SEP).map(str::to_owned).collect();
+                        // A pattern that does not compile matches nothing, as SQL's `str_test`: `strings::test` per row.
+                        strings::Matcher::new(op, &patterns).ok().map(Arc::new)
+                    }
+                    Key::Slot(_) => None,
+                };
+                steps.push(Step::Test { op, s, p, matcher, want: toks[4] == "1" });
+            }
+            "deq" | "dne" => {
+                let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
+                if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("a document comparison of an unbound slot")); }
+                steps.push(Step::Doc { a, b, eq: toks[0] == "deq" });
             }
             "eq" | "ne" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
@@ -1459,15 +1695,18 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (rows, cands) = candidates(src, store, &cx.key, keys);
+                // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
+                // the same bindings, so the rest of the body runs once if one does (a semi-join), not once per row.
+                let exists = *neg || binds.is_empty();
                 let found = cands.any(|id| {
                     let row = rows.row(id);
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
-                    if *neg { return true; }
+                    if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     go(cx, i + 1, slots);
                     false
                 });
-                if *neg && !found { go(cx, i + 1, slots); }
+                if exists && found != *neg { go(cx, i + 1, slots); }
             }
             Step::Count { src, keys, tests, out, bind } => {
                 cx.key.clear();
@@ -1480,6 +1719,23 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     false
                 });
                 if *bind { slots[*out] = n } else if slots[*out] != n { return }
+                go(cx, i + 1, slots);
+            }
+            Step::Extreme { src, keys, tests, col, out, bind, max } => {
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let mut best: Option<i64> = None;
+                cands.any(|id| {
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+                        let v = row.at(*col);
+                        best = Some(best.map_or(v, |b| if *max { b.max(v) } else { b.min(v) }));
+                    }
+                    false
+                });
+                let Some(v) = best else { return };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
             Step::Lt { a, b, or_eq } => {
@@ -1503,6 +1759,34 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
+            Step::Func { name, kinds, args, out, bind } => {
+                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
+                let value = {
+                    let mut text = Vec::new();
+                    let mut numbers = Vec::new();
+                    for (k, a) in kinds.iter().zip(args) {
+                        match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                    }
+                    let text: Vec<&str> = text.iter().map(String::as_str).collect();
+                    eval(name, &text, &numbers)
+                };
+                let v = match value {
+                    rusqlite::types::Value::Integer(n) => n,
+                    rusqlite::types::Value::Text(s) => cx.syms.id(&s),
+                    _ => return,
+                };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
+            Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
+            Step::Test { op, s, p, matcher, want } => {
+                let s = cx.syms.name(val(slots, *s));
+                let hit = match matcher {
+                    Some(m) => m.is_match(&s),
+                    None => crate::code_rule_dsl::logic::strings::test(op, &s, &cx.syms.name(val(slots, *p))),
+                };
+                if hit == *want { go(cx, i + 1, slots) }
+            }
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }

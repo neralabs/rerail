@@ -16,6 +16,7 @@ mod language;
 mod lines;
 mod literal;
 mod logic;
+mod sql_executor;
 mod matcher;
 mod model;
 mod module_graph;

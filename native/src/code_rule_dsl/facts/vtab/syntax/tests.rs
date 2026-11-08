@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
         })
         .collect()
 }
@@ -92,8 +92,8 @@ fn relations_hold_t_exporters_rows() {
                         Ty::Node if v == -1 => "-1".to_owned(),
                         Ty::Node => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         Ty::Kind => {
-                            assert_eq!(v / i64::from(KIND_STRIDE), i64::from(tag));
-                            catalog.kind_name((v % i64::from(KIND_STRIDE)) as u16).unwrap().to_owned()
+                            assert_eq!(crate::code_rule_dsl::facts::core::kind_tag(v as u32), tag);
+                            catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(v as u32)).unwrap().to_owned()
                         }
                         Ty::Field => {
                             assert_eq!(v >> 16, i64::from(tag));
@@ -227,6 +227,9 @@ fn modules_and_packages_follow_t() {
     assert_eq!((module("json/__init__.py"), package("json/__init__.py")), ("json".to_owned(), "json".to_owned()));
     assert_eq!((module("json/tool.py"), package("json/tool.py")), ("json.tool".to_owned(), "json".to_owned()));
     assert_eq!((module("shlex.py"), package("shlex.py")), ("shlex".to_owned(), String::new()));
+    // Stubs are named as their modules.
+    assert_eq!((module("os/__init__.pyi"), package("os/__init__.pyi")), ("os".to_owned(), "os".to_owned()));
+    assert_eq!((module("os/path.pyi"), package("os/path.pyi")), ("os.path".to_owned(), "os".to_owned()));
     assert_eq!(module("x/src/a/mod.rs"), "crate.a");
     assert_eq!(module("src/lib.rs"), "crate");
 }
@@ -234,9 +237,9 @@ fn modules_and_packages_follow_t() {
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    let Some((facts, tape)) = core::build_with_tape(&file, None).unwrap() else { panic!("{path} did not parse") };
+    let Some((facts, tape)) = core::build_with_tape(&file).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, file)) }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, file)), guest: None, module: None }
 }
 
 /// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
@@ -250,7 +253,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
         "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
         "visit_index", "ast_depth",
     ];
-    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()) };
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
     let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
     let read = |name: &str| -> Vec<Vec<i64>> {
@@ -262,7 +265,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let kinds: HashMap<i64, String> = read("node")
         .into_iter()
         .map(|r| {
-            let (tag, code) = ((r[2] / i64::from(KIND_STRIDE)) as u8, (r[2] % i64::from(KIND_STRIDE)) as u16);
+            let (tag, code) = (crate::code_rule_dsl::facts::core::kind_tag(r[2] as u32), crate::code_rule_dsl::facts::core::kind_code(r[2] as u32));
             (r[1], from_tape_tag(tag).unwrap().kinds().kind_name(code).unwrap_or("ERROR").to_owned())
         })
         .collect();
@@ -419,7 +422,7 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None });
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[]).unwrap();
     let nodes = *batch.nodes.last().unwrap();
@@ -442,6 +445,7 @@ fn within_holds_exactly_the_contained_pairs() {
                     && match mode {
                         within::Mode::Tree => lb < la && la <= lb + zb,
                         within::Mode::Span => sb <= sa && ea <= eb,
+                        within::Mode::Axis(_) => unreachable!("the axes have their own test"),
                     };
                 if holds {
                     expected.insert((id(a), id(b)));
@@ -463,6 +467,64 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
+    }
+}
+
+/// The kind-set axes (`within::Axis`: `nearest`, `inside`, `has`) hold exactly the pairs a brute-force walk of each
+/// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
+#[test]
+fn the_kind_set_axes_hold_exactly_their_pairs() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    let store = ContentStore::open(&temp("axes")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size) and kind atom of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        (p.key, local, p.size[local] as usize)
+    };
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
+        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    // Nested kinds: the root's, and two from inside the documents.
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let member = |r: usize| set.contains(&kind(r));
+    let below = |n: usize, a: usize| {
+        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        dn == da && la < ln && ln <= la + za
+    };
+    for axis in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set);
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            for a in 0..nodes {
+                let holds = below(n, a)
+                    && match axis {
+                        within::Axis::Inside => member(a),
+                        within::Axis::Has => member(n),
+                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
+                    };
+                if holds {
+                    expected.insert((id(n), id(a)));
+                }
+            }
+        }
+        assert!(!expected.is_empty());
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect());
+        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..source.len()).collect()), expected);
+        assert_eq!(source.len(), expected.len());
+        assert_eq!(source.estimated_len(), expected.len(), "an axis's rows are counted from the tree");
+        let stats = source.statistics().unwrap();
+        assert!(stats.iter().all(|(_, rows, ndv, _, _)| *rows == expected.len() as i64 && *ndv <= *rows));
     }
 }
 
@@ -494,4 +556,70 @@ fn lookups_with_a_bound_document_read_that_document_only() {
     let before = core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(count(&format!("SELECT count(*) FROM core_node WHERE d = 3 AND t = {t}")), 1);
     assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
+}
+
+
+#[test]
+fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
+    let store = ContentStore::open(&temp("python-verdict")).unwrap();
+    let doc = document(0, "a.py", "python", "print \"legacy\"\n");
+    let source_only = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &source_only).unwrap();
+    assert!(doc.facts.python_syntax.get().is_none(), "raw text must not request grammar validation");
+    let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
+    assert!(verdict.is_some());
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
+
+/// Literal values and positions are one demanded producer; a names-only rule must not build either table.
+#[test]
+fn unread_python_literal_columns_are_not_materialized() {
+    let store = ContentStore::open(&temp("literal-demand")).unwrap();
+    let doc = document(0, "a.py", "python", "x = 'plain'\ny = f'left{x}right'\n");
+    let names = Projection { reads: Some(["name".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &names).unwrap();
+    for rel in ["str_part", "str_part_start", "str_part_word"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+    let literals = Projection { reads: Some(["str_part".into(), "str_part_start".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &literals).unwrap();
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 3, "{rel}");
+    }
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 0);
+    let words = Projection { reads: Some(["str_part_word".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc], &words).unwrap();
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 3);
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+}
+
+
+#[test]
+fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
+    let store = ContentStore::open(&temp("container-text-demand")).unwrap();
+    let source = format!("items = [{}]\n", "1,".repeat(1000));
+    let doc = document(0, "a.py", "python", &source);
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    for (body, source_needed, line_needed) in [
+        ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
+        (".decl copied(sp: span)\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", false, true),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", true, true),
+        ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
+        ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let projection = Projection::of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
+        let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
+        let text = relation("text");
+        let has_text = |loc| (0..text.len()).any(|row| text.value(row, 0) == loc);
+        assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
+        assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
+    }
 }

@@ -213,7 +213,8 @@ impl ContentStore {
     /// Stores one file evaluation's clause runs under `set` (registered first): `results` as rows,
     /// `completions` as bits of the set's completion words (added to the stored words, with their
     /// counts) at the content-pure path or at `key.path`. Returns the run's digest
-    /// (`FactsMemo::run_digest`) when it covered every clause of `set`.
+    /// (`FactsMemo::run_digest`) when it covered every clause of `set`. Writes nothing, and returns `None`, when the
+    /// source was collected after the caller resolved it (O95): the file is evaluated again next time.
     pub fn put_facts_memo(
         &self,
         key: FactsMemoKey<'_>,
@@ -252,6 +253,12 @@ impl ContentStore {
         let schema = i64::from(key.fact_schema);
         let level = self.compression_level;
         self.immediate_transaction(|transaction| {
+            let held: bool = transaction
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM source_objects WHERE source_id=?1)")?
+                .query_row([key.source.0], |row| row.get(0))?;
+            if !held {
+                return Ok(None);
+            }
             let mut insert = transaction.prepare_cached(
                 "INSERT INTO facts_results(source_id,fact_schema,path,plan_digest,codec_id,raw_length,frame) \
                  VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source_id,fact_schema,path,plan_digest) DO UPDATE \

@@ -53,6 +53,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_mul", &[Number, Number], Number),
     ("float_div", &[Number, Number], Number),
     ("float_str", &[Number], Text),
+    // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
+    ("rx_group", &[Text, Text, Text], Text),
 ];
 
 /// The SQL name of function `name`: its own, or `rr_<name>` where SQLite has a function of that name, which
@@ -96,7 +98,14 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
             },
         }
     }
-    let t = |i: usize| text[i].as_str();
+    let text: Vec<&str> = text.iter().map(String::as_str).collect();
+    eval(name, &text, &numbers)
+}
+
+/// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
+/// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
+pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    let t = |i: usize| text[i];
     let out = match name {
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
@@ -108,6 +117,7 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {

@@ -1,5 +1,26 @@
 use super::*;
 
+/// Source spans are locations but are not tree nodes. Their explicit document column must
+/// survive the local split, so locating their rows never adds `node(d, span, ...)`.
+#[test]
+fn source_relations_keep_their_document_location() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    for (relation, columns, arguments) in [
+        ("source", "d: number, sp: loc", "d, sp"),
+        ("src_line", "d: number, l: number, sp: loc", "d, l, sp"),
+        ("line_count", "d: number, k: number", "d, k"),
+        ("docof", "sp: loc, d: number", "sp, d"),
+    ] {
+        let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
+        let program = parse(&text).unwrap();
+        let (_, locations, _) = split_located(&program);
+        assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
+        let mut located = program;
+        locate(&mut located).unwrap();
+        assert!(!located.rules.iter().any(|rule| rule.body.iter().filter_map(|lit| lit.atom()).any(|atom| atom.rel == "node")), "{relation}: a span acquired a tree-node constraint");
+    }
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -57,7 +78,7 @@ fn t_programs_split_into_file_local_and_cross_file() {
     use crate::code_rule_dsl::logic::rr::parse;
     for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
-        let prog = parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let prog = parse(&crate::code_rule_dsl::tools::program_text(&path).unwrap()).unwrap();
         let local = split(&prog);
         let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
         let global: Vec<&&str> = derived.iter().filter(|r| !local.contains(**r)).collect();
@@ -215,6 +236,34 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(join.body.len(), 5, "{join:?}");
     assert_eq!(join.head.args.len(), 2);
     // Its rows are attributable to their file: the node column is a location.
-    let (_, locations) = split_located(&prog);
+    let (_, locations, _) = split_located(&prog);
     assert_eq!(locations[&made[0]], [0], "{locations:?}");
+}
+
+/// Position comparisons must retain the semantic candidate filters. Document equality alone
+/// does not make their Cartesian product a bounded per-file producer.
+#[test]
+fn cross_file_filters_keep_independent_node_positions_out_of_local_products() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl visit_index(n: node, i: number)
+.input node, field, text, docof, visit_index
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl chosen(n: node)
+chosen(n) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !defined(s).
+.decl triangle(a: node, b: node, c: node)
+triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
+    docof(a, d), docof(b, d), docof(c, d), visit_index(a, ai), visit_index(b, bi), visit_index(c, ci), ai < bi, bi < ci.
+.output triangle
+"#;
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    assert!(!split(&program).contains("chosen"));
+    let original = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap().clone();
+    push_local_joins(&mut program);
+    let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
+    assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
 }

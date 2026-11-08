@@ -16,8 +16,9 @@
 //!                                    dump(ast.Tuple(elts=type_params))`
 //! ```
 //!
-//! core.rr's `syntax_error(d, l, msg)` lowers to `cpython_syntax_error` where a program does not declare a
-//! `syntax_error` of its own (`rr::lower::core`); the tape's `syntax_error(d)` (an ERROR or MISSING node) is apart.
+//! `cpython_syntax_error` is core.rr's `syntax_error(d, l, msg)` of a Python document under the name the converter
+//! gives it: both read the tape's one cached verdict (`Facts::python_syntax`, `python_syntax::error`); the tape's
+//! `syntax_error(d)` (an ERROR or MISSING node) is apart.
 //! `@unparse(n)` and `@ast_dump(n)` lower to a variable `cpython_unparse` and `cpython_ast_dump` bind
 //! (`logic::plan::corpus`'s `cpython_functors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
 //! a def, a class or an assignment that tree-sitter ends later than CPython by its start). Rows hold string indexes,
@@ -71,9 +72,9 @@ impl CPython {
         let (true, Some(dialect)) = (python, dialect) else { return };
         let source = p.facts.source.as_str();
         if self.syntax_error
-            && let Some(e) = crate::code_rule_dsl::cpython::syntax::syntax_error(source)
+            && let Some((line, msg)) = p.facts.python_syntax.get_or_init(|| super::python_syntax::error(source))
         {
-            self.syntax_errors.push([i64::from(p.key), e.line as i64, string(&e.msg) as i64]);
+            self.syntax_errors.push([i64::from(p.key), i64::from(*line), string(msg) as i64]);
         }
         if self.literal_json {
             let literals = crate::code_rule_dsl::cpython::literal::literals(source);

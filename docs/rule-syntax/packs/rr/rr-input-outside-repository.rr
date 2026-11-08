@@ -1,0 +1,13 @@
+.policy "rr-input-outside-repository" revision 1
+.description "A rule's input file is read from outside the repository: an absolute path, or one that climbs out of it."
+.language rr
+.mode steer
+.scope include "**/*.rr"
+// Rerail checking rules with rules (decision 0061). An `.input` reads a file; a rule written for one repository
+// should read that repository's files only:
+//   .input facts(IO=file, filename="facts.csv")          fine
+//   .input facts(IO=file, filename="/etc/passwd")        absolute
+//   .input facts(IO=file, filename="../other/x.csv")     climbs out
+.violation outside_input(at: node) code "RR101" "input file outside the repository"
+outside_input(p) :- node(_, p, "io_relation", _, _), field(p, "parameters", t), text(t, s),
+    match(".*filename=\"(/|\\.\\./).*", s).

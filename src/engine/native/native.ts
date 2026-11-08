@@ -286,7 +286,50 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  /** Retain SQL results across source edits; unchanged files reuse native fact shards. */
+  applySnapshot(snapshotJson: string, maxWaves?: number | null): string;
+  /** Atomic {upsert: snapshot files, delete: paths}; leaves unmentioned files and metadata in place. */
+  applyFileChanges(changesJson: string, maxWaves?: number | null): string;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  /** Drop generated outputs while keeping fact bindings and registered extensions. */
+  reset(): void;
+  /** Per-operation limits: {max_steps?: number, timeout_ms?: number}. An empty object removes limits. */
+  setLimits(limitsJson: string): void;
+  createIndex(relation: string, columns: number[]): void;
+  /** Register deterministic aggregate/merge/widen SQL functions for a custom lattice. */
+  registerLattice(name: string, specificationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  /** Atomic [{name, insert?: rows, delete?: rows}] batch; returns deltas and refreshed strata. */
+  applyChanges(changesJson: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
+export interface NativeCodeRuleDslExecution {
+  evaluate(compiled: NativeCompiledCodeRuleDsl, snapshot: string, mode: string): string;
+  createWorkspace(): NativeCodeRuleDslWorkspace;
+  close(): void;
+}
+
+export interface NativeModelCheck {
+  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
+  file?: string | null;
+}
+
 export interface NativeBinding {
+  verifyModelFiles(modelPath: string): NativeModelCheck;
+  CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;

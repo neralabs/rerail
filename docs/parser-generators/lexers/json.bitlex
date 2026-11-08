@@ -2,13 +2,16 @@
 #
 # Every token below is a leaf kind of tree-sitter-json 0.24.8:
 #   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
-#   comment (an extra: `//` to the end of the line, or `/* … */`)
+#   comment (an extra) is not lexed: a file with one escapes to tree-sitter.
 #
 # Observed facts this file relies on (tree-sitter-json 0.24.8, checked with its parser):
 #   - `\s` in the extras is ASCII: space, \t \n \v \f \r. U+00A0, U+2028, U+3000 and U+FEFF are
 #     errors. Outside strings, any byte of 0x80 or above is an error.
 #   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
 #   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
+#   - number is -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)? (grammar.js): an exponent's sign is
+#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers (the `json_number` check sends
+#     them to tree-sitter).
 #   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
 #     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
 #   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
@@ -16,155 +19,101 @@
 
 lexer json
 
+# Two tiers, as simdjson's two stages (docs/final-shape/decisions/0071-two-tiers.md):
+#   - tier 1, every byte: the classes, the string state, each token's first and last byte, and
+#     the errors a byte shows by itself;
+#   - tier 2, every token (the tree section): kinds, keywords, the number check, nesting, keys.
+
 # --- Byte classes --------------------------------------------------------------------------------
 
 class quote     = '"'
 class backslash = '\\'
 class ws        = ' ' '\t' '\n' '\r' 0x0b 0x0c
 class lf        = '\n'
-class lbrace    = '{'
-class rbrace    = '}'
-class lbracket  = '['
-class rbracket  = ']'
-class comma     = ','
-class colon     = ':'
-class slash     = '/'
-class star      = '*'
-class high      = 0x80..0xff
-# Bytes a number or a literal word may contain. Which word it is gets checked per token below.
-class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
-class digit     = '0'..'9'
-class zero      = '0'
-class letter    = 'a'..'z' 'A'..'Z'
-class minus     = '-'
-class sign      = '+' '-'
-class dot       = '.'
-class expc      = 'e' 'E'
-# The letters that may follow a backslash in tree-sitter-json's escape_sequence.
-class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
+# The structural bytes: one class, as simdjson's. Which one a token is, tier 2 reads.
+class op        = '{' '}' '[' ']' ',' ':'
 
-# --- Strings -------------------------------------------------------------------------------------
+# --- Strings: simdjson's stage 1 -----------------------------------------------------------------
 
-# simdjson's carry trick: the byte after an odd run of backslashes is escaped.
-mask escaped    = after_odd_run(backslash)
-
-# Strings and comments hide each other: a quote in a comment opens nothing, and `//` in a string
-# is text. One automaton over the quotes, slashes, stars and newlines settles both.
-#
-#   input    {"a//b": 1 /* x */}
-#   states    .ssssss.....bbbbbe.          s = str, b = blk or bend, e = the comment's last byte
-#
-# Its events are 8.9% of bytes on the data-layer JSON (quotes 8.4%, '/' 0.41%, newlines 0.13%,
-# '*' almost none), and none of those files has a comment. So a file runs one of two variants,
-# chosen once per file as fallback is:
-#   - no '/' outside toggle(q)'s strings: strings are toggle(q), as in simdjson, and there are no
-#     comments. `lex` does not run. The choice is exact: toggle(q) is right up to the first
-#     comment, and a file with none has no such byte.
-#   - otherwise: `lex` runs over all its events.
-# The masks below are written for the second variant; in the first, lex.in(str) is toggle(q).
-
-machine lex {
-  events {
-    q   = quote & ~escaped
-    sc  = star & next(slash)          # listed before star: a '*' that may close a block comment
-    st  = star
-    sl  = slash
-    eol = lf
-  }
-  states code str s1 line blk bend error
-  group cmt = s1 line blk bend
-  start code
-  final code line
-
-  code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
-  str   on q -> code                             # '/', '*' and newlines in a string are text
-  s1    on sl -> line,  on st -> blk,  on sc -> blk   # `/*/`: the '*' of the opener is not a closer
-  line  on eol -> code
-  blk   on sc -> bend
-  bend  on sl -> code                            # the '/' of `*/`, always the next byte
-}
-
-mask q          = lex.on(code -> str) | lex.on(str -> code)
-mask inside     = lex.in(str)                    # the opening quote, not the closing one
-mask opening    = lex.on(code -> str)
-mask closing    = lex.on(str -> code)
+# simdjson's escaped bytes: in a run of backslashes, each one at an even offset escapes the byte
+# after it, a backslash or not. The backslashes not escaped start escapes.
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask inside     = toggle(q)                      # the opening quote, not the closing one
+mask opening    = q & inside
+mask closing    = q & ~inside
 mask body       = inside & ~opening              # between the quotes
-
-# An escape is a backslash at an even offset in its run of backslashes, and the byte after it.
-mask esc        = backslash & body & aligned(backslash, 2)
-mask esc_bytes  = span(esc, 2)
-mask content    = body & ~esc_bytes
+mask esc        = backslash & body & ~escaped    # an escape's backslash
+mask esc_last   = escaped & body                 # the byte it escapes
+mask content    = body & ~esc & ~esc_last
 
 # --- Outside strings -----------------------------------------------------------------------------
 
-mask cmt_start  = lex.on(code -> s1)
-mask in_cmt     = lex.in(cmt) | lex.on(bend -> code)
-mask code       = ~inside & ~closing & ~in_cmt
-mask word       = code & scalar
+mask code       = ~inside & ~closing
+# Any other byte outside a string is in a word: a number or a literal, checked per token. A byte
+# no JSON word holds (a '/', a non-ASCII byte) fails the check, and the file goes to tree-sitter.
+mask word       = code & ~ws & ~op
 
-# --- Tokens --------------------------------------------------------------------------------------
+# --- Tokens: each one's first and last byte ------------------------------------------------------
 
 token '"'             = start q
-token string_content  = start starts(content) through content
-token escape_sequence = start esc through esc_bytes
-token '{'             = start code & lbrace
-token '}'             = start code & rbrace
-token '['             = start code & lbracket
-token ']'             = start code & rbracket
-token ','             = start code & comma
-token ':'             = start code & colon
-# A run of scalar bytes is one token. One that starts with a letter must be `true`, `false` or
-# `null`; any other is a number, checked below.
-mask wstart     = starts(word)
-mask lit        = fill(wstart & letter, ~word)
-mask num        = word & ~lit
-token number          = start wstart & ~letter through num
-token literal         = start wstart & letter through lit
-keywords literal { "true" -> true  "false" -> false  "null" -> null } required
-
-# `//` through the byte before '\n' (whose event returns to code); `/*` through '/'.
-token comment         = start cmt_start through in_cmt
+token string_content  = start starts(content) last lasts(content)
+token escape_sequence = start esc last esc_last
+# tree-sitter-json's escapes: any other is an error, and the file goes to tree-sitter.
+keywords escape_sequence {
+  "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
+  "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
+  "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
+} required
+# One token per structural byte; its kind is its text (tier 2).
+token punctuation     = start code & op
+keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
+# A run of word bytes is one token: a number, unless its text is a keyword (tier 2).
+token number          = start starts(word) last lasts(word)
+keywords number { "true" -> true  "false" -> false  "null" -> null }
 
 skip code & ws
 
-# --- Errors: the file goes to tree-sitter --------------------------------------------------------
+# --- Errors a byte shows by itself: the file goes to tree-sitter ---------------------------------
 
-error "unterminated string"        when lex.final(str)
 error "newline in a string"        when body & lf
-error "invalid escape"             when prev(esc) & ~escapable
-error "a lone '/' or '*'"           when lex.reached(error) | (cmt_start & ~next(slash | star))
-error "unterminated comment"       when ~lex.final(code | line)
-error "non-ASCII outside a string" when code & high
 
-# --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? as masks -----------------------------
+# A string open at the end of the file is tier 2's: its node has no end, as simdjson's stage 1
+# finds it from the final carry, not per byte.
+
+# A comment (valid for tree-sitter-json, an extra) is in a word: its check fails, and the file
+# goes to tree-sitter.
+
+# --- The tree: tier 2, once per token (13-tape-on-the-gpu.md) -------------------------------------
 #
-# The pattern is a fixed sequence of parts, so it needs no automaton. A token matches it exactly
-# when no byte breaks one of the rules below. Each rule looks at most two bytes away, or asks
-# whether a '.' or an 'e' came earlier in the same token: a `fill`, whose carry is one bit.
-# About 25 mask operations per 64 bytes, the same for every block, however many numbers it holds.
+# Each token above is a leaf node. Inner nodes start and end at tokens; where several start at
+# one byte, the one listed first is outermost.
 #
-#   token     -0.5e+10     01      1.e5     1e5.0
-#   breaks    nothing      rule 6  rule 4   rule 3
+# Observed (tree-sitter-json 0.24.8, runtime 0.27.1):
+#   - `document` starts at the first token and ends at the end of the file;
+#   - string_content is split around escapes, as the tokens are;
+#   - a value has the supertype `_value`; a key has the field `key`, a pair's value `value`.
 
-mask nstart     = wstart & num
-mask after_dot  = fill(prev(dot & num) & num, ~num)        # bytes after a '.' in the same token
-mask after_e    = fill(prev(expc & num) & num, ~num)       # bytes after an 'e' in the same token
-mask int_first  = (nstart & digit) | (prev(nstart & minus) & num)
+tree json {
+  mask last_byte = ~next(~empty)
 
-# 1. Only digits, '.', 'e', 'E', '+' and '-'.
-error "number: bad byte"        when num & ~(digit | dot | expc | sign)
-# 2. It starts with '-' or a digit, and a '-' is followed by a digit.
-error "number: bad start"       when (nstart & ~(digit | minus)) | (nstart & minus & ~next(digit))
-# 3. At most one '.', at most one 'e', and no '.' after the 'e'.
-error "number: '.' or e twice"  when (dot & (after_dot | after_e)) | (expc & after_e)
-# 4. A '.' has a digit on each side.
-error "number: bare '.'"        when num & dot & ~(prev(digit) & next(digit))
-# 5. A sign is first ('-' only) or right after the 'e'.
-error "number: misplaced sign"  when num & sign & ~prev(expc) & ~(nstart & minus)
-# 6. The integer part is 0, or does not start with 0.
-error "number: leading zero"    when int_first & zero & next(digit)
-# 7. An 'e' follows a digit, and is followed by a digit or by a sign and a digit.
-error "number: bare e"          when expc & num & (~prev(digit)
-                                                   | ~(next(digit) | (next(sign) & next(digit, 2))))
-# 8. The last byte is a digit.
-error "number: bad end"         when lasts(num) & ~digit
+  node document start first token end last_byte
+  # A key is a string whose next token is ':': known from the bytes alone, so no scan waits on
+  # the stack (14-tier-2-design.md §1). The same pairs from the left, as simdjson's stage 2 finds
+  # them: a string right after a '{' or a ',' inside an object. A target uses one rule and checks
+  # the other. The pair ends with its value.
+  node pair     start string when before ':'
+                also when after ('{' | ',') and parent object
+                end with value
+  # Nesting on the writer's stack: 4 of the 28,470 data-layer files nest past 13.
+  node object   start '{'     end '}'     nested max 13
+  node array    start '['     end ']'     nested max 13
+  node string   start opening         end closing
+
+  check number is json_number
+
+  field key   of string = start of pair
+  field value of _value when after ':'
+  supertype _value of object array number true false null
+  supertype _value of string = not start of pair
+}

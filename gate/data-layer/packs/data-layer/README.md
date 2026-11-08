@@ -1,5 +1,10 @@
 # Data-layer rules
 
+New ports use the `.rr` format from `More-ergonomic-rule-syntax`.
+The [format migration](../../docs/data-layer-rr-migration.md) records the engine target, imported drafts, and full assertion requirements.
+Drafts live in `candidates/rr/`; they do not replace the executable JSON policies until they pass those requirements.
+Do not author new JSON rule ports or treat reader success as parity.
+
 This private pack contains the thirty batch-eight, batch-nine, and batch-ten architecture rules for nera-data-layer.
 A second audit exposed public-contract gaps after the earlier batch-nine repair claim.
 The current report records the repairs, measured coverage and remaining certification limits.

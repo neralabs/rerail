@@ -3,7 +3,7 @@
 .language python
 .mode block
 .scope dirs "impl/common/l2100_sql_grammar"
-.scope exclude "**/tests/**"
+.scope tests false
 // Python linter: scripts/lint_grammar_mutation_invalidation.py. A memoizable grammar class (one of fifteen names, or any
 // class with a `render` method decorated …memoize_in_read_only_scope) caches its rendered SQL. A method of it that
 // edits a private attribute of self and does not call forget_memoized_render_fragments() leaves a stale render:

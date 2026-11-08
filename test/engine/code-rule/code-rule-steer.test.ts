@@ -1,5 +1,9 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildSteer, type CodeRuleViolation, renderSteer, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
+import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
+import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -13,8 +17,9 @@ function violation(overrides: Partial<CodeRuleViolation> = {}): CodeRuleViolatio
   };
 }
 
-const FIX_IT = "Fix it, or tell the user in one line why you won't.";
-const FIX_THESE = "Fix these, or tell the user in one line why you won't.";
+// One rule: the feedback command names it; several: a placeholder for the rule the agent declines.
+const FIX_IT = "Fix it, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.";
+const FIX_THESE = "Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.";
 
 describe("renderSteer", () => {
   it("renders one violation as the agent's steer: the edit's lead, the finding with its location and rule, the latitude", () => {
@@ -91,9 +96,28 @@ describe("renderSteer", () => {
     expect(fix("a ``` b")).toBe("  Suggested fix: replace 1:1–1:4 with ````a ``` b````");
   });
 
+  it("keeps control and bidi characters of the code a fix quotes out of it, and a carriage return from breaking its line", () => {
+    const fix = (text: string) => renderSteer([violation({ fix: { span: span(0, 0, 0, 3), text } })]).split("\n").slice(2, -1);
+    expect(fix("a\u202eb\rc\u0000")).toEqual(["  Suggested fix: replace 1:1–1:4 with `ab c`"]);
+    expect(fix("a\r\nb")).toEqual(["  Suggested fix, replacing 1:1–1:4:", "  ~~~", "  a", "  b", "  ~~~"]);
+  });
+
   it("renders an empty fix as a deletion", () => {
     const deletion = violation({ fix: { span: span(0, 0, 0, 3), text: "" } });
     expect(renderSteer([deletion])).toContain("  Suggested fix: delete 1:1–1:4");
+  });
+
+  it("names a finding in a file named like one holding secrets by rule and place only, its message and fix withheld", () => {
+    const secret = violation({
+      path: "config/secrets.yaml", message: "`API_KEY: hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY: ${SECRET}" },
+    });
+    expect(renderSteer([secret])).toBe([
+      "Rerail found 1 problem in your last edit:",
+      `- config/secrets.yaml:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
+      FIX_IT,
+    ].join("\n"));
+    // Hidden alone is not secret-like: a rule about a workflow file still speaks.
+    expect(renderSteer([violation({ path: ".github/workflows/ci.yml" })])).toContain("- .github/workflows/ci.yml:3:15 — log of user [p]");
   });
 });
 
@@ -108,5 +132,26 @@ describe("buildSteer", () => {
       { id: "acme:no-print", state: "logged", origin: "From your rule library." },
     ]);
     expect(steer.content).toBe(renderSteer([violation(), other, violation()]));
+  });
+
+  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-steer-link-")));
+    try {
+      writeFileSync(join(root, ".env"), "API_KEY=hunter2\n");
+      mkdirSync(join(root, "docs"));
+      symlinkSync("../.env", join(root, "docs", "a.md"));
+      const linked = violation({ path: "docs/a.md", message: "`API_KEY=hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY=" } });
+      expect(renderSteer([linked])).toContain("`API_KEY=hunter2` is plaintext");
+      const steer = buildSteer([linked, violation()], { kind: "edit" }, undefined, checkoutPathBoundary(root).sensitive);
+      expect(steer.content).toBe([
+        "Rerail found 2 problems in your last edit:",
+        `- docs/a.md:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
+        "- src/a.ts:3:15 — log of user [p]",
+        // Both findings are rule `p`, so the feedback command names it.
+        "Fix these, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.",
+      ].join("\n"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

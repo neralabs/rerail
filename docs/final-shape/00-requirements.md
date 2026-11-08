@@ -160,8 +160,8 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | I7 | C | Call-chain analysis and call-target resolution | T26 11:06 | §13 |
 | I8 | C | A native lattice with recursion, parallelism, wavefront tracking and set-valued recursion | T26 01:56, 09:51 | §7, §12 |
 | I9 | C | Soufflé-style magic sets | T26 15:38 | §12 |
-| I10 | I | R0 per file, inside the GPU dispatch; R1..Rk across files over interface summaries, with interface-digest cutoff; bounded rounds, not a global fixpoint | Typing 21:25 | §13 |
-| I11 | X | k = 2 cross-file rounds | Typing (open) | §13 |
+| I10 | I | R0 per file, inside the GPU dispatch; R1..Rk across files over interface summaries, with interface-digest cutoff; bounded rounds, not a global fixpoint | Typing 21:25 | §13; under revision, 0065 (draft) |
+| I11 | X | k = 2 cross-file rounds | Typing (open) | §13; under revision, 0065 (draft) |
 | I12 | I | Interned type terms: named type with arguments, union with an `open` flag, `⊤`, variable with bounds, callable, tuple, literal, reference; widen at depth about 4; must/may trait bitmasks; `type_term`/`type_arg` | Typing 21:31, 22:30 | §13 |
 | I13 | I | Generic instantiation: receiver, then explicit arguments, then one-way matching, then one callback step, then bound fallback; variance declared for libraries, unknown for user types | Typing 21:31 | §13 |
 | I14 | I | `proven:` / `possible:` combine with `not` and `some`/`every`; a bare `type:` keeps today's semantics | Typing 21:31, 23:44 | §13 |

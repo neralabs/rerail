@@ -1,0 +1,125 @@
+// python/modules: which file a module name means, and the library documents a run loads (t21 §2.2, §2.3).
+//
+// The names asked about are the corpus's imports, their parents, and `builtins`; then the imports of each document
+// loaded, so the loads close over what the libraries import. Each name resolves at the first layer that has it:
+//   workspace   a document of the corpus is that module: nothing is loaded
+//   declarations   `<python.declarations>/a/b.pyi`: the user's own stubs
+//   stub package   `<site>/a-stubs/b.pyi`
+//   typed package  `<site>/a/b.pyi`, else `.py`, when `<site>/a/py.typed` exists
+//   stdlib         typeshed's `stdlib/a/b.pyi` or `stdlib/a/b/__init__.pyi`, when `VERSIONS` admits it at py_version
+//   stubs          typeshed's `stubs/<distribution>/a/b.pyi`
+//   untyped        `<site>/a/b.py`, only with `python.untyped = read`
+// (PEP 561's order; t21 §2.2. A workspace `.pyi` beside its `.py` is not read yet: the corpus reads `.py` files.)
+//
+// It reads only relations both shapes have, and the engine's `dir_entry`, `file_line`, `load` and `loaded`.
+#include "python/env.rr"
+
+// py_import(i, q): import statement i names module q. Relative imports are placed from the document's package, one
+// level up per dot after the first.
+.decl py_import(i: node, q: symbol)
+py_import(i, q) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, q).
+py_import(i, q) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n),
+    text(n, q).
+py_import(i, q) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, q).
+py_import(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), py_updots(t, k), !child(n, _, 1), docof(i, d), pkg(d, p0), p = @pkg_up(p0, k), p != "".
+py_import(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), py_updots(t, k), child(n, dn, 1), text(dn, m), docof(i, d), pkg(d, p0),
+    p = @pkg_up(p0, k), p != "".
+.decl py_updots(t: symbol, k: number)
+py_updots(".", 0). py_updots("..", 1). py_updots("...", 2). py_updots("....", 3).
+// `from m import x`: x may be a submodule (`from os import path`).
+.decl py_from_name(i: node, x: symbol)
+py_from_name(i, x) :- kind(i, "import_from_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, x).
+py_from_name(i, x) :- kind(i, "import_from_statement"), field(i, "name", a), kind(a, "aliased_import"),
+    field(a, "name", n), text(n, x).
+.decl py_from_import(i: node, m: symbol, x: symbol)
+py_from_import(i, m, x) :- kind(i, "import_from_statement"), py_import(i, m), py_from_name(i, x).
+
+// The module names asked about. (Every relation a rule reads per document is made per document first, so the
+// cross-file part reads no base relation and a file's rows stay memoised.)
+.decl py_want(q: symbol)
+py_want(q) :- py_import(_, q).
+py_want(@dot(m, x)) :- py_from_import(_, m, x).
+py_want(m) :- py_want(q), m = @pkg_up(q, 1), m != "".
+py_want("builtins").
+
+// The corpus's own modules: a document that was not loaded.
+.decl py_docmod(d: number, p: symbol, q: symbol)
+py_docmod(d, p, q) :- doc(d, p, q), q != "".
+.decl py_workspace(q: symbol)
+py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _, _).
+
+// VERSIONS: `name: 3.0-` or `name: 3.0-3.9`, maybe with a comment (`_typeshed: 3.0-  # ...`). A module not listed
+// has its nearest listed parent's range.
+.decl py_vline(m: symbol, l: symbol)
+py_vline(m, l) :- py_stdlib(r), f = cat(r, "/VERSIONS"), file_line(f, _, l), match("(?<m>[A-Za-z0-9_.]+): *(?<rest>.*)", l).
+.decl py_vrange(m: symbol, a: number, b: number, c: number, e: number)
+py_vrange(m, a, b, c, e) :- py_vline(m, l), match("[^:]*: *(?<x>[0-9]+)\\.(?<y>[0-9]+)-(?<z>[0-9]+)\\.(?<w>[0-9]+).*", l),
+    a = to_number(x), b = to_number(y), c = to_number(z), e = to_number(w).
+py_vrange(m, a, b, 99, 99) :- py_vline(m, l), match("[^:]*: *(?<x>[0-9]+)\\.(?<y>[0-9]+)- *(#.*)?", l),
+    a = to_number(x), b = to_number(y).
+// py_anc(q, m): m is q or a package above it.
+.decl py_anc(q: symbol, m: symbol)
+py_anc(q, q) :- py_want(q).
+py_anc(q, m) :- py_anc(q, m0), m = @pkg_up(m0, 1), m != "".
+.decl py_listed_above(q: symbol, m: symbol)
+py_listed_above(q, m) :- py_anc(q, m), py_vline(m, _), py_anc(q, m2), py_vline(m2, _), strlen(m2) > strlen(m).
+.decl py_admitted(q: symbol)
+py_admitted(q) :- py_anc(q, m), py_vrange(m, a, b, c, e), !py_listed_above(q, m), py_version(x, y),
+    (x > a ; x = a, y >= b), (x < c ; x = c, y <= e).
+
+// q's parts as paths: `a.b.c` has the top package `a`, the rest `/b/c` (py_qrest), and the parent's rest `/b` with
+// the last name `c` (py_qlast). Paths are built from q, never split again (a computed path is no text a test reads).
+.decl py_qrest(q: symbol, h: symbol, t: symbol)
+py_qrest(q, h, t) :- py_want(q), h = @head(q), r = substr(q, strlen(h), strlen(q) - strlen(h)), t = @replace_all(r, "\\.", "/").
+.decl py_qlast(q: symbol, pt: symbol, x: symbol)
+py_qlast(q, pt, x) :- py_want(q), split_dot(q, m, x), h = @head(q), r = substr(m, strlen(h), strlen(m) - strlen(h)),
+    pt = @replace_all(r, "\\.", "/").
+
+// py_try(q, layer, b, top): in that layer, q's top package is the directory or file `top` in directory b (`top` is
+// `a-stubs` for a stub package of `a`).
+.decl py_try(q: symbol, layer: symbol, b: symbol, top: symbol)
+py_try(q, "declarations", d, h) :- py_want(q), !py_workspace(q), env("python.declarations", d), h = @head(q).
+py_try(q, "stub package", s, n) :- py_want(q), !py_workspace(q), py_site(s), h = @head(q), n = cat(h, "-stubs"), dir_entry(s, n, 1).
+py_try(q, "typed package", s, h) :- py_want(q), !py_workspace(q), py_site(s), h = @head(q), dir_entry(s, h, 1), d = cat(s, "/", h),
+    dir_entry(d, "py.typed", 0).
+py_try(q, "stdlib", r, h) :- py_want(q), !py_workspace(q), py_admitted(q), py_stdlib(r), h = @head(q).
+py_try(q, "stubs", b, h) :- py_want(q), !py_workspace(q), py_stubs(r), dir_entry(r, w, 1), b = cat(r, "/", w), h = @head(q),
+    (dir_entry(b, h, 1) ; x = cat(h, ".pyi"), dir_entry(b, x, 0)).
+py_try(q, "untyped", s, h) :- env("python.untyped", "read"), py_want(q), !py_workspace(q), py_site(s), h = @head(q).
+// The layers whose packages are sources: a `.py` file is read where no `.pyi` is.
+.decl py_source_layer(l: symbol)
+py_source_layer("typed package"). py_source_layer("untyped").
+
+// py_file_at(q, layer, d, n): q's file may be `d/n` plus an extension: `<pkg>/__init__`, `<parent>/<last>`, or a
+// top-level module `<b>/<top>`.
+.decl py_file_at(q: symbol, layer: symbol, d: symbol, n: symbol)
+py_file_at(q, l, d, "__init__") :- py_try(q, l, b, top), py_qrest(q, _, t), d = cat(b, "/", top, t).
+py_file_at(q, l, d, x) :- py_try(q, l, b, top), py_qlast(q, pt, x), d = cat(b, "/", top, pt).
+py_file_at(q, l, b, top) :- py_try(q, l, b, top), !contains(".", q).
+
+// Each candidate directory is listed. Asked here, by the directory alone: in the rules below the entry's name is
+// computed from what also gives the directory, so their reads ask for nothing (`rr::lower`'s world demand).
+.decl py_listed(d: symbol)
+py_listed(d) :- py_file_at(_, _, d, _), dir_entry(d, _, _).
+
+// py_at(q, f, layer): a file of q in that layer.
+.decl py_stub_at(q: symbol, f: symbol, layer: symbol)
+py_stub_at(q, f, l) :- py_file_at(q, l, d, n), x = cat(n, ".pyi"), dir_entry(d, x, 0), f = cat(d, "/", x).
+.decl py_has_stub(q: symbol, layer: symbol)
+py_has_stub(q, l) :- py_stub_at(q, _, l).
+.decl py_at(q: symbol, f: symbol, layer: symbol)
+py_at(q, f, l) :- py_stub_at(q, f, l).
+py_at(q, f, l) :- py_file_at(q, l, d, n), py_source_layer(l), !py_has_stub(q, l), x = cat(n, ".py"), dir_entry(d, x, 0), f = cat(d, "/", x).
+
+// py_resolves(q, path, layer): the file module q means, at the first layer that has it.
+.decl py_layer(l: symbol, rank: number)
+py_layer("declarations", 1). py_layer("stub package", 2). py_layer("typed package", 3). py_layer("stdlib", 4).
+py_layer("stubs", 5). py_layer("untyped", 6).
+.decl py_before(q: symbol, rank: number)
+py_before(q, n) :- py_at(q, _, l), py_layer(l, m), py_layer(_, n), m < n.
+.decl py_resolves(q: symbol, f: symbol, layer: symbol)
+py_resolves(q, f, l) :- py_at(q, f, l), py_layer(l, n), !py_before(q, n).
+
+load(f, q, "python", "library") :- py_resolves(q, f, _).

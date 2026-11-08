@@ -1,0 +1,1231 @@
+{
+  "format": "rerail.value-access/v1",
+  "baseCommit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+  "sourceFiles": {
+    "native/src/code_rule_dsl/matcher/anchors/sql/access.rs": "2500c6e18ed9e1e89815e9bb38d27663991bdf6a7bf1a2e23633fd8e1e2a1045",
+    "native/src/code_rule_dsl/matcher/anchors/sql/candidates.rs": "4e67222fdda5234e7c50def47081ea4698aab14f924daf75eea43958c93a494c",
+    "native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs": "bdef0da71a77054bdda8436a1a3339a58de6511e18b073cdca2d17dfc76888c1",
+    "native/src/code_rule_dsl/matcher/anchors/sql/decode.rs": "02ea75d9c4bcc3d359b4d4c29670690a00ee51df002db56eaa8766a6cd8bd98e",
+    "native/src/code_rule_dsl/matcher/anchors/sql/execute.rs": "dbbeaf8978dd37632a216975e961d784635e952f93ebd432c1830f4150fab38a",
+    "native/src/code_rule_dsl/matcher/anchors/sql/functions.rs": "b9c67f27d60115c347ee03f99b92794ac441e105ec634179c99f2bd314e433a9",
+    "native/src/code_rule_dsl/matcher/anchors/sql/lower.rs": "14ded1331a39d6ec329aadbc6049f534dcd782ca6802dd1397633e12f2d79765",
+    "native/src/code_rule_dsl/matcher/anchors/sql/lower_tests.rs": "22936d6a9781e70165c6db9fcc14a2f3657a2393faedd8689a4e8a6e2adc6f2c",
+    "native/src/code_rule_dsl/matcher/anchors/sql/mod.rs": "a83491ee325c09a0fa0567c505614dfb4ef36e677a940331764014309de22fd1",
+    "native/src/code_rule_dsl/matcher/anchors/sql/plans.rs": "fdf20fdbf5627f893770d845b1de5a4644007ec9cfef4e063afd3c11f1ae06f8",
+    "native/src/code_rule_dsl/matcher/anchors/sql/postings.rs": "d1d852dbf6e87cccce256796d6e1f07f1f345f4486f5ae738d372cedbccbaec4",
+    "native/src/code_rule_dsl/matcher/anchors/sql/reader.rs": "98af322855fcfaf94f6a959f731221537d53aa683f5ac6ca89073a52e9f4fd20",
+    "native/src/code_rule_dsl/matcher/anchors/sql/schema.sql": "14cad1c2ee190cd4daedb997b15517c7c92f165f1e7b4019235cb4b85f555352",
+    "native/src/code_rule_dsl/matcher/anchors/sql/store.rs": "4b69539e3c646e22ee54f7bd4d2bee7318cc1ad281814768f31c0c4e22021821",
+    "native/src/code_rule_dsl/matcher/anchors/sql/tests.rs": "a857f5113872d3ab9a510059353cf12da5bbbf7f3b46be3e5302bca3a3da4f9a",
+    "native/src/code_rule_dsl/matcher/anchors/sql/values.rs": "3b66c49c0ee9ea8244c62a8e2913df13e4bcb02a0bba5c01a5ad2d512a936e64",
+    "native/src/code_rule_dsl/tape/index.rs": "c606b4b3ac223ce9ebd0942bbb8d41ffd1d86cf0d59967010e5fdaec8e00bcf4",
+    ".cargo/config.toml": "13ce2e5891eb020cf8daf090f777bc569c3a054330798c99e1f6c26c3ef648df",
+    "Cargo.lock": "60e87945bf160ed22e7ebad32884e502f28408899e66f7f89b4aa337690f28ba",
+    "native/Cargo.toml": "797a339972e37086254b468a505e44834eb9a0e7503c1b52de346c8762d527ff",
+    "native/src/code_rule_dsl/budget.rs": "3ffac6a7fa107c527e219b527a35d74cf8203ffc46ef63da4f3608cc9964320b",
+    "native/src/code_rule_dsl/eval/mod.rs": "d5d1b4a4c1e27c2bd5985343221c0820a10c5ec9dfb32e5529142d695f2d0de9",
+    "native/src/code_rule_dsl/eval/query.rs": "67ffaaa00fba2fba334d65c6d064240db28f5ecf167db3ced197910679db6a84",
+    "native/src/code_rule_dsl/matcher/anchors.rs": "f19d263a4ee388f4a1cfe0f44ae395d20d0a39aaf509d64558b4fb5662e510ff",
+    "native/src/code_rule_dsl/matcher/anchors/semantic.rs": "26d801a6d3adfb4a56201fdc7cb9ef440ce59a5da888f13d8ce20acaee3db14d",
+    "native/src/code_rule_dsl/matcher/anchors/tests.rs": "593af49154c137a062fea1a4cf0cfd59f3438daffcdf2c6276ebfd37b5883576",
+    "native/src/code_rule_dsl/matcher/mod.rs": "9c9ae989cbeebb28d68fb87c6e0e47126eac161dd9294cb822386b85cebd8193",
+    "native/src/code_rule_dsl/profile.rs": "b56c7b1d5e75d9ae00884da136add5e2436c1d536f1087216c2316202c57936d",
+    "native/src/code_rule_dsl/relational.rs": "af5bd3a35a954999fe05cff79943f38eabf5b7fcc44f8da573563a628d0b5632",
+    "native/src/code_rule_dsl/relational/database.rs": "feaefb449cc6f4f1bb1564b35aeee2332582c7a5150a225d2d47c6f55833bb73",
+    "native/src/code_rule_dsl/tape.rs": "1906be9a774f1742788345555d58a620993be626b4d76270c37181bd0b294af6",
+    "native/src/code_rule_dsl/workspace/api.rs": "954615b0718717d79e167ae61c9ed1ffd433d2be45c5873b5c9e3839a89272c5",
+    "native/src/code_rule_dsl/workspace/context_tests.rs": "71314ab209bd5cf84ca5bf584de400730832b5b3b8abfa1a4d77c049a535896d",
+    "native/src/code_rule_dsl/workspace/documents.rs": "f66b085751008871c9179ceca74064dad9a73a01a6d5cac159f3dc43a30db8c4",
+    "native/src/code_rule_dsl/workspace/evaluate.rs": "e9db619b7b4fb3bfcabc4b39534a389757467b0acbbbd90f985837299d3a7d2c",
+    "native/src/code_rule_dsl/workspace/global.rs": "bf1b5efe8acbbc51eab70452d7ec46716222618c336d173dfc25ed1abe438058",
+    "native/src/code_rule_dsl/workspace/ingest.rs": "ba24afb425d5f5914a6a424269100e8ab71c56a9e03f825592b4a1eb4dc179ad",
+    "native/src/code_rule_dsl/workspace/mod.rs": "71fb09a7da4c27175e668aa5a51e00bae0c939d4694b2debecb476feda5ae0b2",
+    "native/src/code_rule_dsl/workspace/tests.rs": "4c52b3175f0d94efbb8fd1134e7bd5e0de513376bd17d65290f3bcedae0e6e2a",
+    "native/src/lib.rs": "a34fe3f47ce6479c0b5a738a34c3a04a03bc2ea91c577ec8169f8850fbe904b1"
+  },
+  "engine": {
+    "path": ".rerail/profiles/value-access-20261021/complete-opt1.node",
+    "sha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+    "optimizationLevel": 1
+  },
+  "reference": {
+    "bench/tape_store.py": {
+      "path": "/Users/jeremy/orca/workspaces/nera-data-layer-12/JF-Issues-Found/tmp/ast-index-spike/bench/tape_store.py",
+      "sha256": "27a3b6e860e9c7bec9158a76e8c4e7536bfb8999244a28a274fd62aa2694044e"
+    },
+    "bench/sql_rec.py": {
+      "path": "/Users/jeremy/orca/workspaces/nera-data-layer-12/JF-Issues-Found/tmp/ast-index-spike/bench/sql_rec.py",
+      "sha256": "cf1b6129f43d9a5530ad8cf8d8d4581b37d4d5cb0d4aef9778f2447722435447"
+    }
+  },
+  "decisions": [
+    "Keep the contentless positional kind FTS index unchanged.",
+    "Persist full case-exact term keys in SQLite B-trees with per-file/kind delta-varint segments; no hash collisions.",
+    "Use distinct-term regex hit relations and literal seeks, with kind domains pushed into posting access.",
+    "Keep coverage and exact unindexed ordinals, with bounded residue and source confirmation.",
+    "Persist typed decoded properties and offsets in SQL; retain no interior source-text cache.",
+    "Hoist an existing universal property demand and mark completed files. Sparse demand remains sparse.",
+    "Keep source materializations needed for cache-fill and consumer dependencies; rejecting their blanket removal.",
+    "Use bounded record/span transport blocks and the standard series table; no optional runtime backend."
+  ],
+  "matchedProduction": {
+    "positive": {
+      "before": {
+        "trials": [
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-positive-1",
+            "cpuSeconds": 1.885739,
+            "peakRssBytes": 378241024,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-positive-2",
+            "cpuSeconds": 1.874442,
+            "peakRssBytes": 377225216,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-positive-3",
+            "cpuSeconds": 1.865527,
+            "peakRssBytes": 378339328,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          }
+        ],
+        "medianCpuSeconds": 1.874442,
+        "medianRssBytes": 378241024
+      },
+      "after": {
+        "trials": [
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-positive-1",
+            "cpuSeconds": 2.458901,
+            "peakRssBytes": 357597184,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-positive-2",
+            "cpuSeconds": 2.5039890000000002,
+            "peakRssBytes": 371113984,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-positive-3",
+            "cpuSeconds": 2.511661,
+            "peakRssBytes": 352993280,
+            "expected": 61,
+            "actual": 61,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+            "policyDigests": {
+              "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+              "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+            }
+          }
+        ],
+        "medianCpuSeconds": 2.5039890000000002,
+        "medianRssBytes": 357597184
+      },
+      "cpuPercentChange": 33.58583514453903
+    },
+    "quality": {
+      "before": {
+        "trials": [
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-quality-1",
+            "cpuSeconds": 3.0618499999999997,
+            "peakRssBytes": 627097600,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-quality-2",
+            "cpuSeconds": 3.004062,
+            "peakRssBytes": 641056768,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-before-quality-3",
+            "cpuSeconds": 2.962141,
+            "peakRssBytes": 630980608,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          }
+        ],
+        "medianCpuSeconds": 3.004062,
+        "medianRssBytes": 630980608
+      },
+      "after": {
+        "trials": [
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-quality-1",
+            "cpuSeconds": 3.39437,
+            "peakRssBytes": 538935296,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-quality-2",
+            "cpuSeconds": 2.913457,
+            "peakRssBytes": 533217280,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          },
+          {
+            "artifact": ".rerail/profiles/value-access-20261021/matched-after-quality-3",
+            "cpuSeconds": 3.191624,
+            "peakRssBytes": 536150016,
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": [],
+            "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+            "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+            "policyDigests": {
+              "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+            }
+          }
+        ],
+        "medianCpuSeconds": 3.191624,
+        "medianRssBytes": 536150016
+      },
+      "cpuPercentChange": 6.243612814915278
+    }
+  },
+  "diagnostic": {
+    "trial": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/complete-api/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 7.67528291704366,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-api",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 23.82,
+            "systemMs": 13.536
+          },
+          "cold": {
+            "userMs": 2099.591,
+            "systemMs": 937.605
+          }
+        },
+        "peakRssBytes": 351076352
+      },
+      "stdoutSha256": "c726ed361dba14333e836b7d5ee002771039c449e2ff7ec4a3aaaf727ca79aba",
+      "stderrSha256": "2e204f6550205d6f69de41d313707d013a7f97c348469135c27f7e9113b234e8"
+    },
+    "batches": [
+      {
+        "runPhase": "cold",
+        "cpuMs": 1682.333333,
+        "emittedRows": 8823,
+        "failed": false,
+        "materializations": 274,
+        "reader": {
+          "blob_opens": 287,
+          "bytes": [
+            15846444,
+            5720,
+            32,
+            2641074,
+            661484,
+            24822,
+            1772748
+          ],
+          "child_steps": 77121,
+          "decoded_nodes": 270106,
+          "decoded_spans": 4850,
+          "handle_clears": 34,
+          "reads": [
+            10335,
+            715,
+            4,
+            10335,
+            4137,
+            4137,
+            10634
+          ],
+          "texts": 10634
+        },
+        "readerColumns": [
+          "rec",
+          "parentOverflow",
+          "sizeOverflow",
+          "flags",
+          "spans",
+          "checkpoints",
+          "source"
+        ]
+      },
+      {
+        "runPhase": "cold",
+        "cpuMs": 763.286208,
+        "emittedRows": 2940,
+        "failed": false,
+        "materializations": 274,
+        "reader": {
+          "blob_opens": 316,
+          "bytes": [
+            4275228,
+            0,
+            0,
+            712538,
+            194090,
+            7302,
+            544992
+          ],
+          "child_steps": 20673,
+          "decoded_nodes": 70411,
+          "decoded_spans": 1408,
+          "handle_clears": 34,
+          "reads": [
+            2804,
+            0,
+            0,
+            2804,
+            1217,
+            1217,
+            3105
+          ],
+          "texts": 3105
+        },
+        "readerColumns": [
+          "rec",
+          "parentOverflow",
+          "sizeOverflow",
+          "flags",
+          "spans",
+          "checkpoints",
+          "source"
+        ]
+      }
+    ],
+    "cpuMsByPhase": {
+      "anchor-batch": 2445.619541,
+      "anchor-results": 374.426041,
+      "anchor-materialize": 1299.088000000001,
+      "anchor-index": 203.45370299999996,
+      "anchor-prepare": 54.287878999999975,
+      "anchor-release": 25.160294999999994,
+      "anchor-lower": 34.592375000000004,
+      "anchor-schema": 2.186204,
+      "anchor-explain": 0.0032500000000000003
+    },
+    "blobReads": 51444,
+    "blobBytes": 26686474,
+    "textExtractions": 13739,
+    "decodedNodes": 340517,
+    "vmSteps": 130976638,
+    "sorts": 1002
+  },
+  "externalSample": {
+    "trial": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/complete-external/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 8.324375166965183,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-external",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 38.962,
+            "systemMs": 6.577
+          },
+          "cold": {
+            "userMs": 2030.837,
+            "systemMs": 805.04
+          }
+        },
+        "peakRssBytes": 355401728
+      },
+      "stdoutSha256": "9f890b12bf7e4acefa4b48d4ffc5e22c180ff137cd916bf70beda1427312735e",
+      "stderrSha256": "6ce95e2bacc2bd13e396491da03566f9403fbdcd849f51b4441230b612f09da4"
+    },
+    "activeNativeSamples": 1536,
+    "selfTop12": [
+      {
+        "symbol": "pwrite (libsystem_kernel.dylib)",
+        "samples": 562,
+        "percent": 36.59
+      },
+      {
+        "symbol": "sqlite3VdbeExec (complete-opt1.node)",
+        "samples": 298,
+        "percent": 19.4
+      },
+      {
+        "symbol": "pread (libsystem_kernel.dylib)",
+        "samples": 103,
+        "percent": 6.71
+      },
+      {
+        "symbol": "sqlite3VdbeRecordCompareWithSkip (complete-opt1.node)",
+        "samples": 92,
+        "percent": 5.99
+      },
+      {
+        "symbol": "_platform_memmove (libsystem_platform.dylib)",
+        "samples": 49,
+        "percent": 3.19
+      },
+      {
+        "symbol": "sqlite3BtreeInsert (complete-opt1.node)",
+        "samples": 38,
+        "percent": 2.47
+      },
+      {
+        "symbol": "sqlite3BtreeIndexMoveto (complete-opt1.node)",
+        "samples": 36,
+        "percent": 2.34
+      },
+      {
+        "symbol": "balance (complete-opt1.node)",
+        "samples": 31,
+        "percent": 2.02
+      },
+      {
+        "symbol": "sqlite3VdbeSerialGet (complete-opt1.node)",
+        "samples": 25,
+        "percent": 1.63
+      },
+      {
+        "symbol": "close (libsystem_kernel.dylib)",
+        "samples": 20,
+        "percent": 1.3
+      },
+      {
+        "symbol": "btreeParseCellPtr (complete-opt1.node)",
+        "samples": 14,
+        "percent": 0.91
+      },
+      {
+        "symbol": "subjournalPageIfRequired (complete-opt1.node)",
+        "samples": 11,
+        "percent": 0.72
+      }
+    ],
+    "note": "Tracing disabled. This is a two-second sample window, not an exact whole-process CPU allocation. Syscall samples can include I/O waits."
+  },
+  "affinityLadder": {
+    "untyped": {
+      "cpuSeconds": 0.191701,
+      "vmStepsApproximate": 35664900,
+      "rows": 2048,
+      "plan": [
+        [
+          3,
+          0,
+          216,
+          "SCAN r"
+        ],
+        [
+          5,
+          0,
+          216,
+          "SCAN s"
+        ]
+      ]
+    },
+    "typed": {
+      "cpuSeconds": 0.0009180000000000021,
+      "vmStepsApproximate": 32700,
+      "rows": 2048,
+      "plan": [
+        [
+          3,
+          0,
+          216,
+          "SCAN r"
+        ],
+        [
+          5,
+          0,
+          47,
+          "SEARCH s USING COVERING INDEX candidate_keys (fid=? AND pre>? AND pre<?)"
+        ]
+      ]
+    }
+  },
+  "experiments": {
+    "before-positive-1": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/before-positive-1/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 9.832539208000526,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/before-positive-1",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "6f99ec7b9aab4b2a9ba4997290c4a9aa37374539c069c5e5f0c3c73a2a7b743d",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 23.171,
+            "systemMs": 7.003
+          },
+          "cold": {
+            "userMs": 1631.677,
+            "systemMs": 222.317
+          }
+        },
+        "peakRssBytes": 377667584
+      },
+      "stdoutSha256": "0c90b4a77c996967d257c4692c142a1039da3719b704119b81aa38e42b34415e",
+      "stderrSha256": "60f2c80b65bccf1cea8e0c4e05cd89b55c1b13c4c2eea565ec67c561f7a5ba2b"
+    },
+    "after-positive-1": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/after-positive-1/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 39.87363537499914,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/after-positive-1",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "dc4eccf60888f76f50ad079e6677773ca44deaf76a161fac5e4baa5bd002cd7a",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 37.28,
+            "systemMs": 6.372
+          },
+          "cold": {
+            "userMs": 8350.774,
+            "systemMs": 761.076
+          }
+        },
+        "peakRssBytes": 358383616
+      },
+      "stdoutSha256": "19bbe9ed5332cb3df6008b3ba5b518fcd933f6adc4f16f68830c24f4adfd3f9f",
+      "stderrSha256": "c8b3ce96b73689745f8056aa6b1cb8521486dc4097aada220d52b5b0a149d8a4"
+    },
+    "typed-api": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/typed-api/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 11.379514165979344,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/typed-api",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "937c892f7240c73cea385298f10a12e942947730a9d37da829aac38a088cab4d",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 39.446,
+            "systemMs": 10.975
+          },
+          "cold": {
+            "userMs": 3324.025,
+            "systemMs": 1125.27
+          }
+        },
+        "peakRssBytes": 359219200
+      },
+      "stdoutSha256": "eb10ee130dc0268c1747373c203d44b9925caaf142ef6a851517e37c9b43f981",
+      "stderrSha256": "ea9fa37d77221f41a30578fda81b74954c78d7ddacbab6de7fe6f13bee2e9b61"
+    },
+    "direct-positive": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/direct-positive/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 8.9899484590278,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/direct-positive",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "f809a002b6694fb26147f486ed2434cf0bfdd9b32eb9eff02ac4988474bcf4a3",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 40.647,
+            "systemMs": 8.019
+          },
+          "cold": {
+            "userMs": 2528.284,
+            "systemMs": 545.71
+          }
+        },
+        "peakRssBytes": 322584576
+      },
+      "stdoutSha256": "0056b0e9d9755dfcc6f956241101893f7cbcd63bc4aaac4edfbffeaf3472265f",
+      "stderrSha256": "8ab233214406175729bfb6ed4dc4eff4424224967dba8f6547b2e88823a778a1"
+    },
+    "amortized-positive": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/amortized-positive/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 8.734053124964703,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/amortized-positive",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "78561e39edd25a5ac4121bec489a859970463078b5f98b8976052436f4f8ffa0",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 23.378,
+            "systemMs": 6.459
+          },
+          "cold": {
+            "userMs": 2155.457,
+            "systemMs": 542.255
+          }
+        },
+        "peakRssBytes": 342245376
+      },
+      "stdoutSha256": "469f8d241a3d672e4a94ac4129bfe25bb4a663287d0c86d5ef4b86987e0717d6",
+      "stderrSha256": "07c99d3490baa6086d1175a7dd644023cce1cfb33341123c655d9655306c7453"
+    },
+    "hoisted-positive": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/hoisted-positive/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 5.302891792031005,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/hoisted-positive",
+      "parity": {
+        "expected": 61,
+        "actual": 61,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "nativeSha256": "24e3b4eede381b6129f2e1a5ce3d53fa4ff3271e5d59fcb0a68ded6507452d93",
+        "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+        "policyDigests": {
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+        },
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 21.685,
+            "systemMs": 6.474
+          },
+          "cold": {
+            "userMs": 2020.373,
+            "systemMs": 467.384
+          }
+        },
+        "peakRssBytes": 377257984
+      },
+      "stdoutSha256": "86492e22a662f2395093c4d9425f63b66cbf1d90ec703a72a2248d34464873e8",
+      "stderrSha256": "0af4320564dd2b617cf880c01a447c81edefbc5b4a330a046530d34bc5d73ec8"
+    },
+    "selected-positive": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/value-access-20261021/selected-positive/parity.json",
+        "--allocator",
+        "unspecified",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "exitCode": -15,
+      "timedOut": false,
+      "elapsedSeconds": 102.72374808398308,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/selected-positive",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "08889a2d27e8043ed291f0da2563ee88d776ade1ec875f14c046dfb2f8636665",
+      "rejected": true,
+      "reason": "Removing source materializations made execution substantially slower; terminated the owned benchmark and restored the required sharing."
+    }
+  },
+  "sourceCorpus": {
+    "coverage": [
+      {
+        "check": "serverplan_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 1,
+        "clean": 1
+      }
+    ],
+    "missingCoverage": [],
+    "nativeCalls": 20,
+    "hostGuardCalls": 0,
+    "nativeCoverage": [
+      {
+        "check": "serverplan_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 1,
+        "clean": 1
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 1,
+        "clean": 1
+      }
+    ],
+    "nativeSha256": "d79e3ec435e4409ce588756baf2440b5da6baa1bbf8a8f4b6a79c5f2a141e422",
+    "dimensions": [
+      "multiplicity",
+      "relative path",
+      "line",
+      "diagnostic code",
+      "backend comparison column",
+      "diagnostic category where recorded"
+    ],
+    "format": "rerail.data-layer-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "recordings": [
+      ".rerail/profiles/cpu-memory-20261021/source-smoke-recording.json"
+    ],
+    "collectedTests": 933,
+    "replayedCalls": 20,
+    "positiveCalls": 10,
+    "cleanCalls": 10,
+    "retainedCalls": [],
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "compilationMs": 1413.7382069999971,
+    "elapsedMs": 12556.753042
+  },
+  "checks": {
+    "complete-anchor-tests": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-7f3012a60147ac30",
+        "code_rule_dsl::matcher::anchors",
+        "--nocapture"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 13.21235229197191,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-anchor-tests",
+      "nativeTestsPassed": 58,
+      "stdoutSha256": "3b8dce3e6464200a60ba9c9c358bd4630de1650379411cf995adff600a505d56",
+      "stderrSha256": "56b2f07380f5e335b77aa056829d753efe36f73a742ffadcd962f9ce98db8d82"
+    },
+    "complete-native-dsl": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-7f3012a60147ac30",
+        "code_rule_dsl::",
+        "--skip",
+        "code_rule_dsl::workspace",
+        "--nocapture"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 94.3227832079865,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-native-dsl",
+      "nativeTestsPassed": 1210,
+      "stdoutSha256": "1b941231d9d4dbcc4c17ea1b6008ca83ffe35188364276eef91a3843a80571fe",
+      "stderrSha256": "6679d81e41fb7d3df08225ba857234944b63662c895ecc13cc0bcd6000673e28"
+    },
+    "complete-native-workspace": {
+      "command": [
+        "/tmp/rerail-data-layer-target/release/deps/rerail_engine-7f3012a60147ac30",
+        "code_rule_dsl::workspace",
+        "--nocapture"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 59.30004099995131,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-native-workspace",
+      "nativeTestsPassed": 194,
+      "stdoutSha256": "06d24945d135b131fc7da0a73edaa1f2a9ed88353a101b4a0ac21c6ceffd0ead",
+      "stderrSha256": "fee94cc46566c79c24391759bdfcb9def1ae4a513ca938db39e916e8e44e163d"
+    },
+    "clippy-complete-profile": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--features",
+        "code-rule-profile",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 26.473033749964088,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/clippy-complete-profile",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "6354170200d188329ae338588ef56f3024813c64d6d4f3f440eb6dc96a4046fd"
+    },
+    "clippy-complete-production": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "native/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 57.08886195800733,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/clippy-complete-production",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrSha256": "5c8f5d43674ac055ccfcd584ee0114d9fd31c575520fa6b69a70e106e7d9120e"
+    },
+    "complete-public": {
+      "command": [
+        "npx",
+        "vitest",
+        "run",
+        "test/engine/native/relational-evidence.test.ts",
+        "test/engine/native/relational-syntax.test.ts",
+        "test/engine/native/relational-reachability.test.ts",
+        "test/engine/native/relational-batch.test.ts",
+        "test/engine/native/relational-completed.test.ts",
+        "test/engine/native/relational-deferred.test.ts",
+        "test/engine/native/native-code-rule-dsl-runtime.test.ts",
+        "test/engine/native/data-layer-batch-five-capabilities.test.ts",
+        "test/engine/native/data-layer-batch-four-capabilities.test.ts",
+        "test/engine/native/data-layer-capabilities.test.ts"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 12.028988624981139,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/complete-public",
+      "stdoutSha256": "9844f724cec207fe6f729a38aade51fb6db07d92542f70356d759004436fac10",
+      "stderrSha256": "12f0abc4e830e64d8c95899d298473205fdfe4ab85459680f38e24c8e45b4dcf"
+    },
+    "source-replay": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/replay.ts",
+        "--recording",
+        ".rerail/profiles/cpu-memory-20261021/source-smoke-recording.json",
+        "--output",
+        ".rerail/profiles/value-access-20261021/source-replay/replay.json"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 13.870734709023964,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/source-replay",
+      "stdoutSha256": "af666e1e7e00cb3e0e8d5af4c979ace551ef1d69f480c7e80a04fcba6db55476",
+      "stderrSha256": "54c2df8a9797d960260aa6fcee400227987a0f00b93758fde4ca2fb3bb43207d"
+    },
+    "profiling-tests": {
+      "command": [
+        "npm",
+        "run",
+        "test:profiling"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 8.376291375025176,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/profiling-tests",
+      "stdoutSha256": "d183eab2b4faf1a3d61b183c59328ba30d794962d33873cfe4361c5499834855",
+      "stderrSha256": "4a67892afec768985b3cb6589b8310642f8b53d2099c0993556703638c6b395a"
+    },
+    "check-complete": {
+      "command": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 21.123932041984517,
+      "deadlineSeconds": 115.0,
+      "artifact": ".rerail/profiles/value-access-20261021/check-complete",
+      "stdoutSha256": "b9ea6d5016edc89416e063b8d9bd6433854cba29cdfebece55a7d25321a4581e",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "limitations": [
+    "Cold CPU regresses by 33.6% on the positive control and 6.2% on the quality control.",
+    "Shared SQL property construction and temporary relation/index writes still need optimization.",
+    "No full-repository or completed ten-rule repository timing is claimed.",
+    "RSS varies with host memory pressure; lower residency does not establish lower allocator memory.",
+    "The source smoke replay covers 20 calls, not all 933 collected linter tests."
+  ]
+}

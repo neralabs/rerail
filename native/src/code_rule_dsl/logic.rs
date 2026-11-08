@@ -3,6 +3,7 @@
 //! `sql` is the typed SQL its plans emit.
 
 pub(in crate::code_rule_dsl) mod crypto;
+pub(in crate::code_rule_dsl) mod derived;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod front;
@@ -19,5 +20,4 @@ pub(in crate::code_rule_dsl) mod rr;
 pub(in crate::code_rule_dsl) mod sql;
 pub(in crate::code_rule_dsl) mod simplify;
 pub(in crate::code_rule_dsl) mod strings;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) mod convert;

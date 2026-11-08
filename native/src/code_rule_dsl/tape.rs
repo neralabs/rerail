@@ -664,6 +664,18 @@ impl Documents for TapeImage {
     }
 }
 
+/// A node as a tape writer writes it, in preorder: its kind and field ids, extra flag, byte span
+/// and subtree size (the node included).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct WrittenNode {
+    pub(in crate::code_rule_dsl) kind: u16,
+    pub(in crate::code_rule_dsl) field: u16,
+    pub(in crate::code_rule_dsl) extra: bool,
+    pub(in crate::code_rule_dsl) start: u32,
+    pub(in crate::code_rule_dsl) end: u32,
+    pub(in crate::code_rule_dsl) size: u32,
+}
+
 #[derive(Clone)]
 struct Pending {
     kf: u16,
@@ -1176,13 +1188,18 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        if grammar.lang == GrammarDialect::Blade {
+        // A build without `lang-blade` routes no file to Blade (`GrammarDialect::built`), so Forte is not linked.
+        if cfg!(feature = "lang-blade") && grammar.lang == GrammarDialect::Blade {
             return match Self::encode_template(grammar, source, budget) {
                 Ok(image) => Some(Ok(image)),
                 // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
                 Err(TemplateError::Parser(_)) => None,
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
+        }
+        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
+        if grammar.lang == GrammarDialect::Rr {
+            return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -1204,8 +1221,12 @@ impl TapeImage {
             None,
             Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
         )?;
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, bytes.len() as u64);
         drop(parse);
         let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
+        if crate::code_rule_dsl::logic::profile::on() {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
+        }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 
@@ -1317,6 +1338,39 @@ impl TapeImage {
         Ok(image)
     }
 
+    /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
+    /// extras and each statement that does not parse an ERROR leaf (decision 0061).
+    pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        checked(budget)?;
+        if grammar.lang != GrammarDialect::Rr {
+            return Err("only a .rr file is encoded from its rule tree".into());
+        }
+        if source.len() > u32::MAX as usize {
+            return Err("source exceeds tape range".into());
+        }
+        let nodes = crate::code_rule_dsl::logic::rr::tape(source)
+            .into_iter()
+            .map(|node| {
+                let error = node.is_error();
+                if !error && (usize::from(node.kind) >= KIND_LIMIT || usize::from(node.field) >= FIELD_LIMIT) {
+                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", node.kind, node.field));
+                }
+                Ok(Pending {
+                    kf: if error { ERROR_CODE } else { node.kind | (node.field << 10) },
+                    parent: node.parent,
+                    start: node.start,
+                    length: node.end.checked_sub(node.start).ok_or("inverted node span")?,
+                    size: 1,
+                    extra: node.extra,
+                    error,
+                    missing: false,
+                    kind_alias: None,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Self::finish(nodes, Vec::new(), grammar, source, budget)
+    }
+
     /// The image of `nodes`, in preorder with their parents set.
     fn finish(
         mut nodes: Vec<Pending>,
@@ -1337,9 +1391,67 @@ impl TapeImage {
                 .checked_add(size)
                 .ok_or("subtree overflow")?;
         }
+        for (index, node) in nodes.iter().enumerate() {
+            match node.parent {
+                Some(parent) if (parent as usize) < index => {}
+                None if index == 0 => {}
+                _ => return Err("invalid preorder parent".into()),
+            }
+        }
+        Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// The image of nodes written in preorder by a tape writer (tier 2 of a block program, decision 0071):
+    /// each node's kind and field, extra flag, span and subtree size, and the supertype
+    /// memberships (node, class). Packed as a parsed tree's are (`pack`), so the bytes are the
+    /// same for the same nodes.
+    pub(in crate::code_rule_dsl) fn from_written(
+        nodes: &[WrittenNode],
+        supertypes: Vec<(u32, u16)>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
+        let nodes: Vec<Pending> = nodes
+            .iter()
+            .map(|n| {
+                if usize::from(n.kind) >= KIND_LIMIT || usize::from(n.field) >= FIELD_LIMIT || n.kind == ERROR_CODE {
+                    return Err(format!("written node kind {} or field {} out of the tape's range", n.kind, n.field));
+                }
+                Ok(Pending {
+                    kf: n.kind | (n.field << 10),
+                    parent: None,
+                    start: n.start,
+                    length: n.end.checked_sub(n.start).ok_or("inverted written span")?,
+                    size: n.size,
+                    extra: n.extra,
+                    error: false,
+                    missing: false,
+                    kind_alias: None,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        if source.len() > u32::MAX as usize || nodes.iter().any(|n| n.start as usize + n.length as usize > source.len()) {
+            return Err("a written node past the source".into());
+        }
+        Self::pack(&nodes, supertypes, grammar, source, budget)
+    }
+
+    /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
+    /// first use, `base` per 16 nodes, and each column at its narrowest width.
+    fn pack(
+        nodes: &[Pending],
+        mut supertypes: Vec<(u32, u16)>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
         let count = nodes.len();
         if count == 0 || u32::try_from(count).is_err() {
             return Err("tape node count out of range".into());
+        }
+        if nodes.iter().enumerate().any(|(i, n)| n.size == 0 || i + n.size as usize > count) {
+            return Err("a subtree size out of range".into());
         }
         supertypes.sort_unstable();
         supertypes.dedup();
@@ -1352,11 +1464,6 @@ impl TapeImage {
         for (index, node) in nodes.iter().enumerate() {
             if index % 256 == 0 {
                 checked(budget)?;
-            }
-            match node.parent {
-                Some(parent) if (parent as usize) < index => {}
-                None if index == 0 => {}
-                _ => return Err("invalid preorder parent".into()),
             }
             let alias = match &node.kind_alias {
                 Some(alias) => {

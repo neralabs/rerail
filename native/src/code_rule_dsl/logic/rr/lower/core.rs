@@ -5,9 +5,10 @@
 //!   core.rr relation (decision 0047, `rr::read_file`). A relation read and not declared, which core.rr declares,
 //!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
 //!   text's own declaration replaces core.rr's: a converted program's `syntax_error(d: number)` (the tape has an
-//!   error node, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (CPython's verdict, line and
-//!   message) would. An authored overlay, a file, reads the tape's verdict as the converter gives it,
-//!   `tape_syntax_error(d)` (`logic::convert`).
+//!   error node, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (the batch's `core_rr` row:
+//!   CPython's verdict for Python, `cpython::syntax`, through `facts::vtab::syntax::python_syntax`) would. An authored
+//!   overlay, a file, reads the tape's verdict as the converter gives it, `tape_syntax_error(d)` (`logic::convert`),
+//!   and CPython's under the name the converter gives it, `cpython_syntax_error(d, l, msg)`.
 //! - **Tree arithmetic.** The core relations that are questions about the tape, where the program does not derive
 //!   them, lower to the relations the engine has (`rewrite`):
 //!
@@ -15,8 +16,6 @@
 //!   next_sibling(a, b)  child(p, a, i), j = i + 1, child(p, b, j)
 //!   precedes(a, b)      child(p, a, i), child(p, b, j), i < j
 //!   earlier(m, n)       node(d, m, _, _, _), visit_index(m, i), node(d, n, _, _, _), visit_index(n, j), i < j
-//!   syntax_error(d, l, msg)  cpython_syntax_error(d, l, msg), CPython's verdict (`cpython::syntax`), where the
-//!                       program declares no syntax_error of its own
 //!   ```
 //!
 //!   Negated, the three of several literals read a relation of their rows, `rr_core_<name>`, with the same body.
@@ -46,11 +45,7 @@ pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = Laz
 });
 
 /// The core relations `rewrite` lowers.
-const REWRITTEN: [&str; 4] = ["next_sibling", "precedes", "earlier", "syntax_error"];
-
-/// The relation the corpus binds for core.rr's `syntax_error(d, l, msg)`, CPython's verdict
-/// (`facts::vtab::syntax::cpython`): named apart from the tape's `syntax_error(d)`, which a program declares.
-pub(in crate::code_rule_dsl) const SYNTAX_ERROR: &str = crate::code_rule_dsl::facts::vtab::syntax::cpython::SYNTAX_ERROR;
+const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
 
 /// Whether core.rr declares `rel`.
 pub(in crate::code_rule_dsl) fn is_core(rel: &str) -> bool {
@@ -108,10 +103,9 @@ fn substitute(t: &Term, map: &BTreeMap<String, Term>) -> Term {
 }
 
 impl Lowerer {
-    /// Whether `rel` is a core relation `rewrite` lowers in this program: one it does not derive (nor, for
-    /// `syntax_error`, declare otherwise than core.rr does: a program's `syntax_error(d: number)` is the tape's).
+    /// Whether `rel` is a core relation `rewrite` lowers in this program: one it does not derive.
     pub(super) fn rewritten(&self, rel: &str) -> bool {
-        REWRITTEN.contains(&rel) && !self.derived.contains(rel) && !(rel == "syntax_error" && self.prog.decls.get(rel).is_some_and(|cols| *cols != DECLS[rel]))
+        REWRITTEN.contains(&rel) && !self.derived.contains(rel)
     }
 
     /// `rel(args)` (negated: `neg`) as the literals the engine reads, where `rewritten(rel)`.
@@ -121,22 +115,10 @@ impl Lowerer {
         }
         let arity = DECLS[rel].len();
         if args.len() != arity {
-            let why = if rel == "syntax_error" {
-                ": core.rr's syntax_error(d, l, msg) is CPython's; the tape's verdict is syntax_error(d: number) in a converted program, tape_syntax_error(d) in an authored overlay"
-            } else {
-                ""
-            };
-            return Err(Error::Syntax(format!("{rel} takes {arity} arguments (core.rr), not {}{why}", args.len())));
+            return Err(Error::Syntax(format!("{rel} takes {arity} arguments (core.rr), not {}", args.len())));
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Some(match rel {
-            "syntax_error" => {
-                if !self.prog.decls.contains_key(SYNTAX_ERROR) {
-                    self.prog.decls.insert(SYNTAX_ERROR.to_owned(), DECLS[rel].clone());
-                    self.prog.inputs.push(SYNTAX_ERROR.to_owned());
-                }
-                vec![atom(SYNTAX_ERROR, args, neg)]
-            }
             _ if !neg => {
                 let (params, body) = definition(rel);
                 let mut map = BTreeMap::new();

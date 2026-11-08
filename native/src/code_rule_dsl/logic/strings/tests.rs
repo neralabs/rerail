@@ -144,6 +144,51 @@ fn globs_nest_alternatives() {
     assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
 }
 
+/// Data-layer text scanners copy complete logical lines through shared candidate relations.
+/// These tests must still use the vocabulary batch, including predicates on those aliases.
+#[test]
+fn logical_line_predicates_and_aliases_use_the_vocabulary_batch() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl candidate(d: number, l: number, t: symbol)
+.decl selected(d: number, l: number, t: symbol)
+.decl finding(d: number, l: number)
+candidate(d,l,t) :- split_line(d,l,t), !prefix("#",t).
+selected(d,l,t) :- candidate(d,l,t).
+finding(d,l) :- selected(d,l,t), contains("inspect",t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
+    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
+    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
+               [vec![11], vec![11,12]]);
+}
+
+/// A second writer can construct strings that the prepared vocabulary never saw.
+/// Optimising only the first writer would silently discard those findings.
+#[test]
+fn computed_or_fact_writers_prevent_alias_vocabulary_rewrites() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl combined(t: symbol)
+.decl constant(t: symbol)
+.decl finding(t: symbol)
+combined(t) :- split_line(_,_,t).
+combined(t) :- split_line(_,_,s), t = @dot(s,"added").
+constant("invented").
+constant(t) :- split_line(_,_,t).
+finding(t) :- combined(t), suffix("added",t).
+finding(t) :- constant(t), prefix("invented",t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
+}
+
 /// An existing signature verifies without changing the signed bytes; tampering, a bad key or a cut signature do
 /// not. Ported from Data-layer-rule-expressivity (rr-migration engine, 109e4883a), checked against `@ed25519_ok`'s
 /// one implementation (`logic::crypto`, W's `verify_ed25519`): its base64 transport is the strict, padded one, so

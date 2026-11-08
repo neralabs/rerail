@@ -1205,6 +1205,14 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
     `vopen(c) :- callee(c, e), !pv(e, _, _), …` and `attr_open(c, a) :- …, !found(c, a, _)` read the absence of
     a hop relation's row as "no value". Under a bounded round, that absence is not final.
 
+- **Narrowed (2026-11-06, decision 0047).** k is 4. A program that declares `unconverged(0)` gets a pending
+  round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
+  is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
+  - pending marking for the other programs (`calls_rust.rr`, workload);
+  - the per-document cutoff, since each round still reruns the whole cross-file part. *Superseded by decision 0065
+    (draft):* no rounds at all. The cross-file part becomes one fixpoint, so nothing is cut and nothing is
+    pending. The cutoff (0064) was measured and withdrawn.
+
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
 Found at list step 29 (2026-11-04). The three write-new modules of Phase 10 exist with their
@@ -1381,6 +1389,8 @@ not make (regex-capture spans: noqa-sec-ratchet, ruff TD00x; tokens), and `!with
 not one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`;
 pyflakes' `negate`/`number`). `hand_written_rules_lowering_report` (with `RERAIL_RR_REPORT_EXTRA`) on
 `final-rerail-shape-lowering` before this merge: 118 files, 75 lower; More-ergonomic-rule-syntax's 949 packs, 393.
+`dfs_first` and `dfs_first_memo` are now computed natively over the edge relation (`logic::native::dfs_first`), so
+`data-layer/lazy-architecture.rr` lowers (944 rules); they are no longer refused.
 **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
@@ -1401,16 +1411,19 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 ## O76. Base relations and inputs the engine does not make yet
 
 Hand-written rules read relations the engine did not make: `parsed` and `string_annotation` (strings parsed as
-code) were read as empty, each named in the profile; they are now made natively (`facts::vtab::syntax::annotation`),
-and `option`, `option_item`, `file` and `package*` are made too (decision 0046). Inputs read from a file in the
-repository (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** the files are read.
+code) were read as empty, each named in the profile. 2026-11-07: `parsed` is made as guest documents of the chunk,
+asked for in rounds (decision 0055); `string_annotation` is made natively from Ruff's table
+(`facts::vtab::syntax::annotation`), nested annotations found in their outer annotation's guest. `option`,
+`option_item`, `file` and `package*` are made too (decision 0046). After the data-layer engine merge (ca930d974):
+repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and `input_error`
+rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test; captures on a node or a span are symbols, not spans. `match_all` and `match_group` are relations
-  of each regex's matches in the batch's spans (`logic::strings::as_relations`, `facts::vtab::syntax`).
+  text test. Over a `source` or `src_line` span, captures are spans (`rx_span`, decision 0054); on a node they
+  are still symbols. `match_all("re", sp, m)` and `match_group` (three and five arguments) are relations of each
+  regex's matches in the batch's spans (`logic::strings::as_relations`, `facts::vtab::syntax`).
 - `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
   `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
@@ -1471,17 +1484,24 @@ tokens have no field.
 
 ## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
 
-- `parsed` and `string_annotation` (O76) are made natively (`facts::vtab::syntax::annotation`): each Python
-  string annotation's tree (`parsed(s, "annotation", root)`) is a document of its own past the batch's real
-  documents.
-- `match_all`, `match_group`, and `match` with captures on a node or span, are made (O77). (`docof` of a span is
-  made: the lowering reads `core.rr`'s `docof` as an input.)
+- `parsed` is made as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` (O76)
+  natively, from Ruff's table (`facts::vtab::syntax::annotation`). A guest is parsed as `( … )` and judged by
+  CPython's module grammar, where W asked `ast.parse(value, mode="eval")`: the two can differ (`(yield x)`).
+- `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
+  per file and pattern) and over symbols (a native relation): decision 0054. `match_all("re", sp, m)` and
+  `match_group` over any span are relations the batches make (O77). (`docof` of a span is made: the lowering
+  reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error(d, l, msg)` for Python is CPython's verdict through Ruff's parser (`cpython_syntax_error`,
-  `rr::lower::core`), where a program declares no `syntax_error` of its own; the tape's `syntax_error(d)` is
-  tree-sitter's ERROR/MISSING.
+- `syntax_error(d, l, msg)` for Python is CPython 3.13's `ast.parse` verdict (`cpython::syntax`, through
+  `facts::vtab::syntax::python_syntax`, Ruff's parser `ruff_python_parser` 0.0.10, the last on the pinned
+  toolchain), not tree-sitter's; compile-time errors CPython's compiler raises after parsing (`return` outside a
+  function) are not checked. `cpython_syntax_error` is the same verdict under the converter's name. A document with
+  one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error
+  report CODE [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document;
+  the tape's `syntax_error(d)` is tree-sitter's ERROR/MISSING.
 - `static_value` is `value`: file-local constants are not followed.
-- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
+  `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
 - `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
   (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
@@ -1550,3 +1570,603 @@ one run. There were five causes:
 
 **Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
 executor's, and the admission spike), 104 s at load 40-73.
+
+## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+
+**Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
+hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
+version of that module is `matcher::p_anchors`, identical to P's but for this branch's edits, and
+W's `matcher::anchors` stays. The other 24 are one choice, O18's and O20's: P's relational clause
+and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
+`ClauseKind::Relational` under `cfg(test)`, `TapeDoc`'s P accessors `#[cfg(test)]`, W's
+`select`/store-restore path in `workspace/evaluate.rs`, W's profile fields kept). None was lost.
+
+**TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
+`calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
+pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
+`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+after P's last native commit):
+- Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
+  P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
+- `test/conformance/data-layer/ports.test.ts` fails the same way on both addons (batch 01: 1 false
+  positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
+  It is P's open parity, and is left out the same way.
+- `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
+  `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
+  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  (imports relative to `gate/`).
+
+To close: when O18 is decided, either the relational clause becomes production and these run by
+default, or the tests move with P's stage.
+
+## O85. Guests (decision 0055): what is not built yet
+
+Decision 0055's guests are built for `.py` and `.rs` corpus runs. Decision 0058 built hiding, kind names across
+grammars, normalized strings and the tape operations (`@parse`, `@splice`, `@unparse`). These parts are not built:
+
+- **Hosts the corpus runner does not collect** (Markdown, HTML, Vue, Blade), and the matcher path's
+  Vue and Blade guests as these documents (0055 step 1).
+- **Global embeds** (an `embed` reading another chunk's facts).
+- **The memo and guests.** A memoised file's rows include its guests' rows. Guest keys depend only
+  on the host's path, place and grammar, so they are stable. No test yet checks a memo hit against
+  a fresh run on a file with guests. Value documents are O96.
+- **Cost on the 9,010-file repository** (guests made, distinct texts, parse CPU): not measured yet.
+- **The shared tape cache races:** O95.
+
+To close: each part is built or decided against in a decision record.
+## O88. `calls.rr` against Jedi over a real corpus
+
+Decision 0047's condition for moving `calls:` is the runtime oracle, which `calls.rr` meets. A Jedi comparison over
+a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check beside it, not a gate.
+`calls::python_tests::benchmark_python_calls_corpus` scores only the native resolver. The spike scored `calls.rdl`
+(99.18% of 33,309 calls, t9 §7.4), but its scorer was not copied.
+
+**Closure:** a Jedi 0.19.2 recording over django (`fixtures/python/calls/generate_corpus.py`), a scorer of
+`calls.rr` over the same files through `corpus::run`, and the run recorded in t20.
+
+**Closed 2026-11-06:** run, and recorded in t20. 99.2% of 20,364 calls both decide agree; 142 differ, mostly
+through decorators. Making the 7,286 calls the program leaves open, which Jedi decides, is the accuracy work
+left.
+
+## O89. The type relations' first draft: what they leave out
+
+`calls.rr`'s type relations (decision 0047, point 3; t20) answer at the positions whose value the program models
+(`vpos`), from its points-to values. Left out, each giving `type_open`, never a wrong class:
+- **Positions:** any expression no rule of the program reads the value of (an operand, a subscript, a
+  comprehension's element).
+- **Declared types:** parameter, return and variable annotations are unread. A parameter's type is open.
+- **Values:** functions, bound methods and `super()` objects get no class. A class with a metaclass the workspace
+  defines gets none either.
+- **Generics:** names only, no arguments: `list`, not `list[int]`. Terms are interned per node by the corpus
+  runner (`x.node_type`) as unions of names.
+- **Exceptions and other builtin hierarchies:** only `bool <: int` and `<: object`.
+- **Possible:** past what is listed, `possible_open`.
+
+**Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and
+generic arguments carried as terms.
+
+**Annotations read (2026-11-07, `5cbb86a96`).** Parameters, returns and class attributes now declare what they hold,
+trusted as a type checker trusts them:
+- a workspace class C means an instance of C or of a workspace subclass, the closed world `self` already assumes;
+- a builtin class means its value, and `None` means None;
+- `A | B`, `Optional[A]` and `Union[A, B]` are their members;
+- a generic is its class, so `LazyResult[T]` is `LazyResult`;
+- `type[C]` means C's class objects, and `Self` means the method's class.
+
+A closed declaration closes the parameter, the function's calls and the attribute. A decorator declared
+`(fn: F) -> F`, with F a type variable, keeps the decorated function. Still open, as a lower bound:
+- **Quoted annotations** (`-> "LazySeq[int]"`). The facts held no parse of a string's contents; since
+  decision 0055 `parsed(s, "annotation", r)` has rows, and `calls.rr` does not read it yet. The data layer
+  has 146 quoted returns against about 118,000 annotated ones.
+- **External classes** (`p: Path`). They get no type name, so a pathlib receiver is unknown rather than "not
+  lazy". This needs the classes' supertypes, from stdlib summaries (t20 gap 6).
+- Type variables, `Any`, `Protocol`s, generic arguments, and variables annotated in a function or module body.
+
+## O94. `calls.rr` over the data layer's l1–l20 packages: cost and convergence
+
+On the data layer's l1–l20 packages (489 files, debug build), `calls.rr` takes 101.6 s of CPU with a peak RSS
+of 835 MB. Its rounds do not converge by k = 4: hop rows 498,860 → … → 753,630, so the pending round runs. On 84
+of those files it takes 15.3 s, 13.0 s before annotations were read. The Jedi score was therefore taken on the 84
+files (t20). LEG-083's own scope (`impl/`, `data_layer/` and every `l<n>` package) is several times larger.
+
+**Profiled** (`RERAIL_PROFILE`, 2026-11-07; spans now cover the round bookkeeping, `8224f2c8a`, and each round's
+hop rows and changed documents, `6940b8a49`). 489 files: 86.4 s user, 777 MB; local 27 s, cross 52 s.
+On the 84 files (13.9 s user, load about 4): local 3.4 s, cross 8.7 s, of which the six rounds are 8.1 s at
+about 1.35 s each. Every round re-runs the whole cross part over every document, but few documents change:
+
+| round | 0 | 1 | 2 | 3 | 4 | pending |
+|---|---|---|---|---|---|---|
+| documents whose hop rows changed (of 83) | 82 | 65 | 43 | 26 | 10 | 30 |
+| `pv` rows | 9,426 | 15,191 | 18,098 | 19,947 | 20,146 | 20,155 |
+
+The rest of the cross part: copying and measuring hop rows 0.9 s, digest 0.35 s, sorting the previous rows
+0.2 s, loading the done inputs 0.45 s. In the local part, column statistics are 1.45 s of 3.4 s (`node`,
+constants, `child`, the three `rr_nearest_*`); they now take one sort per column, and are still exact.
+
+**Since then** (2026-11-07, `88cda9248` … `629b15b33`):
+- Two declared-type rule shapes multiplied out: 14M of 28M join rows on typeshed's closure. They were declared
+  returns joined to subclasses before calls, and module TypeVars per function.
+- `found` now covers only the names that lookups read; the corpus runner does not apply `.demand`. Declared
+  parameter and attribute classes are expanded to subclasses only where read.
+- The rounds sort once, keep their base inputs loaded, and re-measure only hop relations that moved.
+- On the 84 files the outputs are unchanged. The rounds converge after 7 runs: rounds 4 and 5 change 12, then 3,
+  documents.
+
+**Per-document cutoff: design.** Every recursive read across documents already goes through `__prev`: a hop is
+keyed by its first node column, `qv`'s included. A round over the dirty documents D gives the full round's rows
+if:
+1. Every cone rule whose head has a node column carries `docof(h, d), rr_dirty(d)`.
+2. Reads that are not hops see the other documents' last rows. These are non-recursive atoms of cone relations,
+   and atoms in rules whose head has no node column (`need_name`). They read `X__all = X ∪ X__kept`.
+3. A relation without a node column that changed in the round sends the round back to all documents.
+4. D for round r + 1 comes from a touch program: each across rule's input literals over the rows its `__prev` atom
+   gained or lost, to `docof(head, d)`.
+5. Rounds 0, 1 and the final round run in full.
+
+On the 84 files that saves about a quarter of the rounds (about 1.5 s of 5.8 s), and it lets k rise until the
+rounds converge for little cost.
+
+**Closure:** the cutoff above, then k raised so the rounds converge; then the full l1–l20 Jedi score and the
+LEG-083 files.
+
+## O90. Cross-file costs `calls.rr` works around
+
+Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program avoids them by
+how its rules are written; another program would meet them again. Measured on django utils + db (172 files),
+debug build, load about 7.
+
+1. **Hop rules fell off the native engine. Fixed** (`bcffa4c26`). `cross_rounds::bound` adds `@doc($a) = @doc($b)`
+   or `!=` to every hop rule, and `join_spec` had no native step for a call term other than `@cat`. The native set
+   engine declined the whole component ("`@doc($v) != @doc($s)` has no native step"), and its probes ran as SQL
+   through the vtabs, where costs 2 and 3 apply. A `deq`/`dne` step now compares the two nodes' documents
+   (`a >> 32`). The component is native, with composite indexes and live fanout. Cross-file CPU went from
+   25.3 to 18.1 s, SQLite statements from 6,600 to 605, and peak RSS from 418 to 350 MB, with the same outputs.
+   The earlier `cross_rounds` change (a join through same-document atoms is not a hop) removed most of these
+   tests from the start.
+2. **SQL over a vtab looks up one column, priced at one row per value. Fixed** (`f443cc6f8`, `2a69daa08`,
+   `210a2d82b`). `best_index` (`facts::vtab`) used one equality constraint, the one with the smallest
+   `estimated_matches`. The in-memory source (`setfix::Stored`: the cross part's inputs, `__prev`, `__done`)
+   answered 1 for every column, so a tie picked whichever constraint SQLite offered first. Option 4 (native `min`/`max` and
+   text functions) took SQL off `calls.rr`'s hot path. SQL stays a product surface, though: other applications
+   query rerail's relations through these vtabs, and the SQL executor (`--modes ""`) must stay usable. So the
+   index shape is fixed for both tiers:
+   - **Inputs (vtabs; immutable, so an index costs no insert).** Every usable `=` goes into one filter. `Stored`
+     answers from a lexicographic order over those columns. The order is built on first use, holds 4 bytes a row
+     and serves every later search whose columns are its prefix. Other sources probe the most selective column
+     and check the rest before SQLite sees a row. Estimates come from distinct counts (`Stored`); for several
+     columns, the default treats them as independent, bounded by the most selective. A range is taken only
+     when it beats the estimate for all the `=` together.
+   - **Derived tables (SQL executor; mutable, `WITHOUT ROWID`).** Each secondary index is a full copy of the row,
+     written on every insert. So the table's primary key serves every search on a key prefix. The other searches
+     share lexicographic orders, one order per chain of nested column sets: a minimum chain cover, as in
+     Soufflé's index selection (Subotić et al., VLDB 2018). A search either extends an order whose columns are a
+     subset of its own, or starts a new one.
+   - **Semi-naive rounds.** The new rows come from an anti-join on the key (`NOT EXISTS`, one primary-key probe per
+     candidate), not `EXCEPT`, which scanned the whole relation every round.
+
+   On slice-utils (49 files), SQL executor, debug build, with the same outputs:
+
+   | Change | Measure | Before | After |
+   |---|---|---|---|
+   | Chain-cover orders on derived tables | index statements | 99 | 28 |
+   | Composite vtab filter | VM steps | 148.5M | 50.5M |
+   | Composite vtab filter | CPU (load ~146) | 7.9 s | 5.5 s |
+   | Anti-join for new rows | VM steps | 50.5M | 43.2M |
+   | Anti-join for new rows | full-scan steps | 3.87M | 3.02M |
+   | Anti-join for new rows | CPU | 5.4 s | 5.4 s (noise) |
+
+   The worst statement before the fix was `iattr`'s probe of `field` by the constant name rather than the bound
+   child: 65M VM steps across 6 runs. With the fix it drops out of the top statements. The native engine on the same
+   slice was 1.94 s. The rest of the SQL executor's gap is the `cand` temp tables and their union steps.
+3. **A kind test in a recursive step. Gone with 1; the cause was 2.** The cost blamed on `kind(n, "assignment")`
+   came from a lookup of `field` by its constant `f`, not the bound `c`, per the plans' index numbers. It was the
+   1-per-column tie of 2. With 1 those rules run as native joins, and with 2 the SQL path probes `c`.
+4. **Probes start from seed estimates in every round. Fixed** (`a1d580128`, `a450fc0f2`; about 3%, near noise,
+   since the native engine's replans already correct the first waves). Recursive relations are priced at their seed rules'
+   estimated rows, and derived columns have no distinct counts. The probes are replanned from live fanout after
+   the first waves, which are the waves with the largest delta. Plans and statistics are not kept between rounds:
+   the native component replans in every round (`replans=6` over 6 loops). On the SQL path, the bad `pv`-before-`retval`
+   order ran in the first 2 waves of each of the 6 rounds (12 runs, 169M VM steps).
+   **Solution:** price round r's recursive relations by round r − 1's measured rows and distinct counts (the
+   `__prev` totals are already measured), and keep each probe's replanned order for the next round.
+5. **Every round reruns the whole cross-file part. Fixed** (`a450fc0f2`): `cross_rounds::cone_split`. Same 13
+   outputs; utils + template 2.67 → 2.24 s, utils + db 17.4 → 15.4 s. The gain is below the estimate, because
+   `call_target` and the relations next to it are read by hop relations and stay in the cone. `run_rounds` runs the bounded program in full each
+   round. On 172 files, the strata no hop relation reads (the type relations, `call_target`, the outputs) take
+   about 6.3 of 18.1 s over 6 rounds.
+   **Solution:** split the bounded program at the hops' upstream cone. Rounds run only the cone. After the last
+   round, the rest runs once over the cone's held relations, bound as inputs as the cross part binds the exports.
+   This saves about 5 s (29%) here.
+
+**Closure:** 1–5 done; left: `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
+plain rules on the same slices.
+
+## O91. Bridged typing answers are recomputed every run
+
+A rule that reads `typing_<program>__<output>` runs the program in full before the rule (decision 0056). The rows
+are a derivation of the program's digest and the run's sources (its manifest, 0053), but they are not recorded as
+one. An unchanged corpus therefore reruns the typing program's rounds.
+
+**Closure:** the rows are kept as a derivation (03 §14, `content_store::derivation`), valid while the program and
+the files its rounds read are unchanged, and a run with a valid derivation reads them instead.
+
+## O92. The device's nearest is off the corpus path
+
+Since decision 0057, the corpus runner's kind-set axes are made per looked-up node on the host (`within::Axis`).
+The file-local FIX on Metal (pointer jumping, `typing::file_local::nearest` with `Binding::Metal`) now runs only for
+typing's file-local part. A join that scans an axis makes every node's rows on the host, one climb each.
+
+**Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
+where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
+
+## O93. The data-layer pack's rules do not run on the full corpus
+
+These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
+merged at ca930d974. Of the 68 run one at a time on s50:
+
+- 50 run;
+- 7 take over 40 s: conditional-architecture, connection-service-architecture, data-layer-facade-purity,
+  hnsw-architecture, lazy-adapter-ownership, matching-architecture, versioned-lifecycle-legacy-surfaces;
+- eager-resolve takes over 45 s once its directory inputs are read;
+- the rest fail (below).
+
+The 49 that run together:
+
+| corpus | CPU | instructions | peak RSS | violations |
+|---|---|---|---|---|
+| s50 | 17.2 s | 205e9 | 1.57 GB | 606 |
+| s200 | 100.5 s | 1,064e9 | 5.19 GB | 2,878 |
+
+Converted rules on s200 take about 2 s. On s200, the costs are:
+
+- **`gis_before`, 40.7 s of 100.** It is `gis_before(i, n) :- kind(n, "call"), earlier(i, n)`, every node before every
+  call of its file, which is quadratic in a file's size. Its readers bind both arguments. A filter (each rule
+  functional lookups and tests of its head) should be inlined, not built. A draft inliner (`/tmp/ai-trash/
+  simplify-inline-filters.rs`) was correct, but it moved base lookups into rules where the runner had not
+  measured their statistics or held their columns (`no statistics for docof.n`, `syntax_error has no column l`).
+  The runner must measure what the simplified program reads.
+- **`cc_line`, 14.9 s.** It runs in the cross-file part, in SQLite, because `@prefix(…) = 0` has no native step. It
+  crosses the 15 selected documents with every trimmed line (504k) before looking up `split_line` by document.
+  `split_line`'s statistics are not measured, so the lookup is estimated at 2M rows.
+- **Memory.** It grows with which rules are combined, not with their number: 12 rules take 417 MB, 22 take 1.27 GB.
+  A single rule's run is 220–290 MB; the test process adds about 650 MB.
+
+Failures, by kind:
+
+- **A span stored as a symbol** (bounded-composed-graph-paths, schema-architecture, bootstrap-engine-invariants):
+  `match` over a span gives span captures (`core.rr`). A column declared `symbol` then holds a span, and
+  `cat()` stops with `no symbol <id>`. The reader should refuse the program and name the column.
+- **`no such table: rr_ctx<k>`** (cached-pure-lazy-allowlist).
+- **`rule for x(…) reads nothing`**, a constant-head rule left with no body (connection-structural-boundaries,
+  post-op-side-effects, pure-lazy-runtime-purity).
+- **An aggregate in recursion** (lazy-architecture).
+- **Revision and stamped-artifact readers**, not written (plan-composition-architecture, test-budget).
+- **The `$O[:-$K]` slice pattern**, not lowered (versioned-table-names).
+
+**State on 2026-11-07** (t10 §2k). The costs above are fixed: `gis_before` is inlined, `cc_line`'s computed view is
+inlined, text tests are native, and relations are released after their last reader. The 49 rules on s200 take 39.5 s
+and 1.56 GB. Thirteen more rules now run, 62 in all:
+
+- the 7 that took over 40 s take 0.6–1.6 s each, and eager-resolve 1.0 s;
+- bounded-composed-graph-paths, cached-pure-lazy-allowlist, connection-structural-boundaries,
+  post-op-side-effects and pure-lazy-runtime-purity no longer fail (the merges fixed their failures);
+- eager-resolve was slow only in the pack: demand split a rule whose kept atoms only the demanded read joined, a
+  cross product (`pre_1199`). Demand now refuses that split.
+
+The 62 rules together on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule's count equals its count
+alone), and a peak of 1.43 GB, **over the 1 GB budget**.
+
+**Later on 2026-11-07** (t10 §2l). schema-architecture and bootstrap-engine-invariants run too: 64 rules.
+
+| corpus | CPU | instructions | peak (the run's) | violations |
+|---|---|---|---|---|
+| s50 | 15–17 s | 302e9 | 913 MB (995 MB profiled) | 637 |
+| s200 | 43.0 s | | **2.39 GB** | 2,960 |
+
+s50 is within the 1 GB budget; s200 is not. On s200 the footprint is about 1.5 GB at the end of each chunk's
+file-local run, and binding the cross-file part's inputs adds 800 MB (the base relations held for it, and the
+exports read back from `x`).
+
+Left out, by cause (none of them is a quick fix):
+
+- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
+  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
+  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
+  one down), but `front::cycles` measures by preorder and has no depth count.
+- **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
+  `artifact="test_collection"`). Stamped-artifact readers are not written.
+- **versioned-table-names**: `n ~ `pattern`` (O103).
+
+**Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
+
+## O95. The shared tape cache races
+
+`core::build_cached` writes tapes to one SQLite store in the temp directory, and every run on the machine shares it.
+Under parallel tests, a write sometimes fails with `FOREIGN KEY constraint failed`. Guests write many small, equal
+texts, so they hit it most. A guest whose cache write fails is parsed without the cache, and the run counts it
+(`guests.cache_failed`). Primary files use the same call and can fail the same way. The likely cause is a collector
+removing a source between `put_source` and `put_tape`; this is not investigated.
+
+The memo shares the store, and so the race. `value_documents_are_memoised_with_the_files_that_asked` passes alone.
+In a parallel `logic::rr::` run it sometimes fails, in one of two ways. Its first run's write fails on the same
+foreign key. Or its second run finds no memo rows, because another test's background collector deleted them as a
+dead plan's rows between the two runs. A test cannot take a store of its own, because `RERAIL_TAPE_CACHE` is read
+process-wide.
+
+**Closure:** the write is made atomic (source and tape in one transaction, or a collector that cannot remove a
+source a writer holds), with a test that runs parallel writers against one store; or the cache is made per run.
+A run can also name its store, so a test can hold one of its own.
+
+**Closed (2026-11-07).** A run's sources, tapes and memo rows become live only when its manifest is recorded, at
+the end of the run. Until then, collectors of other runs could take them from under it. There were four such
+races; each now has a fix in the store:
+
+- **A run's sources and tapes.** A run holds them (`ContentStore::hold_sources`). Each source the run's handle
+  stores or finds by hash is pinned under the run's owner and lease. So is each tape it stores. The pin is taken in
+  the same transaction as the write or lookup, so no pass can come between. A run that dies leaves its pins to
+  lapse with their lease (6 h). A cold insert gets its pin within its existing write. A source found by hash takes
+  one write. A stat-index hit takes none.
+- **A tape of a collected source.** `put_source_and_tape` stores or finds the source and stores its tape in one
+  transaction. `core::build_cached_source` returns the source's id as it is after that write.
+- **The run's memo plan.** The plan digest is the same across processes, so an earlier, evicted manifest could
+  leave it dead, its rows being deleted while this run writes them. The run holds the plan
+  (`hold_corpus_plan`), which makes it live; a decision keeps a held plan live.
+- **A stale decision.** `keep_corpus_runs` read its manifests outside the transaction that applied the decision,
+  so a plan recorded in between was marked dead. Now the decision is read, made and applied in one transaction.
+
+`put_facts_memo` still writes nothing for a source that is gone, as a last guard (that file is evaluated again next
+time). The runner's `HeldPlan` takes both holds when a run is memoised, and releases them when the run ends, after
+its manifest. Tests:
+
+- `a_source_collected_before_its_tape_is_stored_again_with_it`;
+- `a_held_source_survives_collection_until_released`;
+- `a_held_plan_stays_live_until_its_run_releases_it`;
+- `parallel_writers_and_a_collector_share_one_store`.
+
+`value_documents_are_memoised_with_the_files_that_asked` passed in 12 of 12 parallel `logic::rr::` runs (it had
+failed in 3 of 3 before). The guests' fallback (`guests.cache_failed`) stays, for a store that refuses a write for
+another reason.
+
+## O96. Chunks that read value documents are not memoised
+
+Decision 0058's value documents (`@parse`, `@splice`) belong to no file. A chunk whose outputs hold a row that
+locates one cannot attribute it, so the chunk is not memoised (`memo_unattributed`). Attributing a value to the
+files whose rows asked for it needs the demand's provenance.
+
+**Closure:** value rows are attributed to the files that asked for them, with a test of a memo hit against a fresh
+run; or a measurement shows unmemoised value chunks cost too little to matter.
+
+**Closed (2026-11-07):** a value's rows are attributed to every file of its chunk that asked for it, and the split
+places a value's tape with the atom that gave its text (0058 §4). Test: `value_documents_are_memoised_with_the_files_that_asked`.
+
+## O97. A combined run's programs and their guest bounds
+
+Each program of a combined run is bounded by its own `.guests` setting (decision 0058 §1), but all programs share
+one batch. No test runs a program with `.guests off` beside one without.
+
+**Closure:** a combined-run test where the two programs see different guests.
+
+**Closed (2026-11-07):** `embed` and `embed_value` are shared across a combined run's programs, so one batch makes
+the guests. Test: `combined_programs_see_guests_by_their_own_policy`.
+
+## O98. Kind sets across grammars
+
+`nearest`, `inside`, `has` and `within_stop` take kind sets resolved in the run's grammar. A scoped SQL node's
+`nearest(n, a, {"select_statement"})` names no SQL kind. The scalar kind and field constants are qualified (0058
+§2); the sets are not.
+
+**Closure:** a kind set over a scoped variable is resolved in its grammar, with a test over a SQL guest.
+
+**Closed (2026-11-07):** derived relations and kind sets read over a scoped variable are specialized to its grammar
+(0058 §2). Test: `kind_sets_over_a_guest_are_its_grammars`.
+
+## O99. Guests and hiding at scale
+
+Hiding (decision 0058) is a range test on columns the join already reads. Its cost, and the cost of the guests
+and values a policy makes, are not measured on the 9,010-file repository. Global embeds and the matcher path's
+guests are still not these documents (O85).
+
+**Closure:** a full-corpus run with guests on and off, in CPU time, with the guests made and the distinct texts
+parsed.
+
+
+## O100. Normalized strings as native operations, then as transducers
+
+Decision 0058 §3's normalizer (`facts::vtab::syntax::normalized`) is a hand-written host scanner. Only the guest
+maker calls it. A rule reaches its text only through `str(n, v)`, and its source map not at all. Typing needs both:
+a quoted annotation's text, a decoded key, or SQL text whose nodes need places in the file. Each must run per chunk
+in native code, never in SQL and never per node per byte (see "String matching is chunked").
+
+Two steps:
+
+1. **A native operation.** A normalized string is an operation the engine runs natively, like `@parse`. It is a
+   relation of (literal, text, map) made per chunk, read by `str`, by guests and by rules. The language's decoder
+   and the map stay one, so `str` and a guest can never parse different texts.
+2. **A transducer.** Once the parser-generators work lands, the escape scanner and decoder become a side program
+   of the transducer `Program`, as `value_programs` are (`docs/parser-generators/12` §3). They then run on the
+   transducer's CPU and GPU paths, over the literal's bytes on the tape, and write the text and map as tape rows.
+   They are not a separate module. Each language's escapes are the program's tables, not code.
+
+**Closure:** rules read a literal's normalized text and map through a native operation, with a test against
+`str`. After parser-generators: the operation is a transducer side program, with the hand scanner's tests passing
+against it.
+
+## O101. A demand-lowered `.rr` program does not print back as itself
+
+`rr::parse` lowers `parsed(s, g, r)` (and `@parse`, `@splice`) into a demand: `rr_embed_req` and its context
+relations `rr_ctx<k>`. `print` writes those rules out, and the `parsed` atom stays in the rule's body. Read back,
+the printed program is lowered again, and gets a second context (`rr_ctx2`) and demand rule. The `.rdl` reader
+lowers no demand. `rdl_programs_translate_to_the_same_program` therefore skips `typing/programs/calls.rdl`, which
+reads `parsed` since its quoted annotations (C1). A run whose program text is printed, then read again, may do
+the extra demand's work twice.
+
+**Closure:** lowering a demand is idempotent: a printed program carries its demands as already made, and reading
+it back adds none. The skip is then removed. Or `.rdl` programs are removed (step 31), and the round-trip test
+stays for `.rr`.
+
+**Closed (2026-11-07).** The reader notes which demand relations a text declares itself (`rr_embed_req`,
+`rr_parse_req`, `rr_splice_req`, `rr_dir_req`, `rr_file_req`). A printed program declares the demands it was lowered
+with, so reading it back makes none of them again. A constant world request (`file_line("setup.cfg", …)`) is lowered
+as a fact, the form a bodiless clause reads back as. The `.rdl` comparison drops the demands the `.rdl` reader does
+not make (`without_requests`, which now covers the value demands too), and the skip of `calls.rdl` is removed.
+Test: `a_program_with_demands_prints_back_as_itself`.
+
+## O102. `product_programs_derive_t_outputs` reads a table its fixture lacks
+
+Since 50a57d0e7, `calls.rr` reads `host_node`, and the test stops with `no such table: f.host_node`. The fixture's
+facts database is built without the guest relations. Not caused by the quality branch; seen on 2026-11-07.
+
+**Closure:** the fixture holds every relation the product programs read, and the test passes.
+
+**Closed (2026-11-07).** The test adds the guests and, since Typing's B6 and B10, `name`, `str`, `value` and
+`op_at` (which `calls.rr` reads through `python/conditions.rr`), empty, as it adds `strprefix`. T's facts predate
+them; with them empty no `sys.version_info` or `sys.platform` test is decided and every branch is taken, as T
+assumed. The test passes (merge of Typing-support-final-shape, 56a615905).
+
+## O103. AST pattern literals (`n ~ `pattern``) have no executor
+
+`Lit::Pattern` parses, and `Literal::Ast` exists in the logic, but nothing lowers it and the plan has no step for it
+("no executor … yet"). versioned-table-names is the pack's one rule that needs it. The matcher should run once per
+pattern, over the chunk, and give an input relation of its matches and captures, which the rule then joins.
+
+**Closure:** a pattern literal plans and runs, and versioned-table-names runs in the pack.
+
+## O104. Two guards keep a run's store objects from collection; one should go
+
+O95's fix pins what a run holds. The run's plan is pinned (`hold_corpus_plan`), and so is each source and tape it
+stores or finds (`hold_sources`), under a lease that expires. Rerail-rule-expressivity's fix adds a second guard, a
+shared file lock (`<db>.collection.lock`). Runs hold the lock while they read, and a collector takes it exclusively
+with `try_collect`, deferring if it cannot. Both guards are in place since the merge (31d3d15dc).
+
+The lock is coarse. While any run holds it, no collection happens at all, so a store in constant use (parallel
+runs, a long watch session) may never collect, and disk grows past the 10 GB budget. It also says nothing about
+which objects a run needs. The pins are exact, and they survive a crashed run until their lease expires. But they
+cost a row per held object, written in the transaction that stores the object.
+
+**Closure:** one guard is chosen in a decision citing O95's races
+(`a_source_collected_before_its_tape_is_stored_again_with_it`, `parallel_writers_and_a_collector_share_one_store`,
+`a_held_plan_stays_live_until_its_run_releases_it`, `a_held_source_survives_collection_until_released`). The other
+is removed, and those tests still pass. If the lock stays, collection under constant use is shown to make progress.
+
+## O105. A `.rr` file is a corpus document only in a run whose program names `rr`
+
+Decision 0061 §6 says a `.rr` file in a corpus run is a document like any other, so a run over a repository checks
+its rules with its other files. A corpus run reads one language, though (`corpus_language`): Python or Rust, by
+`Typing::rust` or by which has more files. The build adds `rr` to that choice. A program with `.language rr` reads
+the repository's `.rr` files (`packs/rr/rr-input-outside-repository.rr`), and every other run reads none.
+
+**Closure:** a corpus run reads every registered language its policies name, each document under its own dialect.
+A run with a Python policy and an `rr` policy reports both from one store, and
+`a_rule_about_rules_runs_over_rule_files` holds with a Python file's finding beside the `.rr` ones.
+
+**Closed (2026-11-07).** A program's `.language` now chooses the files it reads (`python`, `rust` or `rr`), and
+`tools::run_policies` (`rerail-engine run-policies <root> <out> <policy.rr>...`) runs several policies over one
+repository, each over its own language's files with one content store, and merges their diagnostics.
+`python_and_rr_policies_run_over_one_repository` runs a Python policy and RR101 over one tree and reports both. One
+run still reads one language. A program naming two would be a run with documents of mixed dialects, which nothing
+needs yet.
+
+## O106. A relation named like a SQL keyword breaks the SQL backend
+
+A program with `.decl values(…)` fails its run with `near "values": syntax error` on `DROP VIEW IF EXISTS
+temp.values`. The relation's name is put into SQL unquoted. Found while writing `rule_files_have_text_facts`, which
+names its relation `vals` instead.
+
+**Closure:** every relation name the SQL backend writes is quoted, and a program with relations named `values`,
+`select` and `order` runs.
+
+**Closed (2026-11-07).** `logic::sql::ident` quotes a relation's name when it is a SQLite keyword or not a plain
+identifier, and `sql::table` does the same for each part of a qualified name (`x.values`). Every statement that
+names a relation goes through one of them: the plan's views, tables and indexes, the corpus's exports, and setfix's
+reads and writes. `relations_named_like_sql_keywords_run` runs `values`, `order`, `select` and `group`, and
+`rule_files_have_text_facts` names its relation `values` again.
+
+## O107. The rr parser still builds statements beside its tree
+
+Since decision 0062, lowering reads a rule file's statements off its tape (`rr::from_tape`). The parser still builds
+its own statements as it builds the tree, because its control flow reads them. Whether a term becomes an atom
+depends on it being a `call`, and a negated comparison is refused. Nothing outside the parity test
+`statements_from_the_tape_are_the_parsers` uses them, and they cost a second copy of every term during a parse.
+
+**Closure:** the parser builds only the tree, and decides from node kinds what it decided from statements. The
+parity test becomes a comparison of the tape-read statements with a recorded set, and the replay (3988 303 298 0)
+and the rr tests are unchanged.
+
+## O108. A corpus run takes two collection leases for one problem
+
+Rerail-rule-expressivity and Typing-support-final-shape each fixed collection deleting a running corpus run's sources
+(O95), in different ways. The final shape now has both:
+- `ContentStore::hold_collection` (`CollectionLease`) with `HeldPlan` (`hold_corpus_plan`, `hold_sources`);
+- `ContentStore::begin_corpus_run` (`CorpusRunLease`, with the store's busy retries).
+
+A run takes both and releases both once its manifest is recorded, before its collection starts (`record_run`). One of
+them is enough.
+
+**Closure:** one lease, the other's tests kept against it.
+
+## O109. A run read from memoised base rows derives other rows
+
+Decision 0063 memoises the base rows a file hands the cross-file part (`memo::Entry::base`), each row its file's by
+its first column, and a memo hit replays them. Merged with typing's `calls.rr`, a run read entirely from the memo
+gave 233 `call_open` rows where the evaluated run and T give 241: eight calls of `glob.py` missing
+(`own_ingestion_derives_what_t_facts_do`, the 4096-node run after the 262144-node one). Every file was a hit and no
+chunk was refused. With `RERAIL_CORPUS_MEMO=off` the rows agree. The cause is not found: the replayed base rows, or
+the statistics the cross-file part plans with (measured once over every file's rows in a memoised run), are the
+candidates. Crediting a guest's rows to its host file made no difference.
+
+Until then a run whose cross-file part reads base relations is not memoised, as before 0063: `memoised &&
+stored.is_empty()`. The entry's `base` field stays. `a_session_reruns_what_an_edit_changed` (0063's test, whose rule
+reads base relations) is ignored with this reason, so a session reruns every file of such a rule.
+
+**Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
+the session test runs again.
+
+## O110. Four builtin receivers are Unknown after the Typing-support merge
+
+After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`
+finds four receivers of `fixtures/python/calls/project/pkg/typed.py` Unknown: `text = str(12)`, `data = b"ab"`,
+`words = [...]` and `table = {...}` (40 exact of 44). It fails with `RERAIL_CORPUS_MEMO=off` too, so the memo is not
+the cause. The merged `calls.rr` is that branch's, unchanged. The rr tape reader gives the parser's statements for it
+(`statements_from_the_tape_are_the_parsers` now covers the typing and golden programs). The run reads no typeshed:
+the world round loads no documents, and `litq`'s classes come from `qv("builtins.…", "cls", c)`. Whether the test
+passes on that branch alone was not checked: building a second target would exceed the disk budget. The test is
+ignored with this reason.
+
+**Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
+
+## O111. Python pack rules that fail to run, alone or combined
+
+Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail-engine run-rr` over
+`fixtures/python/calls/project`, a sample of the Python pack failed:
+
+- **A message names no column:** `ruff-c404`, `ruff-c406` and `ruff-perf403` ("message: no column k: v"), and
+  `ruff-fly002` ("FLY002_fstring message: no column a").
+- **No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.
+- **Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`
+  (`confusable_word`: `match_all` over a node, O80).
+- **Refused:** `ruff-b005`, whose value cycle is unbounded (see above).
+
+Given as one directory to `rerail-engine logic`, the pack does not combine. Leaving out the rules above, and others
+that fail combined (`ruff-c408`, `era001`, `fast003`, `int001`, `int002`, `ruf001` to `ruf003`, `ruf024`, `up030`,
+`up032`), every bandit rule then failed with "relation kind is read by the rule for B101 and not declared". That
+points to how a directory is combined, not to the bandit rules. Not investigated.
+
+**Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
+
+## O112. The shared tape cache holds memo rows whose length does not match
+
+Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
+"corrupt content store: facts memo length does not match metadata". The default tape cache
+(`$TMPDIR/rerail-tape-cache.sqlite`, which every build and session on the machine shares) held 18 of 4,867
+`facts_results` rows whose zstd frame decodes to one byte fewer than `raw_length`. All are per-file memo rows (fact
+schemas 3 and 4) of a `b.py`. No prepared-program entry (schema 1) is among them. In one writer, `raw_length` and the
+frame come from the same entry (`put_facts_memo`), so another writer of the shared file is the likely source. That
+is not confirmed.
+
+`facts_memo` decodes every content-pure row of a source and schema, so one bad row fails every lookup on that source,
+and the run fails instead of missing. The file was not moved (DB files are not moved). Tests for 0073 ran against a
+fresh store (`RERAIL_TAPE_CACHE`).
+
+**Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.

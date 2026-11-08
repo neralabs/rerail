@@ -749,6 +749,7 @@ impl Emitter {
     }
 
     /// Adds a rule `head :- body` and its head's declaration.
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn rule(&mut self, head: &str, columns: &str, body: Body) {
         let name = head.split('(').next().unwrap_or(head).to_owned();
         self.decls.insert(name, columns.to_owned());
@@ -1766,3 +1767,6 @@ impl Globber {
 
 #[cfg(test)]
 mod tests;
+
+mod policy;
+pub(in crate::code_rule_dsl) use policy::policy;

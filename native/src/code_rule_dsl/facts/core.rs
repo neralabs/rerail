@@ -20,16 +20,32 @@ pub(crate) const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub(crate) const KIND_STRIDE: u32 = 1024;
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's code (`u16::MAX`) reaches past the
-/// stride, so a kind atom's dialect is its document's (`Facts::tag`), never the atom divided by the stride.
+/// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
+const ERROR_SYMBOL: u16 = u16::MAX;
+
+/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
+/// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
+/// `tag * 1024 + 0xffff` would read as another dialect's kind.
 pub(crate) fn kind_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) * KIND_STRIDE + u32::from(code)
+    u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
 }
 
-/// The kind code of `atom` in the dialect whose tape tag is `tag` (`kind_atom`'s inverse), if it is one of that
-/// dialect's.
-pub(crate) fn kind_code(tag: u8, atom: u32) -> Option<u16> {
-    atom.checked_sub(u32::from(tag) * KIND_STRIDE).and_then(|code| u16::try_from(code).ok())
+/// The tape tag of a kind atom's dialect.
+pub(crate) fn kind_tag(atom: u32) -> u8 {
+    (atom / KIND_STRIDE) as u8
+}
+
+/// The kind code of a kind atom in its dialect's catalog (`kind_atom`'s inverse: code 0 is ERROR).
+pub(crate) fn kind_code(atom: u32) -> u16 {
+    match atom % KIND_STRIDE {
+        0 => ERROR_SYMBOL,
+        code => code as u16,
+    }
+}
+
+/// The tape tag of a document's dialect (`Facts::tag`): a text-only document, which has no nodes, has its own.
+pub(crate) fn facts_tag(f: &Facts) -> u8 {
+    f.tag
 }
 
 /// One file's facts. Columns are indexed by node id.
@@ -62,6 +78,8 @@ pub(crate) struct Facts {
     pub class_offsets: Vec<u32>,
     pub class_nodes: Vec<u32>,
     pub syntax_errors: bool,
+    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
+    pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
 }
 
 pub(crate) enum Built {
@@ -72,37 +90,74 @@ pub(crate) enum Built {
 
 /// Parses `file` in its own dialect and reads its facts off the tape.
 pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
-    Ok(build_with_tape(file, None)?.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)))
+    Ok(build_with_tape(file)?.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)))
 }
 
-/// [`build`], with the tape the facts were read off (`None`: the parser stopped at a limit). With a `cache` (a
-/// content store, keyed by the source's content, the grammar's version and the tape format), the file's tape is
-/// read from it where it has one, else parsed and stored: the corpus runner's parse cache, so a file parsed once is
-/// not parsed again by a later run.
-pub(crate) fn build_with_tape(file: &FileInput, cache: Option<&crate::content_store::ContentStore>) -> Result<Option<(Facts, TapeDoc)>, String> {
+/// [`build`], with the tape the facts were read off (`None`: the parser stopped at a limit): W's values, f-string
+/// trees and string annotations read it.
+pub(crate) fn build_with_tape(file: &FileInput) -> Result<Option<(Facts, TapeDoc)>, String> {
+    let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
+    let tape = eval::file_tape(language, file).map_err(|e| e.reason.to_string())?;
+    let Some((doc, lines)) = tape else {
+        return Ok(None);
+    };
+    let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok(Some((facts, doc)))
+}
+
+/// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
+/// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
+/// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
+pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+    build_cached_as(file, cache, None)
+}
+
+/// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
+pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
+    build_cached_source(file, cache, known).map(|(built, _)| built)
+}
+
+/// [`build_cached_as`], with the source's id as the store holds it after the build. A parsed tape is stored with its
+/// source in one transaction (O95), so a source collected since the caller resolved `known` is stored again, under a
+/// new id; `None` when the file did not parse and its source is not known.
+pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
+    let (built, id) = build_cached_with_tape(file, cache, known)?;
+    Ok((built.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)), id))
+}
+
+/// [`build_cached_source`], with the tape the facts were read off (`None`: the parser stopped at a limit), as
+/// [`build_with_tape`] gives it.
+pub(crate) fn build_cached_with_tape(
+    file: &FileInput,
+    cache: &crate::content_store::ContentStore,
+    known: Option<crate::content_store::SourceId>,
+) -> Result<(Option<(Facts, TapeDoc)>, Option<crate::content_store::SourceId>), String> {
+    // A standalone cache build has the same lookup/parse/publication window as a corpus run.
+    let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;
     use crate::content_store::HashKey;
     let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
-    let Some(cache) = cache else {
-        let tape = eval::file_tape(language, file).map_err(|e| e.reason.to_string())?;
-        let Some((doc, lines)) = tape else {
-            return Ok(None);
-        };
-        let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-        return Ok(Some((from_tape(&doc, lines)?, doc)));
-    };
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
     let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source.as_bytes();
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
-    let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
-        Some(id) => id,
-        None => cache.put_source(bytes, &[]).map_err(e)?,
+    // The source as the store has it, when it has it: a new one is stored with its tape below.
+    let mut source_id = match known {
+        Some(id) => Some(id),
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+            cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)?
+        }
     };
-    let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
+    let stored = match source_id {
+        Some(id) => cache.tape_by_source(id, tag, gv, fv).map_err(e)?,
+        None => None,
+    };
     drop(lookup);
     let grammar = tape::Grammar::new(language)?;
     let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
@@ -112,23 +167,31 @@ pub(crate) fn build_with_tape(file: &FileInput, cache: Option<&crate::content_st
         }
         None => {
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+            // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
             let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
-                return Ok(None);
+                return Ok((None, source_id));
             };
             let image = image?;
             drop(parse);
             let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
-            cache.put_tape(source_id, tag, gv, fv, &image.primary.to_bytes()?).map_err(e)?;
+            let tape = image.primary.to_bytes()?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            let (id, _) = cache.put_source_and_tape(bytes, HashKey::sha256(bytes), tag, gv, fv, &tape).map_err(e)?;
+            source_id = Some(id);
             image.primary
         }
     };
     let image = FileImage { primary, derived: Vec::new() };
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
     let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
     drop(restore);
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    Ok(Some((from_tape(&doc, lines)?, doc)))
+    let facts = from_tape(&doc, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    Ok((Some((facts, doc)), source_id))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
@@ -156,6 +219,7 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
         class_offsets: Vec::new(),
         class_nodes: Vec::new(),
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
+        python_syntax: Default::default(),
     };
     for id in 0..n as u32 {
         f.kind.push(kind_atom(tag, doc.transducer_kind(id)));
@@ -204,6 +268,7 @@ pub(crate) fn text(source: Arc<String>) -> Facts {
         class_offsets: Vec::new(),
         class_nodes: Vec::new(),
         syntax_errors: false,
+        python_syntax: Default::default(),
     };
     index(&mut f);
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
@@ -239,6 +304,7 @@ pub(crate) fn from_subtree(tag: u8, tree: &crate::code_rule_dsl::literal::SubTre
         class_offsets: Vec::new(),
         class_nodes: Vec::new(),
         syntax_errors: false,
+        python_syntax: Default::default(),
     };
     for node in tree.preorder() {
         f.kind.push(kind_atom(tag, node.kind));
@@ -373,12 +439,15 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     hash.update(f.source.as_bytes());
     hash.update((f.len() as u64).to_le_bytes());
     // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
+    let mut bytes = f.source.len() + f.flags.len() + std::mem::size_of_val(&f.field[..]);
     for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
         hash.update((column.len() as u64).to_le_bytes());
         update_le(&mut hash, column);
+        bytes += std::mem::size_of_val(&column[..]);
     }
     hash.update(&f.flags);
     update_le(&mut hash, &f.field);
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()
 }

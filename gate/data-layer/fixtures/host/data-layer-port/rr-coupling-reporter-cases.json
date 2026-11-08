@@ -1,0 +1,335 @@
+{
+  "format": "rerail.rr-reporter-cases/v1",
+  "cases": [
+    {
+      "id": "scope-0",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "data_layer/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "_internal/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "l\u0661\u0662\u0663\u0664_name/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "nested/l1234_name/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-5",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "impl/common/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-6",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "impl/mongodb/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-7",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "impl/neo4j/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-8",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "impl/mongodbsuffix/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-9",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/tests/test_foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-10",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/test/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-11",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/conform/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-12",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/tmp/foo.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-13",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/test_entity.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-14",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "impl/common/test_entity.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-15",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "_internal/dynamic_import.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-16",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "nested/_internal/dynamic_import.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-17",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/__init__.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-18",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "l2000_connection/connection_factory.py",
+          "source": "from impl.sqlite.connection import X\nfrom impl.common.l2100_sql_grammar import Y\n"
+        }
+      ]
+    },
+    {
+      "id": "first-alias-safe",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "import os, impl.sqlite.connection\n"
+        }
+      ]
+    },
+    {
+      "id": "first-alias-bad",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "import impl.sqlite.connection as connection, os\n"
+        }
+      ]
+    },
+    {
+      "id": "multiple-bad-first-only",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "import impl.sqlite.connection, impl.postgres.connection\n"
+        }
+      ]
+    },
+    {
+      "id": "normalized-dotted",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "from \uff49\uff4d\uff50\uff4c.\uff53\uff51\uff4c\uff49\uff54\uff45 import X\n"
+        }
+      ]
+    },
+    {
+      "id": "parenthesized-typechecking",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "if (TYPE_CHECKING):\n    import impl.sqlite\nelse:\n    import impl.postgres\n"
+        }
+      ]
+    },
+    {
+      "id": "elif-typechecking",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "if value:\n    pass\nelif TYPE_CHECKING:\n    import impl.sqlite\nelse:\n    import impl.postgres\n"
+        }
+      ]
+    },
+    {
+      "id": "outer-typechecking",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "if TYPE_CHECKING:\n    pass\nelif value:\n    import impl.sqlite\nelse:\n    import impl.postgres\n"
+        }
+      ]
+    },
+    {
+      "id": "normalized-guard",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "if \uff34\uff39\uff30\uff25\uff3f\uff23\uff28\uff25\uff23\uff2b\uff29\uff2e\uff27:\n    import impl.sqlite\n"
+        }
+      ]
+    },
+    {
+      "id": "bfs-order",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "def outer():\n    import impl.sqlite.inner\nimport impl.postgres.outer\n"
+        }
+      ]
+    },
+    {
+      "id": "no-source-gate",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "import \uff49\uff4d\uff50\uff4c.\uff53\uff51\uff4c\uff49\uff54\uff45\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-extra-.pytest_cache",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/.pytest_cache/foo.py",
+          "source": "from impl.sqlite import X\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-extra-node_modules",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/node_modules/foo.py",
+          "source": "from impl.sqlite import X\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-extra-browser_build",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/browser_build/foo.py",
+          "source": "from impl.sqlite import X\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-extra-venv",
+      "check": "backend_coupling",
+      "files": [
+        {
+          "path": "api/venv/foo.py",
+          "source": "from impl.sqlite import X\n"
+        }
+      ]
+    }
+  ]
+}

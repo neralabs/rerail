@@ -1,26 +1,19 @@
-//! Python's string annotations as core.rr's relations, made by a batch only for a program that reads them
+//! Python's string annotations as core.rr's relation, made by a batch only for a program that reads it
 //! (`Annotations::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text
 //! string_annotation(s)             s (a `string` or `concatenated_string`) is a string Ruff 0.16.9's semantic model
 //!                                  reads as a type definition (`scope::python::typedefs`: the scope table's
 //!                                  `annotations`), nested ones included
-//! parsed(s, "annotation", root)    root is the tree of the expression s holds, as Ruff's `parse_type_annotation`
-//!                                  reads it (`literal::annotation`): an `expression_statement` over the whole text
 //! ```
 //!
-//! Each tree that parses is a document of its own, past the batch's real documents: key `PARSED | host << 11 | k` for
-//! the `k`th annotation of document `host`, its text the string's value (decoded), its nodes numbered as a document's
-//! (`Projected`). Its nodes have the rows of a document's nodes (`node`, `child`, `field`, `tape`, `text`, `name`,
-//! `str`, `strprefix`, `intval`, `op`, `line`, `end_line`, `col`, `node_text`, `docof`, each over the tree's own text
-//! and lines, its document its own key), so `inside(n, root, k)` and the rest read it as any tree; the document has
-//! no `doc`, `pkg`, `syntax_error` or span rows. A string nested in an annotation (`"List['A']"`'s `'A'`) is a node of
-//! its outer annotation's document, and its own tree another document. A string Ruff's parser refuses gives
-//! `string_annotation(s)` and no `parsed` row (CPython's `ast.parse(value, mode="eval")` refuses it too). Rows hold
-//! string indexes, as `Batch::build`'s do.
+//! Its tree is decision 0055's guest: `parsed(s, "annotation", root)` asks for it (`corpus::guests` parses the string's
+//! value as `( … )`, the expression inside the parentheses its root), and a string Ruff's parser refuses has
+//! `string_annotation(s)` and no `parsed` row (its guest does not parse and is withheld). A string nested in an
+//! annotation (`"List['A']"`'s `'A'`) is a node of its outer annotation's guest: its row is made once that guest is a
+//! document of the batch, found by its range in the guest's text (one byte on, past the `(`).
 
-use super::{Dialect, Document, Projected, Relation, Shape};
-use crate::code_rule_dsl::facts::core;
+use super::{Dialect, Document, Projected, Relation};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubTree;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
@@ -28,14 +21,11 @@ use crate::content_store::{StoreError, StoreResult};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-/// The relations' names.
-pub(crate) const RELATIONS: [&str; 2] = ["string_annotation", "parsed"];
+/// The relation's name.
+pub(crate) const RELATION: &str = "string_annotation";
 
-/// The key flag of an annotation's document: real documents' keys are below it.
-pub(crate) const PARSED: u32 = 1 << 30;
-/// Bits of the annotation's index in its document's key, and the hosts' keys they leave.
-const INDEX_BITS: u32 = 11;
-const HOST_LIMIT: u32 = 1 << (30 - INDEX_BITS);
+/// The grammar of a string annotation's guest (`corpus::guests`).
+const GRAMMAR: &str = "annotation";
 
 /// The kinds a string annotation is a node of.
 const HOSTS: [&str; 2] = ["string", "concatenated_string"];
@@ -72,97 +62,104 @@ pub(crate) fn string_annotations(tape: &crate::code_rule_dsl::tape::TapeDoc) -> 
     Ok(out)
 }
 
+/// A string annotation nested in another: its range in the outer one's text, and its own nested ones.
+#[derive(Clone)]
+struct Nested {
+    start: usize,
+    end: usize,
+    inner: Vec<Nested>,
+}
+
 #[derive(Default)]
 pub(super) struct Annotations {
     string_annotation: bool,
-    parsed: bool,
-    /// The string index of `"annotation"`, once a `parsed` row holds it.
-    grammar: i64,
     hosts: Vec<i64>,
-    parsed_rows: Vec<[i64; 2]>,
+    /// The nested string annotations of each string annotation (by its node), for its guest.
+    nested: HashMap<i64, Vec<Nested>>,
+    /// Each annotation guest of the batch: the node it stands at, and its string nodes by range in its text.
+    guests: Vec<(i64, HashMap<(u32, u32), i64>)>,
 }
 
 impl Annotations {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
-        Self { string_annotation: reads.contains(RELATIONS[0]), parsed: reads.contains(RELATIONS[1]), ..Self::default() }
+        Self { string_annotation: reads.contains(RELATION), ..Self::default() }
     }
 
-    /// Document `p`'s rows (`d` its document; `python`: it is Python's), and its annotations' documents, to be
-    /// placed after the batch's real documents.
-    pub(super) fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<Vec<Projected>> {
-        let (true, true, Some(dialect)) = (self.string_annotation || self.parsed, python, dialect) else { return Ok(Vec::new()) };
+    /// Document `p`'s rows (`d` its document; `python`: it is Python's). A file's are read off its tape; an annotation
+    /// guest's strings wait for `relations`, as its host may be a guest the batch holds after it.
+    pub(super) fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, python: bool) -> StoreResult<()> {
+        let (true, true, Some(dialect)) = (self.string_annotation, python, dialect) else { return Ok(()) };
+        // The string hosts of the projection, by range.
         let f = &*p.facts;
+        let by_range: HashMap<(u32, u32), i64> = p
+            .core
+            .iter()
+            .enumerate()
+            .filter(|&(_, &id)| HOSTS.contains(&dialect.name(f, id)))
+            .map(|(local, &id)| ((f.start[id as usize], f.end[id as usize]), p.global(local as u32)))
+            .collect();
+        if let Some(g) = d.guest.as_deref() {
+            if g.grammar == GRAMMAR {
+                self.guests.push((g.at, by_range));
+            }
+            return Ok(());
+        }
         let Some((tape, _)) = &d.tape else {
-            return Err(StoreError::Invalid(format!("{}: string_annotation and parsed need the document's tape", d.path)));
+            return Err(StoreError::Invalid(format!("{}: string_annotation needs the document's tape", d.path)));
         };
         if tape.transducer_len() != f.len() {
             return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
         }
         let found = string_annotations(tape).map_err(|e| StoreError::Invalid(format!("{}: {e}", d.path)))?;
-        if found.is_empty() {
-            return Ok(Vec::new());
+        // Each annotation's nested ones: an outer one comes before its nested ones, so the innermost are placed first.
+        let mut nested: Vec<Vec<Nested>> = vec![Vec::new(); found.len()];
+        for k in (0..found.len()).rev() {
+            if let Some(o) = found[k].outer {
+                let inner = std::mem::take(&mut nested[k]);
+                nested[o].push(Nested { start: found[k].start, end: found[k].end, inner });
+            }
         }
-        if p.key >= HOST_LIMIT || found.len() > 1 << INDEX_BITS {
-            return Err(StoreError::Invalid(format!(
-                "{}: string annotations need a document key below {HOST_LIMIT} and at most {} annotations (key {}, {} annotations)",
-                d.path,
-                1 << INDEX_BITS,
-                p.key,
-                found.len()
-            )));
-        }
-        // The string hosts of a projection, by range.
-        let hosts_of = |q: &Projected| -> HashMap<(u32, u32), u32> {
-            let g = &*q.facts;
-            q.core
-                .iter()
-                .enumerate()
-                .filter(|&(_, &id)| HOSTS.contains(&dialect.name(g, id)))
-                .map(|(local, &id)| ((g.start[id as usize], g.end[id as usize]), local as u32))
-                .collect()
-        };
-        let top = hosts_of(p);
-        // Each annotation's document (none where its string does not parse) and that document's hosts.
-        let mut trees: Vec<Option<Projected>> = Vec::with_capacity(found.len());
-        let mut inner: Vec<HashMap<(u32, u32), u32>> = Vec::with_capacity(found.len());
-        for (k, a) in found.iter().enumerate() {
-            let tree = (!a.tree.is_error())
-                .then(|| Projected::new(PARSED | p.key << INDEX_BITS | k as u32, Arc::new(core::from_subtree(f.tag, &a.tree)), Some(dialect), Shape::T))
-                .filter(|t| t.len() > 0 && t.local[0] == 0);
-            let (projection, by_range) = match a.outer {
-                None => (Some(p), &top),
-                Some(o) => (trees[o].as_ref(), &inner[o]),
-            };
-            let host = projection.and_then(|q| by_range.get(&(a.start as u32, a.end as u32)).map(|&local| q.global(local)));
-            inner.push(tree.as_ref().map(hosts_of).unwrap_or_default());
-            if let Some(s) = host {
-                if self.string_annotation {
-                    self.hosts.push(s);
-                }
-                if self.parsed && let Some(t) = &tree {
-                    self.grammar = string("annotation") as i64;
-                    self.parsed_rows.push([s, t.global(0)]);
+        for (k, a) in found.iter().enumerate().filter(|(_, a)| a.outer.is_none()) {
+            if let Some(&s) = by_range.get(&(a.start as u32, a.end as u32)) {
+                self.hosts.push(s);
+                let inner = std::mem::take(&mut nested[k]);
+                if !inner.is_empty() {
+                    self.nested.insert(s, inner);
                 }
             }
-            trees.push(tree);
         }
-        Ok(trees.into_iter().flatten().collect())
+        Ok(())
     }
 
-    /// The relations read, their strings as atoms (`atom` of a string index).
-    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
-        let mut out = Vec::new();
-        if self.string_annotation {
-            let mut r = Relation::new(&["s"]);
-            let hosts: BTreeSet<i64> = self.hosts.into_iter().collect();
-            hosts.iter().for_each(|&s| r.push(&[s]));
-            out.push((RELATIONS[0], r));
+    /// The relation read: the files' string annotations, and those nested in the annotation guests of the batch.
+    pub(super) fn relations(mut self) -> Vec<(&'static str, Relation)> {
+        if !self.string_annotation {
+            return Vec::new();
         }
-        if self.parsed {
-            let mut r = Relation::new(&["s", "grammar", "root"]);
-            self.parsed_rows.iter().for_each(|&[s, root]| r.push(&[s, atom(self.grammar), root]));
-            out.push((RELATIONS[1], r));
+        // A guest's strings are placed once its own host's are: a guest of a guest may come before it.
+        let mut pending = std::mem::take(&mut self.guests);
+        loop {
+            let before = pending.len();
+            pending.retain(|(at, by_range)| {
+                let Some(nested) = self.nested.get(at).cloned() else { return true };
+                for n in nested {
+                    // The guest's text is the string's value in `( … )`.
+                    if let Some(&s) = by_range.get(&((n.start + 1) as u32, (n.end + 1) as u32)) {
+                        self.hosts.push(s);
+                        if !n.inner.is_empty() {
+                            self.nested.insert(s, n.inner);
+                        }
+                    }
+                }
+                false
+            });
+            if pending.len() == before {
+                break;
+            }
         }
-        out
+        let mut r = Relation::new(&["s"]);
+        let hosts: BTreeSet<i64> = self.hosts.into_iter().collect();
+        hosts.iter().for_each(|&s| r.push(&[s]));
+        vec![(RELATION, r)]
     }
 }

@@ -1,0 +1,1227 @@
+{
+  "format": "rerail.shared-work-discoveries/v1",
+  "reports": [
+    {
+      "format": "rerail.shared-work-discovery/v1",
+      "capture": ".rerail/profiles/sql-relation-lifetimes-20261023/final-state-diagnostic/sql/raw/candidate-82708-0.json",
+      "complete": true,
+      "hostStatements": 1716,
+      "skippedHosts": [],
+      "materializedPlacements": 10320,
+      "definitionsInMultipleHosts": 157,
+      "extraHostPlacements": 1240,
+      "largestHosts": [
+        [
+          "result:0",
+          1101
+        ],
+        [
+          "stage:981:s5964",
+          87
+        ],
+        [
+          "stage:165:s818",
+          71
+        ],
+        [
+          "stage:429:s2473",
+          61
+        ],
+        [
+          "stage:88:s368",
+          49
+        ]
+      ],
+      "candidates": [
+        {
+          "definitionSha256": "bd4b3394ab19cc70cd461a0c3289d0c3199fc61f4f118ed8306b07336955a413",
+          "hostStatements": 670,
+          "placements": 670,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:8:s6",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:16:s26",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:25:s51",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:31:s76",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:35:s97",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:38:s108",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:48:s138",
+              "localName": "s3"
+            },
+            {
+              "host": "stage:49:s144",
+              "localName": "s3"
+            }
+          ],
+          "definition": "s3(fid,pre) AS MATERIALIZED (SELECT 0,0 WHERE 0)",
+          "review": "constant-fold"
+        },
+        {
+          "definitionSha256": "176759f9ce896c0790721e0724e49bbbaca41f7582f06cb33a72f96d3c5ff4c1",
+          "hostStatements": 144,
+          "placements": 144,
+          "columns": "fid",
+          "witnesses": [
+            {
+              "host": "stage:4:decode_all_nodes",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:5:mark_decoded_files",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:6:s2",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:7:s5",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:9:s8",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:10:s10",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:13:s16",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:14:s17",
+              "localName": "cf"
+            }
+          ],
+          "definition": "cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "f717ab4f47845a3f239744a8434c815db59cd3e7242cd4b3af51ef0d65d12f69",
+          "hostStatements": 53,
+          "placements": 53,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:548:s3249",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:572:s3411",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:600:s3581",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:623:s3731",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:646:s3882",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:670:s4033",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:693:s4183",
+              "localName": "ranges3242"
+            },
+            {
+              "host": "stage:717:s4334",
+              "localName": "ranges3242"
+            }
+          ],
+          "definition": "ranges3242(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props3241 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "973c95e4d45cbcc05c933c39d148683c8408c3a93d85ee2e42cadef5c7f891d7",
+          "hostStatements": 29,
+          "placements": 29,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:25:s51",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:31:s76",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:49:s144",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:59:s213",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:63:s236",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:90:s379",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:112:s525",
+              "localName": "ranges45"
+            },
+            {
+              "host": "stage:123:s635",
+              "localName": "ranges45"
+            }
+          ],
+          "definition": "ranges45(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props44 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "cbde4d119750625d42108d7320bc3c151e0e651d6566ed854e432762bc927917",
+          "hostStatements": 28,
+          "placements": 28,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:25:s51",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:31:s76",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:49:s144",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:59:s213",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:63:s236",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:90:s379",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:112:s525",
+              "localName": "frontier46"
+            },
+            {
+              "host": "stage:123:s635",
+              "localName": "frontier46"
+            }
+          ],
+          "definition": "frontier46(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges45 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "7c8685720a2225d7105b374ceb728caab6ad130e7f78d915ea59ee3f7c01aaba",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:1207:s7942",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1214:s8118",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1234:s8253",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1254:s8400",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1274:s8533",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1294:s8666",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1314:s8799",
+              "localName": "s7936"
+            },
+            {
+              "host": "stage:1334:s8932",
+              "localName": "s7936"
+            }
+          ],
+          "definition": "s7936(fid,pre) AS MATERIALIZED (SELECT r.fid,r.pre FROM ranges3242 r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM s7926 m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "b75120802c2de6077a4b4c363caee3dfaa672c686f867671c12bd4d7e6e338da",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:1207:s7942",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1214:s8118",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1234:s8253",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1254:s8400",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1274:s8533",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1294:s8666",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1314:s8799",
+              "localName": "frontier7939"
+            },
+            {
+              "host": "stage:1334:s8932",
+              "localName": "frontier7939"
+            }
+          ],
+          "definition": "frontier7939(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges7938 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "bc308f397524456180fd642cb970ca0c5393f886c941a142d0f4b309aa2e9637",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:1207:s7942",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1214:s8118",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1234:s8253",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1254:s8400",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1274:s8533",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1294:s8666",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1314:s8799",
+              "localName": "ranges7938"
+            },
+            {
+              "host": "stage:1334:s8932",
+              "localName": "ranges7938"
+            }
+          ],
+          "definition": "ranges7938(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props7937 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "abe4a0ed3c4bbe92e4e1fca668e34277f0a65f7d828e63e7a977889f1562fe8c",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:548:s3249",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:572:s3411",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:600:s3581",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:623:s3731",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:646:s3882",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:670:s4033",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:693:s4183",
+              "localName": "s3243"
+            },
+            {
+              "host": "stage:717:s4334",
+              "localName": "s3243"
+            }
+          ],
+          "definition": "s3243(fid,pre) AS MATERIALIZED (SELECT r.fid,r.pre FROM ranges3242 r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM s3229 m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "d3e4f5583003c360f538c23b517485dcb379291353120ea6e62fb42fc22b4148",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:548:s3249",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:572:s3411",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:600:s3581",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:623:s3731",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:646:s3882",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:670:s4033",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:693:s4183",
+              "localName": "frontier3246"
+            },
+            {
+              "host": "stage:717:s4334",
+              "localName": "frontier3246"
+            }
+          ],
+          "definition": "frontier3246(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges3245 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "f409c244e83a80ae28b8d80380d8a623d6cc4f8504fa45e2a5f47bebc17366ca",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:548:s3249",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:572:s3411",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:600:s3581",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:623:s3731",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:646:s3882",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:670:s4033",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:693:s4183",
+              "localName": "ranges3245"
+            },
+            {
+              "host": "stage:717:s4334",
+              "localName": "ranges3245"
+            }
+          ],
+          "definition": "ranges3245(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props3244 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "f270911270ce2ebb392c9141f96a4932d6bf123f08ba133ee74f3f84b541f300",
+          "hostStatements": 8,
+          "placements": 8,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:89:s373",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:100:s483",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:122:s629",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:166:s843",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:177:s1037",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:210:s1282",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:248:s1454",
+              "localName": "frontier371"
+            },
+            {
+              "host": "stage:275:s1608",
+              "localName": "frontier371"
+            }
+          ],
+          "definition": "frontier371(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges370 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        }
+      ],
+      "localNamesWithDifferentDefinitions": 115,
+      "limitations": [
+        "Static placements, not runtime builds, CPU savings, or safe automatic sharing.",
+        "Each capture is analyzed separately. File versions and mutable-write epochs remain distinct.",
+        "Only generated CTE structure is compared. Nested scopes and forward references are skipped explicitly.",
+        "Legacy captures identify SQL hosts, not rule consumers. Local name reuse across hosts is legal."
+      ]
+    },
+    {
+      "format": "rerail.shared-work-discovery/v1",
+      "capture": ".rerail/profiles/sql-relation-lifetimes-20261023/before-ten-capture/sql/raw/candidate-81166-0.json",
+      "complete": true,
+      "hostStatements": 3216,
+      "skippedHosts": [],
+      "materializedPlacements": 19001,
+      "definitionsInMultipleHosts": 255,
+      "extraHostPlacements": 2048,
+      "largestHosts": [
+        [
+          "result:0",
+          1332
+        ],
+        [
+          "result:1",
+          717
+        ],
+        [
+          "result:2",
+          457
+        ],
+        [
+          "stage:1167:s7477",
+          87
+        ],
+        [
+          "stage:364:s2331",
+          71
+        ]
+      ],
+      "candidates": [
+        {
+          "definitionSha256": "bd4b3394ab19cc70cd461a0c3289d0c3199fc61f4f118ed8306b07336955a413",
+          "hostStatements": 1168,
+          "placements": 1168,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:24:s93",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:59:s190",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:74:s363",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:107:s572",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:112:s583",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:125:s645",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:136:s714",
+              "localName": "s8"
+            },
+            {
+              "host": "stage:139:s760",
+              "localName": "s8"
+            }
+          ],
+          "definition": "s8(fid,pre) AS MATERIALIZED (SELECT 0,0 WHERE 0)",
+          "review": "constant-fold"
+        },
+        {
+          "definitionSha256": "176759f9ce896c0790721e0724e49bbbaca41f7582f06cb33a72f96d3c5ff4c1",
+          "hostStatements": 304,
+          "placements": 304,
+          "columns": "fid",
+          "witnesses": [
+            {
+              "host": "stage:4:decode_all_nodes",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:5:mark_decoded_files",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:6:s2",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:8:s6",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:9:s9",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:11:s12",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:12:s14",
+              "localName": "cf"
+            },
+            {
+              "host": "stage:15:s20",
+              "localName": "cf"
+            }
+          ],
+          "definition": "cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "f717ab4f47845a3f239744a8434c815db59cd3e7242cd4b3af51ef0d65d12f69",
+          "hostStatements": 53,
+          "placements": 53,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:729:s4762",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:754:s4924",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:783:s5094",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:807:s5244",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:831:s5395",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:855:s5546",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:879:s5696",
+              "localName": "ranges4755"
+            },
+            {
+              "host": "stage:903:s5847",
+              "localName": "ranges4755"
+            }
+          ],
+          "definition": "ranges4755(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props4754 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "973c95e4d45cbcc05c933c39d148683c8408c3a93d85ee2e42cadef5c7f891d7",
+          "hostStatements": 29,
+          "placements": 29,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:240:s1579",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:244:s1602",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:261:s1669",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:271:s1738",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:275:s1761",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:296:s1901",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:312:s2040",
+              "localName": "ranges1509"
+            },
+            {
+              "host": "stage:323:s2150",
+              "localName": "ranges1509"
+            }
+          ],
+          "definition": "ranges1509(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props1508 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "cbde4d119750625d42108d7320bc3c151e0e651d6566ed854e432762bc927917",
+          "hostStatements": 28,
+          "placements": 28,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:240:s1579",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:244:s1602",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:261:s1669",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:271:s1738",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:275:s1761",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:296:s1901",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:312:s2040",
+              "localName": "frontier1510"
+            },
+            {
+              "host": "stage:323:s2150",
+              "localName": "frontier1510"
+            }
+          ],
+          "definition": "frontier1510(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges1509 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "6744641e332bcc4d44f5df95b8b2e803ccacb5a749930e1f71cc430154a59c24",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:1401:s9455",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1408:s9631",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1428:s9766",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1448:s9913",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1468:s10046",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1488:s10179",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1508:s10312",
+              "localName": "ranges9451"
+            },
+            {
+              "host": "stage:1528:s10445",
+              "localName": "ranges9451"
+            }
+          ],
+          "definition": "ranges9451(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props9450 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "80e2824bc11e6861e8eccb2866f389e9b74a82f93ef6cb8723a575dbb2f2ded9",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:1401:s9455",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1408:s9631",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1428:s9766",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1448:s9913",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1468:s10046",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1488:s10179",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1508:s10312",
+              "localName": "frontier9452"
+            },
+            {
+              "host": "stage:1528:s10445",
+              "localName": "frontier9452"
+            }
+          ],
+          "definition": "frontier9452(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges9451 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "f47aaf8896c87e94b96e83061193168f490a088b74dc6f3cf83a268222447ee7",
+          "hostStatements": 26,
+          "placements": 26,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:1401:s9455",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1408:s9631",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1428:s9766",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1448:s9913",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1468:s10046",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1488:s10179",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1508:s10312",
+              "localName": "s9449"
+            },
+            {
+              "host": "stage:1528:s10445",
+              "localName": "s9449"
+            }
+          ],
+          "definition": "s9449(fid,pre) AS MATERIALIZED (SELECT r.fid,r.pre FROM ranges4755 r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM s9439 m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "12ce3f168d45b110f090c719670405416314f7b63d6953de9ca180e5fda75893",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,pre",
+          "witnesses": [
+            {
+              "host": "stage:729:s4762",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:754:s4924",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:783:s5094",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:807:s5244",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:831:s5395",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:855:s5546",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:879:s5696",
+              "localName": "s4756"
+            },
+            {
+              "host": "stage:903:s5847",
+              "localName": "s4756"
+            }
+          ],
+          "definition": "s4756(fid,pre) AS MATERIALIZED (SELECT r.fid,r.pre FROM ranges4755 r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM s4742 m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi))",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "69deebd430b019db8a279ac568ac0832693ca78cda7c3777f588ed6f792457e1",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,pre,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:729:s4762",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:754:s4924",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:783:s5094",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:807:s5244",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:831:s5395",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:855:s5546",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:879:s5696",
+              "localName": "ranges4758"
+            },
+            {
+              "host": "stage:903:s5847",
+              "localName": "ranges4758"
+            }
+          ],
+          "definition": "ranges4758(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props4757 s)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "83c917e89a8475848a5447c0fd8c07be8fd0b44feff35ae7d4f8161256f045b8",
+          "hostStatements": 25,
+          "placements": 25,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:729:s4762",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:754:s4924",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:783:s5094",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:807:s5244",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:831:s5395",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:855:s5546",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:879:s5696",
+              "localName": "frontier4759"
+            },
+            {
+              "host": "stage:903:s5847",
+              "localName": "frontier4759"
+            }
+          ],
+          "definition": "frontier4759(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges4758 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        },
+        {
+          "definitionSha256": "58ed5b8c2c3b5b6c8805d2c5825675be8c2fbcae56c6931650f27612f2b611aa",
+          "hostStatements": 8,
+          "placements": 8,
+          "columns": "fid,lo,hi",
+          "witnesses": [
+            {
+              "host": "stage:295:s1895",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:306:s2005",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:322:s2144",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:365:s2356",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:376:s2550",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:406:s2795",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:443:s2967",
+              "localName": "frontier1893"
+            },
+            {
+              "host": "stage:470:s3121",
+              "localName": "frontier1893"
+            }
+          ],
+          "definition": "frontier1893(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges1892 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)",
+          "review": "consider explicit producer contract"
+        }
+      ],
+      "localNamesWithDifferentDefinitions": 206,
+      "limitations": [
+        "Static placements, not runtime builds, CPU savings, or safe automatic sharing.",
+        "Each capture is analyzed separately. File versions and mutable-write epochs remain distinct.",
+        "Only generated CTE structure is compared. Nested scopes and forward references are skipped explicitly.",
+        "Legacy captures identify SQL hosts, not rule consumers. Local name reuse across hosts is legal."
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "path": ".rerail/profiles/sql-relation-lifetimes-20261023/final-state-diagnostic/sql/raw/candidate-82708-0.json",
+      "sha256": "ab5708e60e201279dbeaff6dc2c91e3a202cf6d80454f04f53625814dc61f5b5"
+    },
+    {
+      "path": ".rerail/profiles/sql-relation-lifetimes-20261023/before-ten-capture/sql/raw/candidate-81166-0.json",
+      "sha256": "c0f755cc3383fdedfcd0177a7d316ee96d788df41a67c4c9f9abbb3955efa9ea"
+    }
+  ],
+  "date": "2026-10-23",
+  "sources": [
+    {
+      "path": "scripts/profiling/shared_work.py",
+      "sha256": "3c7abcfeea73e18392987e891984e36116358281394c0a719d683410c385fda2"
+    },
+    {
+      "path": "scripts/profiling/shared_work/__init__.py",
+      "sha256": "ce27ff385f90d51463b827149828e395b2aa82c4c7043d050916e861aeb945d4"
+    },
+    {
+      "path": "scripts/profiling/shared_work/capture.py",
+      "sha256": "3d2cea9f43290471b4c634052765da922f24a1689c7d7e220f7d18fadb4c50a2"
+    },
+    {
+      "path": "scripts/profiling/shared_work/contracts.py",
+      "sha256": "8cff91099d0326828067b3d8285379de71d5c23d308e9ac8f7b8bc5a7404eb87"
+    }
+  ],
+  "declarationExample": {
+    "format": "rerail.shared-work-check/v1",
+    "valid": true,
+    "errors": [],
+    "clashes": [],
+    "equivalentContractCandidates": [],
+    "bindingGroups": [
+      {
+        "group": 0,
+        "identitySha256": "e0b18ea03496a259d3c2be05f2d41f4aee1e83ee4ff39045e6d507e98d20ff81",
+        "signature": {
+          "snapshot": "illustrative-evaluation-not-an-engine-export",
+          "contract": "syntax.source_spans.v1",
+          "inputs": {
+            "tape": {
+              "external": {
+                "name": "python-tape",
+                "generation": "file-1-generation-2"
+              }
+            }
+          },
+          "options": {}
+        },
+        "bindings": [
+          {
+            "id": "a",
+            "origin": {
+              "file": "fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json",
+              "entry": "bindings[0]",
+              "source": "illustrative rule consumer; not an existing policy export"
+            },
+            "consumers": [
+              "example.a"
+            ],
+            "requestedKeys": 1
+          },
+          {
+            "id": "b",
+            "origin": {
+              "file": "fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json",
+              "entry": "bindings[1]",
+              "source": "illustrative rule consumer; not an existing policy export"
+            },
+            "consumers": [
+              "example.b"
+            ],
+            "requestedKeys": 2
+          }
+        ]
+      }
+    ],
+    "sharedBindings": [
+      {
+        "group": 0,
+        "identitySha256": "e0b18ea03496a259d3c2be05f2d41f4aee1e83ee4ff39045e6d507e98d20ff81",
+        "contract": "syntax.source_spans.v1",
+        "bindings": [
+          {
+            "id": "a",
+            "origin": {
+              "file": "fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json",
+              "entry": "bindings[0]",
+              "source": "illustrative rule consumer; not an existing policy export"
+            },
+            "consumers": [
+              "example.a"
+            ],
+            "requestedKeys": 1
+          },
+          {
+            "id": "b",
+            "origin": {
+              "file": "fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json",
+              "entry": "bindings[1]",
+              "source": "illustrative rule consumer; not an existing policy export"
+            },
+            "consumers": [
+              "example.b"
+            ],
+            "requestedKeys": 2
+          }
+        ]
+      }
+    ],
+    "separateBindings": [],
+    "limitations": [
+      "Declared identity checks only. No SQL equivalence proof or runtime completion claim.",
+      "Hashes label diagnostic groups; the runtime registry must compare full definitions."
+    ],
+    "inputs": [
+      {
+        "path": "fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json",
+        "sha256": "ecc296870c38b66ccbe1f4a79341655214930f4daec04e1b719d780e075c6037"
+      }
+    ]
+  },
+  "validation": {
+    "newUnitChecks": 25,
+    "profilingSuiteExitCode": 0,
+    "runtimeChanged": false,
+    "structureMetricsPassed": 25,
+    "gitIndexUnchanged": true
+  }
+}

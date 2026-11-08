@@ -214,6 +214,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "bitlex"
+version = "0.1.0"
+
+[[package]]
 name = "block"
 version = "0.1.6"
 
@@ -590,6 +594,16 @@ dependencies = [
  "target-lexicon",
  "wasmtime-internal-jit-icache-coherence",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "cranelift-jit-wasm"
+version = "0.125.4"
+dependencies = [
+ "anyhow",
+ "cranelift-codegen",
+ "cranelift-control",
+ "cranelift-module",
 ]
 
 [[package]]
@@ -3128,11 +3142,13 @@ dependencies = [
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
+ "bitlex",
  "block",
  "cc",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
+ "cranelift-jit-wasm",
  "cranelift-module",
  "ed25519-dalek",
  "fallible-iterator",
@@ -3194,7 +3210,8 @@ dependencies = [
 [[package]]
 name = "ruff_python_ast"
 version = "0.0.10"
-source = "git+https://github.com/astral-sh/ruff?tag=0.16.4#11c76bf48fdac06b2f240cba502eda96da4dce77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439b17073024a8fd1a420987e2f11721930120f74a5a995dc86ef8df2c442a07"
 dependencies = [
  "aho-corasick",
  "arrayvec",
@@ -3215,7 +3232,8 @@ dependencies = [
 [[package]]
 name = "ruff_python_parser"
 version = "0.0.10"
-source = "git+https://github.com/astral-sh/ruff?tag=0.16.4#11c76bf48fdac06b2f240cba502eda96da4dce77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4938de7992b53ea16070ee180eddba74431e2219578444b75a7689f6b27fa2a"
 dependencies = [
  "bitflags 2.13.1",
  "bstr",
@@ -3237,7 +3255,8 @@ dependencies = [
 [[package]]
 name = "ruff_python_trivia"
 version = "0.0.10"
-source = "git+https://github.com/astral-sh/ruff?tag=0.16.4#11c76bf48fdac06b2f240cba502eda96da4dce77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16eef02a116ba556c4492a3c1c00fd0413e8df2e9d96b81d13df686effcd5f4d"
 dependencies = [
  "itertools 0.15.0",
  "ruff_source_file",
@@ -3249,7 +3268,8 @@ dependencies = [
 [[package]]
 name = "ruff_source_file"
 version = "0.0.10"
-source = "git+https://github.com/astral-sh/ruff?tag=0.16.4#11c76bf48fdac06b2f240cba502eda96da4dce77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a79181d6bc7477e06fb3aefdd618622b7ff5e6d99f8e829610172ab161a30275"
 dependencies = [
  "memchr",
  "ruff_text_size",
@@ -3258,7 +3278,8 @@ dependencies = [
 [[package]]
 name = "ruff_text_size"
 version = "0.0.10"
-source = "git+https://github.com/astral-sh/ruff?tag=0.16.4#11c76bf48fdac06b2f240cba502eda96da4dce77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80cdd98100ecff240f6a3f67d162726e13e92cfe60ef8f1b3c57c8fcb18e52f7"
 dependencies = [
  "get-size2",
 ]
@@ -3561,7 +3582,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3798,8 +3819,6 @@ checksum = "ea68304e134ecd095ac6c3574494fc62b909f416c4fca77e440530221e549d3d"
 [[package]]
 name = "tree-sitter"
 version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5129de2ccc97808c4583d48f1fb44576d015cf241e432800572bda11ef30c3b"
 dependencies = [
  "cc",
  "regex",

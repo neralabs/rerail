@@ -269,6 +269,466 @@ body is no larger than its own work. A positive read can connect the body, so cu
 than the reader. The candidate rule: cut a positive read only when a kept positive atom that is derived or
 constant-filtered binds all its variables. This is for a decision (an extension of 0048), not done here.
 
+### 2e. The roofline: every span against what its work needs (2026-11-06)
+
+The profile now has a roofline section (`logic/profile/roofline.rs`). Each span is charged with its work in units
+of one kind. SQL statements charge their VM steps and native joins their rows (into every step, plus the rows the
+last step makes). The rest are charged where the work is done: bytes read, hashed or stored; nodes built; values
+measured; cells solved; candidates priced. When the profile is written, short loops measure this machine's best
+time per unit: the roof. For each span the report then gives:
+
+- the roof time (units times the roof);
+- the excess (own CPU less the roof time);
+- for a join, the amplification (rows of work per row it made);
+- the CPU that no counter explains.
+
+Tree-sitter has no roof: it is the roof, and only a memo hit avoids it. Planning has none either; the report shows
+its rate.
+
+Runs: the full corpus (9,010 files, 28.2M nodes), the 94 converted rules of the checks with no hand-written rule,
+one combined run. Store as in decision 0053. The cold run is a fresh store. The warm run is the same tree again.
+The incremental run comes after 20 files each gained a function. Instructions are user and system, and the load
+was 18–27.
+
+| Run | Instructions | CPU (phases) | Peak RSS | Chunks |
+|---|---|---|---|---|
+| cold | 804e9 | 56.8 s | 447 MB | 104 |
+| warm | 20.9e9 | 1.40 s | 175 MB | 0 |
+| incremental (20 files) | 28.0e9 | 1.55 s | 229 MB | 1 |
+
+Cold, by kind of work. A span counts under its main kind; "of roof" is roof time over own CPU:
+
+| Kind | Units | Own s | ns/unit | Roof ns | Of roof | Excess s |
+|---|---|---|---|---|---|---|
+| join row | 121M | 13.5 | 111 | 5.4 | 4.8% | 12.9 |
+| node | 74.9M | 6.8 | 91 | 4.7 | 5.1% | 6.5 |
+| byte | 797M | 6.0 | 7.5 | 0.34 | 4.6% | 5.7 |
+| candidate | 1.10M | 4.3 | 3,943 | – | – | 4.3 |
+| VM step | 131M | 2.3 | 17 | 3.2 | 19% | 1.8 |
+| value | 13.4M | 1.2 | 91 | 4.0 | 4.4% | 1.2 |
+| cell | 534M | 1.0 | 1.9 | 0.07 | 3.9% | 1.0 |
+| (tree-sitter) | 138 MB | 8.4 | 61/byte | – | – | – |
+| (no counter) | | 12.9 | | | | |
+
+Where the cold run's excess is, with its cause where the profile names it:
+
+1. **Node sets copied per program, 5–6 s.** The converter's matcher relations make kind sets and their complements
+   for every node, and each program has its own copies:
+   - `p33_m147(n) :- node(_, n, _, _, _), !p33_m146(n)` holds 18.4M rows;
+   - `p53_m131`, a subtree under nodes of one kind, holds 11.4M rows;
+   - `p53_m676` and `p61_m107` each copy all 6.0M identifiers.
+
+   These cost about 100 ns a row against a 5 ns probe. A kind set belongs to the batch's kind index, a complement
+   to an anti-join where it is read (decision 0048), and a subtree to `within` (decision 0050).
+2. **Tape work, 7.6 s.** Encoding the tape costs 140 ns a node against a 4.7 ns roof (3.8 s). Storing it costs 2.1 s
+   for 246 MB. Facts from the tape and the tape restore cost 1.8 s more.
+3. **Content keys, 3.0 s.** Each source is read (0.9 s), hashed and stored for the memo (1.9 s, 14 ns a byte against
+   0.34 for SHA-256), then hashed again for the tape cache (0.28 s). One key per source would do.
+4. **Planning, 4.3 s.** 1.1M candidate orders are priced at 3.9 µs each, over 104 chunks.
+5. **Batch, 4.6 s.** Project and intern: 92 ns a node. Text tests: 1.1M strings at 1 µs each. Nearest: 1.9 ns a
+   cell, against 0.07 sequential; 1.6 s more of it has no counter.
+6. **Recursion through `child`, 0.7 s.** `p33_m25(n) :- p33_u19(v), child(n, v, _)` runs 911 waves for 64k rows,
+   11 µs a row. A climb is a tree axis (`core.rr`: tape arithmetic, never Datalog recursion).
+7. **No counter: 12.9 s.** The largest pieces are engine open (load inputs, build indexes, about 3 s over many
+   strata), statistics and plan (1.0 s), memo remember (0.4 s), tape parse less tree-sitter (0.6 s) and digest
+   (0.3 s).
+
+Warm and incremental runs are small: 1.0–1.3 s of own CPU. Reading every source to key it is 0.4 s (2.9 ns a byte).
+The memo lookup is 0.2 s. Preparing 94 programs and creating 560 export tables (`stats`) is 0.35 s. The 20 edited
+files cost 0.15 s beyond a warm run. Reading by size and mtime first would take away most of the warm cost.
+
+**The hand-written rules** (`docs/rule-syntax/data-layer`, `RERAIL_MEASURE_HAND=only`) cannot run on the full corpus
+yet. Six of them lower and run together. Three read `input_error` (O80), and one does not lower. On s200 (200 files,
+530k nodes) the six cost:
+
+- 39 s of CPU, against 2.1 s for the 94 converted rules on the same files;
+- 1.8 GB of peak RSS, over the 1 GB budget;
+- 1.59M SQL statements.
+
+The profile names three causes:
+
+- **The included library runs once per program.** Each rule includes `python/names.rr`, `imports.rr` and
+  `calls.rr`, and `combine` prefixes every relation that is not `core.rr`'s. So 18.4 s of the 26.5 s in strata is in
+  69 strata repeated up to six times. The value cycles (`base`, `pv`, `found`) alone are 10.2 s over five copies.
+  Sharing relations whose definitions are equal, recursive ones included, would remove about 15 s.
+- **The cross-file rounds** (`typing::cross_rounds`, k = 2) run the whole cross-file program again each round. They
+  write the hop relations one row per statement (`INSERT OR IGNORE INTO x.*__prev VALUES (?)`): the 1.59M statements.
+- **Per-node exports.** Twelve file-local exports (`fl…_violation`, `fl…_wstart`) hold about 349k rows on 200 files,
+  most of a row per node. Each chunk copies them into SQLite at 20–28 ns a VM step.
+
+### 2f. Namespaces, climbs, content keys, planning and counters (2026-11-06)
+
+This section follows up §2e. It covers six items: shared relations across rules, climbs written as recursion,
+the counters, content keys, planning, and the cross-file rounds.
+
+**Rules in their own namespace, shared facts shared.** Each rule's relations carry its prefix (`p{i}_`). A
+congruence merge (`simplify::merge_identical`) then finds relations whose definitions are equal, recursive ones
+included. It is the greatest congruence, found by partition refinement. Such a class is named once in a shared
+namespace (`s_<name>`). The libraries' outputs keep their names as copy rules. On the hand-written rules (s200),
+this took CPU from 39 s to 11.7 s and peak RSS from 1.8 GB to 785 MB. Violations were unchanged.
+
+Relations that are equal up to their constants are only reported, not merged. There are 285 such relations in 57
+groups among the converted rules on s200 (`exists_0 ~ exists_83`), and 10 in 5 groups among the hand-written ones.
+Merging them would need the constant as a column.
+
+**Climbs as an axis.** `simplify::climbs_as_axes` finds a recursive component of unary node relations whose rules
+are bases, copies, or one step through `child` in one direction. It rewrites the component as its bases plus a
+`within` read. Two components of the pack qualify: `p33_m25/p33_u19` and `p33_m63/p33_u57`.
+
+**Content keys.** A source was hashed three times: by the worker, by the memo, and by the tape cache. Now it is
+hashed once (`put_source_hashed`), and the source id goes to the tape cache (`build_cached_as`).
+
+A stat index (`corpus_stats`) keeps each file's size, mtime and inode with its source, as git's index does. A warm
+run trusts an entry when the stat matches and the mtime is over 2 s before the run that recorded it (git's racy
+rule). It then reads and hashes nothing.
+
+| Run (full corpus, 94 rules) | Instructions before | After |
+|---|---|---|
+| cold | 804e9 | 755e9 |
+| warm | 20.9e9 | 15.4e9 (no file read) |
+| incremental (20 files) | 28.0e9 | 23.6e9 |
+
+What remains of cold content-key work is compression and one transaction per file: 1.7 s for sources and 2.0 s
+for tapes, under load. Hashing is 0.05 s of it at the SHA-256 roof. Batching the writes per chunk is the next step.
+
+**Planning.** The 4.3 s that §2e put on planning was mostly not planning:
+
+- Rebuilding EXPLAIN on every re-price, a profile-only cost, took 0.75 s. A kept plan now carries its EXPLAIN.
+- Candidate work was charged after the plan span closed. It landed on the stratum span and took that span's other
+  time with it. It is now charged where the orders are priced.
+
+Planning is now 1.7M candidates at 0.5–0.8 µs each (re-pricings included), and 1.8 s of plan spans when profiled.
+"Statistics and plan" splits into statistics (0.06 s), the demand split (0.6–0.9 s) and strata (0.16 s).
+
+Keying kept plans by rule address does not work. The demand split makes a new program each chunk, so no address
+survives, and every plan was searched again (28 s). The key stays text. Making the split once per run would make
+an address key possible and save the split's own 0.6 s.
+
+**The counters.** The rule is that every span doing work charges the units of that work, and every unit has a roof:
+a short loop on this machine doing the least that work needs. Added here:
+
+| Where | Unit | Roof |
+|---|---|---|
+| engine open: rows loaded from SQLite; Csr, Rel and sorted indexes built | index entry | a row id entered in a hash table, not presized (30 ns) |
+| engine open: SQLite reads | VM step | as before |
+| filtered input views | value | a hash-set insert |
+| digest, memo remember | byte | SHA-256 |
+| spec, engine close, profile record | spans only | none yet |
+
+A span with no counter is either fixed cost or a missing counter. The profile lists them by own CPU. On the cold run
+they went from 17.8 s (31% of own CPU) to 9.7 s (22%). Sampling the process (`sample`) found what the spans could
+not:
+
+- a filtered view scanned rows through `value()`, searching for each row's document. It now scans document by
+  document (`Source::filter_eq`);
+- a rule-number map was rebuilt with SipHash for every stratum.
+
+Cold instructions, unprofiled, went from 725e9 to 683e9.
+
+Still without a counter: `nearest` outside its CPU solve (1.3–2 s), `spec` (2.5 s: native join specs rebuilt per
+stratum per chunk, cacheable while the orders are unchanged), the demand split, tape parse less tree-sitter, and
+the main thread's wait.
+
+**All of it, measured again** (full corpus, 94 rules, profiled, a fresh clone; load 16–33):
+
+| Run | §2e | Now | Peak RSS |
+|---|---|---|---|
+| cold | 804e9 | 702e9 | 407 MB |
+| warm | 20.9e9 | 16.2e9 | 181 MB |
+| incremental (20 files) | 28.0e9 | 24.3e9 | 222 MB |
+
+Violations are 252 in every run.
+
+**Cross-file rounds.** See §2g.
+
+### 2g. Cross-file rounds: what they are, and why they should go
+
+`typing::cross_rounds` comes from typing's summaries (03 §13, I11, list step 29). Its idea is that a file's types
+are computed from the previous round's summaries of the files it imports, with k = 2 rounds and a cutoff when the
+summaries stop changing. In the corpus runner it is applied to the cross-file part of a program:
+
+- every recursive atom whose node may lie in another document (a *hop*) becomes two rules;
+- one rule is within the document (exact);
+- the other is across documents, reading `<rel>__prev`: the previous round's rows.
+
+Each round then reruns the whole cross-file program. The rounds stop when the hop relations' digest is unchanged, or
+after round K = 2.
+
+Why it is wrong here:
+
+1. **It can miss findings.** A chain crossing more than K files is cut. The result is an under-approximation,
+   reported as "not converged". On s200 the hand-written rules do not converge in 3 rounds: the hop rows grow
+   152,539 → 152,757 → 152,792.
+2. **It repeats work.** Each round reruns every rule of the cross-file part, not only those a change reaches.
+3. **It writes rows one at a time.** The previous rows go into `x.<rel>__prev` with one INSERT per row: most of
+   the 1.59M statements of §2e.
+
+The cross-file part already runs in one process, over one in-memory database of every file's exports. That is
+exactly where semi-naive evaluation computes the full fixpoint, cross-file chains included. Each wave joins only the
+new rows, so a chain through n files costs n waves of only the new rows, not n reruns of everything.
+
+The rounds pay for a separation (one file at a time, from summaries) that this part of the engine does not have.
+
+The proposal, not done here: run the cross-file part as one fixpoint and drop the rounds from the corpus runner. Keep
+bounded rounds only where summaries really are per file, in typing over files that are not loaded together. The
+incremental case is then the memo's job: unchanged files replay their exports, and the fixpoint reruns over them.
+
+### 2h. Rounds declared, values derived, axes on demand, counters everywhere (2026-11-07)
+
+Three changes, each on the full corpus (9,010 files, 252 violations throughout), profiled cold, in instructions
+retired:
+
+| step | instructions | load |
+|---|---|---|
+| before | 697.8e9 | 14–19 |
+| join specs kept by their inputs' digest (`logic::derived`, 0057) | 690.5e9 | 33–47 |
+| kind-set axes made per looked-up node (`within::Axis`, 0057) | 635.5e9 | 55–68 |
+
+The counters were added after Homebrew's LLVM was replaced under its rustc. The build since then uses rustup's
+1.97.1, which has its own LLVM. The counters' run, 647.6e9 at load 92–115, includes the two new roofs' calibration,
+and its instructions do not compare with the rows above.
+
+- **Cross-file rounds (2g) are now the library's call (0056).** A program declares `.pragma "cross-rounds" "k"`
+  (the five typing programs say 4). Every other program runs its cross-file part as one fixpoint. Bridged typing
+  answers are one shared fact family, handed over as rows.
+- **Join specs.** 160,654 requests: 158,810 kept, 1,844 made. Writing the digest field by field, rather than as
+  text, took the spec's own CPU from 2.5 s to about 1 s.
+- **Axes.** The `nearest` span went from 2.59 s (1.03 s solving 1,453 sets, 1.56 s copying trees and expanding
+  chains) to 0.01 s. The rows are now made inside the joins that read them.
+- **Counters.** New units: `literal`, for the demand split and the strata (650 ns against a 163 ns roof), and
+  `file stat` (16.9 µs against 1.35 µs). `byte` now covers the tape parse's and the build's own work, and `value`
+  covers interning atoms. Spans with a counter rose from 78% to 90% of own CPU. No span without one is over 0.3 s:
+  `wait` is 0.30 s, the tape cache lookup's own 0.14 s, `worker parse`'s own 0.13 s.
+- **Next, by excess:**
+  - tree-sitter (10.6 s; no roof);
+  - the native joins (12.6 s over the join-row roof);
+  - nodes encoded and projected (8.2 s);
+  - bytes hashed and stored (9.4 s);
+  - the demand split (0.85 s per run). It is a pure function of the program and a few statistics, so it could be a
+    derived value, once the runner gives the program an identity that is cheaper than its digest.
+
+### 2i. After merging data-layer, typing and final-rerail-shape, with waits named (2026-11-07)
+
+The merges took in final-rerail-shape (7f886d5d3) and Typing-support (90ad1c47d). They also copied in
+Data-layer-rule-expressivity's pack (`gate/data-layer`, 75 `.rr` ports) and More-ergonomic's `docs/rule-syntax`,
+which holds 56 hand-written data-layer rules and the new `python/types.rr`.
+
+The replay now gives 3988 events, 303 fully converted and 298 exact, with no errors. Before the merges it was
+295 converted and 290 exact.
+
+The full corpus, profiled cold, still gives 252 violations. It retires 681.2e9 instructions at load 10, against
+679.8e9 before the merges. Own CPU is 43.3 s: the worker's parse is 18.4 s, its batch 2.6 s, and the local part
+21.9 s. Peak RSS is 474 MB by the run's own count; `time -l` reports 1.02 GB for the whole test process.
+
+**Excess over the roof, by kind:**
+
+| kind | units | own s | excess s |
+|---|---|---|---|
+| join row | 131M | 10.16 | 9.30 |
+| source byte (tree-sitter, no roof) | 138M | 7.57 | 7.57 |
+| byte | 1.78G | 6.88 | 6.10 |
+| node | 75M | 6.44 | 5.99 |
+| value | 255M | 4.62 | 3.31 |
+| VM step | 104M | 2.29 | 1.87 |
+
+The byte work has five parts:
+
+- the tape store, 1.6 s;
+- the memo lookup, 1.5 s, at 11 ns a source byte against SHA-256's 0.43 ns;
+- the tape restore, 0.6 s;
+- reading the files, 0.6 s;
+- the tape parse, 0.5 s.
+
+**Waits, by what they waited on:**
+
+| waiter | waited on (and what that thread was doing) | wall | waits |
+|---|---|---|---|
+| main thread | the worker's next chunk (parse) | 3.16 s | 69 |
+| main thread | the worker's next chunk (batch) | 0.44 s | 27 |
+| worker | the main thread (local run) | 0.81 s | 37 |
+
+The pipeline is close to balanced, about 21 s on each side, and the worker's parse is the critical path. Only 3.2 s
+of own CPU has no counter. The largest piece is `wait/release freed pages`, at 0.22 s.
+
+**The hand-written rules (`RERAIL_MEASURE_HAND=only`)** now mostly lower. 45 have a converted counterpart, and the
+counts are:
+
+- 10 read `input_error` (O80);
+- 1 does not lower (`versioned_table_names`, the slice `$O[:-$K]`);
+- 4 read a repository file that exists on the corpus (O76), and 2 read a directory input (`dir="…"`, not made at
+  all). The measure now leaves all six out and names them.
+
+The rest do not yet run:
+
+- **Full corpus:** the run did not finish within 280 s.
+- **s200 (200 files):** the run stopped after 61 s of CPU with `no such table: atom_segment`, which a SQL function
+  over the content store raised (O93). It had used 7.6 GB of RSS and 793e9 instructions by then. On the same 200
+  files, the converted rules take about 2 s.
+
+### 2j. Native joins, the data-layer pack's rules, and what the parser work changes (2026-11-07)
+
+**Native joins: relations built for every node and read for a few.** In 2i, 7.3 s of the 17.7 s in strata went to
+105 relations that demand (0048) refused. The guard's test was too narrow. It asked that one anchor bind the read
+and that every other positive atom be an anchor, but real readers bind their key from a rare kind or a derived
+relation and then step through `field`, `child`, `text` and the axes. For example:
+
+```text
+// one arm is every node of the corpus: 18.4M rows
+p17_m147(n) :- node(_, n, _, _, _), !p17_m146(n).
+// its one reader binds n first, from kind 1169
+violation_at(…) :- node(d, n, 1169, _, _), field(n, …), …, rr_nearest_ks7(n, v), …, p17_m147(n), …
+```
+
+Three changes, each on the full corpus, cold, profiled. 252 violations each time:
+
+| change | instructions | join rows | load |
+|---|---|---|---|
+| before (2i) | 681.2e9 | 131M | 10 |
+| demand's guard is reach through bounded lookups | 630.2e9 | | 40–49 |
+| plan cache searches again for a cheaper start; joins take their relation's demand; the data-layer engine merge | 625.7e9 | 61.4M | 59–73 |
+
+- **Reach.** A kept literal is reached when an anchor binds it or a lookup of bounded fan-out does: `node` by id;
+  `field` and `child` by either end; `doc` by id or path; an axis or any other base relation by its first column.
+  An axis read from its ancestor end is not a lookup. Since 0057, an axis read by its node is made for that node
+  only. Demanded relations went from 94 to 124–127. `p17_m147` fell from 1.48 s to 0.007 s.
+- **The plan cache (0038)** searched a kept order again only where its own work per node grew. A scan from a common
+  kind costs the same per node in every chunk. So `pre_458`, planned where its text test matched 3,397 names, kept
+  scanning 4.5M identifiers in 78 chunks where the test matched dozens. The planner now records each body's
+  cheapest start, and each kept order's work over that start. Where the ratio grows REPLAN times, it searches again;
+  79 plans were. `pre_458` fell from 1.10 s to 0.11 s.
+- **Demand for joins.** `p17_m132` (6M identifiers with text) has a scan rule and a join of derived relations, and
+  the join rule had kept it from demand. Its scans now decide, and the join takes the demand too: 1.14 s to 0.08 s.
+- **Left:** join rows cost 106 ns each against a 7.6 ns roof. `pre_773` (0.7 s) multiplies two independent
+  branches of one body, 24,688 rows to 5.0M. Document-keyed relations (`p27_m131(n)`, every node of the documents
+  where `exists_10` holds) still read every node of each demanded document.
+
+**The data-layer pack's rules.** The rules moved from More-ergonomic's drafts (`docs/rule-syntax/data-layer`, 56) to
+Data-layer-rule-expressivity's pack (`gate/data-layer/packs/data-layer/candidates/rr`, 68 checks, copied at
+994be7e84). Those read `core.rr` relations the data-layer engine adds (`split_line`, `lf_line`, repository inputs),
+so its engine was merged (ca930d974). It had already merged this branch at d334d5bf8.
+
+- **One at a time, on s50:** 50 of 68 run. Seven take over 40 s on 50 files, and the rest fail (O93). A typical rule
+  takes about 1 s in the run, most of it fixed cost: 937 lines of included library.
+- **Together, the 49 that run:**
+
+  | corpus | CPU | instructions | peak RSS |
+  |---|---|---|---|
+  | s50 | 17.2 s | 205e9 | 1.57 GB |
+  | s200 | 100.5 s | 1,064e9 | 5.19 GB |
+
+  The converted rules take about 2 s on s200.
+- **Fixed: an aggregate's context.** `count : { child(al, a, k), k < j, … }` made a context of j alone, which the
+  body only tests. So the helper crossed every argument of every call with every j: 20.6M rows for 4,133 counts on
+  50 files, in each of three libraries' copies. The context now holds every variable the body shares with the rule
+  (al and j). On s50, instructions fell from 248e9 to 206e9 and RSS from 2.26 GB to 1.58 GB.
+- **Next, by cost on s200:**
+  - `gis_before`, 40.7 s of 100.5: every node before every call of its file, quadratic, where the readers bind both
+    ends. A filter (every rule a functional lookup of its head and tests) should be inlined. The draft inliner was
+    correct, but the runner measures statistics and holds columns from the program before it is simplified.
+  - `cc_line`, 14.9 s: SQLite in the cross-file part, because `@prefix(…) = 0` has no native step, and a cross
+    product, because `split_line`'s statistics are not measured.
+  - Memory grows with which rules combine: 12 take 417 MB, 22 take 1.27 GB.
+
+**Parsing: what the Parser-generators worktree changes.** Its target is a side program of the transducer
+(`docs/parser-generators/12`, 13). Bitlex lexer and tree programs run on the transducer's own executors
+(interpreter, Cranelift, Metal) and write our v9np tape directly, byte for byte as `TapeImage::finish` does.
+
+- **Where it is:** JSON compiles to a block program, and its rows equal the reference evaluator's on every
+  executor. Python is lexing only. No executor writes a tape yet, and none of it is on the corpus path.
+- **What it replaces:** tree-sitter and the tape encode, 7.6 s and 3.6 s of excess here.
+- **What stays ours:** the tape format, store and restore, the memo lookup and the content hashing. Of the bytes'
+  6.3 s of excess, the memo lookup is 1.5 s at 11 ns a byte against SHA-256's 0.43 ns, the tape store 1.6 s and
+  the restore 0.6 s.
+
+### 2k. The pack's next costs: filters inlined, text tests native, relations released (2026-11-07)
+
+These are the three costs 2j left, plus one the merge brought in. Each was measured on the 49 pack rules together,
+with violations compared rule by rule and the replay (3988 303 298 0) checked after each.
+
+| step | s50 instructions | s50 peak (the run's) | s200 CPU | s200 peak |
+|---|---|---|---|---|
+| 2j | 205e9 | 1.57 GB | 100.5 s | 5.19 GB |
+| filters inlined, ERROR kinds fixed | 189e9 | 1.24 GB | | |
+| text tests and `rx_group` native, computed views inlined | 183e9 | 1.24 GB | | |
+| relations released after their last reader, semi-joins | 175e9 | 0.92 GB | 39.5 s | 1.56 GB |
+
+The violations held at 606 on s50 and 2,886 on s200 (the count of the same 49 rules before). The full corpus cold
+run of the converted rules is unchanged: 627.4e9 instructions, 252 violations.
+
+- **The merge: a guest's ERROR root.** After final-rerail-shape's 0058, the pack stopped with `no dialect has tape
+  tag 64`. An annotation guest that does not parse has an ERROR node for its root. Tree-sitter's ERROR symbol is
+  0xffff, so its kind atom, `tag * 1024 + 0xffff`, read as another dialect's kind. ERROR's atom now takes code 0
+  (the grammar's end symbol, which labels no node; the tape's own `ERROR_CODE`). `kind_tag`, `kind_code` and
+  `facts_tag` replace the scattered `/` and `%` of `KIND_STRIDE`.
+- **Filters inlined (`gis_before`).** The inliner from 2j is back. The cross-file part now measures any held base
+  relation its statistics do not know, so a program the inliner rewrote still plans. `core.rr`'s relations and
+  guest requests are never inlined, because the engine reads them by name. `RERAIL_INLINE_FILTERS=off` compares.
+  `generated-index-sources` on s200 went from 684e9 to 207e9 instructions and from 3.76 GB to 1.26 GB.
+- **Text tests of computed strings.** A test of a string that no text relation gives (`!prefix("#", snippet)`, where
+  `snippet` is `@replace_all(…)`) lowers to `@prefix($s, p) = 0`, and the join spec had no step for it. That left
+  110 strata in SQL. It is now a native `test` step. A constant pattern's matcher is compiled once, with the spec.
+  `rx_group` moved into `strings::functions`, so the `func` step runs it. 12 declines are left: patterns that are
+  nested calls (`@concat`) or sets of symbols.
+- **`cc_line`'s cross product.** `split_line`'s statistics were right (67,206 rows on s200, about 1,024 per
+  document lookup). The cause was `cc_trim(raw, @replace_all(raw, …)) :- split_line(_, _, raw)`, a view SQLite
+  can only scan. Its reader joined all of it: 548,850 rows for 16,068. A computed view is now inlined wherever every
+  reader already reads its domain. It becomes a `func` step over the reader's own lines: 16,874 rows, against an
+  estimate of 7,680.
+- **Where combined rules' memory went.** The heap grew 4–18 MB per stratum, to 1,157 MB on s50. At 800 MB the native
+  registry held 796 derived relations: 144 MB of rows and 351 MB of the waves' per-column indexes. Nothing was ever
+  removed from it before the run ended. Each relation is now released after the last stratum that reads it. A
+  view's inputs live as long as the view's readers, and outputs, kept relations and gates' relations stay.
+  Separately, `s_rr_ctx18(s) :- s_ann_root(_), s_ann_str(s)` scanned `s_ann_str` once per `s_ann_root` row (25.5M
+  derivations of about 12k rows). A positive atom that binds nothing now runs the rest of its body once if it
+  matches.
+- **The O93 failures (2026-11-07, after merging final-rerail-shape again).** Thirteen more pack rules run, 62 in
+  all (O93 lists the five left out and why). The seven that took over 40 s alone now take 0.6–1.6 s. eager-resolve
+  was slow only with the rest: demand split `pre_1199(e, f, n, x) :- p13_er_body(f, n), p13_unparen(e, m),
+  kind(m, "identifier"), text(m, x)`, whose two groups only the demanded read joined, so its kept part was every
+  body row times every identifier. Demand now refuses a split whose kept atoms are disconnected without the cut.
+  The 62 rules on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule as alone), peak 1.43 GB, over
+  budget. The cold full corpus of the converted rules: 618.8e9 instructions (627.4e9 before), 252 violations, peak
+  427 MB, at a load of about 88.
+- **Left:** the derived relations still alive keep one index per column, which is 2.4 times their rows. Five
+  programs each build their own copy of `unparen` (8.7 MB each). Compiling the 42,707-line combined program takes
+  about 4 s, 1.8 s of it in lowering. The test harness alone peaks at 778 MB after a run, with no rules, so `time
+  -l` overstates; the run's own peak is the figure above.
+
+### 2l. The pack under 1 GB on 50 files, and two more rules running (2026-11-07)
+
+The 62 rules together peaked at 1.43 GB on s50. Measured per stratum (the registry's rows and indexes against the
+process footprint):
+
+- **A chunk's relations outlived it.** All 1,009 native relations of the file-local run (204 MB of rows, 327 MB
+  of indexes) stayed in the registry through the whole cross-file part. They are now dropped once the chunk's
+  exports are in `x`.
+- **Outputs kept their indexes.** An output (or kept relation) whose last reader has run keeps its rows only.
+- **Exports were held to the chunk's end** (215 MB of rows). Without the per-file memo, the local run hands each
+  export to the corpus loop as soon as no later stratum reads it: written to `x`, measured, dropped.
+
+s50, 62 rules: 1,433 → 975 MB profiled (913 MB unprofiled, 64 rules).
+
+On s200 the 64 rules peaked at 3.99 GB of footprint, in one cross-file stratum: eager-resolve's
+`er_wrapped(f, v, v) :- er_sym(f, _), !is_async(f), kind(v, "call")`, every def with every call (1,024 MB of rows,
+385 MB of indexes). Its reader binds f and v. A filter may now test derived relations on its head's bound
+variables, when it also looks up a base relation; an alias or an intersection of derived relations is not
+inlined. s200: 4.2 → 2.39 GB, 59.1 → 43.0 s CPU, 2,960 violations both.
+
+Two rules that O93 left out:
+
+- **schema-architecture** never finished planning. Guest hiding (decision 0058 §2) copies a relation read with a
+  guest variable as `rr_in_<g>_<c>_<rel>`. A copy read with another column scoped was copied from the copy's rules
+  with only the new column seeded, so its reader read it at the first column again: `rr_in_annotation_1_
+  rr_in_annotation_0_rr_agg36`, and on (1,451 rounds in 40 s). A copy is now of the original relation with every
+  seeded column. It runs in 1.8 s.
+- **bootstrap-engine-invariants** stopped with `no symbol <node id>`. `source(d, sp), (contains("Bootstrap", sp) ;
+  …)` was folded into one set test of `sp` itself. A single test on a node or span tests its text; the folded set
+  now does too. 2.3 s, 0 violations on s50 (its scope is a few named files).
+
+The cold full corpus of the converted rules: 646.0e9 instructions (618.8e9 before this round), 252 violations,
+429 MB, load about 19. The new filter rule is not the cause: on s1000 the converted rules took 101.3e9 and
+101.0e9 with it, 100.8e9 without. The rest is not traced.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:

@@ -83,8 +83,13 @@ impl ContentStore {
         Ok(out)
     }
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_hashed(source, HashKey::sha256(source), aliases)
+    }
+
+    /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
+    /// hashed again.
+    pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let canonical = HashKey::sha256(source);
         let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
@@ -103,6 +108,7 @@ impl ContentStore {
                 [canonical_hash_id],
                 |row| row.get(0),
             )?;
+            self.pin_held(transaction, SourceId(source_id))?;
             for alias in aliases {
                 let alias_hash_id = intern_hash(transaction, *alias)?;
                 let existing = transaction
@@ -525,6 +531,56 @@ impl ContentStore {
                 &frame,
                 &[],
             )
+        })
+    }
+
+    /// [`Self::put_source_hashed`] and [`Self::put_tape`] in one transaction: the source (`canonical` its SHA-256),
+    /// stored or found, and its tape. A source looked up earlier may have been collected since (a pass deletes a
+    /// source no tape, pin or live manifest holds); in one transaction no pass can come between the source and the
+    /// tape that holds it (O95). Returns the source's id as it is now.
+    pub fn put_source_and_tape(
+        &self,
+        source: &[u8],
+        canonical: HashKey,
+        grammar_id: i64,
+        grammar_version: i64,
+        tape_format_version: i64,
+        tape: &[u8],
+    ) -> StoreResult<(SourceId, TapeId)> {
+        self.require_write_capacity()?;
+        if grammar_id < 0 || grammar_version < 0 || tape_format_version < 0 {
+            return Err(StoreError::Invalid(
+                "tape identifiers must be nonnegative".to_owned(),
+            ));
+        }
+        let source_frame = compress(source, self.compression_level)?;
+        let tape_frame = compress(tape, self.compression_level)?;
+        self.immediate_transaction(|transaction| {
+            let created_generation = generation(transaction)?;
+            let source_id = put_source_prepared_tx(
+                transaction,
+                canonical,
+                source.len(),
+                &source_frame,
+                &[],
+                created_generation,
+            )?;
+            let tape_id = put_tape_tx(
+                transaction,
+                source_id,
+                TapePayload {
+                    grammar_id,
+                    grammar_version,
+                    tape_format_version,
+                    bytes: tape,
+                    documents: &[],
+                },
+                &tape_frame,
+                &[],
+            )?;
+            self.pin_held(transaction, source_id)?;
+            self.pin_held_tape(transaction, tape_id)?;
+            Ok((source_id, tape_id))
         })
     }
 
@@ -1110,7 +1166,7 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
+pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
     connection
         .query_row(
             "SELECT s.source_id FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id \

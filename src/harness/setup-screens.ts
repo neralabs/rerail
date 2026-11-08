@@ -121,7 +121,7 @@ function plural(count: number, noun: string): string {
 }
 
 /** "Claude Code", "Claude Code and Cursor", "Claude Code, Cursor and Codex". */
-function andList(names: readonly string[]): string {
+export function andList(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
@@ -320,6 +320,22 @@ export interface SessionsInput {
   /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
   readonly carriedArgs: readonly string[];
   readonly setupCommand?: string;
+  /**
+   * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
+   * never says nothing is sent when something is; null when the remote configuration could not be read.
+   */
+  readonly remoteHosts?: readonly string[] | null;
+}
+
+/** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
+function sessionsDestination(remoteHosts: readonly string[] | null | undefined): string[] {
+  if (remoteHosts === null) return ["  ! Rerail could not read its remote settings; run rerail remote list to see what it sends where."];
+  if (remoteHosts === undefined || remoteHosts.length === 0) return ["  ✓ Stays on this computer. Nothing is sent anywhere."];
+  const where = remoteHosts.join(", ");
+  return [
+    `  ! Sent to ${remoteHosts.length === 1 ? "the remote" : "the remotes"} set up on this computer: ${where}.`,
+    "    Stop it with rerail remote remove <name> (rerail remote list names them).",
+  ];
 }
 
 /** T2b: asked once on this computer, before set-up connects anything, so the person agrees to what Rerail reads. */
@@ -332,7 +348,7 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
       "Rerail sees what you ask your agent, what it does, and the files it edits,",
       "so it can check the work against your rules.",
       "",
-      "  ✓ Stays on this computer. Nothing is sent anywhere.",
+      ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
     ],
     choices: [

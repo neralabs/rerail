@@ -68,7 +68,8 @@ def_frame(n, f) :- nearest(n, dc, def_mark), kind(dc, "decorator"), child(dd, dc
 
 // ---- 2. names ----------------------------------------------------------------------------------------------------
 // ast_name(n, x): identifier n is an `ast.Name`: nameref without parameter names, imported names (`__future__`
-// ones too), the names of `global`/`nonlocal`, and `except E as x` (CPython keeps those as strings, not Names).
+// ones too), the names of `global`/`nonlocal`, `except E as x`, `case` captures and PEP 695 type parameters (CPython
+// keeps those as strings, not Names); walrus targets are Names.
 .decl ast_name(n: node, x: symbol)
 ast_name(n, x) :- nameref(n, x), !not_name(n).
 .decl not_name(n: node)
@@ -79,6 +80,23 @@ not_name(n) :- kind(i, "future_import_statement"), within(n, i).
 not_name(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _).
 not_name(n) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), field(ap, "alias", t),
     child(t, n, _).
+// `case` captures are strings in ast (MatchAs, MatchStar, MatchMapping.rest), not Names: `case x`,
+// `case P(a=px)`, `case [*rest] as q`, `{**more}`. A one-part dotted name is a capture unless it is a class
+// pattern's class.
+.decl py_capture(n: node)
+.decl py_pattern_class(d: node)
+py_pattern_class(d) :- kind(c, "class_pattern"), child(c, d, 0).
+py_capture(n) :- kind(d, "dotted_name"), child(d, n, 0), !child(d, _, 1), inside(d, _, "case_pattern"),
+    !py_pattern_class(d).
+py_capture(n) :- (kind(p, "as_pattern") ; kind(p, "splat_pattern")), inside(p, _, "case_pattern"), child(p, n, _),
+    kind(n, "identifier").
+not_name(n) :- py_capture(n).
+// In a dotted value pattern `Color.RED` only the first part is a Name; the rest are attributes.
+not_name(n) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, n, i), i > 0.
+// PEP 695 type parameters hold their name as a string (TypeVar(name='T')).
+not_name(n) :- type_param(_, _, n, _, _, _, _).
+// A walrus target is a Name (ctx Store); nameref skips it as a `name` field.
+ast_name(n, x) :- kind(w, "named_expression"), field(w, "name", n), text(n, x).
 // expr_ctx(n, c): the `ast` context of a Name, Attribute or Subscript: "store", "del" or "load".
 // e.g. in `o.x = y`, expr_ctx(<o.x>, "store"), expr_ctx(<o>, "load"), expr_ctx(<y>, "load").
 .decl ctx_node(n: node)
@@ -255,16 +273,20 @@ body_of(m, m) :- kind(m, "module").
 docstring(o, s) :- body_of(o, b), body_stmt(b, st, 0), doc_stmt(st, s).
 // doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt.
 .decl doc_stmt(s: node, e: node)
-doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str(e, _).
+doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str_node(e).
 // py_if(i, test, body) and py_orelse(i, o): an `ast.If`. Each `elif` is an If of its own, the orelse of the one
 // before it; o is the next elif clause, or the else clause (whose body is its "body" field).
 .decl py_if(i: node, test: node, body: node)
 py_if(i, t, b) :- kind(i, "if_statement"), field(i, "condition", t), field(i, "consequence", b).
 py_if(e, t, b) :- kind(e, "elif_clause"), field(e, "condition", t), field(e, "consequence", b).
 .decl py_orelse(i: node, o: node)
-py_orelse(i, o) :- kind(i, "if_statement"), field(i, "consequence", b), next_sibling(b, o),
+py_orelse(i, o) :- kind(i, "if_statement"), field(i, "consequence", b), py_next_code(b, o),
     (kind(o, "elif_clause") ; kind(o, "else_clause")).
-py_orelse(e, o) :- kind(e, "elif_clause"), next_sibling(e, o), (kind(o, "elif_clause") ; kind(o, "else_clause")).
+py_orelse(e, o) :- kind(e, "elif_clause"), py_next_code(e, o), (kind(o, "elif_clause") ; kind(o, "else_clause")).
+// py_next_code(a, b): b is the next named sibling of a that is not a comment (`# why` before `else:` is a sibling).
+.decl py_next_code(a: node, b: node)
+py_next_code(a, b) :- next_sibling(a, b), !kind(b, "comment").
+py_next_code(a, c) :- next_sibling(a, b), kind(b, "comment"), py_next_code(b, c).
 // bool_operand(t, op, v): v is an operand of the BoolOp t (op "and" or "or"): `a or b or c` gives a, b and c
 // for the outermost `or`. A parenthesised inner `(a or b)` stays one operand, as in `ast`.
 .decl same_bool(v: node, o: symbol)
@@ -293,6 +315,12 @@ string_form(n, "fstr") :- fstring(n).
 string_form(n, "bytes") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
 string_form(n, "tstr") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[tT][rR]?[\"'].*", t).
 string_form(n, "str") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rRuU]*[\"'].*", t).
+// A string Constant's syntactic type does not require a scalar decoded value.
+// Python strings can contain lone surrogates, which Rust String cannot represent.
+.decl plain_str_node(e: node)
+plain_str_node(e) :- string_form(e, "str"), !fstring(e).
+plain_str_node(e) :- kind(e, "concatenated_string"),
+    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0.
 // plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
 // ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
 .decl plain_str(e: node, v: symbol)

@@ -4,9 +4,8 @@
 .mode block
 .scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
-// Python linter: scripts/lint_lazy_sql_surface.py. The plugin reports every finding as LSS-001; the direct calls
-// (scan_source, scan_file) return the message alone, and the recorded events key on it. So the message is the code
-// here (`code {c}`), one per pattern:
+// Python linter: scripts/lint_lazy_sql_surface.py. The plugin reports every finding as LSS-001, as this rule does;
+// the message tells the patterns apart:
 //   connection grammar lazy terminal call: X     `….X()` for X one of the four _grammar_*_lazy methods
 //   SyncSqlConnection defines forbidden grammar terminal: X    `def X` whose innermost class is SyncSqlConnection
 //   ServerPlan execute() outside execution boundary    `<…plan>.execute()` / execute_async(), outside the allowed
@@ -79,7 +78,7 @@ authority(w) :- kind(w, "with_statement"), child(w, cl, _), kind(cl, "with_claus
 .decl authorised(c: node)
 authorised(c) :- kind(c, "call"), within(c, w), authority(w).
 
-.violation LSS(at: node, c: symbol) code {c} "{c}"
+.violation LSS(at: node, c: symbol) code "LSS-001" "{c}"
 
 LSS(c, cat("connection grammar lazy terminal call: ", x)) :- lss_doc(d), docof(c, d), kind(c, "call"),
     field(c, "function", f), kind(f, "attribute"), field(f, "attribute", a), text(a, x), grammar_lazy(x).

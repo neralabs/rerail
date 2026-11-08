@@ -77,6 +77,8 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
   ];
   const pack: RulePack = {
     id: "lint",
+    packageName: null,
+    publisher: "@neralabs",
     name: "Lint",
     version: null,
     category: "language",

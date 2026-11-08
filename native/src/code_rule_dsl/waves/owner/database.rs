@@ -29,11 +29,17 @@ pub(in crate::code_rule_dsl) struct Database {
 }
 
 impl Database {
-    pub(super) fn ensure_idle(&self) -> rusqlite::Result<()> {
+    /// Forget execution bookkeeping after a standalone SQL session drops its generated objects.
+    pub(in crate::code_rule_dsl) fn reset_execution(&self) {
+        *self.storage.borrow_mut() = Storage::default();
+        self.flush_prepared_statement_cache();
+    }
+    pub(in crate::code_rule_dsl) fn ensure_idle(&self) -> rusqlite::Result<()> {
         // SAFETY: this connection and its statements belong to the current worker.
         // SQLite retains the statement list until statements are finalized here.
         unsafe {
-            let mut statement = rusqlite::ffi::sqlite3_next_stmt(self.handle(), std::ptr::null_mut());
+            let mut statement =
+                rusqlite::ffi::sqlite3_next_stmt(self.handle(), std::ptr::null_mut());
             while !statement.is_null() {
                 if rusqlite::ffi::sqlite3_stmt_busy(statement) != 0 {
                     return Err(rusqlite::Error::SqliteFailure(
@@ -46,27 +52,62 @@ impl Database {
         }
         Ok(())
     }
-    pub(in crate::code_rule_dsl) fn prepare_execution(&self, query: &str) -> rusqlite::Result<rusqlite::CachedStatement<'_>> {
+    pub(in crate::code_rule_dsl) fn prepare_execution(
+        &self,
+        query: &str,
+    ) -> rusqlite::Result<rusqlite::CachedStatement<'_>> {
         // Cached plans depend on native access paths and estimates, as well as SQL
         // schema. Zero-row bindings must not freeze scan plans for populated data.
-        self.prepare_cached(&format!("{query}\n/* native estimates {:x} */", self.plan_signature.get()))
+        self.prepare_cached(&format!(
+            "{query}\n/* native estimates {:x} */",
+            self.plan_signature.get()
+        ))
     }
     /// Binds `source` to the vtab `name` and refreshes the plan signature.
-    pub(super) fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
+    pub(in crate::code_rule_dsl) fn bind(
+        &self,
+        name: &str,
+        source: Arc<dyn Source>,
+    ) -> rusqlite::Result<()> {
         self.modules.bind(self, name, Arc::clone(&source))?;
         let mut bound = self.bound.borrow_mut();
         bound.insert(name.to_owned(), source);
         self.plan_signature.set(plan_signature(&bound));
         Ok(())
     }
+    /// Rebind one fact batch and calculate its planner signature once.
+    pub(in crate::code_rule_dsl) fn bind_many<'a>(
+        &self,
+        sources: impl IntoIterator<Item = (&'a str, Arc<dyn Source>)>,
+    ) -> rusqlite::Result<()> {
+        let mut bound = self.bound.borrow_mut();
+        for (name, source) in sources {
+            self.modules.bind(self, name, Arc::clone(&source))?;
+            bound.insert(name.to_owned(), source);
+        }
+        self.plan_signature.set(plan_signature(&bound));
+        Ok(())
+    }
     /// Empties every vtab: a later reader sees no rows rather than another lease's.
-    pub(super) fn clear_bindings(&self) {
+    pub(in crate::code_rule_dsl) fn clear_bindings(&self) {
         for name in std::mem::take(&mut *self.bound.borrow_mut()).into_keys() {
             if let Some(binding) = self.modules.get(&name) {
                 binding.clear();
             }
         }
         self.plan_signature.set(0);
+    }
+
+    /// Remove session-owned modules as well as their rows when an extension session closes.
+    pub(in crate::code_rule_dsl) fn remove_bindings(&self) -> rusqlite::Result<()> {
+        self.ensure_idle()?;
+        self.flush_prepared_statement_cache();
+        let names: Vec<String> = self.bound.borrow().keys().cloned().collect();
+        self.clear_bindings();
+        for name in names {
+            self.modules.unregister(self, &name)?;
+        }
+        Ok(())
     }
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
     pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
@@ -78,9 +119,20 @@ impl Database {
         ] {
             let (mut current, mut high) = (0i64, 0i64);
             // SAFETY: this owned connection stays live and is used only on its evaluating thread.
-            let code = unsafe { rusqlite::ffi::sqlite3_db_status64(self.connection.handle(), kind, &mut current, &mut high, 0) };
+            let code = unsafe {
+                rusqlite::ffi::sqlite3_db_status64(
+                    self.connection.handle(),
+                    kind,
+                    &mut current,
+                    &mut high,
+                    0,
+                )
+            };
             if code != rusqlite::ffi::SQLITE_OK {
-                return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None));
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(code),
+                    None,
+                ));
             }
             total = total.saturating_add(usize::try_from(current.max(0)).unwrap_or(usize::MAX));
         }
