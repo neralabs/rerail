@@ -2713,6 +2713,9 @@ evaluated anything:
 Peak footprint 3.2 GB, against the 1 GB budget. At 50 programs the run takes 5.6 s, at 100 15.1 s: the passes
 before `simplify`'s merge grow with the copies, and the split grows faster than the rules.
 
+**Design:** decision 0089 (proposed 2026-11-08): libraries as modules held once, requests per distinct key, a
+file's memo rows per unit; staged, each stage measured here.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.

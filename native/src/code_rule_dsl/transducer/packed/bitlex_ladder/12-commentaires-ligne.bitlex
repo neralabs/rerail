@@ -1,0 +1,63 @@
+# Step 12: line comments, `(1; -- un\n 2)`.
+#
+# New: an extra, a token the grammar does not name that may come between any two. Tier 1 finds
+# a comment with one `fill` from its `--` to the end of the line; tier 2 takes it in every
+# state, as a leaf of the lowest node holding the tokens on either side.
+
+lexer ladder12
+
+class ws    = ' ' '\t' '\n' '\r'
+class op    = '(' ')' ';' '<' '>' '='
+class quote = '#'
+class lf    = '\n'
+class caret = '^'
+class digit   = '0'..'9'
+class nonzero = '1'..'9'
+class expo    = 'e' 'E'
+class dash    = '-'
+
+mask escaped  = escaped(caret)
+mask q        = quote & ~escaped
+mask inside   = toggle(q)
+mask opening  = q & inside
+mask closing  = q & ~inside
+mask body     = inside & ~opening
+mask esc      = caret & body & ~escaped     # an escape's caret
+mask esc_last = escaped & body              # the byte it escapes
+mask content  = body & ~esc & ~esc_last
+mask outside  = ~inside & ~closing
+# A line comment: from `--` outside a text up to, not including, the end of the line. The
+# text state is computed without comments, so a hash in a comment would be wrong: such a file
+# goes to tree-sitter.
+mask line     = fill(outside & dash & next(dash), lf)
+mask code     = outside & ~line
+
+token '#'          = start q
+token contenu      = start starts(content) last lasts(content)
+token echappement  = start esc last esc_last
+keywords echappement {
+  "^#" -> echappement  "^^" -> echappement  "^n" -> echappement  "^t" -> echappement
+} required
+token commentaire  = start dash & starts(line) last lasts(line)
+mask word          = code & ~ws & ~op & ~dash
+token nombre       = start starts(word) last lasts(word)
+keywords nombre { "vrai" -> vrai  "fausse" -> fausse  "nul" -> nul }
+token punctuation = start code & op
+keywords punctuation { "<" ">" "(" ")" ";" "=" } required
+
+skip code & ws
+error "a newline in a text"   when body & lf
+error "a dash not starting a comment" when code & dash
+escape "a hash in a comment" when line & quote
+
+check nombre = ['~'] ('0' | nonzero digit*) [',' digit+] [expo ['~'] digit+]
+
+tree ladder {
+  extra commentaire
+  node document = valeur
+  node enregistrement nested = '<' [entree (';' entree)*] '>'
+  node entree = cle: texte '=' valeur: valeur
+  node liste nested = '(' [valeur (';' valeur)*] ')'
+  node texte = '#' (contenu | echappement)* '#'
+  choice valeur supertype _valeur = enregistrement | liste | texte | nombre | vrai | fausse | nul
+}

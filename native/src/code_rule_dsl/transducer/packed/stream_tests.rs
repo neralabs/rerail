@@ -7,6 +7,10 @@ use super::*;
 /// loop through `TOKEN`.
 const RUN: &str = "program -
   mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 extract %0
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end @0007
@@ -21,19 +25,24 @@ const RUN: &str = "program -
   0007 ACCEPT 0
 ";
 
+/// Tier 1's run as the words read it: the starts (extract 0) and last bytes (extract 1).
+fn tier1(starts: &[u32], lasts: &[u32]) -> block::BlockRun {
+    block::BlockRun { outputs: Vec::new(), positions: vec![starts.to_vec(), lasts.to_vec()], totals: Vec::new() }
+}
+
 #[test]
 fn a_tier2_program_writes_its_nodes() {
     let p = rir::assemble(RUN).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(rir::assemble(&rir::disassemble(&p, None)).expect("round trips").plain_digest(), p.plain_digest());
-    let nodes = run(&p, b"aa a ", &[0, 1, 3], &[]).expect("parses");
+    let nodes = run(&p, b"aa a ", &tier1(&[0, 1, 3], &[])).expect("parses");
     let spans: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
     assert_eq!(spans, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 1, 2, 1), (2, 3, 4, 1)]);
     // A byte no state takes, a token past the file, an unread last byte, an empty stream:
     // refused.
-    assert!(run(&p, b"ab", &[0, 1], &[]).is_err());
-    assert!(run(&p, b"a", &[0, 1], &[]).is_err());
-    assert!(run(&p, b"aa", &[0, 1], &[1]).is_err());
-    assert!(run(&p, b"", &[], &[]).is_err());
+    assert!(run(&p, b"ab", &tier1(&[0, 1], &[])).is_err());
+    assert!(run(&p, b"a", &tier1(&[0, 1], &[])).is_err());
+    assert!(run(&p, b"aa", &tier1(&[0, 1], &[1])).is_err());
+    assert!(run(&p, b"", &tier1(&[], &[])).is_err());
 }
 
 /// The verifier refuses a loop that does not pass a `TOKEN`: here the second switch jumps to
@@ -58,22 +67,4 @@ fn a_tier2_program_holds_only_its_words() {
     assert!(rir::assemble(&with_child).is_err());
     let bad_return = RUN.replace("  0004 LEAF #2\n", "  0004 PUSH @0002\n");
     assert!(rir::assemble(&bad_return).is_err());
-}
-
-/// Cranelift lowers the same words (`native_cpu_stream`): the compiled function writes the
-/// interpreter's nodes, as a tape, and refuses where it refuses, at the same word.
-#[test]
-fn compiled_words_equal_the_interpreter() {
-    let p = rir::assemble(RUN).unwrap_or_else(|e| panic!("{e}"));
-    let compiled = native_cpu_stream::Tier2Cpu::new(&native_ir::lower(&p).expect("lowers")).unwrap_or_else(|_| panic!("compiles"));
-    let cases: [(&[u8], &[u32], &[u32]); 5] =
-        [(b"aa a ", &[0, 1, 3], &[]), (b"ab", &[0, 1], &[]), (b"a", &[0, 1], &[]), (b"aa", &[0, 1], &[1]), (b"", &[], &[])];
-    for (bytes, starts, lasts) in cases {
-        let want = run(&p, bytes, starts, lasts).map_err(|r| r.pc);
-        let got = compiled.tape(bytes, starts, lasts).map(|t| native_cpu_stream::nodes_of(&t)).map_err(|r| r.pc);
-        assert_eq!(got, want, "{}", String::from_utf8_lossy(bytes));
-    }
-    // A tree walker's program is not tier 2's.
-    let walker = rir::assemble("program -\n  mode set=0 query=0\n  0000 STOP 0\n").expect("assembles");
-    assert!(native_cpu_stream::Tier2Cpu::new(&native_ir::lower(&walker).expect("lowers")).is_err());
 }

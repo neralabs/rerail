@@ -1,0 +1,15 @@
+# corpus: mix: seed 88
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = ~span(escaped(span(digit, 15)), 16)
+mask m1 = (ws ^ alpha)
+mask m2 = lasts(next(lf, 8))

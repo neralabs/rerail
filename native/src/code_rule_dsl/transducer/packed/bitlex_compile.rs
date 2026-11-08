@@ -244,20 +244,47 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 check: check_of.get(&r).copied(),
             });
         }
-        let lowered = bitlex_tier2::lower(&states, &arms, &rows)?;
+        // The extras' arms (grammar::with_extras), in each state whose tokens begin with bytes
+        // apart from the extras': tier 2 tells a token's row by its first byte.
+        let (states, arms) = {
+            let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
+            let mut first: HashMap<u16, ByteSet> = HashMap::new();
+            for r in &rows {
+                if r.kind != 0 {
+                    let e = first.entry(r.kind).or_insert([0; 4]);
+                    (0..4).for_each(|i| e[i] |= r.first[i]);
+                }
+                for (w, k) in &r.keywords {
+                    let e = first.entry(*k).or_insert([0; 4]);
+                    e[usize::from(w[0] / 64)] |= 1 << (w[0] % 64);
+                }
+            }
+            let apart = |a: u16, b: u16| match (first.get(&a), first.get(&b)) {
+                (Some(x), Some(y)) => (0..4).all(|i| x[i] & y[i] == 0),
+                _ => false,
+            };
+            grammar::with_extras(states, arms, &extras, &apart)?
+        };
+        let guards = bitlex_tier2::lower(&states, &arms, &rows, 0)?.guards;
         // A guard: a row beginning with a byte the switch gives another row.
-        for &(r, set) in &lowered.guards {
+        for &(r, set) in &guards {
             let bytes = low.class_set(set);
             let g = low.and(token_rows[r].1, bytes)?;
             low.fallbacks.push(g);
         }
-        if !low.extra.is_empty() {
-            return Err("extra kinds in tier 2's words: not compiled yet".into());
-        }
+        // The words again, now that the fallback's totals are known: each must be zero.
+        let empties = low.fallback()?.len() as u16;
+        let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties)?;
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), checks, lowered.text, takes_last));
     }
     let mut vals: Vec<(String, Val)> = Vec::new();
+    // The words read the fallback's totals (`EMPTY`), so a tree's program always has them.
+    if has_tree && !outputs.contains(&FALLBACK) {
+        for x in low.fallback()? {
+            vals.push((FALLBACK.to_owned(), x));
+        }
+    }
     for name in outputs {
         if *name == FALLBACK {
             for x in low.fallback()? {
@@ -322,6 +349,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         low.program.checks = checks;
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = vec![at[s], at[l]];
+        // The fallback's totals, in `fallback()`'s order: `EMPTY t` reads total `t`.
+        low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
         words = lowered;
         machine = text;
     }
@@ -528,9 +557,12 @@ impl Lowering {
     /// `prev(a, k)`. When `a` is `k` or more bytes late, its bits already stand for the bytes
     /// `k` earlier at a delay `k` smaller: no operation. Its bits for the bytes before the stream
     /// are clean (`next` cleans them), so the bytes shifted in are 0, as a carry's.
+    /// `prev(a, k)`: dirty, whatever `a` is. Its last `k` bits land past the stream's end, by a
+    /// shift or, when `a` is `k` or more bytes late, by `a` read `k` bytes earlier.
     fn prev(&mut self, a: Val, k: u64) -> Result<Val, String> {
+        let dirty = a.dirty || !self.is_zero(a);
         if u64::from(a.d) >= k {
-            return Ok(Val { d: a.d - k as u8, set: None, ..a });
+            return Ok(Val { d: a.d - k as u8, set: None, dirty, ..a });
         }
         let mut v = a.v;
         let mut left = k;
@@ -539,7 +571,12 @@ impl Lowering {
             v = self.prev_op(v, step);
             left -= u64::from(step);
         }
-        Ok(Val { v, set: None, ..a })
+        Ok(Val { v, set: None, dirty, ..a })
+    }
+
+    /// Whether `a` is the constant zero.
+    fn is_zero(&self, a: Val) -> bool {
+        self.program.ops.get(usize::from(a.v)) == Some(&BlockOp::Const(0))
     }
 
     /// `next(a, k)`: `a` itself, `k` bytes later. Two cleanings: past the end in `a`'s own
@@ -972,8 +1009,10 @@ impl Lowering {
     /// `r` of a run's start mod `k`, a fill over the runs that start there, kept at the
     /// positions of the same residue. `k` divides 64, so the residues repeat every word.
     fn aligned(&mut self, a: Val, k: u64) -> Result<Val, String> {
-        if !matches!(k, 1 | 2 | 4 | 8) {
-            return Err(format!("aligned by {k}: only 1, 2, 4 or 8 are compiled"));
+        // Each residue's bytes: a 64-bit pattern repeated over the stream where `k` divides 64,
+        // else `phase k r`, a residue of the position.
+        if k == 0 || k > 63 && k != 64 {
+            return Err(format!("aligned by {k}: from 1 to 63, or 64"));
         }
         if k == 1 {
             return Ok(a);
@@ -983,7 +1022,11 @@ impl Lowering {
         let outside = self.not(a)?;
         let mut out = self.leaf(BlockOp::Const(0), false);
         for r in 0..k {
-            let residue = self.pattern((0..64).filter(|i| i % k == r).fold(0u64, |acc, i| acc | 1 << i));
+            let residue = if 64 % k == 0 {
+                self.pattern((0..64).filter(|i| i % k == r).fold(0u64, |acc, i| acc | 1 << i))
+            } else {
+                self.leaf(BlockOp::Phase(k as u8, r as u8), true)
+            };
             let here = self.and(starts, residue)?;
             let runs = self.fill(here, outside)?;
             let kept = self.and(runs, residue)?;
@@ -1038,6 +1081,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     out.output_delays = program.output_delays.clone();
     out.checks = program.checks.clone();
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
+    out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out
 }
 

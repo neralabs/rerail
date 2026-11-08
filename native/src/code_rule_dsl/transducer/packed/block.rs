@@ -61,6 +61,10 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// with this, so no value has bits outside the stream. No carry: each executor knows the
     /// length and the position, so `within` at a delay is never a `prev` of `within`.
     Within(u8),
+    /// The bytes at stream positions `i` with `i % k == r` (`k` in 1..=63, `r < k`): a residue
+    /// of the position, for a period that does not divide 64 (`Const` holds the others). No
+    /// carry: each executor knows the position, as for `within`.
+    Phase(u8, u8),
 }
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
@@ -143,13 +147,14 @@ impl BlockOp {
             BlockOp::Fill(a, b) => two("fill", a, b),
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
+            BlockOp::Phase(k, r) => format!("phase {k} {r}"),
         }
     }
 
     /// The values the operation reads.
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
                 vec![a, b]
@@ -160,7 +165,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
@@ -216,6 +221,10 @@ impl BlockOp {
                 Ok(d) if (1..=63).contains(&d) => Ok(BlockOp::Within(d)),
                 _ => Err(format!("a bad within delay `{d}`")),
             },
+            ["phase", k, r] => match (k.parse::<u8>(), r.parse::<u8>()) {
+                (Ok(k), Ok(r)) if (1..=63).contains(&k) && r < k => Ok(BlockOp::Phase(k, r)),
+                _ => Err(format!("a bad phase `{k} {r}`")),
+            },
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -255,6 +264,7 @@ impl BlockOp {
             // `within` alone keeps its byte; at a delay, a new one and the delay.
             BlockOp::Within(0) => out.push(13),
             BlockOp::Within(d) => out.extend([14, d]),
+            BlockOp::Phase(k, r) => out.extend([15, k, r]),
         }
     }
 }
@@ -297,6 +307,10 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
+    /// Values, each also an output, whose set bits each executor counts over the whole stream:
+    /// a total per file (`BlockRun::totals`). Tier 2 reads them (`EMPTY`): the fallback's
+    /// masks are totals, and a file with any bit goes to tree-sitter.
+    pub(super) totals: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -318,12 +332,13 @@ pub(in crate::code_rule_dsl) struct BatchFile<'a> {
     pub(in crate::code_rule_dsl) program: usize,
 }
 
-/// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
-/// order).
+/// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
+/// order), and each total's count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BlockRun {
     pub(super) outputs: Vec<Vec<u64>>,
     pub(super) positions: Vec<Vec<u32>>,
+    pub(super) totals: Vec<u64>,
 }
 
 impl BlockProgram {
@@ -344,17 +359,18 @@ impl BlockProgram {
             }
             // Up to 63 bytes: the halo is one 64-bit word on every executor.
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
+            BlockOp::Phase(k, r) => (1..=63).contains(&k) && r < k,
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         // A check: a verified straight-line program with one output, and no checks of its own.
         let checks = self.checks.iter().all(|c| {
             let q = &c.program;
-            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.delay <= 1 && q.checks.is_empty()
+            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.totals.is_empty() && q.delay <= 1 && q.checks.is_empty()
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
             return Err(Error::InvalidTarget(0));
@@ -382,6 +398,14 @@ impl BlockProgram {
         if !self.extracts.is_empty() {
             out.extend_from_slice(&(self.extracts.len() as u32).to_le_bytes());
             for v in &self.extracts {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        // Likewise the totals, tagged.
+        if !self.totals.is_empty() {
+            out.extend_from_slice(b"totals");
+            out.extend_from_slice(&(self.totals.len() as u32).to_le_bytes());
+            for v in &self.totals {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
@@ -423,6 +447,14 @@ impl BlockProgram {
             .collect()
     }
 
+    /// Each total's output index.
+    pub(super) fn total_outputs(&self) -> Vec<usize> {
+        self.totals
+            .iter()
+            .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a total is an output"))
+            .collect()
+    }
+
     /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
     /// sized by its count before it is written (`extract`).
     pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
@@ -431,10 +463,11 @@ impl BlockProgram {
 
     /// `run` over several files at once (`interpret_files`).
     pub(super) fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
-        let extracts = self.extract_outputs();
+        let (extracts, totals) = (self.extract_outputs(), self.total_outputs());
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
+                let totals = totals.iter().map(|&k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()).collect();
                 let positions = extracts
                     .iter()
                     .map(|&k| {
@@ -443,7 +476,7 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
-                BlockRun { outputs, positions }
+                BlockRun { outputs, positions, totals }
             })
             .collect()
     }
@@ -495,6 +528,7 @@ impl BlockProgram {
             let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
             let words: Vec<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
+                BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
@@ -613,6 +647,19 @@ pub(super) fn within(at: usize, len: usize) -> u64 {
 }
 
 /// `within` at delay `d` for block `at`: the bits `d <= i < len + d`.
+/// Multiples of `k` below 64 (`k` in 1..=63): `phase`'s word at a position that is one.
+pub(in crate::code_rule_dsl) fn period_bits(k: u8) -> u64 {
+    (0..64).step_by(usize::from(k)).fold(0u64, |acc, i| acc | 1 << i)
+}
+
+/// `phase k r`'s word for the 64 bytes from position `at`: bit `j` where `(at + j) % k == r`,
+/// the period's bits shifted up by the first such `j`.
+pub(super) fn phase(at: usize, k: u8, r: u8) -> u64 {
+    let k = usize::from(k);
+    let first = (usize::from(r) + k - at % k) % k;
+    period_bits(k as u8) << first
+}
+
 pub(super) fn within_at(at: usize, len: usize, d: u8) -> u64 {
     within(at, len + usize::from(d)) & !within(at, usize::from(d))
 }

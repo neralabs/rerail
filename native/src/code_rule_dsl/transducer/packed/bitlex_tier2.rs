@@ -45,10 +45,11 @@ pub(super) struct Row {
 }
 
 impl Row {
-    /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): not one byte, and not all keywords,
-    /// whose words give their lengths.
+    /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): every row but one of one-byte
+    /// tokens. A row of keywords only is no exception: its token runs to its last byte whatever
+    /// the word, and `truee` is not `true` (the word's bytes are compared over the whole token).
     pub(super) fn takes_last(&self) -> bool {
-        !self.one_byte && self.kind != 0
+        !self.one_byte
     }
 }
 
@@ -78,7 +79,48 @@ pub(super) fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8)
         }
     }
     if atoms.len() > 12 {
-        return [u64::MAX; 4];
+        // Too many to try each: every free value unknown, in three-valued logic. Still sound (a
+        // byte for which the value is false whatever they are is left out), less sharp.
+        fn kleene(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, b: u8, atoms: &HashMap<(u16, u32), usize>) -> Option<bool> {
+            let e = |a: u16, l: u32| kleene(ops, tables, a, l, b, atoms);
+            if atoms.contains_key(&(at, lag)) {
+                return None;
+            }
+            match ops[usize::from(at)] {
+                BlockOp::Eq(c) => Some(c == b),
+                BlockOp::Class { table, bits } => Some(tables[usize::from(table)].member(b, bits)),
+                BlockOp::Not(a) => e(a, lag).map(|x| !x),
+                BlockOp::And(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                },
+                BlockOp::Or(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                },
+                BlockOp::Xor(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(x), Some(y)) => Some(x != y),
+                    _ => None,
+                },
+                BlockOp::AndNot(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(false), _) | (_, Some(true)) => Some(false),
+                    (Some(true), Some(false)) => Some(true),
+                    _ => None,
+                },
+                BlockOp::Prev(a, k) => e(a, lag + u32::from(k)),
+                BlockOp::Const(c) => Some(c != 0),
+                _ => unreachable!("every other operation is free"),
+            }
+        }
+        let mut out = [0u64; 4];
+        for b in 0..=255u8 {
+            if kleene(ops, tables, v, 0, b, &atoms) != Some(false) {
+                out[usize::from(b / 64)] |= 1 << (b % 64);
+            }
+        }
+        return out;
     }
     fn eval(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, d: u32, b: u8, atoms: &HashMap<(u16, u32), usize>, set: u32) -> bool {
         let e = |a: u16, l: u32| eval(ops, tables, a, l, d, b, atoms, set);
@@ -118,6 +160,8 @@ enum Arg {
     Table(u16),
     /// A state's entry, known once every state is laid out.
     State(u16),
+    /// A word's place.
+    Pc(u16),
 }
 
 /// Where an arm's token ends: a length, or the stream's next last byte.
@@ -193,7 +237,7 @@ impl Emit<'_> {
         self.arm_code.insert((arm, span, pre.clone()), at);
         match span {
             Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
-            Span::Last => self.push("SPAN", 1, Arg::None),
+            Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
         }
         match &pre {
             Pre::None => {}
@@ -203,6 +247,13 @@ impl Emit<'_> {
             }
             Pre::Check(c) => self.push("CHECK", 0, Arg::Num(*c)),
         }
+        self.body(arm);
+        at
+    }
+
+    /// An arm's acts, push and jump, here.
+    fn body(&mut self, arm: usize) -> u16 {
+        let at = self.pc();
         let a = &self.arms[arm];
         let (token, to, ret) = (a.token, a.to, a.push);
         for act in a.acts.clone() {
@@ -239,21 +290,65 @@ impl Emit<'_> {
         let row = &self.rows[cands[0].row];
         let plain: Vec<&Cand> = cands.iter().filter(|c| c.word.is_none()).collect();
         let words: Vec<&Cand> = cands.iter().filter(|c| c.word.is_some()).collect();
-        if words.is_empty() {
+        // The row's keywords beginning with the byte that no arm here takes: a token that is one
+        // has the keyword's kind, not the row's, so the row's own arm must not take it.
+        let missing: Vec<Vec<u8>> = row
+            .keywords
+            .iter()
+            .map(|(w, _)| w.clone())
+            .filter(|w| depth == 0 && w[0] == b && !words.iter().any(|c| c.word.as_ref() == Some(w)))
+            .collect();
+        let check_refuses = row.check.is_some_and(|(_, first)| !has(&first, b));
+        if words.is_empty() && (missing.is_empty() || plain.is_empty() || check_refuses) {
             let pre = row.check.map_or(Pre::None, |(c, _)| Pre::Check(c));
             let span = if row.one_byte { Span::Len(1) } else { Span::Last };
             return Ok(self.arm(plain[0].arm, span, pre));
         }
-        if !plain.is_empty() {
-            // A keyword and the row's own kind on one byte: the keyword's `WORD` refuses the
-            // others, so the row's check must refuse every token beginning with the byte.
-            if words.len() > 1 || row.check.is_none_or(|(_, first)| has(&first, b)) {
-                return Err(format!("keywords sharing a byte with the row's own tokens, which the check does not refuse: not compiled yet (byte {b:#04x})"));
+        if !plain.is_empty() && (words.len() > 1 || !check_refuses) {
+            // Keywords and the row's own kind on one byte, which the row's check does not tell
+            // apart: the token's end, then a test per keyword (`WORD m=1`, a jump to the
+            // keyword's arm where the token is the word), then the row's own arm.
+            if row.one_byte {
+                return Err(format!("one-byte tokens sharing byte {b:#04x} with keywords: not compiled yet"));
             }
+            let at = self.pc();
+            self.push("SPAN", 1, Arg::Num(LASTS));
+            let mut jumps = Vec::new();
+            for c in &words {
+                let w = self.string(c.word.as_ref().expect("a keyword"));
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), Some(c.arm)));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            // A keyword no arm here takes refuses the file.
+            for w in &missing {
+                let w = self.string(w);
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), None));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            if let Some((c, _)) = row.check {
+                self.push("CHECK", 0, Arg::Num(c));
+            }
+            self.body(plain[0].arm);
+            let mut stop = None;
+            for (jump, arm) in jumps {
+                let to = match arm {
+                    Some(arm) => self.body(arm),
+                    None => *stop.get_or_insert_with(|| {
+                        let pc = self.pc();
+                        self.push("STOP", 0, Arg::None);
+                        pc
+                    }),
+                };
+                self.words[usize::from(jump)].2 = Arg::Pc(to);
+            }
+            return Ok(at);
         }
         if words.len() == 1 {
             let w = words[0].word.clone().expect("a keyword");
-            // A row of keywords only: the word gives the length. Else the token ends at its last byte.
+            // A one-byte row: the word is its byte. Else the token ends at its last byte, and the
+            // word is compared with all of it.
             let span = if row.takes_last() { Span::Last } else { Span::Len(w.len() as u16) };
             // The switches have read every byte of the word, and its length is its row's: no `WORD`.
             let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w) };
@@ -296,7 +391,7 @@ impl Emit<'_> {
             self.push("RETURN", 0, Arg::None);
             return Ok(());
         }
-        self.push("TOKEN", 0, Arg::None);
+        self.push("TOKEN", 0, Arg::Num(STARTS));
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.push("SWITCH", 0, Arg::Table(t as u16));
@@ -363,7 +458,14 @@ impl Emit<'_> {
 }
 
 /// Tier 2's words from the state machine and the token rows.
-pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Result<Lowered, String> {
+/// Tier 1's extracts the words read: every token's first byte (`TOKEN`), and the last byte of
+/// each token whose arm reads it (`SPAN m=1`).
+pub(super) const STARTS: u16 = 0;
+pub(super) const LASTS: u16 = 1;
+
+/// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
+/// each of which must be zero before the first token is taken.
+pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties: u16) -> Result<Lowered, String> {
     let mut e = Emit {
         states,
         arms,
@@ -376,6 +478,9 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Resul
         arm_code: HashMap::new(),
         guards: HashMap::new(),
     };
+    for t in 0..empties {
+        e.push("EMPTY", 0, Arg::Num(t));
+    }
     for s in 0..states.len() {
         e.state(s)?;
     }
@@ -408,6 +513,7 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Resul
             Arg::Str(s) => write!(text, " s{s}"),
             Arg::Table(t) => write!(text, " T{t}"),
             Arg::State(s) => write!(text, " @{:04}", e.entry[usize::from(s)]),
+            Arg::Pc(p) => write!(text, " @{p:04}"),
         };
         text.push('\n');
     }
