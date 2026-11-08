@@ -1918,7 +1918,12 @@ pub(crate) fn run_with_options(
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
     // `returns`, held for the typing outputs (`corpus::typing`).
-    let mut wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
+    // A program that declares it and derives no row of it (a library that only names it) holds nothing.
+    let mut wanted: BTreeSet<String> = (cross.program.decls.contains_key("returns") && cross.program.rules.iter().any(|r| r.head.rel == "returns"))
+        .then(|| "returns".to_owned())
+        .into_iter()
+        .filter(|r| !prog.outputs.contains(r))
+        .collect();
     // The import components (decision 0076): derived first, from the exports, and each one's stored rows looked up.
     // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
     let mut cross_state: Option<(cross_memo::Components, cross_memo::Found)> = None;

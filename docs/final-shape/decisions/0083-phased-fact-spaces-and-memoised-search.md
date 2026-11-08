@@ -1,6 +1,6 @@
-# 0082: Typing and libraries run as phases of one engine in separate fact spaces; searches are a memoised program kind
+# 0083: Typing and libraries run as phases of one engine in separate fact spaces; searches are a memoised program kind
 
-Status: proposed (2026-11-08). Draft for review. Numbered 0082 because More-ergonomic-rule-syntax holds 0081.
+Status: proposed (2026-11-08). Draft for review. Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
 It supersedes, for typing, the cross-file keys of 0065 §2 (one key per import component) and 0076. It keeps
 0065 §1 (no rounds), §2a (requests answered inside a fixpoint) and §3 (terms, instantiation by value).
 

@@ -1469,8 +1469,9 @@ tokens have no field.
   into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
   is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
-  per file and pattern) and over symbols (a native relation): decision 0054. Over a node's own text, `match_all`
-  is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
+  per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: also over nodes the rules
+  bind to a kind and over another pattern's captures, one scan per distinct text (decision 0081); a node bound to
+  no kind is still refused, and the scan is not chunked (O122).
   (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
 - `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
@@ -2362,3 +2363,24 @@ integer goes`. The rule is skipped in the s200 pack run.
 
 **Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
 the pack runs the rule again.
+
+
+## O121. A fact or empty-body rule whose node column is `unset` has no row
+
+`r(-1).`, and a rule whose body is only `unset(e)`, lower to a row with the node value -1 (`rr::lower::unset`). In
+a corpus run of a file-local relation that row is lost. `ruff-fast003` reads "a parameter with no default" this
+way (`fast_param`), so on Ruff's `FAST003.py` it finds all 31 expected findings and 33 false ones (decision 0081).
+One attempted fix, keeping the row in the file-local split, did not change the result and was reverted.
+
+**Closure:** the row is kept, a test runs `r(-1).` through a corpus run, and FAST003 has no extra findings.
+
+
+## O122. `match_all` over nodes: not chunked, and refused over any expression
+
+Decision 0081 scans each distinct text of the nodes a pattern runs over, once per pattern. That is a scan per
+container, not the chunked pass over the file that string matching should be: nested kinds scan a byte more than
+once, and no measurement on the 9,010-file repository exists yet. A column bound by any expression (`perf403`:
+`store(t, e)`, `e` any node) has no kind, so the lowering still refuses it.
+
+**Closure:** containers are matched in one chunked pass over the file's bytes, with matches kept per container,
+measured at full size; and a column of any expression is scanned, or the rule binds its kinds.
