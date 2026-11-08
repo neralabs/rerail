@@ -1796,6 +1796,20 @@ pub(crate) fn run_with_options(
         }
         Ok(())
     };
+    // Every component found: a memoised relation's own rules derive nothing (each is guarded to the documents not
+    // found), so only its copy from `<rel>__cross` runs (decision 0076).
+    let cross = match (&cross_plan, &cross_state) {
+        (Some(plan), Some((_, found))) if cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty() => {
+            let mut cross = cross;
+            let before = cross.program.rules.len();
+            cross_memo::keep_copies(&mut cross.program, plan);
+            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
+                format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
+            });
+            cross
+        }
+        _ => cross,
+    };
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;

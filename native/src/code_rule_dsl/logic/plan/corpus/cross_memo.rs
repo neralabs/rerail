@@ -318,6 +318,12 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     Ok(Some(Plan { components, memo, digest }))
 }
 
+/// Drops the memoised relations' rules but their copies from `<rel>__cross`: for a run where every component was
+/// found, whose guards (`!rr_cross_doc`) every other rule's rows fail.
+pub(super) fn keep_copies(cross: &mut front::Program, plan: &Plan) {
+    cross.rules.retain(|r| !plan.memo.contains_key(&r.head.rel) || r.body.iter().any(|l| matches!(l, front::Literal::Atom(a) if a.rel.ends_with(SUFFIX))));
+}
+
 /// Each document's component and key, and the components' edges, from the component sub-program's rows.
 pub(super) struct Components {
     pub(super) of: HashMap<i64, (i64, String)>,

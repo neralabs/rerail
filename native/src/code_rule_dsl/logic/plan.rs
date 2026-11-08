@@ -2744,6 +2744,14 @@ impl Run<'_> {
                     let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
                 }
+                Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, args) } if f == "doc" && args.len() == 1 => {
+                    // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
+                    if !matches!(&args[0], Term::Var(v) if slots.contains_key(v)) {
+                        return None;
+                    }
+                    let tn = tok(&args[0], &mut slots)?;
+                    lines.push(format!("docof {} {tn}", tok(&Term::Var(d.clone()), &mut slots)?));
+                }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
                 {
