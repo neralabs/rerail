@@ -500,12 +500,14 @@ impl<'a> HeldPlan<'a> {
     /// The lease: longer than a run, short enough that a dead run's hold does not keep a plan for long.
     const LEASE_SECS: i64 = 6 * 3600;
 
-    fn new(store: &'a ContentStore, plan: [u8; 32]) -> std::result::Result<Self, crate::content_store::StoreError> {
+    fn new(store: &'a ContentStore, plans: &[[u8; 32]]) -> std::result::Result<Self, crate::content_store::StoreError> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let owner = format!("corpus-run:{}:{}:{}", std::process::id(), now.as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let lease = now.as_secs() as i64 + Self::LEASE_SECS;
-        store.hold_corpus_plan(plan, &owner, lease)?;
+        for plan in plans {
+            store.hold_corpus_plan(*plan, &owner, lease)?;
+        }
         store.hold_sources(&owner, lease)?;
         Ok(HeldPlan { store, owner })
     }
@@ -518,12 +520,12 @@ impl Drop for HeldPlan<'_> {
     }
 }
 
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], reading: Option<crate::content_store::CollectionLease>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], reading: Option<crate::content_store::CollectionLease>) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     store
-        .record_corpus_run(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), now)
+        .record_corpus_run_naming(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), also, now)
         .map_err(|e| Error::Plan(e.to_string()))?;
     // The manifest now protects the sources. Release before collection, including warm runs
     // that must resume a pass deferred by another active reader.
@@ -822,6 +824,8 @@ pub(crate) fn run_with_options(
     // (decisions 0073 to 0075). No file roots them, so the run's manifest names them, and collection keeps them while
     // it keeps the run.
     let mut program_sources: Vec<crate::content_store::SourceId> = durable.into_iter().collect();
+    // And the plans it is stored under, which the manifest names too: an earlier build's go once no kept run names them.
+    let program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
     let (kept, from) = match (kept, durable) {
         (Some(p), _) => (Some(p), "memory"),
         (None, Some(source)) => {
@@ -1056,7 +1060,7 @@ pub(crate) fn run_with_options(
     // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
     // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
     let _held = match memo {
-        Some(memo::Memo::Stored(_)) if memoised => Some(HeldPlan::new(store, memo::plan_digest(&memo_program)).map_err(|e| Error::Plan(e.to_string()))?),
+        Some(memo::Memo::Stored(_)) if memoised => Some(HeldPlan::new(store, &[&[memo::plan_digest(&memo_program)][..], &program_plans].concat()).map_err(|e| Error::Plan(e.to_string()))?),
         _ => None,
     };
     // A cross-file part that reads base relations takes their rows from the chunks it evaluates, and from a file's
@@ -1571,7 +1575,7 @@ pub(crate) fn run_with_options(
         store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
-    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, reading)? } else { drop(reading); None };
+    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, &program_plans, reading)? } else { drop(reading); None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -2518,10 +2522,10 @@ mod tests {
         let program = [7; 32];
         // Simulate another active run deferring the first run's background collection.
         let reader = store.hold_collection().unwrap();
-        super::record_run(&store, &root, &[source], &program, None).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], None).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, Some(reader)).unwrap().unwrap().join().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], Some(reader)).unwrap().unwrap().join().unwrap().1.unwrap();
         assert!(!store.corpus_collection_due().unwrap());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }

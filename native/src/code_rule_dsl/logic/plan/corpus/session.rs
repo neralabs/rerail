@@ -24,6 +24,10 @@ pub(in crate::code_rule_dsl) struct Session {
     /// The store's file, which each run's SQL connection opens (its atoms are the store's).
     pub(super) path: PathBuf,
     pub(super) store: ContentStore,
+    /// In a test build, the thread that started the session, the only one whose runs are its: the other tests run
+    /// beside it, in the same process, and are no session's.
+    #[cfg(test)]
+    thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
 }
 
@@ -38,7 +42,13 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join("session.sqlite");
     let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    *session = Some(Session { path, store, memo: Default::default() });
+    *session = Some(Session {
+        path,
+        store,
+        memo: Default::default(),
+        #[cfg(test)]
+        thread: std::thread::current().id(),
+    });
     Ok(())
 }
 
@@ -66,7 +76,12 @@ pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
 
 /// The session, held for a run (`None`: none started, or a full run).
 pub(super) fn current() -> Held {
-    Held(SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner), FULL.load(std::sync::atomic::Ordering::Relaxed))
+    let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    #[cfg(test)]
+    let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
+    #[cfg(not(test))]
+    let skip = false;
+    Held(held, skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The session held for a run, unless the run is a full one.

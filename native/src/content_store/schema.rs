@@ -360,6 +360,19 @@ CREATE TABLE IF NOT EXISTS corpus_stats (
     PRIMARY KEY (root_id, path)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
+-- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
+-- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.
+CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
+    manifest_id INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (manifest_id, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- The sweep of the corpus memo's retired schemas (`RETIRED_CORPUS_MEMO_SCHEMAS`): done once a pass finds no more.
+CREATE TABLE IF NOT EXISTS corpus_swept (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    done INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
 
 -- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
 -- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,

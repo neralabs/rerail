@@ -264,3 +264,54 @@ fn a_held_source_survives_collection_until_released() {
     passes();
     assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), None, "released, it is collected");
 }
+
+/// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
+/// (named by the manifests, `record_corpus_run_naming`), a held plan whose hold lapsed (the slice's memo), and rows
+/// of the corpus memo's retired schemas. A plan still named, a hold still running and other schemas' rows stay.
+#[test]
+fn old_memo_rows_are_collected_while_their_source_lives() {
+    let (_path, store) = store("corpus-old-memo");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1 << 40, ..CorpusPolicy::default() };
+    let source = store.put_source(&noise(1, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(2, 256)).unwrap();
+    let put = |schema: u32, path: &str, plan: [u8; 32]| {
+        let set = crate::content_store::FactsPlanSet::new(vec![plan]);
+        // The corpus memo's rows are under their path; the others read none.
+        let result = crate::content_store::FactsResult { plan, path_dependent: schema == 2, entry: vec![1, 2, 3] };
+        store.put_facts_memo(crate::content_store::FactsMemoKey { source, fact_schema: schema, path }, &set, &[result], &[]).unwrap();
+    };
+    let rows = |plan: [u8; 32]| -> i64 {
+        store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap()
+    };
+    let passes = |now: i64| {
+        for _ in 0..4 {
+            if !store.corpus_pass_wanted(&policy, now).unwrap() {
+                break;
+            }
+            store.collect_corpus_pass(&policy, now).unwrap();
+        }
+    };
+    // Two builds' runs, each naming its memo plan and its prepared program's plan, over the same source.
+    let (old_pointer, new_pointer) = ([11u8; 32], [12u8; 32]);
+    put(101, "rerail/prepared", old_pointer);
+    assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [1u8; 32], &[old_pointer], 1_000).unwrap());
+    put(101, "rerail/prepared", new_pointer);
+    assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [2u8; 32], &[new_pointer], 1_000).unwrap());
+    // A writer that holds its plans: one hold lapses at 1,500, one runs to 9,000.
+    let (lapsed, running) = ([21u8; 32], [22u8; 32]);
+    store.hold_corpus_plan(lapsed, "slice-memo", 1_500).unwrap();
+    store.hold_corpus_plan(running, "slice-memo", 9_000).unwrap();
+    put(1, "a.py", lapsed);
+    put(1, "a.py", running);
+    // Rows of a retired corpus memo schema, and of the slice's schema under a plan nothing ever recorded.
+    let (retired, unrecorded) = ([31u8; 32], [32u8; 32]);
+    put(2, "a.py", retired);
+    put(1, "b.py", unrecorded);
+    passes(1_000);
+    assert_eq!((rows(old_pointer), rows(new_pointer)), (0, 1), "the replaced build's program plan goes; the kept one stays");
+    assert_eq!(rows(retired), 0, "a retired schema's rows are swept");
+    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (1, 1, 1), "holds still running at 1,000");
+    passes(2_000);
+    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
+    assert!(store.get_source(source).is_ok(), "the source lives on");
+}
