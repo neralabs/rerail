@@ -342,13 +342,34 @@ struct Prepared {
     interned: Vec<(Vec<String>, Vec<u32>)>,
 }
 
-fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
-    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
-    PREPARED.get_or_init(Default::default)
+/// The process's prepared programs, given to `f`. A test's are its own thread's: tests run side by side, and one
+/// filling the cache clears it (`PREPARED_KEPT`) under another that expects its program kept (`prepared::tests`).
+fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Prepared>) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        static PREPARED: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::LazyLock::new(Default::default);
+        f(&mut PREPARED.lock().expect("the prepared programs"))
+    }
+    #[cfg(test)]
+    {
+        thread_local! {
+            static PREPARED: std::cell::RefCell<HashMap<[u8; 32], Prepared>> = std::cell::RefCell::default();
+        }
+        PREPARED.with(|kept| f(&mut kept.borrow_mut()))
+    }
 }
 
 /// A few prepared programs at a time are kept.
 const PREPARED_KEPT: usize = 16;
+
+fn keep_prepared(key: [u8; 32], prepared: Prepared) {
+    with_prepared(|kept| {
+        if kept.len() >= PREPARED_KEPT {
+            kept.clear();
+        }
+        kept.insert(key, prepared);
+    });
+}
 
 fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
@@ -916,7 +937,7 @@ pub(crate) fn run_with_options(
             store.intern_atoms(&strings).is_ok_and(|got| got.iter().map(|a| u32::from(*a)).eq(atoms.iter().copied()))
         })
     };
-    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned().filter(holds);
+    let kept = with_prepared(|kept| kept.get(&prepared_key).cloned()).filter(holds);
     // Kept across processes in the persistent store, under the programs' text (decision 0073); a session's or T's run
     // keeps it in memory only.
     let durable = if tapes.is_some() && t.is_none() && session.is_none() {
@@ -934,11 +955,7 @@ pub(crate) fn run_with_options(
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             if from == "store" {
-                let mut kept = prepared_cache().lock().expect("the prepared programs");
-                if kept.len() >= PREPARED_KEPT {
-                    kept.clear();
-                }
-                kept.insert(prepared_key, p.clone());
+                keep_prepared(prepared_key, p.clone());
             }
             p
         }
@@ -982,12 +999,7 @@ pub(crate) fn run_with_options(
             lowered.program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
-            let mut kept = prepared_cache().lock().expect("the prepared programs");
-            if kept.len() >= PREPARED_KEPT {
-                kept.clear();
-            }
-            kept.insert(prepared_key, prepared.clone());
-            drop(kept);
+            keep_prepared(prepared_key, prepared.clone());
             if let Some(source) = durable {
                 prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))?;
             }
@@ -1126,18 +1138,19 @@ pub(crate) fn run_with_options(
             "doc" if decodes => &["d", "path"],
             _ => &[],
         };
-        let named: Vec<&str> = cols
+        let atoms = || cross.program.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).filter(|a| &a.rel == rel);
+        let mut named: Vec<&str> = cols
             .iter()
             .enumerate()
-            .filter(|(i, c)| {
-                decode.contains(c)
-                    || cross.program.rules.iter().flat_map(|r| &r.body).any(|l| match l {
-                        front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => &a.rel == rel && a.args.get(*i).is_some_and(|t| !matches!(t, front::Term::Wild)),
-                        _ => false,
-                    })
-            })
+            .filter(|(i, c)| decode.contains(c) || atoms().any(|a| a.args.get(*i).is_some_and(|t| !matches!(t, front::Term::Wild))))
             .map(|(_, c)| *c)
             .collect();
+        // A relation read with every column a wildcard (`text(_, _)` in a negated conjunction) is read for whether it
+        // has rows: its first column is held, so the cross-file part reads every chunk's rows and measures them (not
+        // the last chunk's binding, or none where the files came from the per-file memo).
+        if named.is_empty() && atoms().next().is_some() {
+            named.push(cols[0]);
+        }
         if named.is_empty() {
             continue;
         }
