@@ -385,6 +385,12 @@ pub(super) struct BlockNative {
     pub tables: Vec<super::block::ClassTable>,
     pub insts: Vec<BlockInst>,
     pub outputs: Vec<u16>,
+    /// The outputs (indexes into `outputs`) whose positions the extract pass writes.
+    pub extracts: Vec<usize>,
+    /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
+    pub delay: u8,
+    /// Each output's delay (`block::BlockProgram::output_delay`).
+    pub output_delays: Vec<u8>,
 }
 
 /// An instruction of a block body.
@@ -398,6 +404,14 @@ pub(super) enum BlockInst {
     Class { table: u16, bits: u8 },
     /// Bit `k` of every byte of the block: one bit-plane (`BlockNative::planes_form`).
     Plane(u8),
+    /// The bytes whose byte before is in `before`'s classes and which are in `table`'s, for a
+    /// shared class of `bits` (`block::BlockOp::Pair`): on the CPU the class bytes of the block
+    /// loaded one byte back, ANDed with the block's own, then one test.
+    Pair { before: u16, table: u16, bits: u8 },
+    /// Bit `k` of every byte's byte before (0x00 before the stream): one bit-plane of the
+    /// source one byte back, for `pair` in the planes form. Local: the byte before a lane is read
+    /// from the source.
+    PlaneBefore(u8),
     /// A 64-bit pattern repeated over the stream.
     Const(u64),
     Not(u16),
@@ -409,13 +423,28 @@ pub(super) enum BlockInst {
     /// block to block; on Metal by a scan of lane summaries (`metal_block_program`).
     Prev(u16, u8),
     Toggle(u16),
-    AfterOddRun(u16),
+    Escaped(u16),
+    /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
+    Fill(u16, u16),
+    /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
+    Within(u8),
 }
 
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub(super) fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..))
+    }
+
+    /// The values the instruction reads.
+    pub(super) fn operands(&self) -> Vec<usize> {
+        match *self {
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => vec![usize::from(a)],
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
+                vec![usize::from(a), usize::from(b)]
+            }
+            _ => vec![],
+        }
     }
 }
 
@@ -428,6 +457,7 @@ impl BlockNative {
             .map(|op| match *op {
                 BlockOp::Eq(byte) => BlockInst::EqByte(byte),
                 BlockOp::Class { table, bits } => BlockInst::Class { table, bits },
+                BlockOp::Pair { before, table, bits } => BlockInst::Pair { before, table, bits },
                 BlockOp::Const(c) => BlockInst::Const(c),
                 BlockOp::Not(a) => BlockInst::Not(a),
                 BlockOp::And(a, b) => BlockInst::And(a, b),
@@ -436,10 +466,19 @@ impl BlockNative {
                 BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
                 BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
-                BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
+                BlockOp::Escaped(a) => BlockInst::Escaped(a),
+                BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
+                BlockOp::Within(d) => BlockInst::Within(d),
             })
             .collect();
-        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone() }
+        Self {
+            tables: program.tables.clone(),
+            insts,
+            outputs: program.outputs.clone(),
+            extracts: program.extract_outputs(),
+            delay: program.delay,
+            output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
+        }
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes
@@ -466,6 +505,23 @@ impl BlockNative {
                     }
                     f.index(word)
                 }
+                // The same with the byte before's planes (8..16) for `before`'s functions.
+                BlockInst::Pair { before, table, bits } => {
+                    let (p, t) = (self.tables[usize::from(before)], self.tables[usize::from(table)]);
+                    let half = |n: &[u8; 16], c: usize| (0..16).fold(0u16, |a, i| a | (u16::from(n[i] >> c & 1) << i));
+                    let mut word = Term::Zero;
+                    for c in (0..8).filter(|c| bits >> c & 1 == 1) {
+                        let pl = f.function(8, 4, half(&p.lo, c));
+                        let ph = f.function(12, 4, half(&p.hi, c));
+                        let l = f.function(0, 4, half(&t.lo, c));
+                        let h = f.function(4, 4, half(&t.hi, c));
+                        let a = f.and(pl, ph);
+                        let b = f.and(l, h);
+                        let both = f.and(a, b);
+                        word = f.or(word, both);
+                    }
+                    f.index(word)
+                }
                 BlockInst::Not(a) => f.push(BlockInst::Not(m(a))),
                 BlockInst::And(a, b) => f.push(BlockInst::And(m(a), m(b))),
                 BlockInst::Or(a, b) => f.push(BlockInst::Or(m(a), m(b))),
@@ -473,7 +529,8 @@ impl BlockNative {
                 BlockInst::AndNot(a, b) => f.push(BlockInst::AndNot(m(a), m(b))),
                 BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
-                BlockInst::AfterOddRun(a) => f.push(BlockInst::AfterOddRun(m(a))),
+                BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
+                BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
                 other => f.push(other),
             };
             at.push(index);
@@ -482,6 +539,9 @@ impl BlockNative {
             tables: self.tables.clone(),
             insts: f.insts,
             outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
+            extracts: self.extracts.clone(),
+            delay: self.delay,
+            output_delays: self.output_delays.clone(),
         }
     }
 }
@@ -498,7 +558,8 @@ enum Term {
 #[derive(Default)]
 struct PlaneFormulas {
     insts: Vec<BlockInst>,
-    planes: [Option<u16>; 8],
+    /// Planes 0..8 of the bytes, 8..16 of the bytes before.
+    planes: [Option<u16>; 16],
     functions: std::collections::HashMap<(usize, usize, u16), Term>,
     shared: std::collections::HashMap<BlockInst, u16>,
 }
@@ -506,7 +567,7 @@ struct PlaneFormulas {
 impl PlaneFormulas {
     /// An instruction's index, shared with an earlier identical one.
     fn push(&mut self, inst: BlockInst) -> u16 {
-        let pure = !matches!(inst, BlockInst::Class { .. });
+        let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. });
         if pure {
             if let Some(&i) = self.shared.get(&inst) {
                 return i;
@@ -532,7 +593,8 @@ impl PlaneFormulas {
         if let Some(i) = self.planes[k] {
             return i;
         }
-        let i = self.push(BlockInst::Plane(k as u8));
+        let inst = if k < 8 { BlockInst::Plane(k as u8) } else { BlockInst::PlaneBefore(k as u8 - 8) };
+        let i = self.push(inst);
         self.planes[k] = Some(i);
         i
     }

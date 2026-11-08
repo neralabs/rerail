@@ -5,6 +5,7 @@
 //! straight bit operations.
 
 use super::*;
+use super::block::BlockRun;
 
 /// A transducer program whose walk does nothing and whose block program is `rows`.
 fn program(rows: &str) -> Program {
@@ -14,7 +15,7 @@ fn program(rows: &str) -> Program {
 
 /// Inputs that put every byte value at every position of a block, and lengths around every
 /// block edge.
-fn inputs() -> Vec<Vec<u8>> {
+pub(super) fn inputs() -> Vec<Vec<u8>> {
     let every: Vec<u8> = (0..=255u8).chain((0..=255u8).rev()).chain(0..=255u8).collect();
     let mut out = vec![vec![], b"\"".to_vec(), every.clone()];
     for len in [1usize, 2, 63, 64, 65, 127, 128, 129, 200] {
@@ -33,7 +34,7 @@ fn inputs() -> Vec<Vec<u8>> {
 /// Runs of backslashes, quotes and other bytes of every length to 200, over enough bytes that
 /// carries cross lanes, SIMD groups and threadgroups at every lane width (a group is 512 to 2048
 /// bytes), with a stretch of one long run.
-fn runs() -> Vec<Vec<u8>> {
+pub(super) fn runs() -> Vec<Vec<u8>> {
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move |n: u64| {
         seed ^= seed << 13;
@@ -69,26 +70,52 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 }
 
 /// Every executor's outputs for the program's first block program, with the executor's name.
-fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
-    let mut out = vec![
-        ("cpu interpreter".to_owned(), block.interpret(bytes)),
-        ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").run(bytes)),
-    ];
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
-        for width in LaneWidth::ALL {
-            let w = width.bytes();
-            out.push((format!("metal interpreter, {w}-byte lanes"), interpret(block, bytes, width).expect("runs")));
-            for strategy in ClassStrategy::ALL {
-                let (got, _) = run_generated_with(&native, bytes, width, strategy).expect("runs");
-                out.push((format!("generated msl, {w}-byte lanes, {strategy:?}"), got));
+pub(super) fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+    let (out, skipped) = Executors::new(p).run(bytes, true);
+    assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
+    out
+}
+
+/// A program's first block program, lowered and compiled once, for runs over many inputs.
+pub(super) struct Executors<'a> {
+    block: &'a block::BlockProgram,
+    native: native_ir::BlockNative,
+    cranelift: native_cpu_block::CompiledBlock,
+}
+
+impl<'a> Executors<'a> {
+    pub(super) fn new(p: &'a Program) -> Self {
+        let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+        let cranelift = native_cpu_block::compile(&native).expect("compiles");
+        Executors { block: &p.block_programs()[0], native, cranelift }
+    }
+
+    /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
+    /// executor whose run would take more launches than the budget (`metal_launch_budget`):
+    /// those are named in the second list.
+    pub(super) fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
+        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
+        let mut skipped = Vec::new();
+        #[cfg(target_os = "macos")]
+        if metal {
+            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
+            let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
+                Ok(got) => out.push((name, got)),
+                Err(Error::BackendLaunchLimit) => skipped.push(name),
+                Err(e) => panic!("{name} runs: {e:?}"),
+            };
+            for width in LaneWidth::ALL {
+                let w = width.bytes();
+                keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
+                for strategy in ClassStrategy::ALL {
+                    keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
+                }
             }
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = metal;
+        (out, skipped)
     }
-    out
 }
 
 /// Check a program's outputs against references on every input and every executor.
@@ -96,9 +123,9 @@ fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
     let p = program(rows);
     for bytes in inputs() {
         let want = want(&bytes);
-        for (name, got) in executors(&p, &bytes) {
-            assert_eq!(got, want, "{name}, {} bytes, program:\n{rows}", bytes.len());
-        }
+        // Every executor that disagrees, so one run shows where a lowering is wrong.
+        let wrong: Vec<String> = executors(&p, &bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
+        assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
     }
 }
 
@@ -166,10 +193,10 @@ fn eq_swar_form_equals_reference() {
 // --- What each executor lowers to ----------------------------------------------------------
 
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
-/// block's.
+/// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 fn body_of(clif: &str) -> Vec<String> {
     let lines: Vec<&str> = clif.lines().collect();
-    let start = lines.iter().position(|l| l.trim_start().starts_with("block1")).expect("a body block") + 1;
+    let start = lines.iter().position(|l| l.trim_start().starts_with("block2")).expect("a body block") + 1;
     lines[start..]
         .iter()
         .take_while(|l| !l.trim_start().starts_with("block"))
@@ -190,7 +217,16 @@ fn opcode(line: &str) -> &str {
 const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
-    "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow",
+    "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
+    // `within`: the bits below the stream's end, from its length (clamp, two shifts).
+    "isub", "smin", "smax", "ishl",
+    // The extract pass's size: each extract's popcount, summed as the plane is written.
+    "popcnt",
+    // Constants, made where they are used (decision 0069): `movi` and literal-pool loads, and
+    // the output words' one pointer (`i * outputs * 8`).
+    "splat", "vconst", "imul_imm",
+    // The packed carried state (decision 0070): a field's bits read with a mask.
+    "band_imm",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -213,14 +249,17 @@ fn check_lowering(name: &str, p: &Program) {
         let carried = native.insts.iter().any(native_ir::BlockInst::carried);
         for (strategy, msl) in metal_program_backend_generate(&native, width) {
             println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
-            // The lane code (the carry helpers, each round's summary and `tempo_block`) is
-            // straight-line; only a round kernel's look-back loops, over predecessor groups.
+            // The lane code (the carry helpers and each program's function) is straight-line;
+            // only the look-backs loop, over predecessor groups, and the workers' loop takes
+            // groups. A program's only branches leave the group unfinished when a look-back has
+            // to wait for another launch: the same in every lane.
             for (section, code) in lane_code(&msl) {
+                let code: String = code.lines().filter(|l| !CONTROL.iter().any(|c| l.trim_start().starts_with(c))).map(|l| format!("{l}\n")).collect();
                 for word in ["for (", "while", "switch", "goto", "?", "if (", "break"] {
                     assert!(!code.contains(word), "{name}: generated MSL ({strategy}), {section}, has `{word}`");
                 }
                 // SIMD-group operations only combine carries: none without a carried instruction.
-                if !carried && section == "tempo_block" {
+                if !carried && section.starts_with("program_") {
                     assert!(!code.contains("simd_"), "{name}: generated MSL ({strategy}) has a SIMD-group operation");
                 }
             }
@@ -232,19 +271,27 @@ fn check_lowering(name: &str, p: &Program) {
     }
 }
 
-/// The generated MSL's lane code: the carry helpers (everything before the first summary or
-/// kernel), each round's summary function, and `tempo_block`.
+/// A program function's control lines: each leaves the group unfinished, the same in every lane.
+const CONTROL: [&str; 3] = ["if (!look_back(", "if (!halo_exchange(", "if (!extract_write("];
+
+/// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
+/// and each `program_P`). The look-backs, which loop over predecessor groups, and the workers'
+/// kernel, which loops over groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
-    let first = ["static inline uint summary_", "kernel void"].iter().filter_map(|m| msl.find(m)).min().expect("code");
-    let mut out = vec![("helpers".to_owned(), msl[..first].to_owned())];
-    for marker in ["static inline uint summary_", "kernel void tempo_block("] {
+    let mut out = Vec::new();
+    for marker in ["static inline "] {
         for (at, _) in msl.match_indices(marker) {
             let code = &msl[at..];
-            let code = &code[..code.find("\n}\n").expect("its end")];
-            let name = code[..code.find('(').expect("a name")].rsplit(' ').next().unwrap_or("").to_owned();
+            let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
+            let code = &code[..end.min(code.len())];
+            let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
+            if ["look_back", "halo_exchange"].contains(&name.as_str()) {
+                continue;
+            }
             out.push((name, code.to_owned()));
         }
     }
+    assert!(out.iter().any(|(name, _)| name == "program_0"), "no program_0");
     out
 }
 
@@ -284,15 +331,27 @@ fn interpreters_have_no_byte_loops() {
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");
     }
-    // The Metal interpreter's `run`: one loop, over operations; the carry helpers it calls have
-    // none. Loops elsewhere are over groups (`block_carry_scan`).
+    // The Metal interpreter's `interpret_file`: one loop over operations, and loops over the
+    // program's outputs and extracts (sizes); a lane's chunks are a loop over `sizeof(M) / 2`.
+    // Its only branches leave the group unfinished when a look-back has to wait.
     let metal = include_str!("metal_block_program.metal");
-    let run = &metal[metal.find("static inline void run(").expect("run")..];
+    let run = &metal[metal.find("static bool interpret_file(").expect("interpret_file")..];
     let run = &run[..run.find("\n}\n").expect("its end")];
-    assert_eq!(run.matches("for (").count(), 1, "the Metal interpreter's one loop is over operations");
-    assert!(run.contains("for (uint at = p.from; at < p.to; at++)"));
-    for word in ["while", "if (", "simd_ballot"] {
+    let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
+    assert_eq!(loops.len(), 3, "{loops:?}");
+    assert!(loops[0].starts_with("for (uint at = 0u; at < pr.steps; at++)"), "{loops:?}");
+    assert!(loops[1].starts_with("for (uint k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint e = 0u; e < pr.exts; e++)"), "{loops:?}");
+    for word in ["while", "simd_ballot"] {
         assert!(!run.contains(word), "the Metal interpreter has `{word}`");
+    }
+    for line in run.lines().filter(|l| l.contains("if (")) {
+        let line = line.trim();
+        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!extract_write("].iter().any(|c| line.starts_with(c)), "the Metal interpreter branches: `{line}`");
+    }
+    for helper in ["eq_file", "plane_file"] {
+        let code = &metal[metal.find(&format!("M {helper}(")).expect("helper")..];
+        let code = &code[..code.find("\n}\n").expect("its end")];
+        assert!(code.contains("for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++)"), "{helper} loops over chunks only");
     }
     let carry = include_str!("metal_block_carry.metal");
     for word in ["for (", "while", "if (", "?"] {
@@ -476,6 +535,55 @@ fn class_bits_equal_reference_on_every_executor() {
     check_all(&rows, |bytes| selectors.iter().map(|&s| reference(bytes, |b| table.member(b, s))).collect());
 }
 
+/// `pair`: the byte before's class bytes AND the byte's, on irregular tables, for each class
+/// bit, several selections and both orders, beside a `class` of the same table (the lookups are
+/// shared); in the planes form too, through Cranelift. The byte before the stream is 0x00.
+#[test]
+fn pair_equals_reference_on_every_executor() {
+    let a = block::ClassTable {
+        lo: [0x01, 0x82, 0x44, 0x08, 0x10, 0xff, 0x00, 0x21, 0x40, 0x80, 0x03, 0x0c, 0x30, 0xc0, 0x55, 0xaa],
+        hi: [0xff, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x00, 0x0f, 0xf0, 0x33, 0xcc, 0x5a, 0xa5],
+    };
+    let b = block::ClassTable { lo: a.hi, hi: a.lo };
+    let tables = [a, b];
+    let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let mut cases: Vec<(u16, u16, u8)> = (0..8).map(|c| (0, 1, 1u8 << c)).collect();
+    cases.extend([(0, 1, 0xff), (1, 0, 0x5a), (0, 0, 0x81), (1, 1, 0x7f)]);
+    let mut rows = format!("  block 0 table 0 lo={} hi={}\n  block 0 table 1 lo={} hi={}\n", hex(&a.lo), hex(&a.hi), hex(&b.lo), hex(&b.hi));
+    for (i, (p, t, bits)) in cases.iter().enumerate() {
+        rows.push_str(&format!("  block 0 %{i} = pair t{p} t{t} {bits:#04x}\n"));
+    }
+    rows.push_str(&format!("  block 0 %{} = class t1 0x0f\n", cases.len()));
+    for i in 0..=cases.len() {
+        rows.push_str(&format!("  block 0 output %{i}\n"));
+    }
+    let classes = |t: &block::ClassTable, x: u8| t.lo[usize::from(x & 15)] & t.hi[usize::from(x >> 4)];
+    let want = |bytes: &[u8]| -> Vec<Vec<u64>> {
+        let mut out: Vec<Vec<u64>> = cases
+            .iter()
+            .map(|&(p, t, bits)| {
+                let hits: Vec<bool> = (0..bytes.len())
+                    .map(|j| {
+                        let before = if j == 0 { 0 } else { bytes[j - 1] };
+                        classes(&tables[usize::from(p)], before) & classes(&tables[usize::from(t)], bytes[j]) & bits != 0
+                    })
+                    .collect();
+                words_of(&hits)
+            })
+            .collect();
+        out.push(reference(bytes, |x| b.member(x, 0x0f)));
+        out
+    };
+    check_all(&rows, want);
+    let p = program(&rows);
+    let planes = native_ir::lower(&p).expect("lowers").block_programs.remove(0).planes_form();
+    assert!(!planes.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Pair { .. })));
+    let compiled = native_cpu_block::compile(&planes).expect("compiles");
+    for bytes in inputs() {
+        assert_eq!(compiled.run(&bytes), want(&bytes), "planes form, {} bytes", bytes.len());
+    }
+}
+
 /// The planes form (`class` as formulas of bit-planes, which Metal runs) equals the reference on
 /// the CPU too, through Cranelift; it has no `class` left, and the Metal interpreter reads no
 /// table.
@@ -533,7 +641,7 @@ fn class_strategies_gpu_time() {
     }
 }
 
-// --- Primitives 9-11: prev, toggle, after_odd_run (carried) ---------------------------------
+// --- Primitives 9-11: prev, toggle, escaped (carried) ---------------------------------
 
 /// The byte-by-byte references of the carried operations, over a mask of bytes.
 fn bits(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<bool> {
@@ -557,31 +665,33 @@ fn toggle_reference(a: &[bool]) -> Vec<bool> {
     a.iter().map(|&x| { parity ^= x; parity }).collect()
 }
 
-fn after_odd_run_reference(a: &[bool]) -> Vec<bool> {
+/// simdjson's escaped bytes: each byte after an even-offset bit of a run (the run's own
+/// odd-offset bits, and the byte after an odd run).
+fn escaped_reference(a: &[bool]) -> Vec<bool> {
     let mut run = 0usize;
     a.iter()
         .map(|&x| {
-            let after = !x && run % 2 == 1;
+            let escaped = run % 2 == 1;
             run = if x { run + 1 } else { 0 };
-            after
+            escaped
         })
         .collect()
 }
 
 #[test]
 fn carried_round_trip_and_refusals() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 3\n  block 0 %2 = toggle %0\n  block 0 %3 = after_odd_run %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n";
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 3\n  block 0 %2 = toggle %0\n  block 0 %3 = escaped %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n";
     let p = program(rows);
     let text = rir::disassemble(&p, None);
-    for line in ["%1 = prev %0, 3", "%2 = toggle %0", "%3 = after_odd_run %0"] {
+    for line in ["%1 = prev %0, 3", "%2 = toggle %0", "%3 = escaped %0"] {
         assert!(text.contains(line), "{line}\n{text}");
     }
     assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
     for (rows, why) in [
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 0\n  block 0 output %1\n", "distance 0"),
-        ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 17\n  block 0 output %1\n", "distance 17"),
+        ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 64\n  block 0 output %1\n", "distance 64"),
         ("  block 0 %0 = toggle %0\n  block 0 output %0\n", "toggle of itself"),
-        ("  block 0 %0 = after_odd_run %1\n  block 0 output %0\n", "a later operand"),
+        ("  block 0 %0 = escaped %1\n  block 0 output %0\n", "a later operand"),
     ] {
         let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
         assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");
@@ -590,7 +700,7 @@ fn carried_round_trip_and_refusals() {
 
 #[test]
 fn prev_equals_reference_on_every_executor() {
-    for k in [1usize, 2, 7, 15, 16] {
+    for k in [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63] {
         let rows = format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n");
         check_all(&rows, |bytes| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]);
     }
@@ -603,41 +713,146 @@ fn toggle_equals_reference_on_every_executor() {
 }
 
 #[test]
-fn after_odd_run_equals_reference_on_every_executor() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 output %1\n";
-    check_all(rows, |bytes| vec![words_of(&after_odd_run_reference(&bits(bytes, |b| b == b'\\')))]);
+fn escaped_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = escaped %0\n  block 0 output %1\n";
+    check_all(rows, |bytes| vec![words_of(&escaped_reference(&bits(bytes, |b| b == b'\\')))]);
+}
+
+// --- Primitive 13: fill (carried, two operands) ---------------------------------------------
+
+/// `f[i] = s[i] | (f[i - 1] & !e[i])`: from each start up to, not including, the next end.
+fn fill_reference(s: &[bool], e: &[bool]) -> Vec<bool> {
+    let mut open = false;
+    s.iter().zip(e).map(|(&s, &e)| { open = s || (open && !e); open }).collect()
+}
+
+#[test]
+fn fill_round_trips_and_refusals() {
+    let p = program("  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 output %2
+");
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("%2 = fill %0, %1"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let rows = "  block 0 %0 = eq 0x22
+  block 0 %1 = fill %0, %1
+  block 0 output %1
+";
+    let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+    assert!(rir::assemble(&text).is_err(), "fill of itself: accepted");
+}
+
+#[test]
+fn fill_equals_reference_on_every_executor() {
+    // Starts at quotes, ends at backslashes; then starts and ends the same bytes (each start
+    // ends the fill coming in and begins another); then ends that are never set.
+    let rows = "  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 %3 = fill %0, %0
+                \x20 block 0 %4 = const 0x0000000000000000
+  block 0 %5 = fill %0, %4
+                \x20 block 0 output %2
+  block 0 output %3
+  block 0 output %5
+";
+    check_all(rows, |bytes| {
+        let (q, b) = (bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'\\'));
+        let none = vec![false; bytes.len()];
+        vec![words_of(&fill_reference(&q, &b)), words_of(&fill_reference(&q, &q)), words_of(&fill_reference(&q, &none))]
+    });
+}
+
+/// `fill` in one round with `toggle` and `escaped` (three scanned carries, one table), and
+/// a fill whose operands are carried values.
+#[test]
+fn fill_with_other_carries_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = eq 0x5c
+  block 0 %1 = eq 0x22
+  block 0 %2 = eq 0x61
+  block 0 %3 = escaped %0
+                \x20 block 0 %4 = toggle %1
+  block 0 %5 = fill %2, %0
+  block 0 %6 = fill %4, %3
+                \x20 block 0 output %5
+  block 0 output %6
+";
+    check_all(rows, |bytes| {
+        let (bs, q, a) = (bits(bytes, |x| x == b'\\'), bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'a'));
+        let (escaped, inside) = (escaped_reference(&bs), toggle_reference(&q));
+        vec![words_of(&fill_reference(&a, &bs)), words_of(&fill_reference(&inside, &escaped))]
+    });
+}
+
+#[test]
+fn fill_lowers_to_straight_bit_operations() {
+    check_lowering("fill", &program("  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 output %2
+"));
 }
 
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped
 /// quotes removed before the toggle, then a shift of the result.
 #[test]
 fn carried_chain_equals_reference_on_every_executor() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 1\n  block 0 output %4\n  block 0 output %5\n";
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 1\n  block 0 output %4\n  block 0 output %5\n";
     check_all(rows, |bytes| {
-        let escaped = after_odd_run_reference(&bits(bytes, |b| b == b'\\'));
+        let escaped = escaped_reference(&bits(bytes, |b| b == b'\\'));
         let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
         let inside = toggle_reference(&quote);
         vec![words_of(&inside), words_of(&prev_reference(&inside, 1))]
     });
 }
 
-/// The look-back's fallback: polling no times, every group computes its predecessors' aggregates
-/// itself, and the outputs are the same.
+/// The look-back's fallback: polling once, a group whose predecessor has not published leaves
+/// unfinished and the launch is repeated, and the outputs are the same. The second program has a
+/// carried `prev` (a halo) between two scanned carries.
 #[test]
 #[cfg(target_os = "macos")]
 fn lookback_fallback_equals_reference() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
-    let p = program(rows);
+    use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
+    let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
+    let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
+    for (rows, halo) in [(one, false), (two, true)] {
+        let p = program(rows);
+        let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+        for bytes in runs() {
+            let escaped = escaped_reference(&bits(&bytes, |b| b == b'\\'));
+            let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
+            let inside = toggle_reference(&quote);
+            let mut want = vec![words_of(&inside)];
+            if halo {
+                want.push(words_of(&toggle_reference(&prev_reference(&inside, 5))));
+            }
+            for width in LaneWidth::ALL {
+                for spins in [0, 64] {
+                    for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
+                        let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, spins).expect("runs");
+                        assert_eq!(run.files[0].outputs, want, "{} bytes, {}-byte lanes, {spins} polls, {executor:?}", bytes.len(), width.bytes());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Generated MSL is one kernel, each instruction once: a few lines per instruction.
+#[test]
+#[cfg(target_os = "macos")]
+fn generated_msl_is_one_kernel() {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
-    for bytes in runs() {
-        let escaped = after_odd_run_reference(&bits(&bytes, |b| b == b'\\'));
-        let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
-        let want = vec![words_of(&toggle_reference(&quote))];
-        for width in LaneWidth::ALL {
-            let source = generate_polling(&native, width, ClassStrategy::Planes, 0);
-            let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
-            assert_eq!(got, want, "{} bytes, {}-byte lanes", bytes.len(), width.bytes());
+    for width in LaneWidth::ALL {
+        for strategy in ClassStrategy::ALL {
+            let msl = generate_with(&native, width, strategy);
+            assert_eq!(msl.matches("kernel void ").count(), 1, "{msl}");
+            let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
+            assert!(lines < 12 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
         }
     }
 }
@@ -646,14 +861,14 @@ fn lookback_fallback_equals_reference() {
 fn carried_lower_to_straight_bit_operations() {
     check_lowering(
         "carried",
-        &program("  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 %2 = toggle %1\n  block 0 %3 = prev %2, 1\n  block 0 output %3\n"),
+        &program("  block 0 %0 = eq 0x5c\n  block 0 %1 = escaped %0\n  block 0 %2 = toggle %1\n  block 0 %3 = prev %2, 1\n  block 0 output %3\n"),
     );
 }
 
 // --- simdjson's stage 1 ----------------------------------------------------------------------
 
 /// Stage 1, written by hand in `rir` (`fixtures/simdjson-stage1/stage1.rir`).
-const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
+pub(super) const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
 
 /// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
 /// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
@@ -688,6 +903,82 @@ fn fnv(indexes: &[u32]) -> u64 {
     hash
 }
 
+/// Every executor's run with the extract pass: the outputs and each extract's positions.
+fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+    let mut out = vec![
+        ("cpu interpreter".to_owned(), block.run(bytes)),
+        ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").extract(bytes)),
+    ];
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
+        for width in LaneWidth::ALL {
+            let w = width.bytes();
+            out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
+            let (got, _) = run_generated_extract(&native, bytes, width, ClassStrategy::Planes).expect("runs");
+            out.push((format!("generated msl, {w}-byte lanes"), got));
+        }
+    }
+    out
+}
+
+/// The extract pass writes a plane's set bits as positions, none past the end, on every
+/// executor: an all-ones plane (every chunk full, the tail cut at every length), a plane of
+/// quotes, and an empty plane.
+#[test]
+fn extract_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = const 0xffffffffffffffff\n  block 0 %1 = eq 0x22\n  block 0 %2 = eq 0x01\n\
+                \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n\
+                \x20 block 0 extract %0\n  block 0 extract %1\n  block 0 extract %2\n";
+    let p = program(rows);
+    let mut cases = inputs();
+    cases.extend([4095usize, 4096, 4097, 9000].map(|n| vec![b'"'; n]));
+    for bytes in cases {
+        let ones: Vec<u32> = (0..bytes.len() as u32).collect();
+        let quotes: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == b'"').collect();
+        let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
+        let want = vec![ones.clone(), quotes.clone(), soh.clone()];
+        for (name, got) in extract_executors(&p, &bytes) {
+            assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
+        }
+        // One poll: a group whose predecessor has not published its count leaves unfinished,
+        // and the launch is repeated.
+        #[cfg(target_os = "macos")]
+        {
+            use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
+            let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+            for width in LaneWidth::ALL {
+                for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
+                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
+                    assert_eq!(run.files[0].positions, want, "no polls, {}-byte lanes, {executor:?}, {} bytes", width.bytes(), bytes.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn extract_round_trips_and_refusals() {
+    let text = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n\
+                \x20 block 0 output %0\n  block 0 output %1\n  block 0 extract %1\n  0000 STOP 0\n";
+    let p = rir::assemble(text).unwrap_or_else(|e| panic!("{e}"));
+    let dump = rir::disassemble(&p, None);
+    assert!(dump.contains("block 0 extract %1"), "{dump}");
+    assert_eq!(rir::assemble(&dump).expect("reassembles").plain_digest(), p.plain_digest());
+    let without = rir::assemble(&text.replace("  block 0 extract %1\n", "")).unwrap();
+    assert_ne!(without.plain_digest(), p.plain_digest(), "the digest covers extracts");
+    let refused = |rows: &str| {
+        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n"))
+            .err()
+            .unwrap_or_else(|| panic!("not refused: {rows}"))
+    };
+    // An extract is an output; outputs come before extracts.
+    assert!(refused("  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n  block 0 output %0\n  block 0 extract %1\n").contains("verifier"));
+    assert!(refused("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 output %0\n").contains("after an extract"));
+}
+
 /// Stage 1's three outputs on `bytes` are simdjson's: the same structural indexes, no control
 /// character inside a string, and no unclosed string.
 fn check_stage1(name: &str, bytes: &[u8], outputs: &[Vec<u64>], want: (usize, u64)) {
@@ -696,6 +987,56 @@ fn check_stage1(name: &str, bytes: &[u8], outputs: &[Vec<u64>], want: (usize, u6
     assert!(outputs[1].iter().all(|&w| w == 0), "{name}: a control character inside a string");
     let last = bytes.len() - 1;
     assert_eq!(outputs[2][last / 64] >> (last % 64) & 1, 0, "{name}: an unclosed string");
+    assert!(!utf8_invalid(bytes, outputs), "{name}: invalid UTF-8");
+}
+
+/// Stage 1's UTF-8 verdict: an error bit anywhere, or a sequence open at the last byte.
+fn utf8_invalid(bytes: &[u8], outputs: &[Vec<u64>]) -> bool {
+    let open = bytes.len().checked_sub(1).is_some_and(|last| outputs[4][last / 64] >> (last % 64) & 1 == 1);
+    outputs[3].iter().any(|&w| w != 0) || open
+}
+
+/// Inputs around every UTF-8 rule: each boundary character, overlong forms, surrogates, values
+/// past U+10FFFF, stray continuations and truncated leads, at offsets across block and lane
+/// edges and at the very end.
+fn utf8_inputs() -> Vec<Vec<u8>> {
+    let atoms: Vec<&[u8]> = vec![
+        b"a", b"\x7f", "\u{80}".as_bytes(), "\u{7ff}".as_bytes(), "\u{800}".as_bytes(), "\u{fffd}".as_bytes(),
+        "\u{ffff}".as_bytes(), "\u{10000}".as_bytes(), "\u{10ffff}".as_bytes(), "\u{d7ff}".as_bytes(), "\u{e000}".as_bytes(),
+        b"\xc0\x80", b"\xc1\xbf", b"\xe0\x80\x80", b"\xe0\x9f\xbf", b"\xf0\x80\x80\x80", b"\xf0\x8f\xbf\xbf",
+        b"\xed\xa0\x80", b"\xed\xbf\xbf", b"\xf4\x90\x80\x80", b"\xf5\x80\x80\x80", b"\xff", b"\xfe",
+        b"\x80", b"\xbf", b"\xc2", b"\xe0\xa0", b"\xf0\x90\x80", b"\xc2\xc2\x80", b"\xe1\x80\xc0",
+    ];
+    let mut out = Vec::new();
+    for (i, atom) in atoms.iter().enumerate() {
+        for pad in [0usize, 1, 13, 14, 15, 30, 31, 61, 62, 63, 64, 125, 126, 127] {
+            let mut v = vec![b' '; pad];
+            v.extend_from_slice(atom);
+            out.push(v.clone());
+            v.extend_from_slice(b" x");
+            v.extend_from_slice(atoms[(i * 7 + pad) % atoms.len()]);
+            v.extend(std::iter::repeat_n(b'y', pad % 5));
+            out.push(v);
+        }
+    }
+    // Long valid text with every length of character, then one error deep inside.
+    let text: Vec<u8> = "a\u{e9}\u{4e2d}\u{1f600}".repeat(700).into_bytes();
+    out.push(text.clone());
+    let mut broken = text;
+    broken[5000] = 0x80;
+    out.push(broken);
+    out
+}
+
+#[test]
+fn stage1_utf8_equals_std_on_every_executor() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    for bytes in utf8_inputs() {
+        let want = std::str::from_utf8(&bytes).is_err();
+        for (name, got) in executors(&p, &bytes) {
+            assert_eq!(utf8_invalid(&bytes, &got), want, "{name}: {:x?}", &bytes[bytes.len().saturating_sub(12)..]);
+        }
+    }
 }
 
 fn stage1_files() -> Vec<(String, usize, (usize, u64))> {
@@ -718,18 +1059,23 @@ fn stage1_equals_simdjson_on_every_executor() {
     for (path, len, want) in stage1_files() {
         let bytes = repo_file(&path);
         assert_eq!(bytes.len(), len, "{path} changed since simdjson's indexes were recorded");
-        if len < 200_000 {
-            for (name, got) in executors(&p, &bytes) {
-                check_stage1(&format!("{path}, {name}"), &bytes, &got, want);
-            }
+        let runs: Vec<(String, BlockRun)> = if len < 200_000 {
+            extract_executors(&p, &bytes)
         } else {
-            check_stage1(&format!("{path}, cranelift"), &bytes, &compiled.run(&bytes), want);
+            let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
             #[cfg(target_os = "macos")]
             {
-                use metal_program_backend::block_program::{LaneWidth, run_generated};
-                let got = run_generated(&native, &bytes, LaneWidth::W64).expect("runs");
-                check_stage1(&format!("{path}, generated msl"), &bytes, &got, want);
+                use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
+                let (got, _) = run_generated_extract(&native, &bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
+                runs.push(("generated msl".to_owned(), got));
             }
+            runs
+        };
+        for (name, got) in runs {
+            check_stage1(&format!("{path}, {name}"), &bytes, &got.outputs, want);
+            // The extract pass's positions are simdjson's structural indexes.
+            let found = &got.positions[0];
+            assert_eq!((found.len(), fnv(found)), want, "{path}, {name}: extracted indexes differ from simdjson's");
         }
     }
 }
@@ -762,11 +1108,220 @@ fn stage1_cost_per_block() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        for width in LaneWidth::ALL {
-            let s = (0..5)
-                .map(|_| run_generated_with(&native, &bytes, width, ClassStrategy::Planes).expect("runs").1)
-                .fold(f64::MAX, f64::min);
-            println!("generated msl, {:2}-byte lanes: {:.3} ns per block (GPU time, all rounds, best of 5)", width.bytes(), s / blocks * 1e9);
+        // The mask passes alone, and with the extract pass (in the same launch unless a
+        // look-back runs out of polls; repeated launches are timed, and counted).
+        let mut masks = native.clone();
+        masks.extracts.clear();
+        use metal_program_backend::block_program::REPEATED_LAUNCHES;
+        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
+            for strategy in ClassStrategy::ALL {
+                for width in LaneWidth::ALL {
+                    let s = (0..5)
+                        .map(|_| run_generated_with(program, &bytes, width, strategy).expect("runs").1)
+                        .fold(f64::MAX, f64::min);
+                    println!(
+                        "generated msl, {what}, {strategy:?}, {:2}-byte lanes: {:.3} ns per block (GPU time, best of 5)",
+                        width.bytes(),
+                        s / blocks * 1e9
+                    );
+                }
+            }
+        }
+        let repeats = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before;
+        println!("repeated launches: {repeats} over 60 runs");
+    }
+}
+
+// --- Primitive 14: within, and the program's delay ------------------------------------------
+
+/// `next(a, k)`: each byte's bit from `k` bytes after, zero past the end.
+fn next_reference(a: &[bool], k: usize) -> Vec<bool> {
+    (0..a.len()).map(|j| j + k < a.len() && a[j + k]).collect()
+}
+
+#[test]
+fn within_and_delay_round_trip_and_refusals() {
+    let p = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n  block 0 delay 5\n");
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("%0 = within") && text.contains("block 0 delay 5"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let undelayed = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n");
+    assert_ne!(undelayed.canonical_digest("-", b""), p.canonical_digest("-", b""), "the delay is in the digest");
+    // `within` at a delay: its own text and digest byte, `within` alone unchanged.
+    let at = program("  block 0 %0 = within 5\n  block 0 output %0\n");
+    let text = rir::disassemble(&at, None);
+    assert!(text.contains("%0 = within 5"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), at.canonical_digest("-", b""));
+    assert_ne!(at.canonical_digest("-", b""), program("  block 0 %0 = within\n  block 0 output %0\n").canonical_digest("-", b""));
+    assert_eq!(block::within_at(0, 3, 5), 0b1110_0000);
+    assert_eq!(block::within_at(1, 70, 5), (1 << 11) - 1);
+    for (rows, why) in [
+        ("  block 0 %0 = within 64\n  block 0 output %0\n", "a within delay of 64"),
+        ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 delay 64\n", "a delay of 64"),
+        ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 delay 1\n", "an extract with a delay"),
+    ] {
+        let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+        assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");
+    }
+}
+
+/// `within` is the stream's bytes; with a delay of `d`, an output is the value `d` bytes after
+/// (`next`), so a value that reads past the end must be cut by `within` first: `eq 0x00` sees
+/// the padding's zero bytes, `within & eq 0x00` does not.
+#[test]
+fn within_and_delay_equal_reference_on_every_executor() {
+    check_all("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n", |bytes| {
+        vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]
+    });
+    for d in [1usize, 2, 3, 15, 16, 17, 33, 63] {
+        let rows = format!(
+            "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 %3 = eq 0x22\n  block 0 %4 = toggle %3\n\
+             \x20 block 0 %5 = and %4, %0\n  block 0 output %2\n  block 0 output %3\n  block 0 output %5\n  block 0 delay {d}\n"
+        );
+        check_all(&rows, |bytes| {
+            let nul = bits(bytes, |b| b == 0);
+            let q = bits(bytes, |b| b == b'"');
+            vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
+        });
+    }
+}
+
+#[test]
+fn within_lowers_to_straight_bit_operations() {
+    check_lowering("within", &program("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %2\n  block 0 delay 3\n"));
+}
+
+// --- Cranelift's loop keeps simdjson's shape (decision 0069) ------------------------------------
+
+/// The loop of a compiled block function's machine code: its largest block (the body over one
+/// 64-byte block) and the blocks it branches to that jump back to it (the back edge). The
+/// edge into the loop from a file's row is not counted: it runs once per file.
+pub(super) fn machine_loop(disassembly: &str) -> Vec<String> {
+    let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+    for line in disassembly.lines() {
+        if let Some(label) = line.strip_suffix(':').filter(|l| l.starts_with("block")) {
+            blocks.push((label.trim_start_matches("block").to_owned(), Vec::new()));
+        } else if let Some((_, body)) = blocks.last_mut() {
+            body.push(line.trim().to_owned());
         }
     }
+    // A block and the edge blocks its last branch takes back to it.
+    let targets = |exits: &str, label: &str| exits.split(|c: char| !c.is_alphanumeric()).any(|w| w == format!("label{label}"));
+    let looped = |body: &str, lines: &[String]| -> Option<Vec<String>> {
+        let exits = lines.last().cloned().unwrap_or_default();
+        let back = format!("b label{body}");
+        let mut out = lines.to_vec();
+        let mut is_loop = targets(&exits, body);
+        for (label, l) in &blocks {
+            if targets(&exits, label) && l.last().is_some_and(|t| *t == back) {
+                out.extend(l.iter().cloned());
+                is_loop = true;
+            }
+        }
+        is_loop.then_some(out)
+    };
+    // The hot loop: the largest block that loops to itself (the full blocks' body).
+    blocks.iter().filter_map(|(label, l)| looped(label, l)).max_by_key(Vec::len).expect("a loop")
+}
+
+/// A loop's stack loads and stores (spills and reloads), and its vector `mvn`s.
+pub(super) fn loop_costs(lines: &[String]) -> (usize, usize) {
+    let stack = lines.iter().filter(|l| (l.starts_with("ldr") || l.starts_with("str") || l.starts_with("ldp") || l.starts_with("stp")) && l.contains("[sp")).count();
+    let mvn = lines.iter().filter(|l| l.starts_with("mvn v")).count();
+    (stack, mvn)
+}
+
+/// The function's loop-carried values, read from the Cranelift IR: the hot body's parameters
+/// after its block index and its byte and output pointers.
+pub(super) fn carried_params(clif: &str) -> usize {
+    let line = clif.lines().find(|l| l.trim_start().starts_with("block2(")).expect("the body block");
+    line.matches(": i64").count() - 3
+}
+
+/// Stage 1 compiles to a loop with no stack traffic and no vector `mvn`: every value and
+/// constant in a register, its carried state packed into words.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn stage1_loop_keeps_values_in_registers() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    let (stack, mvn) = loop_costs(&lines);
+    eprintln!("stage 1 loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
+    assert_eq!((stack, mvn), (0, 0), "stage 1's loop spills or inverts vectors:\n{}", lines.join("\n"));
+    let block = &p.block_programs()[0];
+    // The state is packed: one carried word per 64 state bits (decision 0070).
+    let words = state_bits(block).div_ceil(64) + native.extracts.len();
+    assert_eq!(carried_params(&compiled.clif), words, "stage 1's carried state is not packed");
+}
+
+/// Stage 1's loop is simdjson's size (decision 0071): one reduction per 64-bit mask and one
+/// lookup per table for every class, at most 150 instructions per 64 bytes.
+#[test]
+#[cfg(target_arch = "aarch64")]
+#[ignore = "red guard (decision 0071): on at step 2, stage 1's codegen"]
+fn stage1_loop_is_simdjsons_size() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    eprintln!("stage 1 loop: {} instructions (at most 150)", lines.len());
+    assert!(lines.len() <= 150, "stage 1's loop: {} instructions (at most 150):\n{}", lines.len(), lines.join("\n"));
+}
+
+/// A lab: the Cranelift loop of the program in the `.rir` file `RERAIL_RIR`, its size and its
+/// opcodes, for measuring variants of a program.
+#[test]
+#[cfg(target_arch = "aarch64")]
+#[ignore = "a lab; run by name with RERAIL_RIR"]
+fn rir_loop_size() {
+    let text = std::fs::read_to_string(std::env::var("RERAIL_RIR").expect("RERAIL_RIR")).expect("reads");
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for l in &lines {
+        *ops.entry(l.split_whitespace().next().unwrap_or("")).or_default() += 1;
+    }
+    let mut ops: Vec<_> = ops.into_iter().collect();
+    ops.sort_by_key(|o| std::cmp::Reverse(o.1));
+    eprintln!("loop: {} instructions, {} stack; {ops:?}", lines.len(), loop_costs(&lines).0);
+    if std::env::var("RERAIL_ASM").is_ok() {
+        eprintln!("{}", lines.join("\n"));
+    }
+}
+
+/// A program's carried state in bits (decision 0070): one bit per `toggle`, `escaped` and
+/// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
+/// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
+/// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
+/// words, never a word per bit.
+pub(super) fn state_bits(p: &block::BlockProgram) -> usize {
+    use super::block::BlockOp::*;
+    let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();
+    for op in &p.ops {
+        if let Prev(a, k) = *op {
+            let m = back.entry(a).or_insert(0);
+            *m = (*m).max(k);
+        }
+    }
+    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count();
+    let looks: usize = back
+        .iter()
+        .map(|(&a, &k)| match p.ops[usize::from(a)] {
+            Toggle(_) | Fill(..) => usize::from(k) - 1,
+            _ => usize::from(k),
+        })
+        .sum();
+    ops + looks
+}
+
+/// The values a program's `prev`s read, one carried word each, and its other carried operations.
+pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
+    use super::block::BlockOp::*;
+    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
+    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
 }

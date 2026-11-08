@@ -175,8 +175,13 @@ impl Mask {
         out.trim();
         out
     }
-    /// The byte after an odd run of set bits (simdjson's escape scan, with one carry bit).
+    /// The byte after an odd run of set bits: the escaped bytes outside the run.
     pub fn after_odd_run(&self) -> Mask {
+        self.escaped().andnot(self)
+    }
+    /// simdjson's escaped bytes (its escape scan, with one carry bit): each byte after an
+    /// even-offset bit of a run, the run's own odd-offset bits included.
+    pub fn escaped(&self) -> Mask {
         let mut out = Mask::zeros(self.n);
         let mut carry = 0u64;
         for (j, &bs) in self.w.iter().enumerate() {
@@ -192,7 +197,7 @@ impl Mask {
             let escaped = escape_and_terminal ^ (bs | carry);
             let escape = escape_and_terminal & bs;
             carry = escape >> 63;
-            out.w[j] = escaped & !bs;
+            out.w[j] = escaped;
         }
         out.trim();
         out
@@ -276,6 +281,14 @@ mod tests {
                     }
                 }
                 assert_eq!(s.after_odd_run(), Mask::from_fn(n, |i| a[i]), "after_odd_run n={n} d={d}");
+                // escaped
+                let mut run = 0;
+                let mut e = vec![false; n];
+                for i in 0..n {
+                    e[i] = run % 2 == 1;
+                    run = if s.get(i) { run + 1 } else { 0 };
+                }
+                assert_eq!(s.escaped(), Mask::from_fn(n, |i| e[i]), "escaped n={n} d={d}");
                 for k in [1usize, 2, 3, 9, 64, 70] {
                     assert_eq!(s.prev(k), Mask::from_fn(n, |i| i >= k && s.get(i - k)));
                     assert_eq!(s.next(k), Mask::from_fn(n, |i| s.get(i + k)));

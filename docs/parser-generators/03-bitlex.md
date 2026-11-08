@@ -60,10 +60,10 @@ shows how each is replaced by bit operations:
   times: `rounds`.
 - **Depth is a count,** a prefix sum, and the field a byte is in comes from matching by depth.
 
-The `machine` construct stays in the language, and the JSON lexer's comments still use one
-(7 states). Where plain bit operations are enough, no machine is used: JSON's escapes come from
-simdjson's carry trick (`after_odd_run`), and a JSON file without a `/` outside strings needs only
-one prefix XOR (`toggle`).
+The `machine` construct stays in the language, but no lexer here uses one now. Where plain bit
+operations are enough, no machine is used: JSON's escapes come from simdjson's carry trick
+(`after_odd_run`), its strings from one prefix XOR (`toggle`), and a comment escapes the file to
+tree-sitter (§2.5).
 
 ## 2. The language
 
@@ -92,6 +92,12 @@ directed acyclic graph of mask operations.
 | `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
+| `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
+| `tree NAME { … }` | The tree section: where each node starts and ends, for the tape (`13-tape-on-the-gpu.md`). It holds the statements below, and masks and scans of its own. |
+| `node KIND start S end E [level L]` | A node at each bit of `S`. It ends at the first bit of `E` at or after its start where count `L` after the byte equals `L` before the start; without a level, at the first bit. Listed order is rank: outermost first at one byte. |
+| `field NAME of KIND … = EXPR`, `supertype NAME of KIND … = EXPR` | A node of those kinds starting at a bit of `EXPR` has the field, or is in the supertype. |
+| `extra KIND …` | Nodes of these kinds carry the extra flag. |
+| `untoken KIND …` | Tokens of these kinds are not nodes; a `node` statement makes those nodes instead. |
 
 ### 2.2 Mask expressions
 
@@ -196,10 +202,12 @@ mask s_open = opened | fstrings*.iq_open
 - Machines take parameters the same way (`machine NAME(P, …) { … }`,
   `machine NAME = TEMPLATE(…)`). The reference evaluator runs only machines without them.
 
-**Per-file variants.** A lexer may describe two ways to compute the same masks, and choose one
-per file by a test that is exact for that file. `lexers/json.bitlex` does this: a file with no
-`/` outside `toggle(q)`'s strings has no comments, so its strings are `toggle(q)` and the `lex`
-machine does not run. The choice is one decision per file, like fallback.
+**Escapes.** `escape "WHY" when E` sends a file with any bit of `E` to tree-sitter, as an error
+does. It says the lexer does not handle a construct, not that the file is malformed. The test is
+part of the lexer's own masks, so it costs one OR per file. `lexers/json.bitlex` escapes
+comments: its strings are `toggle(q)`, as in simdjson, and a `/` or `*` outside them escapes.
+The `lex` machine that lexes comments exactly is not in the file; a lowering for machines is
+§3.2.
 
 ### 2.6 Unicode classes
 
@@ -258,6 +266,31 @@ about the bracket frames it counts:
   asks whether that frame is a replacement field or a bracket.
 - `C.since(a)`: whether that frame already holds a byte of `a` at its own level. The lexer asks
   whether the field has passed its `:`, so that the byte is format-spec text.
+
+How the compiler lowers a count, with no operation of its own:
+
+- **Bit-planes.** The count after each byte is `w` masks, one per bit, with `2^w` at least
+  `D + 2`. Bit `k` flips at an up byte whose lower bits were all 1, and at a down byte whose
+  lower bits were all 0. So each plane is a `toggle` of a mask of the planes below it, one
+  byte back.
+- **The bound.** The planes hold the count modulo `2^w`. A count that goes above `D` passes
+  `D + 1`, and one that goes below 0 passes `-1`, which is `2^w - 1`. Both read as more than
+  `D`, and one compare sends the file to tree-sitter. The evaluator holds a count at 0
+  instead, so a file that goes below 0 falls back here and is lexed there. For brackets such
+  a file is malformed.
+- **`frame(a)`** is one `fill` per level `L` from 1 to `D`. It runs from an opener at level `L`
+  in `a` to the next opener at level `L` not in `a`, and holds where the count before the byte
+  is `L`.
+
+```
+# JSON's depth: 4 planes, for depth 0 to 13.
+scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 13
+# A key's quote opens inside an object: 13 fills, one per level.
+mask key_quote = opening & after_open & depth.frame(code & lbrace)
+```
+
+A small `D` keeps the lowering small: JSON's 13 covers all but 4 of the 28,470 data-layer
+files.
 
 **`hypotheses NAME split E lanes L1 L2 …`** cuts the input into segments; a byte of `E` ends its
 segment. Its statements run once per lane, and in each run:
@@ -388,9 +421,8 @@ cost of running every lane and every round.
 
 ## 4. The examples
 
-- `lexers/json.bitlex`: tree-sitter-json's tokens, comments included.
-  - Masks only, for a file without comments.
-  - The 7-state `lex` machine otherwise.
+- `lexers/json.bitlex`: tree-sitter-json's tokens, by masks only. A comment escapes to
+  tree-sitter.
 - `lexers/python.bitlex`: tree-sitter-python's leaves, with no machine.
   - Strings and comments by `reflect`, per line under three `hypotheses`, with a `rounds` fixed
     point for hidden triple quotes;
@@ -420,6 +452,9 @@ cargo run --release --offline --manifest-path tools/bitlex/Cargo.toml -- diff LE
 … -- fstr LEXER LIST       Python: interpolations, format expressions and specs, against
                            tree-sitter and the f-string oracle
 … -- tokens LEXER FILE     the tokens and errors of one file
+… -- tree LEXER LIST       the tree section's nodes against tree-sitter's, per node in
+                           preorder: kind, field, supertypes, extra, span and size
+… -- nodes LEXER FILE      both node lists of one file, side by side
 ```
 
 Tokens are compared with tree-sitter's leaves; a `string_content` with escape children counts as

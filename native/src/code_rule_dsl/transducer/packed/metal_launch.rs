@@ -107,6 +107,14 @@ pub(crate) fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
     Ok(())
 }
 
+/// Releases a command buffer whose submission `commit_checked` refused: it still holds a place in its queue (a queue
+/// holds 64) until it completes, so it is committed and waited for. Its dispatches were refused when encoded
+/// (`checked_dispatch_thread_groups`), and its results are not read.
+pub(crate) fn release_refused(command: &CommandBufferRef) {
+    command.commit();
+    command.wait_until_completed();
+}
+
 /// A completed command buffer's time on the GPU, in seconds (`GPUEndTime - GPUStartTime`).
 pub(crate) fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     unsafe extern "C" {
