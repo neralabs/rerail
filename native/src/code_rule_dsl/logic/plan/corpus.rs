@@ -206,6 +206,12 @@ pub(crate) struct Report {
     pub(crate) cross_strata: Option<(usize, usize)>,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
     pub(crate) cross_maintained: (usize, usize, usize),
+    /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
+    pub(crate) cross_changed: Vec<String>,
+    pub(crate) cross_again: BTreeMap<&'static str, usize>,
+    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows over-deleted, inserted and held by the maintained relations, the rows of
+    /// the deltas of their inputs, and the rows truly deleted and inserted.
+    pub(crate) cross_delta_counts: [usize; 6],
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -2278,7 +2284,9 @@ pub(crate) fn run_with_options(
     // Strata a session's run evaluated, of all (decision 0077).
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
-    let mut cross_again = 0;
+    let mut cross_derived_again = 0;
+    let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
+    let mut cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
     // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
@@ -2393,6 +2401,11 @@ pub(crate) fn run_with_options(
                         }
                     };
                     step(&format!("cut: {} of {} strata to run; inputs changed: {}", cut.strata.0, cut.strata.1, cut.changed.len()));
+                    if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
+                        let read: BTreeSet<&String> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| &a.rel).collect();
+                        let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r)).collect();
+                        eprintln!("O125_VERIFY inputs read but not digested: {undigested:?}");
+                    }
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
                     let part = &maintained.program;
@@ -2416,6 +2429,12 @@ pub(crate) fn run_with_options(
                     let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().collect() } else { Vec::new() };
                     keep.extend(probes.iter().cloned());
                     step("bound; running");
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
+                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                    }
+                    // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
+                    let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
+                    let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     step("ran");
                     collect(&db, &got, &part.program)?;
@@ -2462,6 +2481,46 @@ pub(crate) fn run_with_options(
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
                         .collect::<Result<Vec<_>>>()?;
+                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
+                    // and hold after the run, for measuring delete-and-rederive (spike O125).
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
+                        // [over-deleted, inserted by the insert rules, held after, input and derived-again deltas
+                        // (`__minus` + `__plus`), truly deleted, truly inserted].
+                        let mut counts = [0usize; 6];
+                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s)| (rel.as_str(), s.len())).collect();
+                        let derived_here: BTreeSet<&String> = part.program.rules.iter().map(|r| &r.head.rel).collect();
+                        let rows_of = |rel: &str| held_rows(&db, &got, rel, part.program.decls[rel].len()).unwrap_or_default();
+                        for (rel, cols) in &part.program.decls {
+                            if !derived_here.contains(rel) || cols.is_empty() {
+                                continue;
+                            }
+                            if rel.ends_with("__minus") || rel.ends_with("__plus") {
+                                counts[3] += rows_of(rel).len();
+                            } else if rel.ends_with("__ins") {
+                                counts[1] += rows_of(rel).len();
+                            } else if !rel.ends_with("__del") && part.program.decls.contains_key(&format!("{rel}__del")) {
+                                let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
+                                let del = rows_of(&format!("{rel}__del"));
+                                let gone = del.iter().filter(|r| !after.contains(*r)).count();
+                                let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
+                                counts[0] += del.len();
+                                counts[2] += after.len();
+                                counts[4] += gone;
+                                counts[5] += (after.len() + gone).saturating_sub(old);
+                            }
+                        }
+                        cross_delta_counts = counts;
+                    }
+                    let verify_deltas: HashMap<String, std::collections::HashSet<Vec<i64>>> = if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
+                        part.program
+                            .decls
+                            .iter()
+                            .filter(|(r, c)| (r.ends_with("__del") || r.ends_with("__ins")) && !c.is_empty() && part.program.rules.iter().any(|x| &x.head.rel == *r))
+                            .map(|(r, c)| (r.clone(), held_rows(&db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
                     let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
                     let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -2470,6 +2529,62 @@ pub(crate) fn run_with_options(
                             outputs.entry(rel.clone()).or_default().extend(lines);
                             node_columns.insert(rel, nodes);
                         }
+                    }
+                    // `RERAIL_CROSS_VERIFY`: derive the run's strata again (the cut's program, no maintenance) and name the
+                    // first relations, in stratum order, whose maintained rows differ (spike O125).
+                    if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
+                        let plain = cut.program(&cross);
+                        let mut vkeep = wanted.clone();
+                        vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
+                        let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
+                        let mut shown = 0;
+                        for (rel, width, kept_rows) in &rows {
+                            let want: std::collections::HashSet<Vec<i64>> = held_rows(&db, &again, rel, *width)?.into_iter().collect();
+                            let have: std::collections::HashSet<Vec<i64>> = kept_rows.iter().cloned().collect();
+                            if want != have && shown < 6 {
+                                shown += 1;
+                                let delta = |name: String| -> std::collections::HashSet<Vec<i64>> { verify_deltas.get(&name).cloned().unwrap_or_default() };
+                                let old_rows: std::collections::HashSet<Vec<i64>> = maintained
+                                    .sources
+                                    .iter()
+                                    .find(|(r, _)| *r == format!("{rel}__old"))
+                                    .map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
+                                    .unwrap_or_default();
+                                let (del, ins) = (delta(format!("{rel}__del")), delta(format!("{rel}__ins")));
+                                for row in have.difference(&want).take(3) {
+                                    eprintln!("O125_VERIFY   {rel}{row:?}: in old {}, in del {}, in ins {}", old_rows.contains(row), del.contains(row), ins.contains(row));
+                                }
+                                eprintln!(
+                                    "O125_VERIFY {rel}: {} extra, {} missing; e.g. extra {:?}, missing {:?}",
+                                    have.difference(&want).count(),
+                                    want.difference(&have).count(),
+                                    have.difference(&want).next(),
+                                    want.difference(&have).next()
+                                );
+                            }
+                        }
+                        if let Ok(v) = std::env::var("O125_TRACE") {
+                            let vs: Vec<i64> = v.split(',').map(|x| x.parse().unwrap()).collect();
+                            let hit = |row: &Vec<i64>| vs.iter().all(|v| row.contains(v));
+                            for (rel, width, kept_rows) in &rows {
+                                let fresh = held_rows(&db, &again, rel, *width)?;
+                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
+                                let (a, b): (Vec<_>, Vec<_>) = (kept_rows.iter().filter(|r| hit(r)).collect(), fresh.iter().filter(|r| hit(r)).collect());
+                                let del: Vec<_> = verify_deltas.get(&format!("{rel}__del")).map(|d| d.iter().filter(|r| hit(r)).cloned().collect()).unwrap_or_default();
+                                if !a.is_empty() || !b.is_empty() || !olds.is_empty() {
+                                    eprintln!("O125_TRACE {rel}: old {:?} del {:?} maintained {:?} fresh {:?}", &olds[..olds.len().min(4)], &del[..del.len().min(4)], &a[..a.len().min(4)], &b[..b.len().min(4)]);
+                                }
+                            }
+                            for (rel, src) in &cross_inputs {
+                                let w = src.columns().len();
+                                let now: Vec<Vec<i64>> = (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect();
+                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
+                                if !now.is_empty() || olds.as_ref().is_some_and(|o| !o.is_empty()) {
+                                    eprintln!("O125_TRACE input {rel}: now {now:?} old {olds:?}");
+                                }
+                            }
+                        }
+                        eprintln!("O125_VERIFY done: {shown} relations differ (first 6)");
                     }
                     let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
@@ -2488,7 +2603,12 @@ pub(crate) fn run_with_options(
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;
-                    cross_again = maintained.derived_again;
+                    cross_derived_again = maintained.derived_again;
+                    cross_changed = cut.changed.clone();
+                    cross_again = maintained.again.iter().fold(BTreeMap::new(), |mut m, (_, why)| {
+                        *m.entry(*why).or_insert(0) += 1;
+                        m
+                    });
                     *cell = Some(next);
                 }
                 None => {
@@ -2731,7 +2851,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_again) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts })
 }
 
 

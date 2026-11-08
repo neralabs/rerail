@@ -2547,14 +2547,63 @@ not yet the last 20 commits.
   400 s);
 - the demand split's nullary `pre_` relation gets the unit column every nullary relation has.
 
-**Not closed.** Delete-and-rederive written as rules over whole-relation copies is O(fixpoint) per edit. The 5%
-target needs maintenance in place:
-- maintained relations held in an indexed store across runs, so survivors are not copied;
-- deltas applied to that store;
-- old rows read where they are, not rebound and measured again;
-- plans of the rewritten strata kept.
+**Closed** (2026-11-08). Over the last 20 commits touching the files, and once with typeshed. The test is
+`spike_o125_replay` (77 files at the base; each step applies one commit's files); the replay and the work split
+are made by `scripts/profiling/o125/` (`replay.sh`, `work.py`, `defdelta.py`). CPU is the cross part on the main
+thread; machine load 6–116, so the times are rough.
 
-Still to run: the last 20 commits touching the 84 files, and the same with typeshed.
+The commit replay, one commit per step:
+
+| Step | Files, lines | Nodes renumbered (preorder / in changed definitions) | Input delta rows | Over-deleted / truly deleted | Session cross part | Full run cross part |
+|---|---|---|---|---|---|---|
+| 01 | 2, +176 −1 | 14,462 / 2,473 | – | – | timed out (118 s) | 4.5–7.4 s |
+| 02 | 1, +5 −4 | 17,522 / 1,364 | 928,786 | 257,659 / 204,956 | 35.0 s | |
+| 03 | 3, +75 −33 | 29,501 / 1,830 | 1,607,427 | 434,252 / 352,760 | 40.9 s | |
+| 05 | 14, +479 −82 | 46,054 / 9,146 | 2,423,652 | | 48.2 s, 2 rows wrong | |
+| 08 | 6, +493 −9 | 28,392 / 6,679 | 1,497,030 | | 42.1 s | |
+| 12 | 9, +695 −360 | 35,124 / 13,162 | 1,813,844 | | 51.0 s | |
+| 14 | 1, +2 −32 | 4,492 / 290 | 250,094 | | 38.1 s | |
+| 17 | 2, +31 −9 | 425 / 394 | 17,784 | 4,141 / 3,225 | 32.4 s | |
+
+The other twelve steps fall in the same band: 0.5–2.1 M input delta rows, 33–50 s.
+
+- **Right, with one departure.** 18 of the 19 steps that finished equal a full run. Step 05 has 2 `call_open` rows
+  wrong, and typeshed has 63 (O137). One wildcard bug was found and fixed: an insert rule dropped the negation it
+  was derived from (`maintain.rs`, test `a_session_keeps_a_negation_that_still_fails`).
+- **Over-deletion is mild.** Over-deleted rows are 1.23–1.35x the rows truly deleted. Support counts per row would
+  save at most that, so they are not the fallback.
+- **The input delta follows the ids, not the edit.** A 9-line commit (step 02) changes 929 k input rows, because
+  every node after the edit is renumbered (`doc << 32 | preorder`). Step 17, which edits near the end of its files,
+  changes 18 k.
+- **Where the work goes** (native join work from `RERAIL_PROFILE`):
+
+  | Run | Cold | Session | Deltas (anti-joins) | Survivor copy | Over-delete | Insert | Rederive |
+  |---|---|---|---|---|---|---|---|
+  | step 17 | 8.59 M | 8.90 M | 6.98 M | 1.43 M | 0.29 M | 0.11 M | 0.04 M |
+  | step 02 | 7.55 M | 21.2 M | 6.69 M | 1.34 M | 3.84 M | 6.84 M | 2.46 M |
+  | step 17, typeshed | 71.3 M | 111.8 M | 11.7 M | 3.3 M | 4.2 M | 11.2 M | 9.9 M |
+
+  The typeshed session also runs 71.6 M of plain re-derivation (the strata it does not maintain, and the verify).
+  On step 17 the maintenance proper (over-delete, insert, rederive) is 5% of cold. The rest is linear in the stored
+  fixpoint: computing deltas as anti-joins of whole relations, and copying survivors. The CPU on top of native work
+  is the overhead already named: planning 3–4x the rules, binding, measuring and copying.
+- **Typeshed** (step 17). Cold: 85.5 s CPU, 51.2 s of it the cross part. 71 of 76 strata maintained, 8 recursive.
+  An 18 k-row input delta over-deletes 93 k rows and inserts 93 k, against 3.25 M held: typeshed's fixpoint fans
+  a delta out 5x more than the 84 files alone. The maintenance proper is 35% of cold. Peak RSS 1.64 GB, over the
+  1 GB budget.
+- **The cut alone saves nothing.** Maintenance per component, the cut that re-derives each changed component
+  whole, runs 210–214 of 218 strata with preorder ids: it costs about what a full run costs (5.1–7.3 s).
+
+**Chosen route.** Delete-and-rederive stays, with three changes, in this order:
+1. per-definition node ids (0083 §3). On these commits they cut the rows renumbered 6–30x (step 02: 17,522 to
+   1,364); they are what makes a delta follow the edit;
+2. maintenance in place: deltas handed over by the store (the parser knows what it changed), not anti-joins of
+   whole relations; no survivor copy; plans of the rewritten strata kept;
+3. typeshed's fan-out measured again after 1 and 2. If an edit's maintenance still passes 5% of cold there, the
+   next lever is a dependency cut between library and repository facts (library rows held fixed), not counting.
+
+The 5% target is met on step 17 by the maintenance proper, and missed by everything around it. It is not met
+with typeshed.
 
 ## O126. How big a base delta is per definition (decision 0083, spike 2)
 
@@ -2728,3 +2777,24 @@ file's memo rows per unit; staged, each stage measured here.
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
+
+## O137. Two departures of delete-and-rederive from a full run (spike O125)
+
+Two runs of `spike_o125_replay` keep rows a full run does not have. Both are in `calls.rr`'s points-to component,
+and both in a `rr_in_annotation_0_*` relation.
+
+- **Step 05** (commit 28d80c48d45, 14 files). `call_open` is 2 rows off. `RERAIL_CROSS_VERIFY` traces it to one row
+  of `rr_in_annotation_0_base`, `(4372681134333496151, 4372681134333495048)`. It is in `__old` and missing from
+  `__del`, although its over-delete rule
+  `rr_in_annotation_0_base__del(c, b) :- fl695_ext_base_up__old(c, e), pv__del(e, 1451, b), !special_base__old(e)`
+  has matching rows (`pv__del(…6154, 1451, …5048)`, `ext_base_up__old(c, …6154)`). Turning the demand split off
+  does not change it. The suspicion is the evaluation of the rewritten rule (delta probe or replanning), not the
+  rewrite.
+- **Typeshed, step 17.** `rr_in_annotation_0_gfn` has 60 rows extra and 3 missing. The extra rows are in `__del`
+  and in `__ins` but not in `__old`: the insert rules derive them from rows that a full run does not have.
+
+**Repro:** make the replay with `scripts/profiling/o125/replay.sh <data layer repo> <replay dir>
+scripts/profiling/o125/files.txt`, then run `O125_REPLAY=<replay dir> O125_STEPS=4-5 RERAIL_CROSS_VERIFY=1 O125_TRACE=<row ids>`, test
+`spike_o125_replay`; add `RERAIL_PYTHON_TYPESHED=1` and `O125_STEPS=16-17` for the second.
+
+**Closure:** both runs equal a full run, with the cause found and a test that fails without the fix.
