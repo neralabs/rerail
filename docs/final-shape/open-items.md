@@ -2973,3 +2973,16 @@ findings layer's stages 2–3.
 
 **Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
 equal on the 65 checks that finish both ways.
+
+## O141. The 66-rule pack costs 70% more instructions after the merges of 2026-11-08
+
+On s50 (43 files), with the scope guards off, the pack took 380.8G instructions at `329e0b5d1` and 644.5G at
+`9be591511` (load 33–77). The guards' own share is unchanged (681.1G on, +5.7%), and the 32 violations are the same.
+So the rise is in what the merges brought (trunk's 0081–0089, phases, Typing-support, O136's demand rule, the SQL
+work), not in 0091.
+
+**Repro:** `packguard.sh s50 240 off` (the measuring harness: `measure_converted_rules` over the data-layer
+candidates) on each merge of the day.
+
+**Closure:** the merge that adds the cost is found by bisecting the day's merges, and the cost is explained or
+removed.
