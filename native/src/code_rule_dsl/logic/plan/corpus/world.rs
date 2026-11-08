@@ -130,6 +130,18 @@ impl World {
     /// budget. A file of the corpus is a document already, so its load takes nothing. A loaded document is named by
     /// its canonical path: the same file is one document, and its key and memo entries are the same in every
     /// workspace.
+    /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
+    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for p in paths {
+            if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
+                out.insert(c.to_string_lossy().into_owned());
+            }
+            out.insert(p.clone());
+        }
+        out
+    }
+
     pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
@@ -139,7 +151,8 @@ impl World {
             self.refused.insert(asked.to_owned());
             return None;
         };
-        if self.loads.contains_key(&path) {
+        // `corpus` is canonical (`canonical_corpus`): a workspace file reached through an import is not loaded again.
+        if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
         if grammar != run_grammar || self.loads.len() >= self.budget {
