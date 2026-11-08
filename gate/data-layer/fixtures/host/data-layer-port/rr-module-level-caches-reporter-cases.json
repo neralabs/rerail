@@ -1203,6 +1203,20 @@
       ]
     },
     {
+      "id": "allow-missing-name",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder={}\n"
+        },
+        {
+          "path": "scripts/allowlists/lint_module_level_caches_allowlist.json",
+          "source": "{\"entries\": [{\"path\": \"l1000_schema/sample.py\", \"pattern_type\": \"dict_cache\", \"classification\": \"local_metadata_memo\", \"reason\": \"Reviewed cache.\"}]}"
+        }
+      ]
+    },
+    {
       "id": "allow-duplicate",
       "check": "module_level_caches",
       "files": [

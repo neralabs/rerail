@@ -88,9 +88,8 @@ def main():
         files=[] if value is None else [dict(path=ALLOWLIST,source=json.dumps(value,ensure_ascii=True))]
         api.append(dict(id='allow-'+identity,check='module_level_caches',entry='_load_allowlist_entries',files=files,
             arguments=dict(allowlist_path=dict(path=ALLOWLIST))))
-        if identity!='missing-name':
-            reporters.append(dict(id='allow-'+identity,check='module_level_caches',files=[
-                dict(path=path,source='# cache\n_holder={}\n'),*files]))
+        reporters.append(dict(id='allow-'+identity,check='module_level_caches',files=[
+            dict(path=path,source='# cache\n_holder={}\n'),*files]))
     for i,source in enumerate(['# cache\na={}\nb=[]\nc=set()\n','a=CustomCache()\n',
             '@cache\ndef f(): pass\n','class C:\n    @cache\n    def f(self): pass\n']):
         api.append(dict(id='format-'+str(i),check='module_level_caches',entry='scan_and_format',files=[],
