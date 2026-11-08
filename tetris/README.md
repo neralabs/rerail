@@ -5,6 +5,10 @@ The browser sends events as facts and displays the resulting screen facts.
 
 ## Standalone browser version
 
+The [hosted version on OpenAI Sites](https://falling-facts-rerail.jeremy-ai-research04.chatgpt.site) is private and requires your ChatGPT sign-in.
+Its project metadata is in [standalone/.openai/hosting.json](standalone/.openai/hosting.json).
+The hosted app uses the same static build described below.
+
 Open [standalone/falling-facts.html](standalone/falling-facts.html) directly in your browser.
 This generated file contains the WASM engine, game, source browser, styles, and inspection tools.
 It needs no server or network connection. Each tab has its own game.
