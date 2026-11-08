@@ -90,6 +90,9 @@ pub struct FactsMemo {
     pub results: HashMap<[u8; 32], FactsResult>,
     /// plan digest → (path dependent, counts)
     pub completed: HashMap<[u8; 32], (bool, Vec<u8>)>,
+    /// Stored rows that did not decode (O112), read as missing: the file is evaluated again and its new rows replace
+    /// them.
+    pub damaged: usize,
 }
 
 impl FactsMemo {
@@ -188,8 +191,10 @@ impl ContentStore {
         })?;
         for row in rows {
             let (path, plan, codec, raw_length, frame) = row?;
-            let plan = digest(&plan)?;
-            let entry = decode(codec, raw_length, &frame)?;
+            let (Ok(plan), Ok(entry)) = (digest(&plan), decode(codec, raw_length, &frame)) else {
+                memo.damaged += 1;
+                continue;
+            };
             memo.results.insert(
                 plan,
                 FactsResult {
@@ -218,7 +223,10 @@ impl ContentStore {
         for (path, set, words, codec, raw_length, counts) in rows {
             let set = digest(&set)?;
             let plans = self.plan_set(&connection, set)?;
-            let mut counts = decode_counts(&decode(codec, raw_length, &counts)?)?;
+            let Ok(mut counts) = decode(codec, raw_length, &counts).and_then(|b| decode_counts(&b)) else {
+                memo.damaged += 1;
+                continue;
+            };
             for (ordinal, plan) in plans.iter().enumerate() {
                 if word_bit(&words, ordinal) && !memo.results.contains_key(plan) {
                     let c = counts.remove(&(ordinal as u32)).ok_or_else(|| {
@@ -269,6 +277,7 @@ impl ContentStore {
                 .iter()
                 .map(|c| (set.plans[c.ordinal as usize], (c.path_dependent, c.counts.clone())))
                 .collect(),
+            damaged: 0,
         }
         .run_digest(set);
         let schema = i64::from(key.fact_schema);
@@ -436,12 +445,17 @@ fn merge_completion(
         })
         .optional()?;
     let (mut merged_words, mut merged_counts) = match stored {
-        Some((w, codec, raw_length, frame)) => (
-            w.chunks_exact(8)
-                .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
-                .collect::<Vec<_>>(),
-            decode_counts(&decode(codec, raw_length, &frame)?)?,
-        ),
+        // A stored row that does not decode (O112) is replaced, not merged: its completions are lost, and their files
+        // are evaluated again when next read.
+        Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, &frame).and_then(|b| decode_counts(&b)) {
+            Ok(counts) => (
+                w.chunks_exact(8)
+                    .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
+                    .collect::<Vec<_>>(),
+                counts,
+            ),
+            Err(_) => (Vec::new(), HashMap::new()),
+        },
         None => (Vec::new(), HashMap::new()),
     };
     if merged_words.len() < words.len() {

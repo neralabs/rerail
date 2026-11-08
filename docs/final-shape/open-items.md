@@ -2133,7 +2133,7 @@ points to how a directory is combined, not to the bandit rules. Not investigated
 
 **Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
 
-## O112. The shared tape cache holds memo rows whose length does not match
+## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
 "corrupt content store: facts memo length does not match metadata". The default tape cache
@@ -2152,9 +2152,14 @@ fresh store (`RERAIL_TAPE_CACHE`).
 *Likely writer (2026-11-07, investigate-bend-vs-datalog):* an early version of decision 0074's corpus test
 (`cross_file_rows_are_memoised_per_import_component`) ran an `UPDATE` on `facts_results` for every row with
 `path = 'b.py'` in the shared store, whatever its plan (17 rows then), to plant a bad row. The test now changes only
-its own plan's newest row and restores it. A run that does not decode should still miss rather than fail.
+its own plan's newest row and restores it.
 
-## O113. `calls.rr` with `.pragma "cross-memo"` fails in world's final round: no statistics for `docof`
+*Closed:* a row that does not decode is a miss. `facts_memo` skips it and counts it (`FactsMemo::damaged`, profiled
+as `corpus.memo_damaged_rows`); the file is evaluated again and its new row replaces the damaged one (the insert's
+upsert). A damaged completion row is replaced rather than merged. Test:
+`facts_memo::tests::a_row_that_does_not_decode_is_a_miss_and_is_rewritten`.
+
+## O113. `calls.rr` with `.pragma "cross-memo"` fails in world's final round: no statistics for `docof` (closed 2026-11-07)
 
 Found trying decision 0074 on the typing programs (2026-11-07). With the pragma appended (even naming no relation
 `calls.rr` derives), `python_calls_program_agrees_with_the_runtime` fails in the final round with "no statistics for
@@ -2169,5 +2174,9 @@ docof.n" (`plan.rs`, an input a rule reads that is not a batch source and was no
 - Also seen: the 84-file Jedi benchmark (`dl-small` with typeshed) ran past 10 minutes of wall time at load 50–120
   without finishing its final round, so the time it would take is unknown.
 
-**Closure:** the benchmark runs with the pragma, `RERAIL_CROSS_MEMO=verify` passes on a second run, and the profile
-names the relations the static contract allows.
+*Closed:* `add` gives inputs and facts only to relations the program does not declare (calls.rr's `docof` over
+nodes is a rule over `node` after lowering; re-adding `core.rr`'s input left it unmeasured), and a pragma naming no
+derived relation binds no `rr_cross_doc`. The profile names the relations the static contract allows: 122 of
+calls.rr's 234 cross-file relations, once run constants (`py_version`) and projections that keep a node (`kind`,
+`docof`) are read freely. Kept out: `isqmod`, `qknown`, `qopen` (sets over every document, keyed by name), `tsub`,
+`tsup_open` and `need_name` (demand).
