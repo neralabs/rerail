@@ -2873,3 +2873,15 @@ scripts/profiling/o125/files.txt`, then run `O125_REPLAY=<replay dir> O125_STEPS
 `spike_o125_replay`; add `RERAIL_PYTHON_TYPESHED=1` and `O125_STEPS=16-17` for the second.
 
 **Closure:** both runs equal a full run, with the cause found and a test that fails without the fix.
+
+## O138. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
+
+**Seen (2026-11-08, t24).** On the 84 files with typeshed and both memos on, the run's report gives a peak RSS of
+762 MB for a cold run and 355 MB for a warm one. `/usr/bin/time -l` gives 1.46 GB and 1.07 GB for the same
+processes. An edit's run gives 712 MB and 1.43 GB. Phase 0's whole-run cutoff is not the cause: the warm figure
+is with it off.
+
+**Open.** The report samples RSS at phase ends, so a transient peak inside a phase is missed. Find the phase, and
+whether the per-phase figures the budget is checked against should be the process peak.
+
+**Closure:** the process peak within the budget, or the phase that exceeds it named, with a figure the report gives.
