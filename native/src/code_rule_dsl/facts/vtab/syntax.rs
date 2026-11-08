@@ -104,7 +104,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -766,11 +766,21 @@ impl Batch {
         // Only a program that reads it: every node's hash is a symbol.
         let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         // `rx_span`'s regexes, compiled once for the batch.
-        let rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)> = if core {
+        // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
+        // end after, chunk at a time, so the regex runs only where one can.
+        let rx_spans: Vec<core_rr::SpanPattern> = if core {
             projection
                 .rx_spans
                 .iter()
-                .map(|(within, re)| regex::Regex::new(re).map(|r| (*within, re.as_str(), r)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}"))))
+                .map(|(within, re)| {
+                    use crate::code_rule_dsl::logic::front::SpanIn;
+                    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+                    let prefilter = match within {
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line),
+                        _ => None,
+                    };
+                    regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+                })
                 .collect::<StoreResult<_>>()?
         } else {
             Vec::new()

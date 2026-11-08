@@ -108,6 +108,22 @@ CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 Only plans that some manifest has named are ever collected this way (`corpus_plans`: `live` is 0 for a plan no kept
 manifest names). The facts engine's own memo rows register no manifest and are left alone.
 
+### 2a. Every memo writer's old rows are collected (2026-11-08)
+
+Three writers put memo rows under sources that live on, so the source's collection never took their old rows:
+
+- **A prepared program** (decision 0073) is kept under its program text's source, which every run of that program
+  names. Its pointer's plan names the engine build, so each build added a row and the old ones stayed. A run's
+  manifest now names these plans too (`record_corpus_run_naming`, table `corpus_manifest_plans`): they are live
+  while a kept manifest names them, and dead after, as the run's memo plan is.
+- **The slice's memo** (the workspace server's waves) has no manifest. Each wave that writes or reads under a plan
+  holds it for a day (`hold_corpus_plan`, renewed at most hourly). A lapsed hold makes a keep decision due, so the
+  next pass marks the plan dead and its rows go, with no new run to prompt it.
+- **Rows from before this decision** (corpus memo schemas 2 and 3, `RETIRED_CORPUS_MEMO_SCHEMAS`) were never under a
+  recorded plan. Passes sweep them in bounded batches until one finds none (`corpus_swept`).
+
+The test `old_memo_rows_are_collected_while_their_source_lives` checks all three, with the source still live.
+
 ### 3. What is kept: each root's last runs, and a history up to a high-water mark
 
 A pass decides which manifests to keep, newest first by `last_run`:
@@ -279,8 +295,7 @@ The replay is unchanged (3988 273 266 0), and the `content_store` tests pass (10
 ## Open
 
 - **The atom epoch (§7) isn't built.** It waits until an arena first approaches 64 MB. The full corpus holds 26 MB.
-- **Memo rows from before 0053** (memo schema 2, 18,020 rows and about 2 MB on the full-corpus store) were never
-  named by a manifest. So they stay until their sources go.
+- ~~Memo rows from before 0053~~: swept (§2a).
 - **An older binary's collector** can ignore `corpus_live` or active reader leases. Shared-cache safety requires updated readers and collectors.
 - **The marks** (512 and 384 MB) and the protected count (2 runs) are starting values. They should be revisited with a
   measured development workflow.

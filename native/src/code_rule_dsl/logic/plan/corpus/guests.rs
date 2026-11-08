@@ -107,10 +107,11 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
     out
 }
 
-/// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`).
+/// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`): a
+/// fragment the registry declares (decision 0082), or a dialect's label.
 fn grammar(name: &str) -> Option<(&'static str, bool)> {
-    if name == "annotation" {
-        return Some(("python", true));
+    if let Some((dialect, start)) = crate::code_rule_dsl::language::fragment(name) {
+        return crate::code_rule_dsl::language::label(dialect).map(|label| (label, start == "expression"));
     }
     let dialect = crate::code_rule_dsl::language::dialect_by_label(name)?;
     crate::code_rule_dsl::language::label(dialect).map(|label| (label, false))

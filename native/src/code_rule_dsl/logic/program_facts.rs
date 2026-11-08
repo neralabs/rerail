@@ -290,11 +290,13 @@ impl Writer<'_> {
         }
         for (span, text) in &prog.rx_spans {
             let span = match span {
-                SpanIn::Source => "source",
-                SpanIn::Line => "line",
-                SpanIn::Comment => "comment",
+                SpanIn::Source => "source".to_owned(),
+                SpanIn::Line => "line".to_owned(),
+                SpanIn::Comment => "comment".to_owned(),
+                SpanIn::Kind(k) => format!("kind:{k}"),
+                SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
-            self.row("rx_span", vec![s(span), s(text)]);
+            self.row("rx_span", vec![s(&span), s(text)]);
         }
     }
 }
@@ -549,11 +551,18 @@ impl<'a> Reader<'a> {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
-            let span = match text(&row[0])?.as_str() {
-                "source" => SpanIn::Source,
-                "line" => SpanIn::Line,
-                "comment" => SpanIn::Comment,
-                other => return Err(bad(format!("no span {other}"))),
+            // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).
+            let named = text(&row[0])?;
+            let span = match named.split_once(':') {
+                None if named == "source" => SpanIn::Source,
+                None if named == "line" => SpanIn::Line,
+                None if named == "comment" => SpanIn::Comment,
+                Some(("kind", k)) => SpanIn::Kind(k.to_owned()),
+                Some(("capture", rest)) => match rest.split_once(':') {
+                    Some((g, p)) => SpanIn::Capture(p.to_owned(), g.to_owned()),
+                    None => return Err(bad(format!("no span {named:?}"))),
+                },
+                _ => return Err(bad(format!("no span {named:?}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }

@@ -265,6 +265,7 @@ pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
 pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).

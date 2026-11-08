@@ -12,7 +12,7 @@ mod collection_guard;
 pub(crate) use collection_guard::CollectionLease;
 mod connection;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, StatIndex};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) use connection::sqlite_on_jemalloc;
 mod derivation;
