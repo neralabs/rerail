@@ -34,10 +34,17 @@ pub(super) struct Policy {
 pub(in crate::code_rule_dsl) struct Report {
     /// Global relations with one copy for the run (by name), and how many policies' copies each merged.
     pub canonical: BTreeMap<String, usize>,
+    /// Copies of the engine's relations made canonical (alike in several policies).
+    pub engine: usize,
     /// Library relations a policy changed: each policy's own.
     pub demoted: Vec<String>,
     /// Policies whose rules got guards, and the guards added.
     pub guarded: Vec<(String, usize)>,
+}
+
+/// The documents read that are out of a scope relation's (`rr_scope_doc…` to `rr_scope_not…`), which a guard negates.
+fn complement(scope_doc: &str) -> String {
+    scope_doc.replacen(front::SCOPE_DOC, "rr_scope_not", 1)
 }
 
 /// The guards and the canonical relations of `all`, the policies combined (see the module).
@@ -65,6 +72,16 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
             return Err(format!("`.global {name}`: the policies {} and {other} of the run define it differently; a global relation has one definition", copies[0].0));
         } else {
             report.demoted.push(name.clone());
+        }
+    }
+    // The engine's relations (`rr_…`: lowering's helpers, guest contexts, aggregates), alike in several policies, are
+    // canonical too: they are made from the library's rules as much as from a policy's. The scope's own are not.
+    let engine = |rel: &str| policies.iter().find_map(|p| rel.strip_prefix(p.prefix.as_str())).is_some_and(|r| r.starts_with(front::RESERVED) && !r.starts_with("rr_scope") && !r.starts_with("rr_report"));
+    for class in &classes {
+        let spaces: BTreeSet<usize> = class.iter().filter_map(|r| policies.iter().position(|p| p.own.contains(r))).collect();
+        if spaces.len() > 1 && class.iter().all(|r| engine(r)) {
+            report.engine += class.len();
+            canonical.extend(class.iter().cloned());
         }
     }
     // Shared: the canonical relations and every relation of a policy they read, to a fixpoint.
@@ -96,9 +113,10 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         set.iter().all(|&i| scope_of(i).is_some() && policies[i].own.contains(&scope_doc_of(i)))
             && (0..n).any(|j| !set.contains(&j) && !set.iter().any(|&i| scope_of(i) == scope_of(j)))
     };
-    let owner = |rel: &str| policies.iter().position(|p| p.own.contains(rel));
+    let owners: BTreeMap<&str, usize> = policies.iter().enumerate().flat_map(|(i, p)| p.own.iter().map(move |r| (r.as_str(), i))).collect();
+    let owner = |rel: &str| owners.get(rel).copied();
     let machinery = |rel: &str| {
-        let r = policies.iter().find_map(|p| rel.strip_prefix(p.prefix.as_str())).unwrap_or(rel);
+        let r = owner(rel).and_then(|i| rel.strip_prefix(policies[i].prefix.as_str())).unwrap_or(rel);
         r.starts_with("rr_scope") || r.starts_with("rr_report")
     };
     let mut groups: Vec<(BTreeSet<String>, String)> = Vec::new();
@@ -160,7 +178,8 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         }
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
-        let at = |d: &str| Literal::Atom(Atom { rel: scope_doc.to_owned(), args: vec![Term::Var(d.to_owned())], neg: false, gated: false });
+        // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
+        let at = |d: &str| Literal::Atom(Atom { rel: complement(scope_doc), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("rr_sd{}", *fresh);
             *fresh += 1;
@@ -218,7 +237,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         }
         let mut added = 0;
         for (k, g) in guards.into_iter().rev() {
-            added += g.iter().filter(|l| matches!(l, Literal::Atom(a) if a.rel == scope_doc)).count();
+            added += g.iter().filter(|l| matches!(l, Literal::Atom(a) if a.neg)).count();
             rule.body.splice(k + 1..k + 1, g);
         }
         added
@@ -230,6 +249,22 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     }
     drop(place);
     all.rules = rules;
+    // Each scope's complement among the documents read: `rr_scope_not…(d) :- doc(d, _, _), !rr_scope_doc…(d)`.
+    for (_, scope_doc) in groups.iter().filter(|(_, s)| report.guarded.iter().any(|(g, n)| g == s && *n > 0)) {
+        let name = complement(scope_doc);
+        if all.decls.contains_key(&name) {
+            continue;
+        }
+        all.decls.insert(name.clone(), vec![("d".to_owned(), "int".to_owned())]);
+        let d = Term::Var("d".to_owned());
+        all.rules.push(front::Rule {
+            head: Atom { rel: name, args: vec![d.clone()], neg: false, gated: false },
+            body: vec![
+                Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![d.clone(), Term::Wild, Term::Wild], neg: false, gated: false }),
+                Literal::Atom(Atom { rel: scope_doc.clone(), args: vec![d], neg: true, gated: false }),
+            ],
+        });
+    }
     // A union of scopes: a document of any of them.
     for (users, name) in unions {
         all.decls.insert(name.clone(), vec![("d".to_owned(), "int".to_owned())]);

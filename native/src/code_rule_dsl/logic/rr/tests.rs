@@ -2029,9 +2029,9 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
     // The library's relation is unguarded in both policies (so the simplifier makes it one); B's rule is guarded.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
-    let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.ends_with(crate::code_rule_dsl::logic::front::SCOPE_DOC)));
+    let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.contains("rr_scope_")));
     assert!(!reads_scope("p0_def_at") && !reads_scope("p1_def_at"), "the library's rules stay as written");
-    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel == format!("p1_{}", crate::code_rule_dsl::logic::front::SCOPE_DOC))), "B's reads are guarded");
+    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's reads are guarded");
     // `.global`: alike (up to variable names) is shared; different is refused.
     let named = |name: &str, scope: &str, rule: &str| policy(name, scope, &format!(".global named\n.decl named(f: node)\n{rule}\n.violation N(at: node) \"n\"\nN(f) :- named(f)."));
     let c = named("c", "a", "named(f) :- kind(f, \"function_definition\").");

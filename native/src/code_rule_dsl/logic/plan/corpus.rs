@@ -485,13 +485,16 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         }
     }
     // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0089).
+    let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
     let report = scoping::guard(&mut all, &policies).map_err(Error::Plan)?;
+    drop(spacing);
     crate::code_rule_dsl::logic::profile::decision("fact spaces", || {
         let guarded: Vec<String> = report.guarded.iter().map(|(p, n)| format!("{p}: {n}")).collect();
         format!(
-            "{} global relations one copy for the run ({} policies' copies); {} library relations a policy changed, its own{}; guards on the reads of the policies narrower than the run: {} (decision 0089)",
+            "{} global relations one copy for the run ({} policies' copies), and {} copies of engine relations; {} library relations a policy changed, its own{}; guards on the reads of the policies narrower than the run: {} (decision 0089)",
             report.canonical.len(),
             report.canonical.values().sum::<usize>(),
+            report.engine,
             report.demoted.len(),
             if report.demoted.is_empty() { String::new() } else { format!(" ({})", report.demoted.iter().take(6).cloned().collect::<Vec<_>>().join(", ")) },
             if guarded.is_empty() { "none".to_owned() } else { guarded.join(", ") },
