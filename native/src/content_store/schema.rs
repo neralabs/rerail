@@ -295,6 +295,23 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
+-- The cross-file memo's stored rows (decision 0076, cross_rows.rs). `cross_components` maps a component's digest
+-- (its plan, key and documents' keys) to a source holding that descriptor; `cross_rows` holds its rows of each
+-- memoised relation, clustered by (source, relation), so a run's lookup and its replay are one query each. Additive:
+-- every row cascades from its source, which a run's manifest names (decision 0053).
+CREATE TABLE IF NOT EXISTS cross_components (
+    digest TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS cross_components_by_source ON cross_components(source_id);
+CREATE TABLE IF NOT EXISTS cross_rows (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
+    PRIMARY KEY (source_id, rel, seq)
+) STRICT, WITHOUT ROWID;
+
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
 -- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the

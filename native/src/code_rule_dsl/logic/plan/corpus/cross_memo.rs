@@ -8,13 +8,14 @@
 //! - `split` takes those rules out of the cross-file part into a sub-program run first. It checks the contract's
 //!   static half, and gives each memoised relation an input `<rel>__cross`, a rule `rel(…) :- rel__cross(…)`, and a
 //!   guard `!rr_cross_doc(@doc(first node))` on its other rules.
-//! - `lookup` finds each component's stored rows by its key. The hits are replayed; the misses are derived.
-//! - `record` stores the misses' rows under `cross-rows/<plan>/<key>`. It checks the contract's other half: each
+//! - `lookup` finds every component's stored rows by its descriptor's digest (plan, key, documents' keys), in one
+//!   query. The hits are replayed, their rows read as columns by one more query; the misses are derived.
+//! - `record` stores the misses' rows in the store's `cross_rows` table. It checks the contract's other half: each
 //!   node of a stored row lies in the closure of its first node's component.
 //! - With `RERAIL_CROSS_MEMO=verify` nothing is replayed, and the hits' stored rows are compared with what was
 //!   derived.
 use super::{Error, Result, front};
-use crate::content_store::{ContentStore, HashKey};
+use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -28,7 +29,7 @@ pub(super) const DOCS: &str = "rr_cross_doc";
 const WORLD_FACTS: [&str; 3] = ["dir_entry", "file_line", "loaded"];
 const SCHEMA: &str = "rerail.cross-rows/v1";
 /// The stored rows' encoding version: bumped when its meaning changes.
-const ROWS_SCHEMA: u32 = 1;
+const ROWS_SCHEMA: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
@@ -392,15 +393,37 @@ impl Components {
     }
 }
 
-fn name(plan: &[u8; 32], key: &str) -> String {
-    format!("cross-rows/{}/{key}", plan.iter().map(|b| format!("{b:02x}")).collect::<String>())
+/// A component's descriptor (the plan, its key and its documents' keys by path), which its stored source holds, and
+/// the descriptor's digest, which names it (`cross_components`).
+fn descriptor(plan: &[u8; 32], key: &str, keys: &BTreeMap<String, i64>) -> (String, Vec<u8>) {
+    let mut b = Vec::new();
+    let put_str = |b: &mut Vec<u8>, s: &str| {
+        b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        b.extend_from_slice(s.as_bytes());
+    };
+    put_str(&mut b, SCHEMA);
+    b.extend_from_slice(&ROWS_SCHEMA.to_le_bytes());
+    b.extend_from_slice(plan);
+    put_str(&mut b, key);
+    b.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    for (path, k) in keys {
+        put_str(&mut b, path);
+        b.extend_from_slice(&k.to_le_bytes());
+    }
+    let digest: [u8; 32] = Sha256::digest(&b).into();
+    (digest.iter().map(|x| format!("{x:02x}")).collect(), b)
+}
+
+/// A component's documents' keys, by path (a guest has none: its host's key covers it).
+fn doc_keys(docs: &[i64], paths: &HashMap<i64, String>) -> BTreeMap<String, i64> {
+    docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect()
 }
 
 /// What `lookup` found.
 #[derive(Default)]
 pub(super) struct Found {
-    /// The components found, by component, with their stored rows.
-    pub(super) hits: BTreeMap<i64, Rows>,
+    /// The components found, by component, with the source their rows are stored under.
+    pub(super) hits: BTreeMap<i64, crate::content_store::SourceId>,
     /// The components that missed.
     pub(super) misses: BTreeSet<i64>,
     /// The hits' stored sources, which the run's manifest names so collection keeps them (decision 0053).
@@ -408,50 +431,56 @@ pub(super) struct Found {
 }
 
 impl Found {
-    /// The inputs to bind: `rr_cross_doc` (the hits' documents) and each memoised relation's replayed rows. Empty
-    /// when verifying, so everything is derived.
-    pub(super) fn inputs(&self, plan: &Plan, components: &Components, mode: Mode) -> Vec<(String, usize, Vec<i64>)> {
+    /// The inputs to bind, as columns: `rr_cross_doc` (the hits' documents) and the replayed rows of each memoised
+    /// relation `need` admits, read from the store by one query. Empty when verifying, so everything is derived.
+    pub(super) fn inputs(
+        &self,
+        store: &ContentStore,
+        plan: &Plan,
+        components: &Components,
+        mode: Mode,
+        need: impl Fn(&str) -> bool,
+    ) -> Result<Vec<(String, usize, Vec<Vec<i64>>)>> {
         // Nothing memoised: `split` added no replay inputs to bind.
         if plan.memo.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let replay = mode == Mode::On;
         let docs: Vec<i64> = if replay { components.of.iter().filter(|(_, (c, _))| self.hits.contains_key(c)).map(|(d, _)| *d).collect() } else { Vec::new() };
-        let mut inputs = vec![(DOCS.to_owned(), 1, docs)];
-        for (rel, &(_, width)) in &plan.memo {
-            let mut values = Vec::new();
-            if replay {
-                for rows in self.hits.values() {
-                    if let Some((w, v)) = rows.rels.get(rel)
-                        && *w == width
-                    {
-                        values.extend_from_slice(v);
-                    }
-                }
-            }
-            inputs.push((format!("{rel}{SUFFIX}"), width, values));
+        let mut inputs = vec![(DOCS.to_owned(), 1, vec![docs])];
+        let rels: Vec<(String, usize)> = plan.memo.iter().filter(|(r, _)| need(r)).map(|(r, &(_, w))| (r.clone(), w)).collect();
+        let mut rows = if replay && !self.hits.is_empty() {
+            store.cross_rows(&self.hits.values().copied().collect::<Vec<_>>(), &rels, false).map_err(|e| Error::Plan(e.to_string()))?
+        } else {
+            BTreeMap::new()
+        };
+        for (rel, width) in rels {
+            let cols = rows.remove(&rel).unwrap_or_else(|| vec![Vec::new(); width]);
+            inputs.push((format!("{rel}{SUFFIX}"), width, cols));
         }
-        inputs
+        Ok(inputs)
     }
 }
 
-/// Each component's stored rows under `plan`, if its documents' keys are the ones they were stored under.
-pub(super) fn lookup(store: &ContentStore, plan: &Plan, components: &Components, paths: &HashMap<i64, String>) -> Found {
+/// Finds each component's stored rows under `plan`, by its descriptor's digest (its documents' keys included), with
+/// one query.
+pub(super) fn lookup(store: &ContentStore, plan: &Plan, components: &Components, paths: &HashMap<i64, String>) -> Result<Found> {
+    let members = components.members();
+    let digests: Vec<(i64, String)> = members.iter().map(|(c, (key, docs))| (*c, descriptor(&plan.digest, key, &doc_keys(docs, paths)).0)).collect();
+    let stored = store.cross_lookup(&digests.iter().map(|(_, d)| d.clone()).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
     let mut found = Found::default();
-    for (c, (key, docs)) in components.members() {
-        let stored = lookup_source(store, &name(&plan.digest, &key)).and_then(|(id, b)| Rows::decode(&b).map(|r| (id, r)));
-        let keys: BTreeMap<String, i64> = docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect();
-        match stored {
-            Some((id, rows)) if rows.keys == keys => {
+    for (c, digest) in digests {
+        match stored.get(&digest) {
+            Some(&id) => {
                 found.sources.push(id);
-                found.hits.insert(c, rows);
+                found.hits.insert(c, id);
             }
-            _ => {
+            None => {
                 found.misses.insert(c);
             }
         }
     }
-    found
+    Ok(found)
 }
 
 /// What `record` did.
@@ -465,8 +494,8 @@ pub(super) struct Recorded {
 }
 
 /// Stores the misses' rows of the memoised relations (`rows`: each relation's derived rows), checking that each
-/// row's nodes lie in the closure of its first node's component. When verifying, compares the hits' stored rows with
-/// what was derived instead of trusting them.
+/// row's nodes lie in the closure of its first node's component. When verifying, compares the hits' stored rows
+/// (read by one query) with what was derived instead of trusting them.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record(
     store: &ContentStore,
@@ -515,26 +544,39 @@ pub(super) fn record(
     let members = components.members();
     let mut recorded = Recorded::default();
     let mut differ: Vec<String> = Vec::new();
+    // Verifying: every hit's stored rows, by source and relation, from one query.
+    let mut had: HashMap<(i64, String), BTreeSet<Vec<i64>>> = HashMap::new();
+    if mode == Mode::Verify && !found.hits.is_empty() {
+        let rels: Vec<(String, usize)> = plan.memo.iter().map(|(r, &(_, w))| (r.clone(), w)).collect();
+        let stored = store.cross_rows(&found.hits.values().copied().collect::<Vec<_>>(), &rels, true).map_err(|e| Error::Plan(e.to_string()))?;
+        for (rel, cols) in stored {
+            let (source, cols) = cols.split_last().expect("a source column");
+            for (i, s) in source.iter().enumerate() {
+                had.entry((*s, rel.clone())).or_default().insert(cols.iter().map(|c| c[i]).collect());
+            }
+        }
+    }
     for (c, (key, docs)) in &members {
         let derived = by.remove(c).unwrap_or_default();
-        let mut stored = Rows { keys: docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect(), rels: BTreeMap::new() };
+        let keys = doc_keys(docs, paths);
+        let mut rels: BTreeMap<String, (usize, Vec<i64>)> = BTreeMap::new();
         for (rel, &(_, width)) in &plan.memo {
-            stored.rels.insert(rel.clone(), (width, derived.get(rel).cloned().unwrap_or_default()));
+            rels.insert(rel.clone(), (width, derived.get(rel).cloned().unwrap_or_default()));
         }
         if let Some(hit) = found.hits.get(c) {
             if mode == Mode::Verify {
-                for (rel, (width, values)) in &stored.rels {
-                    let had = hit.rels.get(rel).map(|(_, v)| v.clone()).unwrap_or_default();
-                    let set = |v: &[i64]| v.chunks(*width).map(<[i64]>::to_vec).collect::<BTreeSet<_>>();
-                    let (had, now) = (set(&had), set(values));
-                    if had != now {
+                for (rel, (width, values)) in &rels {
+                    let empty = BTreeSet::new();
+                    let had = had.get(&(hit.raw(), rel.clone())).unwrap_or(&empty);
+                    let now: BTreeSet<Vec<i64>> = values.chunks(*width).map(<[i64]>::to_vec).collect();
+                    if *had != now {
                         differ.push(format!(
                             "{rel} about the component of {} ({} stored, {} derived, {} only stored, {} only derived)",
                             docs.first().and_then(|d| paths.get(d)).map_or("?", String::as_str),
                             had.len(),
                             now.len(),
                             had.difference(&now).count(),
-                            now.difference(&had).count()
+                            now.difference(had).count()
                         ));
                     }
                 }
@@ -542,8 +584,9 @@ pub(super) fn record(
             }
             continue;
         }
-        recorded.rows += stored.rels.values().map(|(w, v)| v.len() / w).sum::<usize>();
-        recorded.sources.push(record_named(store, &name(&plan.digest, key), &plan.digest, &stored.encode())?);
+        recorded.rows += rels.values().map(|(w, v)| v.len() / w).sum::<usize>();
+        let (digest, bytes) = descriptor(&plan.digest, key, &keys);
+        recorded.sources.push(store.put_cross_rows(&digest, &bytes, &rels).map_err(|e| Error::Plan(e.to_string()))?);
         recorded.stored += 1;
     }
     if !differ.is_empty() {
@@ -554,86 +597,3 @@ pub(super) fn record(
 
 /// The component sub-program's relations a run holds: the components and the edges.
 pub(super) const HELD: [&str; 2] = [COMPONENT, EDGE];
-
-/// A component's stored rows: each of its documents' keys (by path), and each relation's width and rows (flat).
-#[derive(Default, Debug, PartialEq)]
-pub(super) struct Rows {
-    pub(super) keys: BTreeMap<String, i64>,
-    pub(super) rels: BTreeMap<String, (usize, Vec<i64>)>,
-}
-
-impl Rows {
-    pub(super) fn encode(&self) -> Vec<u8> {
-        let mut b = Vec::new();
-        let put_str = |b: &mut Vec<u8>, s: &str| {
-            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
-            b.extend_from_slice(s.as_bytes());
-        };
-        b.extend_from_slice(&ROWS_SCHEMA.to_le_bytes());
-        b.extend_from_slice(&(self.keys.len() as u32).to_le_bytes());
-        for (path, key) in &self.keys {
-            put_str(&mut b, path);
-            b.extend_from_slice(&key.to_le_bytes());
-        }
-        b.extend_from_slice(&(self.rels.len() as u32).to_le_bytes());
-        for (rel, (width, values)) in &self.rels {
-            put_str(&mut b, rel);
-            b.extend_from_slice(&(*width as u32).to_le_bytes());
-            b.extend_from_slice(&(values.len() as u64).to_le_bytes());
-            for v in values {
-                b.extend_from_slice(&v.to_le_bytes());
-            }
-        }
-        zstd::encode_all(b.as_slice(), 3).expect("zstd over memory")
-    }
-
-    pub(super) fn decode(bytes: &[u8]) -> Option<Rows> {
-        let b = zstd::decode_all(bytes).ok()?;
-        let mut at = 0usize;
-        let mut take = |n: usize| -> Option<&[u8]> {
-            let s = b.get(at..at + n)?;
-            at += n;
-            Some(s)
-        };
-        let u32_ = |s: &[u8]| u32::from_le_bytes(s.try_into().expect("4 bytes"));
-        if u32_(take(4)?) != ROWS_SCHEMA {
-            return None;
-        }
-        let mut rows = Rows::default();
-        for _ in 0..u32_(take(4)?) {
-            let n = u32_(take(4)?) as usize;
-            let path = String::from_utf8(take(n)?.to_vec()).ok()?;
-            let key = i64::from_le_bytes(take(8)?.try_into().ok()?);
-            rows.keys.insert(path, key);
-        }
-        for _ in 0..u32_(take(4)?) {
-            let n = u32_(take(4)?) as usize;
-            let rel = String::from_utf8(take(n)?.to_vec()).ok()?;
-            let width = u32_(take(4)?) as usize;
-            let len = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
-            let raw = take(len.checked_mul(8)?)?;
-            let values = raw.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().expect("8 bytes"))).collect();
-            rows.rels.insert(rel, (width, values));
-        }
-        Some(rows)
-    }
-}
-
-/// The stored source a derivation's output `name` binds, and its bytes.
-fn lookup_source(store: &ContentStore, name: &str) -> Option<(crate::content_store::SourceId, Vec<u8>)> {
-    let digest = store.binding(name).ok()??;
-    let source = store.source_by_hash(HashKey::from_sha256_digest(digest)).ok()??;
-    store.get_source(source).ok().map(|bytes| (source, bytes))
-}
-
-/// Stores `bytes` as the derivation `name` of `producer`, with no named input: `name` is a function of its inputs.
-fn record_named(store: &ContentStore, name: &str, producer: &[u8; 32], bytes: &[u8]) -> Result<crate::content_store::SourceId> {
-    use crate::content_store::DerivationRecord;
-    let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
-    let source = store.put_source(bytes, &[]).map_err(plan)?;
-    let digest: [u8; 32] = Sha256::digest(bytes).into();
-    let record = DerivationRecord { output: name.to_owned(), producer: *producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
-    store.record_derivations(&[record]).map_err(plan)?;
-    Ok(source)
-}
-

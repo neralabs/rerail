@@ -990,7 +990,7 @@ pub(crate) fn run_with_options(
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
     });
-    let (local, cross) = (part(split.local), part(split.cross));
+    let (local, mut cross) = (part(split.local), part(split.cross));
     let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
     crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
@@ -1119,6 +1119,8 @@ pub(crate) fn run_with_options(
     let mut totals = Totals::default();
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);
+    // Why a chunk's rows were not memoised: the relation, and what its row named.
+    let mut memo_why: BTreeSet<String> = BTreeSet::new();
     let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<String>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
@@ -1454,12 +1456,16 @@ pub(crate) fn run_with_options(
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
                 if attributable {
-                    // Each row is its file's by its first column. A guest's or a value document's row names no file of
-                    // the chunk, so the chunk is not memoised: a replay appends rows as columns, not as a set (O109).
+                    // Each row is its file's by its first column; a guest's is its host file's, whose bytes it is made
+                    // from. A value document's row, kept by every file that asked for it, is not: a replay appends
+                    // base rows as columns, not as a set (O109), so the chunk is not memoised.
                     for r in 0..source.len() {
-                        match entries.get_mut(&memo::document_of(source.value(r, 0))) {
+                        let d = memo::document_of(source.value(r, 0));
+                        let file = if askers.contains_key(&d) { None } else { Some(host_of.get(&d).copied().unwrap_or(d)) };
+                        match file.and_then(|f| entries.get_mut(&f)) {
                             Some(e) => e.base.entry(rel.clone()).or_insert_with(|| (have.clone(), columns.clone(), Vec::new())).2.extend(columns.iter().map(|&c| source.value(r, c))),
                             None => {
+                                memo_why.insert(format!("base {rel}: a row of {}", if askers.contains_key(&d) { "a value document" } else { "no file of the chunk" }));
                                 attributable = false;
                                 break;
                             }
@@ -1516,6 +1522,7 @@ pub(crate) fn run_with_options(
                 for line in lines {
                     let files = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(owners).unwrap_or_default();
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
+                        memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
                         attributable = false;
                         continue;
                     }
@@ -1533,6 +1540,7 @@ pub(crate) fn run_with_options(
                 return;
             }
             let Some(&at) = split.locations.get(rel).and_then(|l| l.first()) else {
+                memo_why.insert(format!("export {rel}: no location column"));
                 attributable = false;
                 return;
             };
@@ -1540,6 +1548,7 @@ pub(crate) fn run_with_options(
             for r in 0..rows.len() {
                 let files = owners(rows.value(r, at));
                 if !files.iter().all(|d| entries.contains_key(d)) {
+                    memo_why.insert(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
                     attributable = false;
                     return;
                 }
@@ -1751,15 +1760,25 @@ pub(crate) fn run_with_options(
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("components:{k}")));
         let components = cross_memo::Components::new(rows, &edges);
-        let found = cross_memo::lookup(&store, plan, &components, &paths);
+        let found = cross_memo::lookup(&store, plan, &components, &paths)?;
+        // Every component found: a memoised relation's own rules derive nothing (each is guarded to the documents not
+        // found), so only its copy from `<rel>__cross` runs, and only the copies something reads (decision 0076).
+        let all_found = cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty();
+        if all_found {
+            let before = cross.program.rules.len();
+            cross_memo::keep_copies(&mut cross.program, plan, &wanted);
+            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
+                format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
+            });
+        }
+        let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
         let mut replayed = Totals::default();
-        let inputs = found.inputs(plan, &components, cross_mode);
-        let replayed_rows: usize = inputs.iter().skip(1).map(|(_, w, v)| v.len() / (*w).max(1)).sum();
-        for (rel, width, values) in inputs {
+        let inputs = found.inputs(&store, plan, &components, cross_mode, |r| !all_found || read.contains(format!("{r}{}", cross_memo::SUFFIX).as_str()))?;
+        let replayed_rows: usize = inputs.iter().skip(1).map(|(_, _, cols)| cols.first().map_or(0, Vec::len)).sum();
+        for (rel, width, cols) in inputs {
             let types: Vec<String> = cross.program.decls[&rel].iter().map(|(_, t)| t.clone()).collect();
             let columns = (0..width).map(|i| format!("c{i}")).collect();
-            let values = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, cols.into_iter().map(Some).collect());
             replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
             modules.bind(&db, &rel, source)?;
         }
@@ -1796,22 +1815,12 @@ pub(crate) fn run_with_options(
         }
         Ok(())
     };
-    // Every component found: a memoised relation's own rules derive nothing (each is guarded to the documents not
-    // found), so only its copy from `<rel>__cross` runs (decision 0076).
-    let cross = match (&cross_plan, &cross_state) {
-        (Some(plan), Some((_, found))) if cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty() => {
-            let mut cross = cross;
-            let before = cross.program.rules.len();
-            cross_memo::keep_copies(&mut cross.program, plan, &wanted);
-            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-                format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
-            });
-            cross
-        }
-        _ => cross,
-    };
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
+        // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line (a debugging aid).
+        if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
+            let _ = std::fs::write(path, cross.program.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
+        }
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
@@ -2013,7 +2022,7 @@ pub(crate) fn run_with_options(
         format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
     });
     if memoised {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk)", docs.len()));
+        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
     }
     if let Some(collecting) = collecting {
         let collection = crate::code_rule_dsl::logic::profile::Activity::default();
