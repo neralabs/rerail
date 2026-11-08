@@ -1201,7 +1201,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/print.rr",
-      "sha256": "7b1a1d6e2fdfee9108c92ad49a1a13f7ebd98608d7499898fdd1701635ec3842",
+      "sha256": "20617a0d26bf295bb33dfeae5b656951c3d87c6da780311ff89c167124ff4554",
       "origin": "authored",
       "importedSha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
       "repairs": [
@@ -1209,6 +1209,11 @@
           "before": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
           "after": "bad2b3dc1aeb2a53576900478bf02369fb85ea101d4c7bd94fc43c6b85ba0b57",
           "reason": "Expose canonical call-receiver rows through the same native Python printer for async diagnostics"
+        },
+        {
+          "before": "7b1a1d6e2fdfee9108c92ad49a1a13f7ebd98608d7499898fdd1701635ec3842",
+          "after": "20617a0d26bf295bb33dfeae5b656951c3d87c6da780311ff89c167124ff4554",
+          "reason": "Expose batched runtime representations of non-string annotation constants required by grammar escape-hatch findings"
         }
       ]
     },
@@ -2482,7 +2487,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "07a6b4171d8ca6aea400beefee04fabdbcc979f8",
-    "status": "Root Final shape engine through 07a6b4171; memoised base rows are memoised again, with all upstream combined-rule resolutions; reviewed generic extensions",
+    "status": "Root Final shape engine through 07a6b4171 with reviewed generic extensions, including annotation constant value representations",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2518,11 +2523,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "9cfdb4256d174f21f0c11017707205403fbb0165abfc3ab6934f2e892f5db523"
+        "sha256": "5747e6b0063bec3e7906fc9e9177a746db11788d1ccfc50e90ca08e9d34b43df"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "6656460e70cc134bd3395ace27f7a02e68255de171eee9252d2c570682b0f6e2"
+        "sha256": "89a7e595470d547ca5d6e17a491e0aa30ec5a8ec291afceb15fc186255e35a84"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2530,7 +2535,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "10e3a228f92e042cd8465606404b2481a91f73ae42e5c6e3b82d1590e700d06d"
+        "sha256": "045158eb00d48def674de7ad87f078372c1902577f3b8f22bb3c626be5bec90d"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
@@ -2558,7 +2563,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "41dc687906f14fe13b0bcb4f202b83ce87143b2d87e4d7ed5c16a4dc433631ce"
+        "sha256": "b35055a739fcd8534e47eab26749f7112ef4ec7a304de8392fd8acc6d3b27e78"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2566,15 +2571,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "ba4f6cce2c631a4ef5c526a3b3972290798ab76547265a4244a3aa5dcbb1e7ea"
+        "sha256": "81bb6408e925f4b526a59487bdeb3c0b2181967b2438c8821933d6666eb91809"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "c81073ee4b1adfc2f93d220b029717efb46f5478eb837c61669c2f5fa054fde2"
+        "sha256": "c4026f4cd9086df0a67c3c535ae92fcdf650fcaa49d38cf86ddbd7b70abae5d0"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "75bda356f1afb9db573551e115b597fddccb5e61f32b419fe139d93890b09930"
+        "sha256": "0dacb3ba5126bca5b421b3940cc347afcf50284c11c7ddd7b27c606ef90621fc"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
@@ -2582,7 +2587,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
-        "sha256": "f839910c89293ab01274e29f44ce0e038a89786cf95ecf8b32ef920249051765"
+        "sha256": "6ace086612d0dd7a370c26d47dff012cb9b8b95e7efa4b84fee44df9b54dc568"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
