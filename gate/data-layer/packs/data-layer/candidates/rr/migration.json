@@ -2551,7 +2551,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "dcb39e3c904a96abd43c2abb432701c0f355d70438ac49806b188b78389cbf61"
+        "sha256": "bdf218e6a7a4e8a00303edaf5d6a4134d8d78d4d518b8c659a5dec630948931b"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",

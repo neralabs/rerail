@@ -172,7 +172,11 @@ impl Printer<'_> {
                     p,
                     n.values
                         .iter()
-                        .map(|e| self.expr(e, p + 1))
+                        .enumerate()
+                        // CPython increases the required level for each operand,
+                        // saturating at ATOM. This also preserves its deliberate
+                        // parentheses around later Boolean and unary operands.
+                        .map(|(i, e)| self.expr(e, (usize::from(p) + i + 1).min(usize::from(ATOM)) as u8))
                         .collect::<Result<Vec<_>>>()?
                         .join(sep),
                 )
