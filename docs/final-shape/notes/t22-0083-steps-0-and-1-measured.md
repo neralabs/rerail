@@ -73,9 +73,10 @@ keep their keys, so this move would be a delta of spans and paths only.
 - **Cold work of the moved layout.** It needs a prime of about 130 s CPU, which is 5 minutes at this load. It is
   the next long run. It is to be compared with the prime's 128.8 s.
 - **The pair without typeshed.** 0083 asks for runs with typeshed and without it.
-- **Both memos off.** A cold `calls_cx` run with the per-file memo off as well as the cross memo grew past 10 GB
-  RSS in 6.8 min of CPU, and was stopped. The memoised prime peaks at 842 MB. This is O135. Step 0's
-  no-memo comparison waits on it.
+- **Both memos off.** At first, a cold `calls_cx` run with both memos off grew past 10 GB. Demand had cut a
+  read whose remaining body joined only through documents. O135 has the details; it is now fixed. Both memos
+  off now costs 87.3 s of CPU on the main thread (51.4 s of it in the cross part) at 846 MB. That run is
+  step 0's no-memo baseline for the original layout.
 
 ## Reproducing
 
