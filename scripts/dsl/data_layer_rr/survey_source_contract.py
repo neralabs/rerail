@@ -9,6 +9,7 @@ import importlib
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 from migration import PIN, ROOT, git, sha, write_json
 
@@ -111,6 +112,20 @@ CASES = [
     ('edges-legacy-sync-wins', {'a.py': 'class C:\n @legacy_sync\n @legacy_async\n def run_async(self): pass\n def run_async_lazy(self): pass\n def run_lazy(self): pass\n'}),
     ('edges-legacy-inherited-first', {'a.py': 'class Far:\n def run_lazy(self): pass\nclass Left(Far): pass\nclass Right:\n def run_lazy(self): pass\nclass C(Left, Right):\n @legacy_module_sync\n def run(self): pass\n'}),
     ('edges-legacy-property-missing-free', {'a.py': '@legacy_sync\ndef run(): pass\ndef run_lazy(): pass\nclass C:\n @legacy_sync\n def missing(self): pass\n @legacy_sync\n def value(self): pass\n @property\n def value_lazy(self): pass\n'}),
+    ('exports-implicit-imports-and-locals', {'impl.py': 'def target(): pass\nclass C:\n def method(self): pass\n', 'data_layer/api.py': 'from impl import target as Alias, C\nimport impl as module\ndef local(): pass\ndef _private(): pass\n'}),
+    ('exports-explicit-duplicates', {'impl.py': 'class C:\n def method(self): pass\n', 'data_layer/__init__.py': 'from impl import C\n__all__ = ["C", "missing", "_private", "C", 1, b"C"]\n'}),
+    ('exports-first-all-only', {'data_layer/a.py': 'def First(): pass\ndef Second(): pass\n__all__ = ["Second"]\n__all__ = ["First"]\n'}),
+    ('exports-unsupported-all-blocks', {'data_layer/a.py': 'def C(): pass\n__all__ = frozenset({"C"})\n__all__ = ["C"]\n'}),
+    ('exports-empty-all-blocks', {'data_layer/a.py': 'def C(): pass\n__all__ = []\n'}),
+    ('exports-annotated-all-ignored', {'data_layer/a.py': 'def C(): pass\n__all__: list[str] = []\n'}),
+    ('exports-chained-all-tuple', {'data_layer/a.py': 'def C(): pass\nother = __all__ = ("C", ("C"), None)\n'}),
+    ('exports-import-over-definition', {'impl.py': 'def target(): pass\n', 'data_layer/a.py': 'from impl import target as C\nclass C: pass\n'}),
+    ('exports-top-level-only', {'impl.py': 'def target(): pass\n', 'data_layer/a.py': 'if flag:\n from impl import target as conditional\n def hidden(): pass\ndef outer():\n from impl import target as nested\n if flag:\n  def inner(): pass\n'}),
+    ('exports-direct-child-files-only', {'data_layer/a.py': 'def Direct(): pass\n', 'data_layer/sub/a.py': 'def Nested(): pass\n', 'other.py': 'def Other(): pass\n'}),
+    ('exports-sorted-paths', {'data_layer/z.py': 'def Zed(): pass\n', 'data_layer/a.py': 'def Alpha(): pass\n'}),
+    ('exports-reexports-cycle-and-missing', {'impl.py': 'class C: pass\n', 'bridge.py': 'from impl import C as Public\nfrom data_layer.api import Loop\n', 'data_layer/api.py': 'from bridge import Public, Loop\nfrom missing import Absent\n'}),
+    ('exports-public-eligibility', {'data_layer/api.py': 'class Base:\n def inherited(self): pass\nclass C(Base):\n def zed(self): pass\n @property\n def inherited(self): pass\n def _private(self): pass\n def __init__(self): pass\n def authorize_internal_access(self): pass\n__all__ = ["C"]\n'}),
+    ('exports-unicode-and-decorated', {'data_layer/api.py': '@decorator\nclass K:\n def method(self): pass\n@decorator\ndef ﬁeld(): pass\n'}),
 ]
 
 
@@ -151,6 +166,14 @@ EDGE_CONTRACTS = [
     ('edges-legacy-property-missing-free','graph_call','a::C.value','a::C.value_lazy'),
 ]
 
+EXPORT_CONTRACTS = [
+    ('exports-implicit-imports-and-locals', 'data_layer.api', 'Alias', 'impl::target'),
+    ('exports-import-over-definition', 'data_layer.a', 'C', 'impl::target'),
+    ('exports-annotated-all-ignored', 'data_layer.a', 'C', 'data_layer.a::C'),
+    ('exports-public-eligibility', 'data_layer.api', 'C', 'data_layer.api::C'),
+    ('exports-reexports-cycle-and-missing', 'data_layer.api', 'Public', 'impl::C'),
+]
+
 
 def check_target_contracts(cases):
     by_id={case['id']:case for case in cases}
@@ -168,6 +191,10 @@ def check_target_contracts(cases):
     for label,kind,owner,sid in EDGE_CONTRACTS:
         if dict(kind=kind,owner=owner,sid=sid) not in by_id[label]['expected']:
             raise ValueError(f'The source fixture no longer covers {label}: {owner} -> {sid}')
+    for label,module,name,sid in EXPORT_CONTRACTS:
+        if not any(row['kind']=='graph_export' and (row['module'],row['name'],row['sid'])==(module,name,sid)
+                   for row in by_id[label]['expected']):
+            raise ValueError(f'The source fixture no longer covers {label}: {module}/{name}')
 
 
 def source_rows(source, files):
@@ -250,6 +277,18 @@ def source_rows(source, files):
         rows.extend(dict(kind='graph_class_use',owner=sid,sid=target) for target in symbol.class_uses)
     rows.extend(dict(kind='graph_caller',owner=target,sid=caller)
                 for target,callers in graph.callers.items() for caller in callers)
+    with tempfile.TemporaryDirectory(prefix='rerail-offline-source-exports-') as temporary:
+        root=Path(temporary)
+        for path,text in files.items():
+            target=root/path
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_text(text,encoding='utf-8')
+        graph.root=root
+        graph._collect_data_layer_roots()
+    rows.extend(dict(kind='graph_export',ordinal=i,module=r.export_module,name=r.export_name,sid=r.symbol_id)
+                for i,r in enumerate(graph.exported_roots))
+    rows.extend(dict(kind='graph_exported_root',sid=sid) for sid in graph.exported_root_ids)
+    rows.extend(dict(kind='graph_exported_class',sid=sid) for sid in graph.exported_class_ids)
     return ordered(rows)
 
 

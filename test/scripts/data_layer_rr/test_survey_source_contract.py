@@ -49,6 +49,8 @@ class SurveySourceContractTests(unittest.TestCase):
             by_id[label]['expected'].append(dict(kind='graph_ref',owner=owner,ref_kind=ref_kind,base=base,attr=attr,target=target,target_kind=kind,has_target=has))
         for label,kind,owner,sid in contract.EDGE_CONTRACTS:
             by_id[label]['expected'].append(dict(kind=kind,owner=owner,sid=sid))
+        for label,module,name,sid in contract.EXPORT_CONTRACTS:
+            by_id[label]['expected'].append(dict(kind='graph_export',module=module,name=name,sid=sid,ordinal=0))
         return value
 
     def test_source_fixture_cannot_silently_lose_its_positive_branch(self):
@@ -61,7 +63,7 @@ class SurveySourceContractTests(unittest.TestCase):
             contract.check_target_contracts(value['cases'])
 
     def test_member_and_edge_positive_guards_refuse_missing_observations(self):
-        for label in {c[0] for c in contract.MEMBER_CONTRACTS+contract.EDGE_CONTRACTS}:
+        for label in {c[0] for c in contract.MEMBER_CONTRACTS+contract.EDGE_CONTRACTS+contract.EXPORT_CONTRACTS}:
             with self.subTest(case=label):
                 value=self.recording()
                 case=next(c for c in value['cases'] if c['id']==label)
