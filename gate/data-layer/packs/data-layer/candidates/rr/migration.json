@@ -478,7 +478,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "158276ee7e2900c2301a0ada08e25ebe1417cc8e6b624107691401dd6cc2a5d5",
+      "sha256": "18444d8ef5fed66c4596c66aa8cdcae52a429ff7604b0e1823a5de35e686cbe4",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -567,6 +567,11 @@
           "before": "9a3897be7c674051e17badd73dc37b156c2f9f84419308e71d0b88e8adcc96b0",
           "after": "158276ee7e2900c2301a0ada08e25ebe1417cc8e6b624107691401dd6cc2a5d5",
           "reason": "Adopt committed Final shape ae7c48111: loaded documents have no special library role and cross-file typing uses stored derivations"
+        },
+        {
+          "before": "158276ee7e2900c2301a0ada08e25ebe1417cc8e6b624107691401dd6cc2a5d5",
+          "after": "18444d8ef5fed66c4596c66aa8cdcae52a429ff7604b0e1823a5de35e686cbe4",
+          "reason": "Adopt committed Final shape a9e927674: import-component memoization and the SQL executor; preserve projection alongside the new query input parameter"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2539,8 +2544,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "ae7c48111140451cf9cd50c2edff2509e4632282",
-    "status": "Root Final shape through ae7c48111; reviewed generic syntax capabilities and planner repairs retained",
+    "upstreamCommit": "a9e927674c074df4815c83487e04fa4013fb5beb",
+    "status": "Root Final shape through a9e927674; reviewed generic syntax capabilities and planner repairs retained",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2616,15 +2621,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "a9eb0293f394190a0037eb5ef859a53effc9295f2209837942cace6372f80f52"
+        "sha256": "0c1c1b8e8b582c2355388a900705af9a5058585bfff52aff1c2414fee6e6be3f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "86ff7c3f7d84225576818f6066796135d6b86a1a82273f5010364473fc49fd55"
+        "sha256": "c5e605336582b31696e9d910f67ddd8e366af83e5f4f94472fd15cafeb533923"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "514509cccbf1182b6c188e0fdd519347ce400dc374ba5ea1e50086d9f2b9aff1"
+        "sha256": "9cb178d7bf6b5209fc978a144f47d68615f022d2ae61bf6118aee384816f1f91"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2648,6 +2653,6 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "ee5b50fa258d32be1aa1d474ee299b09d3342fbf"
+    "upstreamMerge": "acec50e9865165a871ba9110577a25f010356ff9"
   }
 }
