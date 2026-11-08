@@ -2705,8 +2705,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "220a5d4f58cfa5daed5a2834490621fed8e48f37",
-    "status": "Root Final shape through 220a5d4f5 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "upstreamCommit": "2e81953715f254ed500c6af613b1cab6551fe1c7",
+    "status": "Root Final shape through 2e8195371 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2742,11 +2742,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "bcb54ba7cf0a901b5e7e6899df5dba4c797be67cdbe01cddf7738fe2c7341cd2"
+        "sha256": "810b59e394f974e23bc2b51d8dc9b878c0369a456ae6721901757899070c22b5"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "0683f21bd9ff0039d43e2a0061b1adc7b34565d9bcf3c23265c70f8a0628ab69"
+        "sha256": "28e86feff36f8ef39e06238104a07c82e3942e2583729ce1c3188437568e8b04"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2782,11 +2782,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "09b14a2c91d773e228bac6873c23278c071640707fd49584d5d0d6cf267f5c45"
+        "sha256": "5d227473c7dc20a654278d7a8c774d2df0baa87ebad4e3f8e93527872e547cb3"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "6b95ae5587958c6b10afbf7fd5fdc4a9f20454a9c05a847ead1ab80982b0181a"
+        "sha256": "07a0f76f63781d904b4893d73e687fde8e380839621a7c9013e6723f1eb6cdea"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
@@ -2794,7 +2794,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "030c330580ef4391229a51ba7a6bc86fcf5d1ae8039277fd5f57c20e5981a67c"
+        "sha256": "f80673a737fe8845090853d9de61b3de71bdc5b4b78c2978d65143e23f63b325"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2802,11 +2802,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "58ba590a7f8e26bcb4b8c661f9063ec14aafb8c495e6036cfb7554f7a9669c5d"
+        "sha256": "89b1995ca02807212656777008a435fbcfd4e90c47d7a70f16f5cfc556f58859"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "6b178afcdcdf906b39cdabf4dfcf044776caeae2c218f7bdacf67fd32060e3cf"
+        "sha256": "4a36fa9b184445a8792f3a62b0db889f817587236a037607ce9bb6ef32c563e1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -2814,7 +2814,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "874b44e8b0d2eceb57a7a55b8ec0bb1a36c3630be0cc2c9e45bfa3ec09efe867"
+        "sha256": "5bf6b73fa0a77a317dccda01fe0d1886e8001ab69692883180d8d6fd4df90a58"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2838,6 +2838,6 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "5cfbe3abfe8d65590394b8de2020e8d51d62a602"
+    "upstreamMerge": "16e57260525e4736ae096885aaff975c5cf6a65d"
   }
 }

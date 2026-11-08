@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`220a5d4f5`. Merge `a8124a128` adopts Final's terminating hiding pass, type checks, and rule-specific planning errors.
+`2e8195371`. Merge `16e572605` adopts in-fixpoint request answers, retained cross-file session strata, bulk memo replay, and span/grammar updates.
+Merge `a8124a128` adopts Final's terminating hiding pass, type checks, and rule-specific planning errors.
 Merge `eae3e8e01` adopts Final's live run dumps and span memory profiling.
 Merge `13874e415` adopts Final's regex scans over node kinds and captures.
 It also adopts Final's 64-bit boundary for corpus row bindings.
