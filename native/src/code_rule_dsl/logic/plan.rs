@@ -2960,7 +2960,9 @@ impl Run<'_> {
         let started = std::time::Instant::now();
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
-        let mut chunk: i64 = 2;
+        // One wave first: the seeds' rows give live statistics before the next wave, the first in which most
+        // relations' deltas are all their rows and the probes run their whole plans.
+        let mut chunk: i64 = 1;
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
@@ -2987,6 +2989,29 @@ impl Run<'_> {
             }
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
+            }
+            if chunk == 1 {
+                // The whole plans, planned from seed estimates (a derived relation empty, its columns without
+                // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
+                // (`setfix` runs it once a wave).
+                let mut whole: Vec<(*const Rule, String)> = Vec::new();
+                for k in 0..probes.len() {
+                    let r = probes[k].0;
+                    let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
+                        Some((_, w)) => w.clone(),
+                        None => {
+                            let _span = planning(r, "replan whole");
+                            let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            let w = hex(&w);
+                            whole.push((r, w.clone()));
+                            w
+                        }
+                    };
+                    self.fx().reprobe(&name, seeds.len() + k, "whole", &spec)?;
+                }
+                chunk = 2;
+                continue;
             }
             for k in 0..probes.len() {
                 let (r, ai) = (probes[k].0, probes[k].1);
@@ -3268,7 +3293,7 @@ impl Run<'_> {
                         if !rest.iter().any(|l| matches!(l, Literal::Atom(x) if !x.neg)) {
                             return Ok(Err("rest has no atom".to_owned()));
                         }
-                        // A rest sharing no variable (a constant test, `stage("library")`) has no edge table to keep.
+                        // A rest sharing no variable (a constant test) has no edge table to keep.
                         if key.is_empty() && ecols.is_empty() {
                             return Ok(Err("rest binds no variable".to_owned()));
                         }
