@@ -153,6 +153,8 @@ impl LibraryFile {
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
 const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+/// The library's programs the engine adds to a run itself (decision 0063's import components).
+const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
@@ -188,8 +190,10 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
             }
         }
     }
-    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places.
-    for (file, statements) in &statements {
+    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places. The engine's own
+    // library programs (`ENGINE_FILES`, which the runner adds; no rule includes them) may use them.
+    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+    for (file, statements) in statements.iter().filter(|(file, _)| !own.contains(file)) {
         for (item, line) in statements {
             let names: Vec<&String> = match item {
                 syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => vec![name],

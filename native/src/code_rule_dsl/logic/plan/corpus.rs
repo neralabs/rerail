@@ -33,6 +33,7 @@ mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
 mod library;
+mod cross_memo;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -192,6 +193,8 @@ pub(crate) struct Report {
     pub(crate) typing_runs: bridge::Runs,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub(crate) memo: (usize, usize),
+    /// The cross-file memo (decision 0063): import components found and components derived.
+    pub(crate) cross: (usize, usize),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -785,6 +788,13 @@ pub(crate) fn run_with_options(
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
+    // Cross-file rows memoised per import component (decision 0063): the program asks, and its documents' language
+    // has import rules in `components.rr`; not for a round of `world` or a library stage, whose rows are 0059's.
+    let cross_mode = cross_memo::mode();
+    let cross_declared = cross_memo::declared(&prog).filter(|_| world_round.is_none() && cross_mode != cross_memo::Mode::Off && label == "python");
+    if cross_declared.is_some() {
+        cross_memo::add(&mut prog)?;
+    }
     let prepared_key: [u8; 32] = {
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
@@ -881,6 +891,16 @@ pub(crate) fn run_with_options(
     }
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
+    let cross_plan = match &cross_declared {
+        Some(declared) => cross_memo::split(&mut split.cross, declared, &memo_program)?,
+        None => None,
+    };
+    crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0063)", || match (&cross_declared, &cross_plan) {
+        (None, _) if cross_memo::declared(&prog).is_none() => "off: the program declares no `.pragma \"cross-memo\"`".to_owned(),
+        (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else if world_round.is_some() { "a world round or library stage" } else { "no import rules for the run's language" }),
+        (Some(_), None) => "off: the component rules did not reach the cross-file part".to_owned(),
+        (Some(_), Some(plan)) => format!("{} relations memoised per import component ({}){}", plan.memo.len(), plan.memo.keys().cloned().collect::<Vec<_>>().join(", "), if cross_mode == cross_memo::Mode::Verify { "; verifying: derived afresh and compared" } else { "" }),
+    });
     // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
     let local_outputs = split.local.outputs.clone();
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
@@ -1485,7 +1505,18 @@ pub(crate) fn run_with_options(
             relations.push((rel.clone(), serde_json::json!({ "lines": cols }).to_string()));
         }
     }
-    let collecting = if recording { record_run(store, root, &run_sources, &memo_program, &relations, reading)? } else { drop(reading); None };
+    // With the cross-file memo, the manifest also names the components' stored rows (decision 0063), known only
+    // after the cross-file part: published then, the lease held until.
+    let mut publish_later = None;
+    let mut collecting = if recording && cross_plan.is_none() {
+        record_run(store, root, &run_sources, &memo_program, &relations, reading)?
+    } else if recording {
+        publish_later = Some((relations, reading));
+        None
+    } else {
+        drop(reading);
+        None
+    };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -1586,15 +1617,73 @@ pub(crate) fn run_with_options(
         wanted.extend(cross.program.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !prog.outputs.contains(r)));
         library_rows.keys = docs.iter().map(|(d, p)| (p.clone(), *d)).collect();
     }
-    let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {
-        if !library_stage {
-            return Ok(());
+    // The import components (decision 0063): derived first, from the exports, and each one's stored rows looked up.
+    // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
+    let mut cross_state: Option<(cross_memo::Components, cross_memo::Found)> = None;
+    if let Some(plan) = &cross_plan {
+        let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
+        let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
+        let got = super::run_atoms_native_over(&part(plan.components.clone()), &db, "main", cross_stats.clone(), held, modes)?;
+        let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
+        let mut keys: HashMap<i64, String> = HashMap::new();
+        let mut rows = Vec::new();
+        for r in held_rows(&db, &got, cross_memo::COMPONENT, 3)? {
+            if !keys.contains_key(&r[2]) {
+                let text: String = db.query_row("SELECT sym_text(?1)", [r[2]], |row| row.get(0))?;
+                keys.insert(r[2], text);
+            }
+            rows.push((r[0], r[1], keys[&r[2]].clone()));
         }
+        let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
+        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("components:{k}")));
+        let components = cross_memo::Components::new(rows, &edges);
+        let found = cross_memo::lookup(&store, plan, &components, &paths);
+        let mut replayed = Totals::default();
+        let inputs = found.inputs(plan, &components, cross_mode);
+        let replayed_rows: usize = inputs.iter().skip(1).map(|(_, w, v)| v.len() / (*w).max(1)).sum();
+        for (rel, width, values) in inputs {
+            let types: Vec<String> = cross.program.decls[&rel].iter().map(|(_, t)| t.clone()).collect();
+            let columns = (0..width).map(|i| format!("c{i}")).collect();
+            let values = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
+            modules.bind(&db, &rel, source)?;
+        }
+        replayed.apply(&mut cross_stats);
+        // Held for storing, unless an output (written to its table, read from there).
+        wanted.extend(plan.memo.keys().filter(|r| !prog.outputs.contains(*r)).cloned());
+        drop(components_span);
+        crate::code_rule_dsl::logic::profile::decision("import components (decision 0063)", || {
+            format!(
+                "{} documents in {} components over {} edges; {} found ({replayed_rows} rows {}), {} derived",
+                components.of.len(),
+                found.hits.len() + found.misses.len(),
+                edges.len(),
+                found.hits.len(),
+                if cross_mode == cross_memo::Mode::Verify { "derived again to verify" } else { "replayed" },
+                found.misses.len()
+            )
+        });
+        cross_state = Some((components, found));
+    }
+    // The memoised relations' derived rows, for storing (decision 0063).
+    let memo_rels: BTreeSet<String> = cross_plan.as_ref().map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
+    let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    let collect_rows = library_stage || !memo_rels.is_empty();
+    let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {
         let derived: BTreeSet<&str> = part.rules.iter().map(|r| r.head.rel.as_str()).collect();
         for rel in derived.into_iter().filter(|r| !r.ends_with(cross_rounds::PREV) && !r.ends_with(cross_rounds::DONE)) {
+            if !library_stage && !memo_rels.contains(rel) {
+                continue;
+            }
             let width = part.decls[rel].len();
             let rows = held_rows(db, got, rel, width)?;
-            library_rows.rels.insert(rel.to_owned(), (width, rows.into_iter().flatten().collect()));
+            if memo_rels.contains(rel) {
+                memo_rows.entry(rel.to_owned()).or_default().extend(rows.iter().cloned());
+            }
+            if library_stage {
+                library_rows.rels.insert(rel.to_owned(), (width, rows.into_iter().flatten().collect()));
+            }
         }
         Ok(())
     };
@@ -1624,7 +1713,7 @@ pub(crate) fn run_with_options(
             // Held: what the rest reads, unless an output (written to its table, read from there).
             let mut held = wanted.clone();
             held.extend(cone.reads.iter().filter(|r| !outputs_of(r)).cloned());
-            let cone_rules = if library_stage { cone.cone.clone() } else { front::Program::default() };
+            let cone_rules = if collect_rows { cone.cone.clone() } else { front::Program::default() };
             let got = run_rounds(&db, &modules, part(cone.cone), &bounded.hops, &held, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
             collect(&db, &got, &cone_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
@@ -1662,7 +1751,7 @@ pub(crate) fn run_with_options(
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
-            let all_rules = if library_stage { bounded.program.clone() } else { front::Program::default() };
+            let all_rules = if collect_rows { bounded.program.clone() } else { front::Program::default() };
             let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
             collect(&db, &got, &all_rules)?;
             if wanted.contains("returns") {
@@ -1686,6 +1775,24 @@ pub(crate) fn run_with_options(
     phase("cross", statements.count());
     if library_stage {
         library::write(out, &library_rows)?;
+    }
+    let mut cross_counts = (0, 0);
+    if let (Some(plan), Some((components, found))) = (&cross_plan, &cross_state) {
+        cross_counts = (found.hits.len(), found.misses.len());
+        let _storing = crate::code_rule_dsl::logic::profile::span(|| "store import components' rows".into());
+        let nodes: BTreeMap<String, Vec<usize>> = plan
+            .memo
+            .keys()
+            .map(|rel| (rel.clone(), cross.program.decls[rel].iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect()))
+            .collect();
+        let recorded = cross_memo::record(&store, plan, components, found, cross_mode, &memo_rows, &nodes, &paths)?;
+        crate::code_rule_dsl::logic::profile::decision("import components stored (decision 0063)", || {
+            format!("{} components' rows stored ({} rows); {} found components verified", recorded.stored, recorded.rows, recorded.verified)
+        });
+        run_sources.extend(found.sources.iter().copied().chain(recorded.sources.iter().copied()));
+    }
+    if let Some((relations, reading)) = publish_later {
+        collecting = record_run(store, root, &run_sources, &memo_program, &relations, reading)?;
     }
     statements.enter("write");
     let mut rows = BTreeMap::new();
@@ -1760,7 +1867,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts })
 }
 
 
@@ -2410,6 +2517,71 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
+    /// Decision 0063: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
+    /// re-derives the edited file's component and its importers' only; `verify` derives everything again and
+    /// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
+    /// outside its closure.
+    #[test]
+    fn cross_file_rows_are_memoised_per_import_component() {
+        let marker = format!("# {:?}\n", std::time::SystemTime::now());
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cross-memo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+        write("a.py", "def f():\n    pass\n");
+        write("b.py", "from a import f\ndef g():\n    pass\n");
+        write("c.py", "def h():\n    pass\n");
+        let program = |pragma: &str, extra: &str| {
+            let rule = dir.join("uses.rr");
+            std::fs::write(&rule, format!(r#"
+.pragma "cross-memo" "{pragma}"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+{extra}
+.output uses
+"#)).unwrap();
+            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+        };
+        let out = dir.join("out");
+        let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let uses = || std::fs::read_to_string(out.join("uses.csv")).unwrap();
+        let text = program("uses", "");
+        let first = run(&text).unwrap();
+        assert_eq!(first.cross, (0, 3), "three components, none stored yet");
+        let derived = uses();
+        assert_eq!(derived.lines().count(), 1, "{derived}");
+        assert!(derived.starts_with("b.py:"), "{derived}");
+        assert_eq!(run(&text).unwrap().cross, (3, 0), "unchanged: every component found");
+        assert_eq!(uses(), derived, "replayed rows are the derived ones");
+        // An edit to c, which nothing imports: c alone is derived.
+        write("c.py", "def h():\n    return 1\n");
+        assert_eq!(run(&text).unwrap().cross, (2, 1));
+        assert_eq!(uses(), derived);
+        // An edit to a: a and b, which imports it, are derived; c is found.
+        write("a.py", "def f():\n    return 2\n");
+        assert_eq!(run(&text).unwrap().cross, (1, 2));
+        assert_eq!(uses(), derived);
+        // Verify: nothing replayed, every found component's stored rows equal to those derived.
+        // SAFETY: only this test reads RERAIL_CROSS_MEMO while it is set (the others declare no pragma).
+        unsafe { std::env::set_var("RERAIL_CROSS_MEMO", "verify") };
+        let verified = run(&text);
+        unsafe { std::env::remove_var("RERAIL_CROSS_MEMO") };
+        assert_eq!(verified.unwrap().cross, (3, 0));
+        assert_eq!(uses(), derived);
+        // The contract: a memoised relation reading a cross-file relation the pragma does not name is refused.
+        let reads = program("wide", ".decl wide(n: node)\nwide(n) :- uses(n, _).\n.output wide");
+        let err = run(&reads).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("wide") && err.contains("uses"), "{err}");
+        // A row about a whose other node is in b, which a does not import, is outside a's closure.
+        let back = program("uses back", ".decl back(f: node, n: node)\nback(f, n) :- uses(n, f).\n.output back");
+        let err = run(&back).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("back") && err.contains("outside its import closure"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(feature = "tape-cache")]
     #[test]
     fn a_warm_run_resumes_deferred_collection() {

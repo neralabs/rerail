@@ -1,6 +1,6 @@
 # 0063: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
-Status: proposed (2026-11-07)
+Status: built (2026-11-07; steps 1–4, Python imports; not measured on a large corpus yet)
 
 ## Intro
 
@@ -100,8 +100,9 @@ The engine checks what it can:
   - Its rules may read only exports, base facts, `rr_cx_*` and other declared relations.
   - A relation that reads an undeclared cross-file relation is refused with a named error.
 - **When rows are stored.** Every node column of a stored row must lie in the closure of the first
-  node's component. A row that breaks this stops that relation's memo for the run, and the profile
-  names it.
+  node's component. A row that breaks this fails the run with an error naming the relation and both
+  files. Rows already replayed under a broken contract cannot be taken back, so the run is not
+  allowed to finish.
 - **`RERAIL_CROSS_MEMO=verify`.** The run derives everything afresh as well, and fails on any
   difference from the replayed rows. Tests and CI use it.
 - **`RERAIL_CROSS_MEMO=off`** turns the memo off.
@@ -119,6 +120,25 @@ The memo is off for a run when:
 
 Without import rules, a document would have no edges. A missing edge makes the key too small, and
 that is unsound.
+
+### 6. What building it settled
+
+- **The manifest is published after the cross-file part.**
+  - With the memo on, the run's manifest also names the stored rows of every component it found or
+    stored.
+  - Those are known only after the cross-file part, so the manifest is published then, and the
+    collection lease is held until it is.
+  - Before this, the background collection (0053) started at the end of the file-local part and
+    deleted rows stored by an earlier run that no manifest named.
+- **The engine's library programs may use `rr_` names.** `components.rr` is the engine's own, so it
+  is exempt from the reserved-name check (`rr::ENGINE_FILES`), as `core.rr` is exempt from the
+  core-name check.
+- **Where things are:**
+  - `logic/native/components.rs`: the native relation;
+  - `docs/rule-syntax/lib/components.rr`: the rules;
+  - `logic/plan/corpus/cross_memo.rs`: the split, replay, lookup, storage and checks;
+  - `Report::cross`: the components found and derived;
+  - test: `corpus::tests::cross_file_rows_are_memoised_per_import_component`.
 
 ## What the prior work says
 
@@ -163,6 +183,11 @@ that is unsound.
   measured on the typing corpus.
 - Rounds (0035, 0047) still iterate the whole cross-file part of the components that missed. A
   per-component cutoff inside the rounds is O41's remaining step.
+- Stored component rows are never removed while their name stays bound. Every version of a
+  component's key is kept. Collecting rows that no recent manifest names is open, as it is for
+  0059's library rows.
+- Measurement on the 9,010-file repository and the typing corpus. No converted rule declares
+  `cross-memo` yet.
 
 ## Order of work
 

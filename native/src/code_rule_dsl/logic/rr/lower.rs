@@ -185,6 +185,10 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
+                // `.pragma "cross-memo" "r s"` (decision 0063): cross-file relations memoised per import component.
+                [key, rels] if key == "cross-memo" => {
+                    l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
+                }
                 // `.pragma "library-open" "r s"` (decision 0059): relations a workspace run still derives about library nodes.
                 [key, rels] if key == "library-open" => {
                     l.prog.settings.push(("pragma".to_owned(), format!("\"library-open\" \"{rels}\"")));

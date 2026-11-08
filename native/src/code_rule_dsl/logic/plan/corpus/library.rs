@@ -129,12 +129,33 @@ fn name(key: &[u8; 32]) -> String {
 
 /// The stored rows of `key`, if a stage stored them and the store still holds them.
 pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> Option<Vec<u8>> {
-    let digest = store.binding(&name(key)).ok()??;
+    lookup_named(store, &name(key))
+}
+
+/// The stored bytes a derivation's output `name` binds.
+pub(super) fn lookup_named(store: &ContentStore, name: &str) -> Option<Vec<u8>> {
+    lookup_source(store, name).map(|(_, bytes)| bytes)
+}
+
+/// The stored source a derivation's output `name` binds, and its bytes.
+pub(super) fn lookup_source(store: &ContentStore, name: &str) -> Option<(crate::content_store::SourceId, Vec<u8>)> {
+    let digest = store.binding(name).ok()??;
     let source = store.source_by_hash(HashKey::from_sha256_digest(digest)).ok()??;
-    store.get_source(source).ok()
+    store.get_source(source).ok().map(|bytes| (source, bytes))
 }
 
 /// Stores a stage's encoded rows under `key`, as the output of a derivation that read the loaded documents.
+/// Stores `bytes` as the derivation `name` of `producer`, with no named input: `name` is a function of its inputs.
+pub(super) fn record_named(store: &ContentStore, name: &str, producer: &[u8; 32], bytes: &[u8]) -> Result<crate::content_store::SourceId> {
+    use crate::content_store::DerivationRecord;
+    let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
+    let source = store.put_source(bytes, &[]).map_err(plan)?;
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let record = DerivationRecord { output: name.to_owned(), producer: *producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
+    store.record_derivations(&[record]).map_err(plan)?;
+    Ok(source)
+}
+
 pub(super) fn record(store: &ContentStore, key: &[u8; 32], bytes: &[u8], loaded: &[String]) -> Result<()> {
     use crate::content_store::{DerivationInput, DerivationRecord};
     let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
