@@ -2762,6 +2762,54 @@ What remains against the closure:
 - `push_local_joins` is not yet measured as linear in the rules.
 - Hiding still runs over the whole combined program once. Stage 2 makes it per module.
 
+**Progress (2026-11-08, 0089 stage 2).** Equal requests now share one cone. A program that asks nothing is read
+with its libraries' declarations and kind sets only.
+
+- **Requests are keyed.** A request is held as a unit: the library relations of its cone, plus the program's own
+  relations they read. Its key is the digest of the unit's rules and declarations, with variables as written, so
+  equal keys mean equal questions. Programs with equal keys read one copy, `q<k>_…`.
+  - `RERAIL_REQUESTS=copied` keeps one copy per program, for comparison.
+  - A unit that reads a repository file the policy names stays per program.
+  - Test: `libraries_are_held_once_and_equal_requests_share_one_cone`.
+- **What this saves on this pack: little.** 29 of 534 programs ask, with 26 distinct requests, so 3 copies are
+  saved. The cones are 159 relations in all. The largest share is 6 copies, for `cmp_same` and its cone.
+- **Parsing is halved.** 505 of the 534 programs ask nothing. Each of them is read with its libraries' statements
+  except their clauses. The exception is kind sets (unary relations), which lowering reads statically
+  (`rr::parse_own`). Leaving the kind sets out lost 22 findings in quarter 2 (`nearest(…, fscope)`).
+  - "parse each program": 7.84 s CPU and 17.3 GB allocated, now 3.3 s and 7.3 GB.
+  - "parse the program": 10.1 s, now 5.1 s.
+- **Hiding runs once.** It covers the 12,850 rules of the combined program, in 1.67 s. It was 19.5 s per program.
+  Programs read under different bounds (`.guests off`) still take the copied path. The pack has none, and holding
+  a library once per bound is left until one appears.
+- **Whole pack, keyed requests, declarations-only parse:**
+  - rc 0, 6,184 findings, equal to the union of the four quarters;
+  - 100.1 s CPU at load 35 to 82, with the profile on;
+  - peak footprint 1,076 MB (max RSS 1.57 GB, which counts mapped pages).
+  - The quarters match stage 1: 3,776, 943, 387 and 1,078 findings.
+- **What is left:**
+  - `push_local_joins`, 13.2 s, now the largest preparation span;
+  - the footprint peak, 1,076 MB, against the 1 GB budget. The largest rises are evaluation (`local/run`, 365 MB)
+    and "stats" (355 MB).
+
+**Before 0089 stage 3 (2026-11-08): what a per-unit memo could save.** This uses the profile of the same whole-pack
+run. Adding one rule changes the file-local digest, so every file is evaluated again. Of that work:
+
+| span | CPU | under stage 3 |
+|---|---|---|
+| `local/run` | 34.2 s | |
+| … library strata (unprefixed names) | 3.8 s | read from the library unit's rows |
+| … lowering helpers (`fl…`, `rr_in_annotation…`, not a program's) | 3.0 s | mostly the library's, so mostly read |
+| … programs' own and requests' strata | 6.8 s | made again |
+| … the rest (per chunk: opening, loading inputs, indexes) | about 20 s | made again |
+| `local/guests` | 18.1 s | unchanged (tape cache, already content-keyed) |
+| preparing (`stats`; `push_local_joins` is 13.2 s of it) | 24.3 s | unchanged: the prepared program is keyed by the whole pack |
+
+So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit costs. The larger costs are three:
+
+- the per-chunk overhead of `local/run`;
+- `push_local_joins`;
+- preparing the whole program again for one rule.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
