@@ -31,7 +31,7 @@ fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     for part in parts {
         let Some((key, value)) = part.split_once('=') else { return Err(Error::Plan(format!("invalid input parameter: {part}"))); };
         let (key, value) = (key.trim(), value.trim());
-        if !["IO", "filename", "dir", "path", "records", "at", "artifact"].contains(&key) {
+        if !["IO", "filename", "dir", "path", "records", "projection", "at", "artifact"].contains(&key) {
             return Err(Error::Plan(format!("unsupported input parameter: {key}")));
         }
         let value = if value.starts_with('"') {
@@ -82,14 +82,22 @@ fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult
     row.iter().zip(columns).map(|(v, (_, ty))| scalar(v, ty, text)).collect()
 }
 
-fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
+fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
     let mut selected = Vec::new();
     select(value, &steps, prefix, &mut selected);
     let mut out = Vec::new();
     for (prefix, value) in selected {
-        let rows: Vec<Vec<Json>> = if records {
+        let rows: Vec<Vec<Json>> = if projection == "type" {
+            let kind = match value {
+                Json::Null => "null", Json::Bool(_) => "boolean", Json::Number(_) => "number",
+                Json::String(_) => "string", Json::Array(_) => "array", Json::Object(_) => "object",
+            };
+            vec![vec![Json::String(kind.to_owned())]]
+        } else if projection == "json" {
+            vec![vec![Json::String(value.to_string())]]
+        } else if records {
             let Json::Array(items) = value else { return Err(malformed("records=true requires a list of objects")); };
             items.iter().map(|item| {
                 let Json::Object(map) = item else { return Err(malformed("record is not an object")); };
@@ -115,7 +123,7 @@ impl Readers {
     fn read<'a>(&'a mut self, path: &str, read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<&'a str> {
         self.bytes.entry(path.to_owned()).or_insert_with(|| read(path)).as_ref().map(String::as_str).map_err(Clone::clone)
     }
-    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
+    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
         if matches!(io, "json" | "yaml") {
             let key = (path.to_owned(), io.to_owned());
             if !self.documents.contains_key(&key) {
@@ -125,7 +133,7 @@ impl Readers {
                 self.documents.insert(key.clone(), decoded);
             }
             let document = self.documents[&key].as_ref().map_err(Clone::clone)?;
-            return json_rows(document, pointer, records, prefix, columns);
+            return json_rows(document, pointer, records, projection, prefix, columns);
         }
         let source = self.read(path, read)?;
         // Repository text readers use universal newlines. No line is manufactured after a final separator.
@@ -136,7 +144,7 @@ impl Readers {
             if matches!(io, "lines" | "jsonl") { row.push(Json::from(i + 1)); }
             if io == "jsonl" {
                 let value = serde_json::from_str(line).map_err(|e| malformed(format!("line {}: {e}", i + 1)))?;
-                out.extend(json_rows(&value, pointer, records, row, columns)?);
+                out.extend(json_rows(&value, pointer, records, projection, row, columns)?);
             } else {
                 row.extend(if io == "lines" { vec![Json::String(line.to_owned())] }
                            else { line.split('\t').map(|s| Json::String(s.to_owned())).collect() });
@@ -169,6 +177,12 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
             None | Some("false") => false, Some("true") => true,
             _ => return Err(Error::Plan(format!("{rel}: records must be true or false"))),
         };
+        let projection = params.get("projection").map_or("rows", String::as_str);
+        if !["rows", "type", "json"].contains(&projection) || records && projection != "rows"
+            || projection != "rows" && !matches!(io, "json" | "yaml" | "jsonl")
+        {
+            return Err(Error::Plan(format!("{rel}: invalid input projection {projection}")));
+        }
         let pointer = params.get("path").map_or("", String::as_str);
         let filename = params.get("filename");
         let directory = params.get("dir");
@@ -191,14 +205,14 @@ fn populate_with(program: &mut front::Program, root: &Path, read: &mut impl FnMu
                     for file in paths {
                         if !file.is_file() { continue; }
                         let name = file.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-                        match readers.rows(&name, io, pointer, records, vec![Json::String(name.clone())], columns, read) {
+                        match readers.rows(&name, io, pointer, records, projection, vec![Json::String(name.clone())], columns, read) {
                             Ok(part) => rows.extend(part), Err(e) => { failure = Some(e); break; }
                         }
                     }
                     failure.map_or(Ok(rows), Err)
                 }
             }
-        } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
+        } else { readers.rows(path, io, pointer, records, projection, Vec::new(), columns, read) };
         program.inputs.retain(|name| name != rel);
         match result {
             Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
@@ -264,7 +278,7 @@ mod tests {
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
         let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();
-        Readers::default().rows("fixture", io, pointer, records, Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
+        Readers::default().rows("fixture", io, pointer, records, "rows", Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
     }
 
     #[test]

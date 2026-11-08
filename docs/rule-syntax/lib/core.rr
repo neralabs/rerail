@@ -486,6 +486,9 @@
 //                row per operation of every group, and each `*` it crossed is a leading column (its index or key).
 //                `*#` adds the zero-based member position before its key or index. Object positions follow
 //                insertion order, including empty members; a repeated key keeps its first position and last value.
+//                projection="type" returns one type-name column for each selected value; projection="json"
+//                returns one serialized JSON column for complete DTO transport. Wildcard captures stay in front.
+//                Both use the same decoded document as the typed rows. JSON numbers retain their full precision.
 //   IO=jsonl     one JSON value per line (JSON Lines); each line is read as IO=json reads a file, with the line
 //                number as a leading column
 //   IO=yaml      the same shapes as json

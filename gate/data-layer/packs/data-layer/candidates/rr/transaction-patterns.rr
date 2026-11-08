@@ -55,6 +55,16 @@ tp_default_key(11, "BULK_OPS").
 .input tp_baseline_member(IO=json, filename=".transaction-patterns-baseline.json", path="/categories/*#/*")
 .decl tp_baseline_ready()
 tp_baseline_ready() :- !input_error(".transaction-patterns-baseline.json", _, _).
+.decl tp_baseline_type(value: symbol)
+.input tp_baseline_type(IO=json, filename=".transaction-patterns-baseline.json", path="", projection="type")
+.decl tp_baseline_categories_type(value: symbol)
+.input tp_baseline_categories_type(IO=json, filename=".transaction-patterns-baseline.json", path="/categories", projection="type")
+.decl tp_baseline_value(value: symbol)
+.input tp_baseline_value(IO=json, filename=".transaction-patterns-baseline.json", path="", projection="json")
+.decl tp_configuration_bad()
+tp_configuration_bad() :- tp_baseline_type(t), t != "object", t != "null".
+tp_configuration_bad() :- tp_baseline_categories_type(t), t != "object".
+tp_configuration_bad() :- tp_baseline_type(_), input_error(".transaction-patterns-baseline.json", _, _).
 .decl tp_layer(path: symbol)
 tp_layer(path) :- doc(_, path, _), match("(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^/\\n][^/]*/.*", path).
 
@@ -239,6 +249,8 @@ TPConstant(@place("", 0), "init", value) :- option("entryPoint", "constants"), t
 TPConstant(@place("", 0), "bridge", value) :- option("entryPoint", "constants"), tp_bridge_pattern(value).
 TPConstant(@place("", 0), "key", value) :- option("entryPoint", "constants"), tp_public_key(value).
 TPConstant(@place("", 0), "file", value) :- option("entryPoint", "constants"), tp_baseline_file(value).
+.violation TPLoad(at: span, value: symbol) code "TP_LOADED_BASELINE" "{value}"
+TPLoad(@place("", 0), value) :- option("entryPoint", "_load_baseline"), tp_baseline_value(value).
 
 .decl tp_triggered(d: number)
 tp_triggered(d) :- doc(d, _, _), source(d, sp), text(sp, source), tp_trigger(trigger), contains(trigger, source).
@@ -246,6 +258,7 @@ tp_triggered(d) :- doc(d, _, _), source(d, sp), text(sp, source), tp_trigger(tri
 tp_selected(0) :- tp_graph().
 tp_selected(d) :- !tp_graph(), tp_doc(d, _), option("entryPoint", _), tp_api_gate(), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d).
 tp_selected(d) :- !tp_graph(), tp_doc(d, p), !option("entryPoint", _), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d),
+    !tp_configuration_bad(),
     (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; tp_layer(p)).
 .decl tp_skipped(d: number)
 tp_skipped(d) :- doc(d, physical, _), !option_item("documentPaths", _, physical), path_part(d, p), (p = "test" ; p = "tests").
@@ -268,14 +281,17 @@ TPAnalysis(@place(path, l), name, param, category, calls, entry, exit) :- tp_fin
     tp_function(f, name), tp_position(f, d, l, entry, exit), tp_doc(d, path), option("entryPoint", _), !option("internalProbe", "true").
 
 .violation TPFindingNEEDS_REVIEW(at: span, name: symbol, param: symbol, entry_order: number, exit_order: number) code "NEEDS_REVIEW" "{name}({param}) must be refactored to take a transaction"
+.severity TPFindingNEEDS_REVIEW error
 TPFindingNEEDS_REVIEW(@place(path, l), name, param, entry, exit) :- tp_finding(f, param, "NEEDS_REVIEW", _),
     tp_function(f, name), tp_position(f, d, l, entry, exit), tp_doc(d, path), !option("entryPoint", _).
 
 .violation TPFindingTS_BRIDGE(at: span, name: symbol, param: symbol, entry_order: number, exit_order: number) code "TS_BRIDGE" "{name}({param}) must be refactored to take a transaction"
+.severity TPFindingTS_BRIDGE error
 TPFindingTS_BRIDGE(@place(path, l), name, param, entry, exit) :- tp_finding(f, param, "TS_BRIDGE", _),
     tp_function(f, name), tp_position(f, d, l, entry, exit), tp_doc(d, path), !option("entryPoint", _).
 
 .violation TPFindingINTERNAL_TXN_VIOLATION(at: span, name: symbol, param: symbol, entry_order: number, exit_order: number) code "INTERNAL_TXN_VIOLATION" "{name}({param}) must be refactored to take a transaction"
+.severity TPFindingINTERNAL_TXN_VIOLATION error
 TPFindingINTERNAL_TXN_VIOLATION(@place(path, l), name, param, entry, exit) :- tp_finding(f, param, "INTERNAL_TXN_VIOLATION", _),
     tp_function(f, name), tp_position(f, d, l, entry, exit), tp_doc(d, path), !option("entryPoint", _).
 .decl tp_public_key(value: symbol)

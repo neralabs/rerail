@@ -19,6 +19,12 @@ def transaction_patterns(source,target,header):
     text+=f'.input tp_baseline_member(IO=json, filename={q(original.BASELINE_FILE)}, path="/categories/*#/*")\n'
     text+='.decl tp_baseline_ready()\n'
     text+=f'tp_baseline_ready() :- !input_error({q(original.BASELINE_FILE)}, _, _).\n'
+    for relation,representation,path in [('tp_baseline_type','type',''),('tp_baseline_categories_type','type','/categories'),('tp_baseline_value','json','')]:
+        text+=f'.decl {relation}(value: symbol)\n.input {relation}(IO=json, filename={q(original.BASELINE_FILE)}, path={q(path)}, projection={q(representation)})\n'
+    text+='.decl tp_configuration_bad()\n'
+    text+='tp_configuration_bad() :- tp_baseline_type(t), t != "object", t != "null".\n'
+    text+='tp_configuration_bad() :- tp_baseline_categories_type(t), t != "object".\n'
+    text+=f'tp_configuration_bad() :- tp_baseline_type(_), input_error({q(original.BASELINE_FILE)}, _, _).\n'
     text+='.decl tp_layer(path: symbol)\ntp_layer(path) :- doc(_, path, _), match('+q('(?s)l'+character_class(str.isdecimal)+r'{4}_[^/\n][^/]*/.*')+', path).\n'
     text+=projection()+inference()+categories_and_helpers()+detector()
     text+=f'.decl tp_public_key(value: symbol)\ntp_public_key({q(original.BASELINE_PUBLIC_KEY_HEX)}).\n'
@@ -174,6 +180,8 @@ TPConstant(@place("", 0), "init", value) :- option("entryPoint", "constants"), t
 TPConstant(@place("", 0), "bridge", value) :- option("entryPoint", "constants"), tp_bridge_pattern(value).
 TPConstant(@place("", 0), "key", value) :- option("entryPoint", "constants"), tp_public_key(value).
 TPConstant(@place("", 0), "file", value) :- option("entryPoint", "constants"), tp_baseline_file(value).
+.violation TPLoad(at: span, value: symbol) code "TP_LOADED_BASELINE" "{value}"
+TPLoad(@place("", 0), value) :- option("entryPoint", "_load_baseline"), tp_baseline_value(value).
 '''
 
 
@@ -185,6 +193,7 @@ tp_triggered(d) :- doc(d, _, _), source(d, sp), text(sp, source), tp_trigger(tri
 tp_selected(0) :- tp_graph().
 tp_selected(d) :- !tp_graph(), tp_doc(d, _), option("entryPoint", _), tp_api_gate(), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d).
 tp_selected(d) :- !tp_graph(), tp_doc(d, p), !option("entryPoint", _), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d),
+    !tp_configuration_bad(),
     (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; tp_layer(p)).
 .decl tp_skipped(d: number)
 tp_skipped(d) :- doc(d, physical, _), !option_item("documentPaths", _, physical), path_part(d, p), (p = "test" ; p = "tests").
@@ -209,6 +218,7 @@ TPAnalysis(@place(path, l), name, param, category, calls, entry, exit) :- tp_fin
     for category in ['NEEDS_REVIEW','TS_BRIDGE','INTERNAL_TXN_VIOLATION']:
         text+=f'''
 .violation TPFinding{category}(at: span, name: symbol, param: symbol, entry_order: number, exit_order: number) code "{category}" "{{name}}({{param}}) must be refactored to take a transaction"
+.severity TPFinding{category} error
 TPFinding{category}(@place(path, l), name, param, entry, exit) :- tp_finding(f, param, "{category}", _),
     tp_function(f, name), tp_position(f, d, l, entry, exit), tp_doc(d, path), !option("entryPoint", _).
 '''

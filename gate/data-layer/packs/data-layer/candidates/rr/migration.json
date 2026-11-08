@@ -478,7 +478,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
+      "sha256": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -547,6 +547,11 @@
           "before": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
           "after": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
           "reason": "Document ordered object-member capture on the modern typed JSON reader; transaction_patterns preserves category lookup precedence"
+        },
+        {
+          "before": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
+          "after": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
+          "reason": "Expose JSON type facts and complete loader DTO transport from the same cached native parse; transaction_patterns requires both"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -1430,7 +1435,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "sha256": "4105da80ec10b04a98fd9351415b9b0f9a08e1dd721482113073e64d6eacf7f7",
+      "sha256": "776ffc84620b5d0dafa5239cd38e01e86f12a251d9cdcbfe5bc6ccea5f019ad7",
       "origin": "authored",
       "upstreamPath": "scripts/lint_transaction_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1667,7 +1672,7 @@
       "legacySha256": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "ruleSha256": "4105da80ec10b04a98fd9351415b9b0f9a08e1dd721482113073e64d6eacf7f7"
+      "ruleSha256": "776ffc84620b5d0dafa5239cd38e01e86f12a251d9cdcbfe5bc6ccea5f019ad7"
     },
     {
       "check": "lazy_result_usage",
@@ -2455,7 +2460,7 @@
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "1a67d2cce937ab923e9d35e1cb7c69fb9c1bbebc459ce9a507a044cd7d45a462"
+        "sha256": "9e43c2c45a7e9cafe43d04ed4e089caf89d5be765440bfa4ae9790c8e266f610"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -2507,7 +2512,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "57f77a4e5f9804a8db6446550beb8d7d8388e882cfad89c6bd3d52e3b3dc9293"
+        "sha256": "86ff7c3f7d84225576818f6066796135d6b86a1a82273f5010364473fc49fd55"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",

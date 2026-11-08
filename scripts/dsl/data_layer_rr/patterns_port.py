@@ -126,9 +126,17 @@ def install(suite,module):
         return module._facts_for_files(root_dir,tuple(sorted(files)),categorized_functions) if files else []
     def load(root_dir):
         path=root_dir/module.BASELINE_FILE
-        if not path.exists():return None
-        try:return json.loads(path.read_text())
-        except Exception:return None
+        files=[];text=None
+        if path.exists():
+            try:text=path.read_text();files=[dict(path=module.BASELINE_FILE,source=text)]
+            except Exception as error:print(f'Error loading baseline: {error}')
+        rows=query(suite,'_load_baseline',files=files)
+        values=[r['parameters']['value'] for r in rows if r['code']=='TP_LOADED_BASELINE']
+        if values:return json.loads(values[0])
+        if text is not None:
+            try:json.loads(text)
+            except Exception as error:print(f'Error loading baseline: {error}')
+        return None
     def token(root_dir):
         import hashlib
         try:return hashlib.sha256((root_dir/module.BASELINE_FILE).read_bytes()).hexdigest()[:16]
