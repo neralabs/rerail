@@ -1,188 +1,169 @@
 # Parser generators: the TDD plan for tier 2
 
-Status: plan, being built (2026-11-07). It builds docs 14 to 16, with the corrections from
-review (§0). Each phase writes its tests first and sees them fail. It builds until they pass,
-commits, and only then starts the next phase.
+Status: plan, being built (2026-11-07). Rewritten for decision 0077: the tree section is a
+grammar (doc 18), and tier 2 is its state machine. Each phase writes its tests first and sees
+them fail. It builds until they pass, commits, and only then starts the next phase.
 
 ## Intro
 
-Tier 2 is built in seven phases, from the Bitlex file down to Metal. Each phase ends in code
-that the next one reads, and its tests pin the shape of that code, not only its answers:
+Tier 2 is simdjson's stage 2: a state machine over tier 1's token stream. The Bitlex file
+states the grammar; the compiler makes the state machine from it, as data in the block
+program; and the compiler lowers that data to the transducer's IR, which runs on the IR's
+interpreter, Cranelift and Metal. Nothing else runs it.
 
 | phase | builds | pinned by |
 |---|---|---|
-| 1 | `before`, `after`, `also when` in Bitlex and the block program | the reference, every executor, `rir` |
-| 2 | the monoids: combines, summaries, references | laws and sequential references |
-| 3 | the analysis: classes, depths, candidates, fixes | JSON's table, as doc 16 §4.1 |
-| 4 | the plan: steps, entry layout, budget, verifier | the printed plan, and refusals |
-| 5 | the CPU: a generated Cranelift tier 2 | tapes equal tree-sitter's; shape guards |
-| 6 | Metal: the generated plan kernel | tapes equal the CPU's; shape guards |
+| 1 | the tree section as a grammar, and its reference parser | tree-sitter, over the corpus |
+| 2 | the state machine: a compiler pass, held in the block program | its `rir` text, pinned whole; a guard |
+| 3 | the monoids, kept for Metal | laws and sequential references |
+| 4 | the Metal plan's stores, steps and verifier, kept for Metal | hand-built plans and refusals |
+| 5 | the CPU: tier 2 lowered to the IR, run on the interpreter and Cranelift | IR shape; tapes; cost |
+| 6 | Metal, after the CPU: depth carry, nearest smaller value | tapes equal the CPU's; shape guards |
 | 7 | timing | CPU time next to simdjson's stages |
 
-The oracle for tapes is tree-sitter, as before. Rust references are oracles for the parts:
-the monoids' sequential references and the carries'. None of them is an executor.
+The oracle for tapes is tree-sitter. Rust references are oracles for the parts (the
+reference parser, the monoids' walks). None of them is an executor.
 
-## 0. Corrections from review, built in
+## The rule
 
-- **The scan phase has one barrier.** Every SIMD group scans the 32 SIMD totals itself, and
-  the SIMD totals carry four candidates. So all depths are exchanged at once.
-- **Entries go to device memory,** as structure of arrays: one array per 4-byte word, in
-  candidate-major order. Pass A stages each tile's 32 entries in threadgroup memory, then
-  writes each array's 32 words as one 128-byte segment.
-- **Threadgroup memory is a budget, well under 32 KB,** for occupancy: 10,240 bytes, of which
-  JSON uses 10,112.
-- **No chunk limit.** A file of any size is one pass A, one scan, one pass B.
+The states and arms are the compiler's data. Two things read them: the pass that makes them
+(`grammar`) and the pass that lowers them to the transducer's words (`bitlex_tier2`, decision
+0079). No Rust function walks them to parse a file, and generated code calls no Rust. The guard
+`only_the_compiler_reads_tier2s_states` fails if any other file reads them.
 
-## 1. Bitlex and the block program (done)
+## 1. The tree section as a grammar (done)
 
-**Built:** `before X` and `also when` in Bitlex. A node statement may run over several lines,
-with `also` and `end` starting their own. Rows carry `before` and `also`, and `rir` prints them.
-`json.bitlex`'s pair is found by `before ':'`, with the rule from the left as its `also`.
+**Built:** doc 18's syntax in `tools/bitlex` (`node K [nested] = E`, `choice N [supertype S]`,
+`f: X`), and the reference parser over the token stream. JSON's tree section is
+tree-sitter-json's `grammar.js`, restated.
 
-**Changed from doc 16 §3:** the block program keeps rules. `before` and `after` are not tier-1
-ops. The analysis lowers the rows' conditions to values (phase 3). The one-byte kinds are not
-tier-1 outputs either: as outputs, they took JSON's loop from 178 instructions to 274. Tier 2
-reads them from the token's byte, as simdjson's stage 2 does. The punctuation row's keywords
-say which byte is which kind.
+**Found:** the root spans the file to its end, trailing whitespace included, as tree-sitter's.
+A number's syntax went to tier-1 masks and errors (no validator call).
 
-**Tests:** `bitlex::syntax::before_and_also_parse`,
-`rir::tests::block_tree_rows_before_and_also_round_trip`,
-`bitlex_compile_tests::json_rows_read_kinds_as_designed`, and the tier-1 ratchets unchanged.
+**Tests:** `tree_grammar_parses`; the corpus: 28,467 of 28,470 files equal tree-sitter's
+nodes. One file has no tokens and falls back; the two that tree-sitter errs on are refused.
 
-## 2. The monoids (done)
+## 2. The state machine (done)
 
-**Built:** `block_monoid`: `StateFn` (S1's 16-bit table, with an identity that keeps the
-halos coming in), `Last` and `First` (forward and backward `last`), and `Dyck`. `add` and `or`
-are integer operations.
+**Built:** `grammar::build`, a pass of the Bitlex compiler:
 
-**Changed from doc 14 §3:** the stack effect has a **peak**, 4 bits: the most levels above the
-piece's start. `nested max 13` bounds the absolute depth, and a nesting inside a piece that
-closes again before its end shows in no final count. A file fails when, from its start, the
-effect has a mismatch, a close with nothing open, or a peak past 13. The effect is 41 bits.
+- one level for the root and one per `nested` node, the others inlined;
+- Glushkov's positions, with the wrappers (nodes, fields, supertypes) each edge leaves and
+  enters;
+- a state per position, an arm per token: closes, opens, the leaf, the next state; a call
+  opens the nested node and pushes its return state;
+- refusals: not LL(1), an empty node, a self-reference without `nested`;
+- Moore's refinement merges states that act alike.
+
+The block program held token rows, keywords, `skip`, states and arms; since decision 0079
+they are the compiler's only, and the words carry them. The old rows (`after`, `before`,
+`also`, `parent`, code facts, the `json_number` validator) are deleted, with the Rust tape
+writer's leftovers.
+
+**Tests:** `json_tier2_states_print_as_designed` (19 states, pinned whole),
+`json_number_check_is_straight_line`, `json_number_check_equals_the_reference`,
+`a_check_that_needs_a_byte_loop_is_refused`, `check_matches_a_tokens_bytes`,
+`rir::tests::block_tree_rows_round_trip`, `json_rows_equal_the_evaluator_on_every_executor`
+(the token rows), `only_the_compiler_reads_tier2s_states`.
+
+## 3. The monoids (done, for Metal)
+
+`block_monoid`: `StateFn`, `Last`, `First`, `Dyck`. Metal composes each level's transitions as
+state functions and matches closes by depth (phase 6).
 
 **Tests** (`block_plan_tests`): `state_fn_laws`, `state_fn_composes_like_a_walk`, `dyck_laws`,
-`dyck_equals_a_stack`, `last_and_first_equal_a_walk`. Breaking the peak's combine fails the two
-Dyck tests.
+`dyck_equals_a_stack`, `last_and_first_equal_a_walk`.
 
-**Moved to phase 3:** S1's summaries against tier 1's carries need the block program's carried
-slice, which the analysis finds.
+## 4. The Metal plan's verifier (done, for Metal)
 
-## 3. The analysis (done)
+`block_plan`: stores (threadgroup or device, single or double), steps (uniform or ragged
+loops, work, barriers), and the verifier: the budget of 10,240 bytes, SIMD operations and
+barriers only in uniform loops, a barrier between every write and read of a shared store by
+different steps, double buffers as a parity. The plans themselves are made again in phase 6,
+from the state machine.
 
-**Built:** `block_plan::analyse(program, target)`: every value with its class, monoid and depth,
-the scans by depth, the candidates, the fixes and the passes over the bytes. Metal takes the
-rule with fewer passes, and the CPU the one that runs forward. `Dataflow::text` prints it.
+**Tests:** `plan_verifier_accepts_a_whole_plan`, `plan_verifier_refuses_a_missing_barrier`
+(each of 5), `plan_verifier_models_double_buffers`,
+`plan_verifier_refuses_simd_in_a_ragged_loop`,
+`plan_verifier_refuses_threadgroup_memory_over_the_budget`.
 
-**Found by the analysis, against doc 16 §4.1:**
+## 5. The CPU: tier 2 lowered to the IR
 
-- **The stack is in S3, not S2.** The pair bit's event is the key, and the key reads the
-  backward carry at the block's right edge. So the stack is one deeper than the key: S3, with
-  the node counts. The chain is still three scans, and the scan phase still one exchange.
-- **The key is two `last 1` backward values:** the token after the string's end is `:`, and
-  that bit carried back to the string's start. Doc 16 used one, over tokens outside strings;
-  the analysis has no notion of "outside strings", only rows.
-- **Four nodes may start at one byte, so three planes.** `document`, `pair`, `string` and `"`
-  can all start at the first token by the rows alone. Such a file fails the `also` check, but
-  the planes must hold the count.
-- **The counts are 14 bits.**
+**The shape.** Tier 1 is stage 1: bit operations per 64-byte block, ending in one extraction
+of the token stream. Tier 2 is stage 2: one loop over the stream. At each entry it reads the
+token's kind, branches on it in its state, does straight-line work, and jumps to the next
+state. Branches are fine where they are on something concrete and go straight through. There
+is no search for a character, no loop over bytes, no counting.
 
-**Tests:** `json_values_are_classed_as_designed` (the whole text),
-`json_rule_from_the_left_needs_a_third_pass` (S1, S2, S3 the stack, S4 the counts after a third
-pass), `json_cpu_dataflow_is_forward`. S1's summaries against tier 1's carries move to phase 6,
-where the generated code makes them.
+**5a. The stream.** Two extracts, as simdjson's structural indexes: every token's first byte,
+and the last byte of each token whose end its row does not give. A one-byte token ends after
+its byte; a keyword-only row's word gives its length. JSON's second extract holds string
+contents' and words' last bytes.
 
-## 4. The plan (done)
+**5b. The words (decision 0079).** Tier 2 is the transducer's own instruction words, with new
+ones for the stream, lowered by its own pipeline: the words' interpreter, `native_ir`, and
+Cranelift's lowering of `native_ir`. There is no second IR and no new code generator. On
+Cranelift (`native_cpu_stream`) each word is a block, `SWITCH` a jump table, `RETURN` a
+switch over the states `PUSH` names, and `CHECK` a call of the check's compiled block program
+over the token copied after zeros (a block program reads the byte before its first). Per
+state:
 
-**Built:** `block_plan::plan(program, target)` and `Plan`: the steps (loops over tiles or
-rounds, work, barriers), the entry's fields, the threadgroup stores and the budget.
-`Plan::text` prints it; `verify` checks the budget, uniform loops, and a barrier between every
-write and read of a shared store by different steps. The CPU plan is one pass.
+- `TOKEN` takes the next token, and `SWITCH` jumps by its first byte;
+- the arm: `SPAN` (its end), `WORD` or `CHECK` where needed, its node writes (`CLOSE`, `OPEN`,
+  `LEAF`, `NODE_FIELD`, `NODE_SUPER`), a `PUSH` for a call, and `GOTO` the next state;
+- a nested level that may end closes its node and `RETURN`s; the root `ACCEPT`s.
 
-How the plan is made:
+The verifier refuses any cycle without a `TOKEN`: no loop over bytes, ever (decision 0078). A
+`CHECK` runs its block program over the token as tier 1 runs over a file, 64 bytes at a time,
+its carries passed from word to word; tree-sitter is never the way out of a case simdjson
+handles.
 
-- **The entry's fields** are the later scans' values, in the dataflow's order, then the fixes,
-  the error and, matching by a scan, the open ords. A field wider than a word starts at one;
-  no narrower field crosses one. JSON's candidate is 3 words, its entry 13.
-- **Threadgroup stores:** staging and the exchange have two buffers, the opens one. While the
-  stores are over the budget, the largest double store loses a buffer.
-- **Staging** holds at most 16 words of each entry. A wider entry is staged and written out in
-  slices, which take the two buffers in turn.
-- **The exchange** is one step if all of an entry fits in 4 KB, both buffers. Otherwise it is
-  two: S1 first, then the candidate S1 picked.
-- **Barriers:** one where the verifier needs it. A loop gets a barrier at its body's end only if
-  the next iteration would rewrite a store still being read.
+**5c. The kinds and checks.** A token's kind is its first byte, as simdjson's
+`switch (*value)`: the compiler finds each row's possible first bytes from its start mask's
+operations, and where two rows share a byte, tier 1 guards the wider. A keyword is a switch
+per byte, and a `WORD` only where the switches have not read all of it or its length is not
+its row's. A token with a check runs it in its arm, as simdjson's `parse_number`: JSON's number
+is 100 operations, a `fill` per digit run.
 
-**Changed from the plan above:**
+**5d. The stack.** simdjson's: one frame per nested open, in memory: the open's ord and the
+return state. A close writes the size into the open's slot. Its depth is the file's.
 
-- **Double buffers are a parity.** Each write to a double store takes the other buffer, and a
-  read reads the one last written. The verifier tracks this, and so must the generated code.
-  It is what lets `match scan`'s eight staging slices share one 4 KB store.
-- **`match scan`'s exchange is single-buffered:** 121 words per entry is over the budget with
-  two. It needs no extra barrier: the next round's S1 barrier comes before its rewrite.
-- **The budget is 10,240 bytes,** not 9 KB. JSON uses 10,112.
-- **`rir` does not print plans yet.** The plan is derived from the program each time.
-- **The value names:** the backward key value prints as `r1 before ':'`.
+**5e. The tape, with widths speculated.** Tier 2 writes the v9np columns directly, at widths
+guessed before the file (from its length and its stream's length), and ORs each column's
+values as it goes. If the ORs fit the guess, the tape is done. If not, the columns are written
+again at the known widths: at most one second pass.
 
-**Tests** (`block_plan_tests`): `json_gpu_plan_prints_as_designed` (the whole text, 7
-barriers), `json_cpu_plan_is_one_pass`, `plan_verifier_refuses_a_missing_barrier` (each of the
-7 removed), `plan_verifier_refuses_simd_in_a_ragged_loop`, `json_entry_is_13_arrays_of_words`
-(with the budget), `match_scan_has_no_mid_pass_barrier` (121 words, 2 scan barriers, none in
-pass B).
+**Tests, first:**
 
-## 5. The CPU (done)
+- `json_stream_equals_the_evaluator_on_every_executor` (done): the two extracts are the
+  evaluator's tokens, on the interpreter, Cranelift and Metal.
+- `a_loop_not_over_the_stream_is_refused` (done): the verifier refuses a cycle without a
+  `TOKEN`; `json_tier2_is_transducer_words` (done): no word of the tree walker's.
+- `json_tier2_nodes_equal_the_reference` (done, the words' interpreter): the reference
+  parser's nodes on cases, nesting, every kind, long numbers and strings.
+- `json_tier2_on_cranelift_equals_the_interpreter` (done): the compiled words write the
+  interpreter's nodes and refuse at the same word.
+- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and Cranelift.
+- `json_widths_speculated_once`: a second pass only where the guess was wrong.
+- `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in
+  CPU time.
 
-**Built:** `native_cpu_tier2::compile(program, fallbacks)`: one Cranelift function per block
-program, generated from its rows. It reads tier 1's masks, word-major, and writes the nodes in
-preorder. Its columns are packed by the tape's one packer (`TapeImage::from_written`).
-
-The function walks the events in byte order: every bit of a row's start or end mask. At each:
-
-- **the token** that starts there picks an arm of one `br_table`: an arm per token row, and one
-  for a byte where no token starts. In its arm, the rows' starts are tests in rank order. A
-  test the arm decides is folded: a token row's own start, another token row's (false), a
-  kind known from a row without keywords. Keywords are inlined as compares of 8-byte words.
-- **the ends** close the stack's top while its row ends there, by a `br_table` on the top's
-  row. A node that ends `with` its child's field closes with it, by another.
-- **the checks** send the file to tree-sitter: a fallback bit, two tokens at a byte, bytes in
-  no token, a stray or too-deep close, a validator, a second root.
-
-The CPU plan's rule is `also`: the pair opens from the left. Its `before ':'` is checked at
-the token after its first child (the string). A file where the two rules differ goes to
-tree-sitter.
-
-**Changed from the plan above:**
-
-- **The dispatch is per token row, not per kind.** JSON's punctuation is one row whose
-  keywords give six kinds: the kind is read in the arm, by compares, as simdjson's stage 2
-  switches on the byte.
-- **`check_nesting` is gone.** The stack makes nodes nest; the second-root check is generated.
-- **The validator is a call,** the only one: `json_number`, a built-in over the token's text.
-  Its exponent takes `-` only, as tree-sitter-json's.
-- **Open:** the masks are copied word-major and the source padded by 8 bytes before the call.
-  Tier 1's buffer is already word-major; reading it in place is phase 7's.
-- **Open:** two valid files of the 900 go to tree-sitter (as with the deleted writer).
-
-**Tests** (`bitlex_compile_tests`): `json_tapes_equal_tree_sitter_byte_for_byte` (on the
-interpreter's masks and Cranelift's), `json_tier2_writes_doc_16s_nodes` (doc 16 §8's 19
-nodes), `json_tier2_has_one_case_per_token_row`, `json_tier2_reads_no_rows` (arguments only;
-no global, data or stack slot), `json_tier2_calls_nothing_per_token_but_its_validator`, and
-`json_rows_equal_the_evaluator_on_every_executor` again asserting that a file the evaluator
-rejects falls back. The corpus, once: 900 files, 897 tapes equal, 3 to tree-sitter, 0 differ.
+**Tier 1's cost (decision 0078).** The number masks took tier 1 to 95 operations and 450 loop
+instructions; with the check in tier 2 and one word token it is 37 and 174, below the old
+ratchets, which are lowered. Handing tier 2 its stream (decision 0079) took it to 40 and 182.
 
 ## 6. Metal
 
-**Builds:** `metal_tier2`: MSL for the plan, generated as one kernel: tier 1 per lane for a
-carry-in, pass A with candidates and staging, the scan, pass B (B1, B2 spread, B3 with its
-barrier), and the columns.
+**Builds:** tier 2 from the state machine: the carry is the depth and its low point; closes
+find their opens by nearest smaller value (doc 01 §3, `metal_nearest`); within a level, the
+transitions compose as state functions, with each transition's node count. A plan for it,
+checked by phase 4's verifier.
 
 **Tests:**
 
-- `json_tier2_msl_compiles`.
-- `json_tier2_msl_has_the_plans_barriers`: the barriers in the MSL, in order, are the plan's.
-- `json_tier2_msl_loops_are_uniform`: every loop with a SIMD call or a barrier has a uniform
-  bound.
-- `json_tier2_msl_threadgroup_bytes`: the declared threadgroup arrays equal the plan's budget.
-- `monoids_on_metal_equal_rust`: the generated helpers, run on random values.
+- the MSL compiles; its barriers are its plan's; its loops with a SIMD call or a barrier are
+  uniform; its threadgroup arrays are within the budget;
+- `monoids_on_metal_equal_rust`: the generated helpers, run on random values;
 - `json_metal_tapes_equal_the_cpus`: test cases and the corpus.
 
 ## 7. Timing

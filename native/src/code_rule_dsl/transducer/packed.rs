@@ -248,7 +248,7 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
-mod native_cpu_tier2;
+mod native_cpu_stream;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -269,6 +269,9 @@ pub(in crate::code_rule_dsl) mod block;
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+mod grammar;
+mod bitlex_tier2;
+pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
@@ -304,6 +307,21 @@ const REPEAT_END: u8 = 0x23;
 const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
+// Tier 2's words, over the token stream (decision 0079, `stream`).
+const TOKEN: u8 = 0x50;
+const SWITCH: u8 = 0x51;
+/// `WORD` in `rir`.
+const WORD_IS: u8 = 0x52;
+const CHECK: u8 = 0x53;
+const OPEN: u8 = 0x54;
+const CLOSE: u8 = 0x55;
+const LEAF: u8 = 0x56;
+const NODE_FIELD: u8 = 0x57;
+const NODE_SUPER: u8 = 0x58;
+const PUSH: u8 = 0x59;
+const RETURN: u8 = 0x5a;
+const ACCEPT: u8 = 0x5b;
+const SPAN: u8 = 0x5c;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
@@ -813,6 +831,8 @@ pub(in crate::code_rule_dsl) struct Program {
     /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
     /// the side programs over a node's text.
     block_programs: Vec<block::BlockProgram>,
+    /// Tier 2's switch tables (`SWITCH`, decision 0079).
+    switches: Vec<stream::ByteSwitch>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -1864,6 +1884,7 @@ impl Program {
             set_mode: false,
             ast_pattern: None,
             block_programs: Vec::new(),
+            switches: Vec::new(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2100,6 +2121,16 @@ impl Program {
                 digest.update(bytes);
             }
         }
+        if !self.switches.is_empty() {
+            digest.update(b"switches");
+            digest.update((self.switches.len() as u64).to_le_bytes());
+            for s in &self.switches {
+                digest.update([s.offset]);
+                for t in s.targets.iter().chain([&s.end]) {
+                    digest.update(t.to_le_bytes());
+                }
+            }
+        }
         format!("{:x}", digest.finalize())
     }
 
@@ -2320,6 +2351,29 @@ impl Program {
                 }
             })
         {
+            return Err(Error::InvalidOperand(0));
+        }
+        // A tier-2 program (decision 0079): its own words and rules.
+        if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
+            for (pc, &w) in self.words.iter().enumerate() {
+                let (opcode, mode, operand) = split(w);
+                match opcode {
+                    STOP => {
+                        if mode != 0 || operand != 0 {
+                            return Err(Error::InvalidMode(pc));
+                        }
+                    }
+                    GOTO => {
+                        if mode != 0 || usize::from(operand) >= self.words.len() {
+                            return Err(Error::InvalidTarget(pc));
+                        }
+                    }
+                    _ => stream::validate_word(self, pc, opcode, mode, operand)?,
+                }
+            }
+            return stream::validate(self);
+        }
+        if !self.switches.is_empty() {
             return Err(Error::InvalidOperand(0));
         }
         for (pc, &instruction) in self.words.iter().enumerate() {

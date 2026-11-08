@@ -275,119 +275,15 @@ impl ClassTable {
     }
 }
 
-/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1, decision
-/// 0071): its grammar id, where its nodes start and end, and its tier-2 rules, which the tape
-/// writer runs once per token. Its place in `BlockProgram::nodes` is its rank.
+/// A token's `check` (doc 18 §4, decision 0078): straight-line operations over the token's bytes,
+/// 64 at a time with carries, which tier 2's `CHECK` runs, as simdjson's stage 2 parses a
+/// number. Bit `i` is the token's byte `i`, `within 0` its bytes; its one output fails the
+/// token where it has a bit.
+/// No loop over the bytes: the compiler refuses a check that would need one. A token of any
+/// length is checked; none goes to tree-sitter.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct NodeRow {
-    /// Its grammar id. A token row's kind may be 0: each of its tokens is a keyword, which gives
-    /// its kind, and one that is not goes to tree-sitter.
-    pub(super) kind: u16,
-    pub(super) start: RowStart,
-    pub(super) end: RowEnd,
-    /// The kind's nodes carry the extra flag.
-    pub(super) extra: bool,
-    /// A token's row: the tokens tile the file (apart from the skipped bytes), and `after` reads
-    /// the previous one.
-    pub(super) leaf: bool,
-    /// On the writer's stack of nested nodes, at most this deep: an end closes the innermost
-    /// open nested node, which must be of this row.
-    pub(super) nested: Option<u8>,
-    /// A node starts only where the previous token's kind is one of these (none: anywhere).
-    /// Kinds, not rows: a token's kind is its keyword's, known at its start.
-    pub(super) after: Vec<u16>,
-    /// A node starts only where the innermost open node is of this kind.
-    pub(super) parent: Option<u16>,
-    /// A node starts only where the token after its first child is of one of these kinds
-    /// (none: anywhere): the token after a string, for a key. Read from the right.
-    pub(super) before: Vec<u16>,
-    /// The same nodes by another rule. A target uses one of the two and checks the other; a
-    /// file where they differ goes to tree-sitter.
-    pub(super) also: Option<RowCond>,
-    /// A `nested` row's closes find their opens by a scan over the entries, not by a barrier
-    /// in pass B (`match scan`; docs/parser-generators/14-tier-2-design.md §4).
-    pub(super) match_scan: bool,
-    /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
-    pub(super) check: Option<(u16, Validator)>,
-}
-
-/// A row's start condition: `after`, `before` and `parent` as `NodeRow`'s.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct RowCond {
-    pub(super) after: Vec<u16>,
-    pub(super) before: Vec<u16>,
-    pub(super) parent: Option<u16>,
-}
-
-/// Where a row's nodes start: at each bit of an output, where a token of a kind starts (its
-/// kind after its keywords), or at the first token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowStart {
-    At(u16),
-    Kind(u16),
-    FirstToken,
-}
-
-/// Where a row's node ends: at the first bit of an output at or after its start; where a token
-/// of a kind ends; with its child that has field `With`'s id; or with the last token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowEnd {
-    At(u16),
-    Kind(u16),
-    With(u16),
-    LastToken,
-}
-
-/// A built-in validator of a token's text (decision 0071): one check per token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Validator {
-    /// JSON's number: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)?`, tree-sitter-json's.
-    JsonNumber,
-}
-
-impl Validator {
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Validator::JsonNumber => "json_number",
-        }
-    }
-
-    pub(super) fn named(name: &str) -> Option<Self> {
-        [Validator::JsonNumber].into_iter().find(|v| v.name() == name)
-    }
-}
-
-/// A fact of a node kind's code: its field, or one of its supertypes, where its test holds at the
-/// node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct CodeRow {
-    /// The node row the fact is about.
-    pub(super) node: u16,
-    /// A field (else a supertype), by grammar id.
-    pub(super) field: bool,
-    pub(super) id: u16,
-    pub(super) when: Fact,
-}
-
-/// A code fact's test at a node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Fact {
-    /// A bit of an output.
-    At(u16),
-    /// A node of this row starts at the same byte; or does not.
-    StartOf(u16),
-    NotStartOf(u16),
-    /// The previous token's kind is one of these.
-    After(Vec<u16>),
-    Always,
-}
-
-/// A keyword of a token row: a token of the row whose text is `word` has kind `kind`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct KeywordRow {
-    pub(super) node: u16,
-    pub(super) word: Vec<u8>,
-    pub(super) kind: u16,
+pub(in crate::code_rule_dsl) struct CheckRow {
+    pub(super) program: BlockProgram,
 }
 
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
@@ -409,12 +305,9 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
-    /// The tree section's node kinds, code facts and keywords, for the tape writer; every mask
-    /// an output. `skip`: the bytes between tokens that belong to none.
-    pub(super) nodes: Vec<NodeRow>,
-    pub(super) codes: Vec<CodeRow>,
-    pub(super) keywords: Vec<KeywordRow>,
-    pub(super) skip: Option<u16>,
+    /// The token checks tier 2's `CHECK` runs (decision 0078). Tier 2 itself is the program's
+    /// words (decision 0079).
+    pub(super) checks: Vec<CheckRow>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -453,30 +346,17 @@ impl BlockProgram {
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
             _ => true,
         });
-        // The extract pass writes undelayed positions only (a delay comes with the tape writer).
-        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v)) && (self.extracts.is_empty() || self.delay == 0);
+        // The extract pass writes positions from the undelayed outputs.
+        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
-        let output = |v: u16| self.outputs.contains(&v);
-        let row = |r: u16| usize::from(r) < self.nodes.len();
-        let keyworded = |r: usize| self.keywords.iter().any(|k| usize::from(k.node) == r);
-        let nodes = self.nodes.iter().enumerate().all(|(i, r)| {
-            !matches!(r.start, RowStart::At(v) if !output(v))
-                && !matches!(r.end, RowEnd::At(v) if !output(v))
-                // A token's start and end are masks; a kind-0 row's tokens are all keywords.
-                && (!r.leaf || matches!((r.start, r.end), (RowStart::At(_), RowEnd::At(_))))
-                && (r.kind != 0 || r.leaf && keyworded(i))
-        }) && self.codes.iter().all(|c| {
-            row(c.node)
-                && match &c.when {
-                    Fact::At(v) => output(*v),
-                    Fact::StartOf(r) | Fact::NotStartOf(r) => row(*r),
-                    Fact::After(_) | Fact::Always => true,
-                }
-        }) && self.keywords.iter().all(|k| row(k.node) && self.nodes[usize::from(k.node)].leaf && !k.word.is_empty() && k.word.len() <= 8)
-            && self.skip.is_none_or(output);
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
+        // A check: a verified straight-line program with one output, and no checks of its own.
+        let checks = self.checks.iter().all(|c| {
+            let q = &c.program;
+            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.delay <= 1 && q.checks.is_empty()
+        });
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -505,7 +385,7 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        // Likewise the delay, tagged (a program with a delay has no extracts).
+        // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
@@ -515,10 +395,9 @@ impl BlockProgram {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
-        // And the tree section's rows.
-        if !self.nodes.is_empty() || !self.codes.is_empty() {
-            // The rows' text (`rir`), which names every field of every row.
-            out.extend_from_slice(b"tree2");
+        // And the token checks, as their text (`rir`).
+        if !self.checks.is_empty() {
+            out.extend_from_slice(b"checks4");
             let mut text = String::new();
             super::rir::tree_rows(&mut text, 0, self);
             out.extend_from_slice(&(text.len() as u32).to_le_bytes());
