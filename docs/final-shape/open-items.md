@@ -2409,6 +2409,42 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
+**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
+count). The tool is a dev script, not engine code.
+- **The commits are bulk.**
+  - 109 of the 224 change more than 40 `.py` files and were only counted.
+  - The other 115 change a median of 17 files (p90 34), and 120 definitions each (p90 277).
+- **Base rows rewritten per commit** (medians, p90 in brackets):
+
+  | Id scheme | Rows rewritten |
+  |---|---|
+  | `(definition, index)` | 18,605 (44,920) |
+  | `(document, preorder)` | 64,575 (160,774) |
+  | whole files (today's per-file memo) | 130,521 (319,704) |
+
+  Per commit, the definition scheme is a median 15% of the files' rows (p90 37%) and 29% of the preorder scheme's.
+- **Commits that change one file** (6 of them), the size of an edit:
+  - definition: 246 rows;
+  - preorder: 3,571 rows;
+  - file: 6,064 rows.
+
+  The definition scheme is 14x smaller than preorder and 25x smaller than the file.
+- **What a key by qualified name must disambiguate**, at HEAD:
+
+  | Case | Definitions | Share |
+  |---|---|---|
+  | conditional (inside `if`, `try`, loops) | 2,741 | 1.26% |
+  | a name defined more than once in one scope | 1,010 | 0.46% |
+  | `@overload` | 722 | 0.33% |
+  | under `TYPE_CHECKING` | 40 | 0.02% |
+  | property accessors sharing a name | 26 | 0.01% |
+
+  A key of (qualified name, ordinal among the scope's definitions of that name) covers all of these. Its ordinal
+  shifts only when a same-named definition is inserted before another, which is under 0.5% of definitions.
+
+Not yet measured: key churn across commits (renames and moves), and rows under tree-sitter's tapes rather than `ast`.
+
 ## O127. Layout invariance of today's engine (decision 0083, spike 3)
 
 **Method:** move definitions between modules of the 84 files, with imports rewritten by a script. Run with and
@@ -2423,6 +2459,22 @@ without typeshed, and compare findings and work (CPU, rows per stratum).
 - distinct `(class, attribute)` lookups against `found` rows and the `sub` closure.
 
 **Closure:** the ratios recorded, and each question in 0083 §4's table confirmed as a search or moved to eager.
+
+**Measured, in part** (2026-11-08). 84 files with typeshed, `calls.rr` plus counting rules, through
+`RERAIL_PYTHON_CALLS_OUT`. Run at 166.6 s wall, which was this hour's exception to the run cap.
+- **Generics are small here.**
+  - `gpar`: 1,667 rows over 165 calls, and 426 distinct (class, variable, annotation node) keys, about 3.9 rows per key.
+  - `gbind`: 824 rows; `garg`: 2,474; `ghcls`: 1,409; `fbind`: 227.
+- **Attribute lookup:** `found` has 5,090 rows for 2,034 asked keys (`need_attr`), 2.5x.
+- **Subclasses:** `sub` has 628 rows, of which 396 serve the 286 classes some reader asks about, 1.6x.
+- **What dominates is `pv`.** On workspace nodes it grows from 24,475 rows without typeshed to 302,897 with it, and
+  181,293 of those point at a library value.
+- **Gap:** the benchmark writes no row located in a library document. So the library side (lookups on typeshed's
+  classes, its own `pv`) is not counted yet. Next: count by `RERAIL_PROFILE`'s rows per rule, or write the hidden
+  rows for counting.
+
+So far, searching for generics, attribute lookup and subclasses saves 1.6–4x rows on this corpus. The bulk is the
+value relation itself, which P1 and P2 shrink only if library values become declared facts.
 
 ## O129. Structure and declared types over the real library (decision 0083, spike 5)
 
