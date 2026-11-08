@@ -1268,6 +1268,35 @@ none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
 }
 
 
+/// `components` through rules: a cycle is one component named by its smallest document, and keys are equal only
+/// over equal closures.
+#[test]
+fn components_run_through_rules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("components");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl e(a: number, b: number)
+e(1, 2). e(2, 3). e(3, 2). e(4, 2).
+.decl own(d: number, h: symbol)
+own(1, "a"). own(2, "b"). own(3, "c"). own(4, "a").
+.decl comp(d: number, c: number, k: symbol)
+comp(d, c, k) :- components(d, c, k, e, own).
+.decl same(a: number, b: number)
+same(a, b) :- comp(a, _, k), comp(b, _, k), a < b.
+.decl named(d: number, c: number)
+named(d, c) :- comp(d, c, _).
+.output named, same
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("named"), "1\t1\n2\t2\n3\t2\n4\t4\n");
+    // 1 and 4 have the same digest and the same closure; 2 and 3 share their component.
+    assert_eq!(read("same"), "1\t4\n2\t3\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn error_directives_survive_public_report_transport() {
     let rows = finding_contract("def (:\n", r#"

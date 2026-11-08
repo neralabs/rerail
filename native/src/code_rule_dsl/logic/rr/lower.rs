@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 7] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -78,6 +78,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 7] = [
     ("has", &[2]),
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
+    ("components", &[3, 4]),
 ];
 
 fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
@@ -1601,6 +1602,14 @@ impl Lowerer {
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
             }
+            ("components", [d, c, k, edge, own]) => {
+                let name = |t: &STerm| match t {
+                    STerm::Var(v) => Ok(v.clone()),
+                    _ => Err(Error::Syntax("components: the edge and own relations are named".to_owned())),
+                };
+                let rel = self.components(&name(edge)?, &name(own)?);
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(d)?, self.term(c)?, self.term(k)?], neg, gated: false }));
+            }
             _ => {}
         }
         if let Some((_, _)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {
@@ -1633,6 +1642,24 @@ impl Lowerer {
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
         self.prog.decls.insert(rel.clone(), cols);
         self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
+        rel
+    }
+
+    /// `components(_, _, _, edge, own)`'s relation `rr_components_<edge>_<own>`: `(d, c, key)`, made natively
+    /// (`front::Native::Components`). Its one rule reads both inputs and joins two documents, so it is evaluated
+    /// after them and in the cross-file part; the evaluator makes its rows, not the rule.
+    fn components(&mut self, edge: &str, own: &str) -> String {
+        let rel = format!("rr_components_{edge}_{own}");
+        if self.prog.natives.contains_key(&rel) {
+            return rel;
+        }
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("d"), v("e"), v("k")], neg: false, gated: false }, body });
+        let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
+        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
     }
 

@@ -582,20 +582,31 @@ named(n, x) :- def(n, x), x = "g".
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
     let a_node = rows(&executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
+    // Only this run's entry: its path, the root's plan, and b.py's content (unique to this run).
     let b = rows(&executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
     let root = std::fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
-    let changed = executor
-        .connection()
-        .execute(
-            "UPDATE facts_results SET raw_length = raw_length + 1 WHERE path = ?1 AND plan_digest = \
-             (SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)",
-            [&b, &root],
-        )
-        .unwrap();
+    let plan = "(SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)";
+    // The newest source at that path under the plan: this run's content.
+    let entry = format!("path = ?1 AND plan_digest = {plan} AND source_id = (SELECT max(source_id) FROM facts_results WHERE path = ?1 AND plan_digest = {plan})");
+    let corrupt = |delta: i64| {
+        executor
+            .connection()
+            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
+            .unwrap()
+    };
+    let changed = corrupt(1);
     assert_eq!(changed, 1);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
     assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
+    // The store is shared with other tests: put the entry back.
+    let corrupt = |delta: i64| {
+        executor
+            .connection()
+            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
+            .unwrap()
+    };
+    assert_eq!(corrupt(-1), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }

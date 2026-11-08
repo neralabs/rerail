@@ -2192,6 +2192,7 @@ impl Run<'_> {
         let (edge, target, roots) = match native {
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
+            Native::Components { edge, own } => return self.components(rel, edge, own),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
@@ -2219,6 +2220,38 @@ impl Run<'_> {
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
+    }
+
+    /// `components` (`front::Native::Components`): each document's component and key from `edge`'s and `own`'s
+    /// rows. Digests and keys are symbols: atoms (interned by `sym_atom`) or text, as the run stores them.
+    fn components(&mut self, rel: &str, edge: &str, own: &str) -> Result<usize> {
+        let atoms = self.model.inputs.atoms.is_some();
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let (e0, e1) = (self.model.col(edge, 0), self.model.col(edge, 1));
+        let edges: Vec<(i64, i64)> = {
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {e0}, {e1} FROM {}", ident(edge)))?;
+            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let (o0, o1) = (self.model.col(own, 0), self.model.col(own, 1));
+        let text = if atoms { format!("sym_text({o1})") } else { o1.clone() };
+        let digests: Vec<(i64, String)> = {
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {o0}, {text} FROM {}", ident(own)))?;
+            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let rows = crate::code_rule_dsl::logic::native::components::components(&edges, &digests);
+        let mut ids = if atoms { super::native::intern_batch(self.db, rows.iter().map(|(_, _, k)| k.as_str()))?.into_iter() } else { Vec::new().into_iter() };
+        let values = rows
+            .into_iter()
+            .map(|(d, c, k)| {
+                let k = if atoms { SqlValue::Integer(ids.next().expect("one atom per key")) } else { SqlValue::Text(k) };
+                vec![SqlValue::Integer(d), SqlValue::Integer(c), k]
+            })
+            .collect();
+        let before = self.db.total_changes();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), values)?;
+        Ok((self.db.total_changes() - before) as usize)
     }
 
     /// `match_all` over symbols (`front::Native::MatchAll`): each distinct text of `input`, and each match's groups.
