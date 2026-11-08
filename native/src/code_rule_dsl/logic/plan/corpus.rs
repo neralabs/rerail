@@ -2128,9 +2128,21 @@ pub(crate) fn run_with_options(
                     let ckey = retain::key(&prepared_key, &cross.program);
                     let mut cell = cell.lock().expect("the session's cross-file part");
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    // The O125 spike's progress: each step of a session's run, with this thread's CPU.
+                    let trace = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
+                    let step = |what: &str| {
+                        if trace {
+                            let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+                            // SAFETY: `t` is a valid timespec for the call to fill.
+                            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+                            eprintln!("O125 step {what} at {:.1} s CPU", t.tv_sec as f64 + t.tv_nsec as f64 / 1e9);
+                        }
+                    };
+                    step(&format!("cut: {} of {} strata to run; inputs changed: {}", cut.strata.0, cut.strata.1, cut.changed.len()));
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
                     let part = &maintained.program;
+                    step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
                     let mut stats = cross_stats;
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
                     for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
@@ -2142,8 +2154,47 @@ pub(crate) fn run_with_options(
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
+                    // The O125 spike (`RERAIL_SPIKE_DELTA`): each maintained relation's overdeleted and inserted rows.
+                    let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
+                    let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().collect() } else { Vec::new() };
+                    keep.extend(probes.iter().cloned());
+                    step("bound; running");
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
+                    step("ran");
                     collect(&db, &got, &part.program)?;
+                    step("collected");
+                    if spike {
+                        for (rel, why) in &maintained.again {
+                            eprintln!("O125 derived-again {rel}: {why}");
+                        }
+                        let (mut tdel, mut tins, mut tgone, mut tnew) = (0usize, 0usize, 0usize, 0usize);
+                        let mut lines = Vec::new();
+                        for p in probes.iter().filter(|p| p.ends_with("__del")) {
+                            let rel = &p[..p.len() - 5];
+                            let width = part.program.decls[p].len();
+                            let del = if got.kept.contains(p.as_str()) { held_rows(&db, &got, p, width)?.len() } else { 0 };
+                            let ins_name = format!("{rel}__ins");
+                            let ins = if got.kept.contains(ins_name.as_str()) { held_rows(&db, &got, &ins_name, width)?.len() } else { 0 };
+                            let new: std::collections::HashSet<Vec<i64>> = if got.kept.contains(rel) { held_rows(&db, &got, rel, width)?.into_iter().collect() } else { Default::default() };
+                            let old: std::collections::HashSet<Vec<i64>> = cell
+                                .as_ref()
+                                .and_then(|k| k.old(rel))
+                                .map(|cols| (0..cols.first().map_or(0, Vec::len)).map(|i| cols.iter().map(|c| c[i]).collect()).collect())
+                                .unwrap_or_default();
+                            let gone = old.difference(&new).count();
+                            let fresh = new.difference(&old).count();
+                            tdel += del;
+                            tins += ins;
+                            tgone += gone;
+                            tnew += fresh;
+                            lines.push((del, format!("{rel}: old {} new {} overdeleted {del} (gone {gone}, so {} put back) inserted {ins} (new {fresh})", old.len(), new.len(), del.saturating_sub(gone))));
+                        }
+                        lines.sort_by(|a, b| b.0.cmp(&a.0));
+                        for (_, l) in lines.iter().take(25) {
+                            eprintln!("O125 {l}");
+                        }
+                        eprintln!("O125 total: overdeleted {tdel}, gone {tgone}, put back {}, inserted {tins}, new {tnew}; strata {} of {} run, {} maintained ({} recursive), {} derived again", tdel.saturating_sub(tgone), cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
+                    }
                     if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
