@@ -1320,3 +1320,33 @@ Final advanced to `f549a6f99` before disabled-behavior controls could run. The a
 Those controls are not claimed as tested. The completed receipts remain historical evidence for `8ce26cfb7`.
 Public-pair and legacy-triple detection, escape hatches, production reports, broader helper domains, and global acceptance remain open.
 The inventory remains 88 drafts and 12 absent translations.
+
+## 2026-11-08 — Delegation rerun after Final's tier-2 parser merge
+
+Merge `928d3800e` adopts committed Final shape `f549a6f99` without conflicts.
+It takes the Bitlex parser pipeline, transducer instructions, native lowering, and tape resolutions from that branch.
+The existing 21 reviewed generic extension files remain the complete native diff. This delegation work adds no native engine code.
+The root CLI build took 94.814 seconds. No retired engine checkout was used.
+
+All 124 original tests ran again, after the helper ownership repair.
+The result remains 118 passed and six failed, with all 111 observations retained and no semantic fallback.
+The shards took 85.18 and 77.49 seconds while other validation commands ran concurrently.
+These are bounded assertion runs, not cold repository benchmarks or comparable performance measurements.
+All 65 supplemental cases pass again, including 25 positive finding lists.
+All nine controls that remove required behavior produce full DTO mismatches through successful native execution.
+They cover sync delegation, no-await detection, await suppression, structural stubs, lifecycle bodies, lazy builders, path exemptions, shared context helpers, and mixed names.
+All 100 tooling tests and 99 readers also pass on this CLI.
+
+The [current delegation rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-f549-rung.json.gz) retains the exact programs, source cases, observations, controls, and build identity.
+It explicitly records these six failing original cases:
+
+- `test_flags_non_thin_public_sync_async_pair`
+- `test_flags_txn_bound_pair_that_has_lazy_sibling_but_skips_it`
+- `test_flags_legacy_session_handle_missing_lazy_surface`
+- `test_flags_legacy_wrapper_missing_async_pair_even_with_lazy_sibling`
+- `test_flags_legacy_wrapper_without_local_lazy_surface`
+- `test_flags_legacy_wrapper_when_lazy_symbol_is_rebound_to_eager_helper`
+
+The next implementation must add the complete public-pair and legacy-triple semantics, then rerun these positives and their negative counterparts.
+Escape-hatch detection also needs native implementation and supplemental positives; the original 124 tests do not prove it.
+Production reports, broader helper domains, and global migration acceptance remain open. The inventory remains 88 drafts and 12 absent translations.
