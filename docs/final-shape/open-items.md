@@ -2765,3 +2765,55 @@ What remains against the closure:
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
+
+## O138. Two data-layer checks read run artifacts, and no artifact or revision reader exists
+
+Found 2026-11-08, over the 75 data-layer candidate checks on 133 files of the data layer. `plan-composition-architecture`
+and `test-budget` fail before evaluation: `spc_fingerprint: revision and stamped-artifact readers are not implemented`
+(`corpus/inputs.rs`, `populate_with`). They read `artifact="plan_composition_probes"` and `artifact="test_collection"`.
+No candidate check uses `at="base"` yet.
+
+The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-layer/RUN-FACTS.md` §2–§5;
+`FINDINGS-LAYER.md` §2). What is missing:
+
+1. `.artifact "name" inputs globs` kept as a program setting, checked for one declaration per name.
+2. `artifact="name"`: the file `name.json` in the facts directory (`--facts DIR`, default `.rerail/facts/`), its
+   envelope (`format`, `artifact`, `inputs`, `status`, `data`) checked, and `path=` applied to `data` with every
+   `IO=json` option.
+3. Freshness: SHA-256 over sorted `path NUL blob-id LF` of the files the walk sees under the globs. The blob ids are
+   the content hashes the store already has (decision 0092 §2's leaves). A different digest gives no rows.
+4. `input_error("artifact:NAME", kind, detail)` with `missing`, `stale`, `failed` or `malformed`.
+5. Withholding: rules that read the artifact through `!` or an aggregate give no findings when it has no rows, and
+   their places are Unknown (FINDINGS-LAYER §2). Until the findings layer has Unknown, the run reports the
+   withheld relations, so a missing artifact is never a silent pass.
+6. `rerail facts stamp DIR --out DIR`, so a test can make a fresh artifact.
+7. `at="base"`: the file as it is at `git_rev("base", …)`, read from the object store.
+
+**Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
+with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
+
+## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
+
+Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3
+s with `RERAIL_PROFILE` set. Over six checks the run's phases account for the same time either way. The rest, 8.5–9 s
+per check at that load, lies outside every phase and span: the profile's own report. Profiled timings of the data-layer
+checks taken before this was found are inflated by it.
+
+**Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
+
+## O140. Engine rules that make per-file facts look global
+
+Found 2026-11-08 by `RERAIL_SPLIT_DUMP` (decision 0093 §4). After a30c360ee fixed the demand context, the data-layer
+checks are file-local or same-unit in 42 checks by their own rules, but in 17 with the library's and lowering's;
+unions of per-file rows rise from 1 check to 19. Two causes remain:
+
+1. **Located rows projected to a set** (`x(c) :- x_at(_, c)`): lowering drops the document column, and readers that
+   bind the document read the union.
+2. **An equality between two per-file pieces' carriers placed in the cross-file part** (`deco_word`'s `$e0 = $d`).
+   `file_local::push_local_joins` should treat the equality as one document, as the classifier does.
+
+And the findings assembly (`rr_diagnostic`, `violation`), which drops the document in cross-file rules; it is the
+findings layer's stages 2–3.
+
+**Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
+equal on the 65 checks that finish both ways.

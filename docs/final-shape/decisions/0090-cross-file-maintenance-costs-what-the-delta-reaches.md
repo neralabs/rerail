@@ -2,6 +2,8 @@
 
 Status: accepted (2026-11-08). The direction, and its order of work. Step 1 (the profile) is built and measured;
 §1–§5 are not built yet. Aggregates by changed group (0077 §3) and Typing-support's three O125 fixes are in.
+Its order of work is revised by 0092 §6: steps 6 and 4 (definition node ids, per-file base deltas) come before
+steps 2, 3 and 5, because a delta wider than the edit (Intro, cause 2) multiplies every other cost.
 
 ## Intro
 
