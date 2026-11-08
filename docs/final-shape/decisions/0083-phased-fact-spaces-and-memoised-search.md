@@ -379,10 +379,16 @@ Each spike answers one question that could change the plan, and is tracked as an
    - Measure: rows over-deleted and re-derived, CPU against a cold run, and the result against a full run.
    - Success: an edit to one function costs under 5% of a cold run, with no case past the cold run. If not,
      measure support counts per row, then maintenance per component of definitions.
-   - First result (O125, 2026-11-08). Delete-and-rederive is right on three edits, and their deltas are tiny
-     (3–88 rows of 1.14 M). But written as rules over whole-relation copies, it costs 2.5–4x a cold derivation of
-     the cross part, because every run copies, binds, measures and replans the whole stored fixpoint. §2 then needs
-     maintenance in place: an indexed store kept across runs, deltas applied to it, and the rewritten plans kept.
+   - Result (O125, closed 2026-11-08, over the last 20 commits and once with typeshed). Delete-and-rederive is
+     right on 18 of 19 commits; the two departures are O133. Over-deletion is mild (1.23–1.35x the rows truly
+     deleted), so support counts are not needed. Two things break the 5% target:
+     - preorder ids: a 9-line commit renumbers 17 k nodes and changes 929 k input rows. Per-definition ids
+       (§3) cut the renumbering 6–30x;
+     - rules over whole-relation copies: computing deltas as anti-joins and copying survivors is linear in the
+       fixpoint (78% of the work on a small edit, where the maintenance proper is 5% of cold).
+     With typeshed the maintenance proper is 35% of cold even for an 18 k-row delta, and peak RSS is 1.64 GB.
+     Maintenance per component alone saves nothing (210 of 218 strata run). Route: per-definition ids, then
+     maintenance in place (store-supplied deltas, no survivor copy, plans kept), then typeshed measured again.
 2. (O126) **The size of the base delta per definition.**
    - Method: replay the data layer's git history (a few hundred commits). For each commit, count files changed,
      definitions whose digest changed, and base rows changed under `(document, preorder)` ids against
