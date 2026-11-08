@@ -38,8 +38,10 @@ def install(suite,module):
     suite.replace(module,'_looks_like_callback_entrypoint',lambda node:boolean('_looks_like_callback_entrypoint',node))
     suite.replace(module,'_looks_like_transaction_bound_eager_entrypoint',lambda node:boolean('_looks_like_transaction_bound_eager_entrypoint',node))
     def stats(stats,root_dir=None):
-        native('ViolationStats.to_dict',options=dict(categoryA=stats.category_a_count,categoryB=stats.category_b_count,categoryC=stats.category_c_count,total=stats.total_count,files=list(stats.files_with_violations),offenderPaths=list(stats.worst_offenders),offenderCounts=list(stats.worst_offenders.values()),hasRoot=root_dir is not None,root=str(root_dir) if root_dir is not None else ''))
-        raise NotImplementedError('Native statistics DTO is not implemented yet')
+        rows=native('ViolationStats.to_dict',options=dict(categoryA=stats.category_a_count,categoryB=stats.category_b_count,categoryC=stats.category_c_count,total=stats.total_count,files=list(stats.files_with_violations),offenderPaths=list(stats.worst_offenders),offenderCounts=list(stats.worst_offenders.values()),hasRoot=root_dir is not None,root=str(root_dir) if root_dir is not None else ''))
+        p=next(r['parameters'] for r in rows if r['code']=='ASD_STATS')
+        offenders=[r['parameters'] for r in rows if r['code']=='ASD_OFFENDER']
+        return dict(category_a=dict(count=p['a'],description=p['a_description']),category_b=dict(count=p['b'],description=p['b_description']),category_c=dict(count=p['c'],description=p['c_description']),summary=dict(total_violations=p['total'],files_affected=p['files']),worst_offenders={r['path']:r['count'] for r in sorted(offenders,key=lambda r:r['ordinal'])})
     suite.replace(module.ViolationStats,'to_dict',stats)
     def analyze_source(file_path,source,tree=None):
         rows=native('analyze_source',[dict(path='input.py',source=source)],dict(originalPath=str(file_path),originalName=Path(file_path).name,allowlistedTargets=list(module.ALLOWLISTED_CATEGORY_C_TARGETS)))

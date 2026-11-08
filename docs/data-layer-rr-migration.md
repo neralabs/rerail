@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`a9e927674`. Merge `acec50e98` adopts import-component memoization and the current SQL executor.
+`434090efd`. Merge `43e884a18` adopts retained SQL waves and recursive SQL iterations across updates.
+Earlier merge `acec50e98` adopts import-component memoization and the current SQL executor.
 The typed input reader retains `projection` alongside Final shape's new `query` parameter.
 Earlier merge `ee5b50fa2` adopts stored cross-file typing and discovery derivations.
 Loaded documents have the same evaluation rules as other documents; `load` and `loaded` have no role column.
@@ -96,7 +97,8 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **87 target drafts and 13 absent translations**. None has full acceptance yet.
+The current inventory contains **88 target drafts and 12 absent translations**. None has full acceptance yet.
+The 88th draft, `async_sync_delegation`, remains unfinished. Its original helper slice passes; its source detector does not.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
 On the `ae7c48111` engine, all 144 original tests pass with 137 complete observations, including 57 positive set results and four growing-allowlist CLI cases.
 All 200 supplemental API cases and 24 reporter cases pass. Twenty-three disabled-behavior controls produce observable parity failures.
@@ -1267,3 +1269,21 @@ The next source contract, `async_sync_delegation`, is now recorded.
 Its 124 original tests pass with 111 complete observations and 13 positive analyses.
 The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-original-source.json.gz) includes helper results and statistics DTOs.
 Its native translation has not started. No completion or native acceptance is claimed for that rule.
+
+## 2026-11-08 — Delegation helper ladder and retained SQL waves
+
+Merge `43e884a18` adopts committed Final shape `434090efd`, including retained SQL waves and recursive SQL iterations across updates.
+The root CLI build took 75.056 seconds. Compilation remains separate from execution.
+The empty native delegation detector fails 67 original tests and passes 57. No source semantic fallback was permitted.
+The next helper rung passes 73 selected original tests in 35.84 seconds, with complete recorded observations.
+It covers naming, callable spelling, docstrings, abstract methods, decorators, legacy requirements, callback parameters, transaction parameters, and statistics formatting.
+The [helper receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-helper-rung.json.gz) preserves its exact program bytes and build identity.
+It does not certify source detection, production reporting, or the complete helper domain.
+
+The source detector now has unaccepted context-manager and mixed-name clauses over the current Python tape.
+The first full assertion attempt reached the large connection fixture and exceeded the 115-second bound.
+The ordering relation counted all function and class events. Its replacement limits that count to candidate context-manager classes.
+The bounded rerun was rejected before execution because committed Final shape advanced to `8ce26cfb7`.
+Those newer engine resolutions must be merged before acceptance resumes. The guard remains enabled.
+All 100 tooling tests pass at this checkpoint. No new native engine code was added.
+The source categories A/B, public pairs, legacy triples, escape hatches, supplemental positives, and reporter contracts remain open.
