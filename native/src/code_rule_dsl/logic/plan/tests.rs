@@ -411,8 +411,8 @@ fn product_programs_derive_t_outputs() {
          INSERT INTO stat_col VALUES ('parsed', 's', 0, 0, 0, 0), ('parsed', 'grammar', 0, 0, 0, 0), ('parsed', 'root', 0, 0, 0, 0);
          CREATE TABLE host_node(n INTEGER, h INTEGER); INSERT INTO stat_meta VALUES ('rows.host_node', 0);
          INSERT INTO stat_col VALUES ('host_node', 'n', 0, 0, 0, 0), ('host_node', 'h', 0, 0, 0, 0);
-         CREATE TABLE value(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.value', 0);
-         INSERT INTO stat_col VALUES ('value', 'n', 0, 0, 0, 0), ('value', 's', 0, 0, 0, 0);
+         CREATE TABLE value(n INTEGER, v TEXT); INSERT INTO stat_meta VALUES ('rows.value', 0);
+         INSERT INTO stat_col VALUES ('value', 'n', 0, 0, 0, 0), ('value', 'v', 0, 0, 0, 0);
          CREATE TABLE str(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.str', 0);
          INSERT INTO stat_col VALUES ('str', 'n', 0, 0, 0, 0), ('str', 's', 0, 0, 0, 0);
          CREATE TABLE name(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.name', 0);
