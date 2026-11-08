@@ -16,7 +16,7 @@ from survey_discovery_contract import case, file, directory, process_environment
 from survey_analysis_contract import native_result, same_result
 
 
-FORMAT='rerail.survey-cli/v1'
+FORMAT='rerail.survey-cli/v2'
 
 
 def cli_case(name,files,args=(),install_dirs=('impl',),omit_root=False):
@@ -64,6 +64,9 @@ CASES=[
              file('impl/a/__init__.py','def other(): pass\n')],['--dirs','$ROOT/impl']),
     cli_case('empty-dirs-no-dynamic-roots',DYNAMIC,['--dirs']),
     cli_case('unicode',[file('impl/é😀.py','def façade(): pass\n')],['--json']),
+    cli_case('absolute-module-collision-suppressed',[
+             file('impl/a/__init__.py','# import_module("impl.a").live\ndef other(): pass\n'),
+             file('impl/a.py','def live(): pass\n')],['--dirs','$ROOT/impl']),
 ]
 
 
@@ -106,7 +109,7 @@ def input_options(item,root):
     parser.add_argument('--check',action='store_true');parser.add_argument('--json',action='store_true')
     parser.add_argument('--no-default-excludes',action='store_true');parser.add_argument('--limit',default='100')
     args=parser.parse_args(item['args'])
-    env=['data-layer.cli.root='+str(root.resolve()),'data-layer.cli.install=__installation__']
+    env=['data-layer.cli=true','data-layer.cli.root='+str(root.resolve()),'data-layer.cli.install=__installation__']
     if args.dirs is not None:
         env.append('data-layer.cli.dirs=true')
         env.extend(f'data-layer.cli.dir.{i}={expand(value,root.resolve())}' for i,value in enumerate(args.dirs))
@@ -160,6 +163,9 @@ def check_positives(rows):
     if values['dynamic-invalid-file']['dynamicRoots']==values['absolute-valid-candidates-skip-invalid']['dynamicRoots']:raise ValueError('Missing fallback distinction')
     if values['empty-dirs-no-dynamic-roots']['dynamicRoots']:raise ValueError('Empty CLI dirs differ from graph defaults')
     if values['empty-installation-defaults']['directories']:raise ValueError('Installation defaults must remain empty')
+    if 'neighbor' not in values['default-excludes']['text']:raise ValueError('Excluding an earlier item must retain later report details')
+    if 'impl/bad.py' in values['dynamic-invalid-file']['graphPaths']:raise ValueError('Invalid files must not enter the graph module dictionary')
+    if values['absolute-module-collision-suppressed']['dynamicRoots']:raise ValueError('Only the selected module dictionary value can seed the absolute-path scan')
 
 
 def main():

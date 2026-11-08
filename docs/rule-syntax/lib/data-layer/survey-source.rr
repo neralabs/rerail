@@ -15,7 +15,7 @@ sgs_path(d, @slice(label, 7, strlen(label))) :- doc(d, physical, label), prefix(
 sgs_resource_module(d, path, @replace_all(@replace_all(path, "(?:/)?__init__\\.py$", ""), "/", ".")) :- sgs_path(d, path), suffix("__init__.py", path), (path = "__init__.py" ; suffix("/__init__.py", path)).
 sgs_resource_module(d, path, @replace_all(@slice(path, 0, strlen(path)-3), "/", ".")) :- sgs_path(d, path), suffix(".py", path), path != "__init__.py", !suffix("/__init__.py", path).
 .decl sgs_module(d: number, path: symbol, module: symbol)
-sgs_module(d, path, module) :- sgs_scan_file(d), sgs_resource_module(d, path, module).
+sgs_module(d, path, module) :- sgs_scan_file(d), sgs_resource_module(d, path, module), !syntax_error(d, _, _).
 .decl sgs_definition(n: node, d: number, name: symbol, qual: symbol, k: symbol, owner: symbol)
 sgs_definition(n, d, @nfkc(name), @nfkc(name), "class", "") :- kind(n, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).
 sgs_definition(n, d, @nfkc(name), @nfkc(name), "function", "") :- kind(n, "function_definition"), !nearest(n, _, "function_definition"), !nearest(n, _, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).

@@ -16,7 +16,7 @@ import survey_cli_contract as contract
 
 class SurveyCliContractTests(unittest.TestCase):
     def baseline(self):
-        return json.loads(gzip.decompress((contract.ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-source.json.gz').read_bytes()))
+        return json.loads(gzip.decompress((contract.ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-survey-cli-source-v2.json.gz').read_bytes()))
 
     def run_native(self,root,baseline,execute):
         source=root/'source.json';source.write_text(json.dumps(baseline))
@@ -62,7 +62,7 @@ class SurveyCliContractTests(unittest.TestCase):
         options=contract.input_options(item,root)
         self.assertEqual(set(options),{'entryPoint','env','cliJson','cliCheck','cliNoDefaultExcludes','cliExcludePaths','reportLimit'})
         self.assertEqual(options['cliExcludePaths'],[' \u2003impl\\a.py\u2003 '])
-        self.assertEqual(options['env'],['data-layer.cli.root=/workspace','data-layer.cli.install=__installation__'])
+        self.assertEqual(options['env'],['data-layer.cli=true','data-layer.cli.root=/workspace','data-layer.cli.install=__installation__'])
 
     def test_context_transport_cannot_supply_selected_documents(self):
         import replay

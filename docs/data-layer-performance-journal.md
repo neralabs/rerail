@@ -9178,3 +9178,21 @@ The native dynamic-import case runs successfully but fails parity: CLI discovery
 The source and red receipts retain this starting point. No CLI completion is claimed.
 Five transport and acceptance tests pass, with eight subtests.
 The root engine still adopts Final `2b494d4ef`. No engine code or build changes occur in this step.
+
+### 2026-11-08 — Native survey CLI implementation and integration regressions
+
+The native CLI relations now derive scan directories, dynamic-import roots, normalized exclusions, reports, and check status.
+Loading uses unordered membership. Ordered arguments and graph assembly remain separate consumers.
+Only active discovery callers request host metadata.
+
+The CLI cases exposed two defects in earlier work.
+Excluded result rows left ordinal gaps, so text reports omitted surviving findings despite correct counts and analysis.
+The report bridge now assigns dense positions after filtering.
+The module dictionary also retained syntax-invalid files. Graph modules now require successful parsing.
+The saved integration failures retain both defects and their observable results.
+
+The expanded source corpus has 29 cases, including a module-collision counterexample.
+Twelve changed-clause controls require successful execution with different results. Two additional controls require explicit refusal without output or success status.
+The complete regression cohort remains pending at this commit.
+Deletion mode, production CLI registration, registry scope, and full migration acceptance remain open.
+No engine code or build changes occur. This step makes no repository performance claim.

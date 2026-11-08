@@ -2,8 +2,9 @@
 // ordinal assignment happens after discovery, outside the load request cone.
 #include "data-layer/survey-scope.rr"
 
+.decl sgd_enabled()
 .decl sgd_workspace(path: symbol)
-sgd_workspace(".").
+sgd_workspace(".") :- sgd_enabled().
 .decl sgd_top(name: symbol)
 sgd_top(name) :- sgd_workspace(path), dir_entry(path, name, 1).
 .decl sgd_layer(name: symbol)
@@ -29,11 +30,16 @@ sgd_default(1, "impl") :- !sgd_modern(), sgd_top("impl").
 .decl sgd_argument(i: number, path: symbol)
 .decl sgd_configured()
 sgd_configured() :- env(key, _), match_all("\\Adata-layer\\.scan\\.[0-9]+\\z", key).
-sgd_argument(to_number(index), path) :- env(key, path), match_all("\\Adata-layer\\.scan\\.(?<index>[0-9]+)\\z", key).
-sgd_argument(0, "public") :- !sgd_configured().
+sgd_argument(to_number(index), path) :- sgd_enabled(), env(key, path), match_all("\\Adata-layer\\.scan\\.(?<index>[0-9]+)\\z", key).
+sgd_argument(0, "public") :- sgd_enabled(), !sgd_configured().
+// Membership is separate from ordered arguments. Callers can compute argument
+// ranks after discovery without placing aggregates in the loading request cone.
+.decl sgd_membership(path: symbol)
+sgd_membership(path) :- sgd_enabled(), env(key, path), match_all("\\Adata-layer\\.scan\\.[0-9]+\\z", key).
+sgd_membership("public") :- sgd_enabled(), !sgd_configured().
 .decl sgd_requested_path(path: symbol)
-sgd_requested_path(path) :- sgd_argument(_, path), path != "public".
-sgd_requested_path(path) :- sgd_argument(_, "public"), sgd_public_path(path).
+sgd_requested_path(path) :- sgd_membership(path), path != "public".
+sgd_requested_path(path) :- sgd_membership("public"), sgd_public_path(path).
 .decl sgd_walk_root(path: symbol)
 sgd_walk_root(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(raw, "/+", "/"), "\\A(?:\\./)+", ""), "/(?:\\./)+", "/"), "/\\.\\z", ""), "/+\\z", "")) :- sgd_requested_path(raw).
 .decl sgd_has_public()
@@ -85,9 +91,9 @@ sgd_size(path, bytes) :- sgd_size_parent(parent), sgd_size_probe(path, parent, n
 // Host demands have no discovery/count dependency. A single execution caches
 // requested values; no file's parse result can alter worker count or weights.
 .decl sgd_host_key(key: symbol)
-sgd_host_key("cpu_count").
-sgd_host_key("env:NERA_LINTER_WORKERS").
-sgd_host_key("env:PYTHONINTMAXSTRDIGITS").
+sgd_host_key("cpu_count") :- sgd_enabled().
+sgd_host_key("env:NERA_LINTER_WORKERS") :- sgd_enabled().
+sgd_host_key("env:PYTHONINTMAXSTRDIGITS") :- sgd_enabled().
 .decl sgd_host(key: symbol, value: symbol)
 sgd_host(key, value) :- sgd_host_key(key), host_info(key, value).
 .decl sgd_count(n: number)

@@ -115,6 +115,7 @@ def program():
     text=re.sub(r'^\.scope include .*\n\.scope exclude[^\n]*','.scope dirs "__survey_no_primary__"',text,count=1,flags=re.M)
     return text+'''
 #include "data-layer/survey-discovery.rr"
+sgd_enabled().
 .violation DiscoveredPath(at: span, ordinal: number, path: symbol) code "DISCOVERED_PATH" "discovered"
 DiscoveredPath(@place("", 0), i, path) :- sgd_discovery_path(path, i).
 .violation DemandedPath(at: span, path: symbol) code "DEMANDED_PATH" "demanded"

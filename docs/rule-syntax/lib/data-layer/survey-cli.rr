@@ -1,0 +1,103 @@
+// Pinned internal-dead-code survey CLI. The host transports parsed arguments
+// and installation/project roots. All selection and reporting happens here.
+#include "data-layer/survey-discovery.rr"
+
+.decl scli_active()
+scli_active() :- env("data-layer.cli", "true").
+.decl scli_survey()
+scli_survey() :- scli_active(), !option("cliExecute", "true").
+sgd_enabled() :- scli_active().
+sgd_configured() :- scli_active().
+.decl scli_root(path: symbol)
+scli_root(path) :- scli_active(), env("data-layer.cli.root", path).
+.decl scli_install(path: symbol)
+scli_install(path) :- scli_active(), env("data-layer.cli.install", path).
+scli_install(".") :- scli_active(), !env("data-layer.cli.install", _).
+.decl scli_install_top(name: symbol)
+scli_install_top(name) :- scli_install(path), dir_entry(path, name, 1).
+.decl scli_install_layer(name: symbol)
+scli_install_layer(name) :- scli_install_top(name), match("l[0-9]{4}_.+(?s:.*)", name).
+.decl scli_default_path(path: symbol)
+scli_default_path(path) :- scli_install_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal").
+scli_default_path(path) :- scli_install_layer(path).
+.decl scli_default(i: number, path: symbol)
+scli_default(0,"impl") :- scli_default_path("impl").
+scli_default(1,"data_layer") :- scli_default_path("data_layer").
+scli_default(2,"_internal") :- scli_default_path("_internal").
+scli_default(i+3,path) :- scli_install_layer(path), i = count : { scli_install_layer(other), @str_cmp(other,path) < 0 }.
+.decl scli_dirs_supplied()
+scli_dirs_supplied() :- scli_active(), env("data-layer.cli.dirs","true").
+.decl scli_raw_path(path: symbol)
+scli_raw_path(path) :- scli_dirs_supplied(), env(key,path), match_all("\\Adata-layer\\.cli\\.dir\\.[0-9]+\\z", key).
+scli_raw_path(path) :- scli_active(), !scli_dirs_supplied(), scli_default_path(path).
+.decl scli_initial(i: number, path: symbol)
+scli_initial(to_number(index),path) :- scli_dirs_supplied(), env(key,path), match_all("\\Adata-layer\\.cli\\.dir\\.(?<index>[0-9]+)\\z", key).
+scli_initial(i,path) :- scli_active(), !scli_dirs_supplied(), scli_default(i,path).
+.decl scli_public()
+scli_public() :- scli_raw_path("public").
+.decl scli_expanded(i: number, j: number, path: symbol)
+scli_expanded(i,0,path) :- scli_initial(i,path), path != "public".
+scli_expanded(i,j,path) :- scli_initial(i,"public"), sgd_default(j,path).
+.decl scli_earlier(i: number, j: number, path: symbol)
+scli_earlier(i,j,path) :- scli_expanded(i,j,path), scli_expanded(a,b,path), (a < i ; (a = i, b < j)).
+.decl scli_chosen(i: number, j: number, path: symbol)
+scli_chosen(i,j,path) :- scli_expanded(i,j,path), (!scli_public() ; !scli_earlier(i,j,path)).
+.decl scli_directory(i: number, path: symbol)
+scli_directory(i,path) :- scli_chosen(a,b,path), i = count : { scli_chosen(c,d,_), (c < a ; (c = a, d < b)) }.
+
+// Keep absolute CLI spellings for the source's startswith test. Discovery uses
+// logical project paths so graph module names remain relative to the project.
+.decl scli_logical(raw: symbol, path: symbol)
+scli_logical(raw,@slice(raw,strlen(root)+1,strlen(raw))) :- scli_raw_path(raw), env("data-layer.cli.root",root), prefix(cat(root,"/"),raw).
+scli_logical(raw,raw) :- scli_raw_path(raw), env("data-layer.cli.root",root), !prefix(cat(root,"/"),raw), raw != root.
+scli_logical(root,".") :- scli_raw_path(root), env("data-layer.cli.root",root).
+sgd_membership(path) :- scli_logical(_,path).
+sgd_membership("public") :- scli_active(), !scli_raw_path(_).
+sgd_argument(i,path) :- scli_directory(i,raw), scli_logical(raw,path).
+// Expanded public paths also need an identity mapping after expansion.
+sgd_argument(i,path) :- scli_public(), scli_directory(i,path), !scli_logical(path,_).
+sgd_argument(0,"public") :- scli_active(), !scli_raw_path(_).
+
+// Parsed module dictionary candidates win if any path starts with an expanded
+// directory spelling. Otherwise rescan the supplied directories, even invalid
+// Python files. Empty CLI directories do not acquire graph fallback files.
+.decl scli_candidate(d: number)
+scli_candidate(d) :- scli_active(), sgc_module(_,d,_,path), scli_directory(_,directory), scli_root(root), prefix(directory,cat(root,"/",path)).
+.decl scli_has_candidate()
+scli_has_candidate() :- scli_candidate(_).
+.decl scli_dynamic_file(d: number)
+scli_dynamic_file(d) :- scli_candidate(d).
+scli_dynamic_file(d) :- scli_active(), !scli_has_candidate(), scli_directory(_,_), sgs_graph_path(path), sgs_path(d,path).
+idc_literal_source(cat("file:",to_string(d)),text) :- scli_dynamic_file(d), source(d,span), text(span,text).
+.decl scli_imported(fq: symbol)
+scli_imported(fq) :- scli_dynamic_file(d), idc_literal_fq(cat("file:",to_string(d)),fq).
+.decl scli_import_root(sid: symbol)
+scli_import_root(sid) :- scli_imported(fq), sg_resolved(fq,sid).
+cm_root(sid) :- scli_import_root(sid), sg_class(sid).
+.decl scli_dynamic_root(sid: symbol)
+scli_dynamic_root(sid) :- scli_import_root(sid).
+scli_dynamic_root(method) :- scli_import_root(sid), sg_class(sid), (idc_public(sid,method) ; idc_dunder(sid,method)).
+sg_extra(sid) :- scli_dynamic_root(sid).
+
+.decl scli_exclusion_input(path: symbol)
+scli_exclusion_input("impl/browser/") :- scli_active(), !option("cliNoDefaultExcludes","true").
+scli_exclusion_input(path) :- scli_active(), option_item("cliExcludePaths",_,path).
+.decl scli_exclusion_text(path: symbol)
+// Python str.strip includes U+001C..U+001F in addition to Unicode White_Space.
+scli_exclusion_text(@replace_all(@replace_all(raw,"\\\\","/"),"\\A[\\s\\x{1c}-\\x{1f}]+|[\\s\\x{1c}-\\x{1f}]+\\z","")) :- scli_exclusion_input(raw).
+.decl scli_exclusion(path: symbol)
+scli_exclusion(path) :- scli_exclusion_text(path), suffix("/",path).
+scli_exclusion(cat(path,"/")) :- scli_exclusion_text(path), !suffix("/",path).
+idc_excluded(sid) :- scli_active(), sg_symbol(_,sid,_,_,_,raw,_,_,_,_), path = @replace_all(raw,"\\\\","/"), scli_exclusion(prefix), (path = @replace_all(prefix,"/\\z","") ; prefix(prefix,path)).
+
+idc_graph_report() :- scli_survey().
+srep_mode("text") :- scli_survey(), !option("cliJson","true"), !idc_source_unproven().
+srep_mode("json") :- scli_survey(), option("cliJson","true"), !idc_source_unproven().
+srep_limit("100") :- scli_survey(), !option("reportLimit",_).
+.decl scli_high_confidence()
+scli_high_confidence() :- scli_survey(), idc_result(category,sid), prefix("high_confidence_",category), !idc_excluded(sid).
+.violation IDCCliExit(at: span, status: number) code "IDC_CLI_EXIT" "exit"
+IDCCliExit(@place("",0),1) :- scli_survey(), option("cliCheck","true"), scli_high_confidence(), !idc_source_unproven().
+IDCCliExit(@place("",0),0) :- scli_survey(), (!option("cliCheck","true") ; !scli_high_confidence()), !idc_source_unproven().
+.violation IDCCliExecuteRequired(at: span) code "IDC_CLI_EXECUTE_REQUIRED" "Native CLI deletion and import cleanup are not implemented"
+IDCCliExecuteRequired(@place("",0)) :- scli_active(), option("cliExecute","true").
