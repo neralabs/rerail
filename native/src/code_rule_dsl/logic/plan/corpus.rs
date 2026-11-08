@@ -366,7 +366,32 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         Ok(prog)
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
-    let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    // Each program's library modules (decision 0089), when it names them by `#include`.
+    let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
+    } else {
+        vec![None]
+    };
+    let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
+    let core = crate::code_rule_dsl::logic::rr::core_names();
+    // A program that adds to no library relation is read with its libraries' declarations only: the run holds their
+    // rules once (§5). One that asks (§3) is read whole, since its cone is copied from what it read.
+    let asks = |modules: &crate::code_rule_dsl::logic::rr::Modules| {
+        modules.heads.iter().any(|h| !core.contains(h) && modules.files.iter().any(|(_, _, names)| names.contains(h)))
+    };
+    let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
+    let mut parsed = programs
+        .iter()
+        .zip(&own_only)
+        .map(|(text, &own_only)| {
+            if !own_only {
+                return parse(text);
+            }
+            let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
+            front::declared(&prog)?;
+            Ok(prog)
+        })
+        .collect::<std::result::Result<Vec<_>, Error>>()?;
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs
@@ -379,20 +404,21 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             .collect();
         let _ = std::fs::write(path, lines);
     }
-    // Each program's library modules (decision 0089), when it names them by `#include`.
-    let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
-    } else {
-        vec![None]
-    };
     drop(parsing);
     let makes_guests = parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
     let bounds: Vec<u32> = parsed.iter().map(hiding::bound).collect();
     // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
     // bound of the documents they show, so the library's relations are the same for each.
     // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
-    let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
     let shared = !copied && modular.iter().flatten().count() > 1 && bounds.windows(2).all(|w| w[0] == w[1]);
+    // Not held once after all: a program read without its libraries' rules is read whole.
+    if !shared {
+        for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
+            if own_only {
+                *prog = parse(text)?;
+            }
+        }
+    }
     crate::code_rule_dsl::logic::profile::decision("libraries (decision 0089)", || {
         if shared {
             format!("held once: {} of {} programs name their libraries as modules", modular.iter().flatten().count(), programs.len())
@@ -405,9 +431,10 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         }
     });
     let mut library: Option<Program> = None;
+    // A program's request (§3): its key's number and the relations it holds, named `q<k>_` for every asker.
+    let mut requests: Vec<Option<(usize, BTreeSet<String>)>> = vec![None; parsed.len()];
     if shared {
         let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
-        let core = crate::code_rule_dsl::logic::rr::core_names();
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
         let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
         for modules in modular.iter().flatten() {
@@ -434,16 +461,49 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         library = Some(crate::code_rule_dsl::logic::rr::lower_library(&paths)?);
         let mut cones = 0;
         let mut kept = 0;
-        for (prog, modules) in parsed.iter_mut().zip(&modular) {
-            if let Some(modules) = modules {
-                let (dropped, cone) = own_part(prog, modules, core);
-                kept += dropped;
-                cones += cone;
+        // Each program's request (§3): the cone's library relations and the program's own relations they read, held
+        // once per distinct key. `RERAIL_REQUESTS=copied` keeps one copy per program, to compare.
+        let per_program = std::env::var("RERAIL_REQUESTS").is_ok_and(|v| v == "copied");
+        let mut keys: BTreeMap<[u8; 32], usize> = BTreeMap::new();
+        let mut copies: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        let mut asking = 0;
+        for (i, (prog, modules)) in parsed.iter_mut().zip(&modular).enumerate() {
+            let Some(modules) = modules else { continue };
+            let (dropped, cone) = own_part(prog, modules, core);
+            kept += dropped;
+            cones += cone.len();
+            if cone.is_empty() {
+                continue;
             }
+            asking += 1;
+            let (unit, key) = request_unit(prog, &cone, core, i, per_program);
+            let n = keys.len();
+            let k = *keys.entry(key).or_insert(n);
+            for rel in cone.iter() {
+                copies.entry(rel.clone()).or_default().insert(k);
+            }
+            if k != n {
+                // Another program asked the same: read its copy.
+                prog.rules.retain(|r| !unit.contains(&r.head.rel));
+                prog.decls.retain(|r, _| !unit.contains(r));
+                prog.facts.retain(|r, _| !unit.contains(r));
+                prog.natives.retain(|r, _| !unit.contains(r));
+                prog.lattice.retain(|r, _| !unit.contains(r));
+                prog.nullary.retain(|r| !unit.contains(r));
+            }
+            requests[i] = Some((k, unit));
         }
         let rules = library.as_ref().map_or(0, |l| l.rules.len());
         crate::code_rule_dsl::logic::profile::decision("library relations", || {
-            format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} relations each copied for the program whose clauses add to them (a request's cone, §3)")
+            format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} cone relations in {asking} programs' requests (§3)")
+        });
+        crate::code_rule_dsl::logic::profile::decision("requests (decision 0089 §3)", || {
+            let most: Vec<String> = {
+                let mut by: Vec<(&String, usize)> = copies.iter().map(|(r, ks)| (r, ks.len())).collect();
+                by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+                by.iter().take(8).map(|(r, n)| format!("{r} {n}")).collect()
+            };
+            format!("{} distinct requests of {asking} asking programs{}; copies per relation: {}", keys.len(), if per_program { " (RERAIL_REQUESTS=copied)" } else { "" }, most.join(", "))
         });
     }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
@@ -492,24 +552,16 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
         }
-        let shared_outputs = ["violation", "rr_diagnostic"];
-        // Named repository readers belong to their policy. Equal bytes may share a reader later;
-        // equal relation names alone do not mean equal input files or selectors.
-        let file_inputs: BTreeSet<_> = prog.settings.iter().filter(|(key, _)| key == "input")
-            .filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect();
-        let own: BTreeSet<String> = prog
-            .decls
-            .keys()
-            .chain(prog.facts.keys())
-            .chain(prog.rules.iter().map(|r| &r.head.rel))
-            // The library's relations keep their names (decision 0089 §2).
-            .filter(|_| unit.is_some())
-            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
-            // a repository file a policy reads (`.input r(IO=…)`) is its own.
-            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
-            .cloned()
-            .collect();
+        // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
+        // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.
+        let own: BTreeSet<String> = if unit.is_some() { own_names(&prog, core) } else { BTreeSet::new() };
+        let request = unit.and_then(|u| requests[u].as_ref());
         let rename = |rel: &str| -> String {
+            if let Some((k, held)) = request
+                && held.contains(rel)
+            {
+                return format!("q{k}_{rel}");
+            }
             if own.contains(rel) {
                 return format!("p{i}_{rel}");
             }
@@ -589,7 +641,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
 /// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
 /// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
-fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, usize) {
+fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
     use front::Literal;
     let library: BTreeSet<&str> = modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r)).collect();
     let reads = |r: &front::Rule| -> Vec<String> {
@@ -652,8 +704,85 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
     prog.natives.retain(|r, _| !part.contains(r));
     prog.lattice.retain(|r, _| !part.contains(r));
     prog.nullary.retain(|r| !part.contains(r));
-    let cones = cone.iter().filter(|r| library.contains(r.as_str())).count();
+    let cones = cone.into_iter().filter(|r| library.contains(r.as_str())).collect();
     (taken, cones)
+}
+
+/// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
+/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0047), the bridged and the
+/// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
+fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String> {
+    let shared_outputs = ["violation", "rr_diagnostic"];
+    let file_inputs = file_inputs(prog);
+    prog.decls
+        .keys()
+        .chain(prog.facts.keys())
+        .chain(prog.rules.iter().map(|r| &r.head.rel))
+        .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// The relations a policy reads from repository files (`.input r(IO=…)`): each is the policy's own.
+fn file_inputs(prog: &front::Program) -> BTreeSet<String> {
+    prog.settings.iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
+}
+
+/// A program's request (decision 0089 §3): the library relations of its cone (`cone`) and every relation of its own
+/// they read, through rules and natives; and the request's key, the digest of what those relations are. Two programs
+/// with one key ask the same, so they read one copy. A request that reads one of the program's own relations it does
+/// not hold, or a repository file, is the program's alone (its index is in the key), as is every request when
+/// `alone`.
+fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<String>, i: usize, alone: bool) -> (BTreeSet<String>, [u8; 32]) {
+    use front::Literal;
+    use sha2::Digest as _;
+    let own = own_names(prog, core);
+    let files = file_inputs(prog);
+    let mut unit: BTreeSet<String> = cone.iter().filter(|r| own.contains(*r)).cloned().collect();
+    let mut work: Vec<String> = unit.iter().cloned().collect();
+    let mut outside = false;
+    while let Some(rel) = work.pop() {
+        let mut reads: Vec<String> = Vec::new();
+        for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
+            for l in &r.body {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                    reads.push(a.rel.clone());
+                }
+            }
+        }
+        if let Some(native) = prog.natives.get(&rel) {
+            reads.extend(native.reads().into_iter().map(str::to_owned));
+        }
+        for r in reads {
+            if files.contains(&r) {
+                outside = true;
+            }
+            if own.contains(&r) && unit.insert(r.clone()) {
+                work.push(r);
+            }
+        }
+    }
+    let mut hash = sha2::Sha256::new();
+    if alone || outside {
+        hash.update(format!("program {i}\n"));
+    }
+    let mut rules: Vec<String> = prog.rules.iter().filter(|r| unit.contains(&r.head.rel)).map(|r| format!("{r:?}")).collect();
+    rules.sort();
+    for rule in rules {
+        hash.update(rule);
+        hash.update("\n");
+    }
+    for rel in &unit {
+        hash.update(format!(
+            "{rel} {:?} {:?} {:?} {:?} {}\n",
+            prog.decls.get(rel),
+            prog.facts.get(rel),
+            prog.natives.get(rel),
+            prog.lattice.get(rel),
+            prog.nullary.contains(rel)
+        ));
+    }
+    (unit, hash.finalize().into())
 }
 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
@@ -3775,5 +3904,36 @@ uses(n, f) :- imp(n, q), def(f, q).
         assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
         // Many small files and a few large ones of one language are two mixes.
         assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
+    }
+
+    /// Decision 0089: a library is held once, and a request's cone once per distinct request. Two programs ask
+    /// `compare.rr` the same, a third asks something else, a fourth asks nothing and reads the library's own copy.
+    #[test]
+    fn libraries_are_held_once_and_equal_requests_share_one_cone() {
+        let ask = |kind: &str, own: &str| {
+            format!(
+                "#include \"python/compare.rr\"\ncmp_same_ask(a, b) :- kind(a, \"{kind}\"), kind(b, \"{kind}\"), a < b.\n.decl {own}(a: node)\n{own}(a) :- cmp_same(a, _).\n.output {own}\n"
+            )
+        };
+        let quiet = "#include \"python/compare.rr\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
+        let texts = [ask("call", "one"), ask("call", "two"), ask("name", "three"), quiet];
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let prog = super::combine_texts(&texts, "").unwrap();
+        let heads = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).count();
+        // The library's rule once, unprefixed, whatever the programs read.
+        assert_eq!(heads("cmp_same"), 1);
+        // Programs 0 and 1 ask the same: one copy of the cone; program 2 its own.
+        let copies: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| r.starts_with('q') && r.ends_with("_cmp_same")).collect();
+        assert_eq!(copies.len(), 2, "{copies:?}");
+        assert!(copies.iter().all(|r| heads(r) == 1));
+        assert!(!prog.rules.iter().any(|r| r.head.rel.starts_with('p') && r.head.rel.ends_with("_cmp_same")));
+        // Each asker reads its request's copy; the quiet one reads the library's.
+        let reads = |head: &str| -> Vec<String> {
+            prog.rules.iter().filter(|r| r.head.rel == head).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect()
+        };
+        let (one, two, three) = (reads("p0_one"), reads("p1_two"), reads("p2_three"));
+        assert_eq!(one, two);
+        assert_ne!(one, three);
+        assert_eq!(reads("p3_quiet"), ["cmp_same"]);
     }
 }
