@@ -28,6 +28,7 @@ pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
+mod prepared;
 mod bridge;
 mod inputs;
 mod world;
@@ -190,6 +191,9 @@ pub(crate) struct Report {
     pub(crate) typing_runs: bridge::Runs,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub(crate) memo: (usize, usize),
+    /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
+    /// `store` (decision 0073).
+    pub(crate) prepared: &'static str,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -806,18 +810,37 @@ pub(crate) fn run_with_options(
         hash.update(format!("{label}\0{:?}\0{:?}\0{:?}", prog.facts, prog.inputs, prog.outputs).as_bytes());
         hash.finalize().into()
     };
-    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned();
-    let kept = kept.filter(|p| {
-        // The lowered program's atoms are the store's: the same strings must still be the same atoms.
+    // The lowered program's atoms are the store's: the same strings must still be the same atoms.
+    let holds = |p: &Prepared| {
         p.interned.iter().all(|(strings, atoms)| {
             let strings: Vec<&str> = strings.iter().map(String::as_str).collect();
             store.intern_atoms(&strings).is_ok_and(|got| got.iter().map(|a| u32::from(*a)).eq(atoms.iter().copied()))
         })
-    });
+    };
+    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned().filter(holds);
+    // Kept across processes in the persistent store, under the programs' text (decision 0073); a session's or T's run
+    // keeps it in memory only.
+    let durable = if tapes.is_some() && t.is_none() && session.is_none() {
+        Some(memo::source(store, &programs.join("\0")).map_err(|e| Error::Plan(e.to_string()))?)
+    } else {
+        None
+    };
+    let (kept, from) = match (kept, durable) {
+        (Some(p), _) => (Some(p), "memory"),
+        (None, Some(source)) => (prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(holds), "store"),
+        (None, None) => (None, ""),
+    };
     let reused = kept.is_some();
     let prepared = match kept {
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
+            if from == "store" {
+                let mut kept = prepared_cache().lock().expect("the prepared programs");
+                if kept.len() >= PREPARED_KEPT {
+                    kept.clear();
+                }
+                kept.insert(prepared_key, p.clone());
+            }
             p
         }
         None => {
@@ -855,10 +878,20 @@ pub(crate) fn run_with_options(
                 kept.clear();
             }
             kept.insert(prepared_key, prepared.clone());
+            drop(kept);
+            if let Some(source) = durable {
+                prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))?;
+            }
             prepared
         }
     };
-    crate::code_rule_dsl::logic::profile::decision("program prepared", || if reused { "reused: this process prepared the same program and additions before".to_owned() } else { "prepared".to_owned() });
+    let origin = if reused { from } else { "prepared" };
+    crate::code_rule_dsl::logic::profile::decision("program prepared", || match (reused, from) {
+        (true, "store") => "read from the store: an earlier process prepared the same program and additions (decision 0073)".to_owned(),
+        (true, _) => "reused: this process prepared the same program and additions before".to_owned(),
+        (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
+        (false, _) => "prepared".to_owned(),
+    });
     let Prepared { prog, vocabulary, lowered, sets, demanded, pushed, located, merged: (remerged, reshared), split, interned: _ } = prepared;
     let vocabulary = vocabulary.again();
     if !demanded.is_empty() {
@@ -1819,7 +1852,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin })
 }
 
 

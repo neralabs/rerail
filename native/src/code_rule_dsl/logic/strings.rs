@@ -197,6 +197,8 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
 pub(in crate::code_rule_dsl) struct Vocabulary {
     /// Each test's input relation and matcher (`again` keeps them for another run).
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
+    /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
+    pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -304,14 +306,21 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
 impl Vocabulary {
     /// The same tests for another run, with nothing tested yet.
     pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
-        Vocabulary { tests: self.tests.clone(), ..Vocabulary::default() }
+        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), ..Vocabulary::default() }
+    }
+
+    /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
+    /// decision 0073).
+    pub(in crate::code_rule_dsl) fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
+        let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
+        Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
     }
 }
 
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
-    let mut tests = Vec::new();
+    let (mut tests, mut specs) = (Vec::new(), Vec::new());
     for rule in &mut prog.rules {
         let texts: HashSet<String> = rule
             .body
@@ -344,6 +353,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                         format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
                     });
                     tests.push((rel.clone(), Arc::new(matcher)));
+                    specs.push(key.clone());
                     ids.insert(key, rel.clone());
                     rel
                 }
@@ -357,7 +367,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, seen: Mutex::default(), tested: Mutex::default() })
+    Ok(Vocabulary { tests, specs, seen: Mutex::default(), tested: Mutex::default() })
 }
 
 pub(in crate::code_rule_dsl) mod functions;

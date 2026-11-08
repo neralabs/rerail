@@ -2113,3 +2113,38 @@ passes on that branch alone was not checked: building a second target would exce
 ignored with this reason.
 
 **Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
+
+## O111. Python pack rules that fail to run, alone or combined
+
+Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail-engine run-rr` over
+`fixtures/python/calls/project`, a sample of the Python pack failed:
+
+- **A message names no column:** `ruff-c404`, `ruff-c406` and `ruff-perf403` ("message: no column k: v"), and
+  `ruff-fly002` ("FLY002_fstring message: no column a").
+- **No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.
+- **Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`
+  (`confusable_word`: `match_all` over a node, O80).
+- **Refused:** `ruff-b005`, whose value cycle is unbounded (see above).
+
+Given as one directory to `rerail-engine logic`, the pack does not combine. Leaving out the rules above, and others
+that fail combined (`ruff-c408`, `era001`, `fast003`, `int001`, `int002`, `ruf001` to `ruf003`, `ruf024`, `up030`,
+`up032`), every bandit rule then failed with "relation kind is read by the rule for B101 and not declared". That
+points to how a directory is combined, not to the bandit rules. Not investigated.
+
+**Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
+
+## O112. The shared tape cache holds memo rows whose length does not match
+
+Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
+"corrupt content store: facts memo length does not match metadata". The default tape cache
+(`$TMPDIR/rerail-tape-cache.sqlite`, which every build and session on the machine shares) held 18 of 4,867
+`facts_results` rows whose zstd frame decodes to one byte fewer than `raw_length`. All are per-file memo rows (fact
+schemas 3 and 4) of a `b.py`. No prepared-program entry (schema 1) is among them. In one writer, `raw_length` and the
+frame come from the same entry (`put_facts_memo`), so another writer of the shared file is the likely source. That
+is not confirmed.
+
+`facts_memo` decodes every content-pure row of a source and schema, so one bad row fails every lookup on that source,
+and the run fails instead of missing. The file was not moved (DB files are not moved). Tests for 0073 ran against a
+fresh store (`RERAIL_TAPE_CACHE`).
+
+**Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.

@@ -364,6 +364,9 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         report.chunks,
         report.native
     );
+    if report.prepared != "prepared" {
+        text += if report.prepared == "store" { "  program prepared: read from the store\n" } else { "  program prepared: kept in memory\n" };
+    }
     if report.memo.0 > 0 {
         text += &format!("  {} of {} files from the per-file memo\n", report.memo.0, report.files);
     }
