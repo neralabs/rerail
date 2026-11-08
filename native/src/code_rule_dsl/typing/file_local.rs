@@ -813,7 +813,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     // An atom with no node column that meets the rest only through the document, with two or more columns of its
     // own (a document's imports, `la_imp(d, name, symbol)`), is a table per document: joined to the document's
     // nodes it multiplies them by its rows, so it is a group of its own.
-    let independent_node_groups = |atoms: &[&Atom]| {
+    let independent_node_groups = |atoms: &[&Atom], equal: &[(String, String)]| {
         let documents: BTreeSet<&String> = atoms
             .iter()
             .filter_map(|a| match (a.rel.as_str(), a.args.as_slice()) {
@@ -836,6 +836,8 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 }
                 nodes = own;
             }
+            // `a = b` names one node twice.
+            close_under(&mut nodes, equal);
             let mut connected = nodes;
             let mut separate = Vec::new();
             for group in groups {
@@ -861,11 +863,15 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             }
             let base = |rel: &str| prog.inputs.iter().any(|r| r == rel);
             let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || local.contains(&a.rel)));
-            // Components of the candidates by shared variables.
+            // Components of the candidates by shared variables. `a = b` between two variables (a disjunction's
+            // branch, as lowering leaves it: `(e0 = d ; …)`) names one value, so it joins the atoms on each side; apart,
+            // each would be pushed alone and their join left to the cross-file part (decision 0093 §4, O140).
             let idx: Vec<usize> = (0..rule.body.len()).filter(|&j| candidate(&rule.body[j])).collect();
+            let equal = var_equalities(rule);
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
             for &j in &idx {
-                let vars = rule.body[j].vars();
+                let mut vars = rule.body[j].vars();
+                close_under(&mut vars, &equal);
                 let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| !v.is_disjoint(&vars));
                 let mut all = (BTreeSet::from([j]), vars);
                 for (l, v) in joined {
@@ -885,7 +891,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 if !atoms.iter().any(|a| base(&a.rel)) && atoms.len() < 2 {
                     continue;
                 }
-                if independent_node_groups(&atoms) > 1 {
+                if independent_node_groups(&atoms, &equal) > 1 {
                     continue;
                 }
                 // One plain atom, alone or widened by plain attribute lookups of its nodes (`within(n, b)` and n's

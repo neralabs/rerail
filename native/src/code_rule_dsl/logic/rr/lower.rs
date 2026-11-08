@@ -2175,6 +2175,12 @@ impl Lowerer {
         // Otherwise a helper relation of the body. `count` and `sum` read the body's distinct rows, so they keep every
         // variable; `min`, `max` and `join` keep the aggregated one (and a join's keys) and those the rule shares.
         let mut inner = body_vars(body);
+        // A nested aggregate's variables that the rule shares are the helper's too: in `count : { ident(x), count : {
+        // ref(n, f, x) } = 0 }`, the inner count is per (f, x), so the helper is a relation of f and x, and f is bound
+        // inside it by the context. Without f, the inner count read it free, and the outer could not group by it.
+        let mut nested = Vec::new();
+        body.iter().for_each(|l| l.vars(&mut nested));
+        inner.extend(nested.into_iter().filter(|v| outer.contains(v)));
         // `match_all`'s groups are variables of the body too, named in its regex: each match is a row to count.
         for l in body {
             if let Lit::Atom { rel, args, neg: false } = l

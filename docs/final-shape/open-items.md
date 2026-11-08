@@ -2877,3 +2877,20 @@ findings layer's stages 2–3.
 
 **Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
 equal on the 65 checks that finish both ways.
+
+**2026-11-08, worked:**
+
+- **Item 2 is not a leak.** In the 39 checks with `x(c) :- x_at(_, c)`, none of the projections' 144 readers binds
+  the projected row's document; the 7 that bind some document read the projection by a value. A projection is a union
+  of per-file rows, a unit fact (0092 §4), and there is nothing to rewrite (0093 §4, corrected).
+- **Item 3 is fixed.** `file_local::push_with` closes each candidate's variables under the rule's `a = b` equalities,
+  both when it groups the atoms and when it counts their independent node groups. `deco_word`'s four cross-file rules
+  are now pushed into the chunks (bootstrap-engine-invariants, graph-lazy-sql-plan, schema-bootstrap-contracts).
+  Test: `an_equality_between_two_pieces_joins_them_in_the_chunks`. Over the 25 checks with variable equalities in
+  their cross part, findings are equal with and without the grouping half of the fix, and CPU is within noise.
+- **Found while checking: a nested aggregate lost the rule's variables.** `count : { bei_identity(x), count : {
+  def_walk(n, f), bei_ref(n, x) } = 0 } > 0` made a helper of x alone, so bootstrap-engine-invariants failed to plan
+  after the final-rerail-shape merge ("unplaced literals … in rr_agg72($x)"). The helper now has every variable the
+  rule shares with its nested aggregates, bound by the context. Test:
+  `a_nested_aggregate_keeps_the_rules_variables_it_reads`.
+- The findings assembly (`rr_diagnostic`, `violation`) is a union too; it moves when the findings layer is built.
