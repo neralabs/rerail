@@ -187,8 +187,8 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them). NULL
-/// gives NULL.
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them, and
+/// `plan::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -197,7 +197,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
     })?;
-    functions::register(db)
+    functions::register(db)?;
+    super::plan::register_functors(db)
 }
 
 /// A text test in a rule body: `@op($s, patterns) = 1` (holds) or `= 0` (fails).

@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod references;
 mod prepared;
-mod bridge;
+pub(in crate::code_rule_dsl) mod bridge;
 mod inputs;
 mod world;
 mod typing;
@@ -534,15 +534,20 @@ pub(in crate::code_rule_dsl) const GIVEN: [&str; 8] = ["in_scope", "out_scope", 
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
-    let given = |rel: &str| GIVEN.contains(&rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty.
+    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
+    // relations itself (T's shape) has none.
+    let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
+    let parts = |rel: &str| t_shape && rel.starts_with("str_part");
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(front::Literal::atom) {
             let rel = a.rel.as_str();
-            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel) {
+            if !parts(rel) && (derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel)) {
                 continue;
             }
             let why = match rel {
-                "str_part" => format!("it needs {cpython}"),
+                _ if parts(rel) => format!("core.rr's shape makes it (a program that includes core.rr); without it, it needs {cpython}"),
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };

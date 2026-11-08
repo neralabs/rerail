@@ -75,11 +75,14 @@ pub(crate) struct Projection {
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub(crate) partial: BTreeSet<String>,
+    /// In T's shape, `syntax_error` is core.rr's `syntax_error(d, l, msg)`, CPython's verdict, not T's
+    /// `syntax_error(d)`: the program declares that one (a program of core.rr's base relations, not T's).
+    verdict: bool,
 }
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new(), verdict: false }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -97,7 +100,8 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
+        let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect(), verdict }
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -1403,10 +1407,10 @@ impl Batch {
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let guest = d.guest.as_deref().filter(|_| core);
             let error = match dialect {
-                Some(dialect) if core && (projection.wants("syntax_error") || guest.is_some()) => core_rr::verdict(&d.facts, dialect),
+                Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => core_rr::verdict(&d.facts, dialect),
                 _ => None,
             };
-            let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
+            let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, python_lines)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
@@ -1535,13 +1539,20 @@ impl Batch {
             c.extend_text(&rows.text);
             relations.extend(c.relations(&atom).into_iter().filter(|(name, _)| !made.contains(name)));
         } else {
+            // T's `syntax_error(d)`, or core.rr's `syntax_error(d, l, msg)` (CPython's verdict) where the program
+            // declares that one (`Projection::verdict`).
+            let syntax_error = if projection.verdict {
+                c.relations(&atom).into_iter().find(|(name, _)| *name == "syntax_error").map(|(_, r)| r).expect("core_rr makes syntax_error")
+            } else {
+                relation(&["d"], &mut errors.iter().map(|&d| vec![d]))
+            };
             relations.extend([
                 ("text", pairs(&["n", "s"], &rows.text, [false, true])),
                 ("op", pairs(&["n", "s"], &rows.op, [false, true])),
                 ("name", pairs(&["n", "s"], &rows.name, [false, true])),
                 ("str", pairs(&["n", "s"], &rows.strs, [false, true])),
                 ("strprefix", pairs(&["n", "s"], &rows.strprefix, [false, true])),
-                ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
+                ("syntax_error", syntax_error),
             ]);
         }
         relations.extend(read);
