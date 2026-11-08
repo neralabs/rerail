@@ -132,9 +132,10 @@ pass B).
 ## 5. The CPU: tier 2 through the compiler
 
 Tier 2 is part of the transducer's block side program (doc 12 §3), so it goes where tier 1
-goes: lowered by `native_ir`, defined by `native_cpu_block`, and on Metal by the same packing
-and kernels. Nothing on the path is Rust: no call from generated code, no host step between
-the tiers, no hand-built emitter. (A first build did all three, and is deleted.)
+goes: its IR runs on the transducer's backends, the interpreter, `native_cpu_block` (lowered
+by `native_ir`) and Metal. Nothing does the parse's work outside that IR: no call from
+generated code, no host step between the tiers, no hand-built emitter. (A first build did all
+three, and is deleted.)
 
 **5a. Tier 2's native IR.** `native_ir` lowers the rows, through the analysis (phase 3), to
 tier-2 instructions in `BlockNative`:
@@ -163,7 +164,8 @@ only as the test's encoder of tree-sitter's side.
 - `json_tier2_ir_prints_as_designed`: JSON's tier-2 IR, as `rir` text, pinned whole.
 - `json_tier2_states_are_simdjsons`: the states equal stage 2's labels.
 - `json_block_function_has_no_call`: the compiled CLIF has no call, and one loop per block.
-- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the fused function.
+- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and the fused
+  function.
 - `json_tier2_cost_ratchet`: ns per block next to simdjson's stage 2, in CPU time.
 
 ## 6. Metal
