@@ -59,6 +59,31 @@ struct Printer<'a> {
     source: &'a str,
 }
 impl Printer<'_> {
+    /// Python repr(value) for non-string Constant expressions. The syntax
+    /// printer uses source expressions such as 1e309; value facts use inf.
+    fn annotation_constant(&self, e: &Expr) -> Option<Result<String>> {
+        match e {
+            Expr::NumberLiteral(n) => Some(Ok(match &n.value {
+                ast::Number::Int(i) => i.to_string(),
+                ast::Number::Float(f) => crate::code_rule_dsl::value::python::float_repr(*f),
+                ast::Number::Complex { real, imag } => {
+                    let component = |f| {
+                        let text = crate::code_rule_dsl::value::python::float_repr(f);
+                        text.strip_suffix(".0").unwrap_or(&text).to_owned()
+                    };
+                    if *real == 0.0 {
+                        format!("{}j", component(*imag))
+                    } else {
+                        format!("({}{}{}j)", component(*real), if *imag >= 0.0 { "+" } else { "" }, component(*imag))
+                    }
+                }
+            })),
+            Expr::BytesLiteral(_) | Expr::BooleanLiteral(_) | Expr::NoneLiteral(_) => Some(self.expr(e, TEST)),
+            Expr::EllipsisLiteral(_) => Some(Ok("Ellipsis".to_owned())),
+            _ => None,
+        }
+    }
+
     fn expr(&self, e: &Expr, needed: u8) -> Result<String> {
         let (own, text) = match e {
             Expr::Name(n) => (ATOM, n.id.to_string()),
@@ -578,6 +603,7 @@ fn float(f: f64) -> String {
 #[derive(Default)]
 pub(super) struct Texts {
     pub annotations: HashMap<(u32, u32), String>,
+    pub annotation_constants: HashMap<(u32, u32), String>,
     pub receivers: HashMap<(u32, u32), String>,
     pub calls: HashMap<(u32, u32), String>,
     pub functions: HashMap<(u32, u32), String>,
@@ -587,6 +613,7 @@ pub(super) struct Texts {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Requested {
     pub annotations: bool,
+    pub annotation_constants: bool,
     pub receivers: bool,
     pub calls: bool,
     pub functions: bool,
@@ -606,9 +633,12 @@ pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
         rows: Texts,
         requested: Requested,
         error: Option<String>,
+        in_annotation: bool,
     }
     impl<'a> Visitor<'a> for Collect<'a> {
         fn visit_annotation(&mut self, e: &'a Expr) {
+            let previous = self.in_annotation;
+            self.in_annotation = true;
             if self.requested.annotations {
                 match self.printer.expr(e, TEST) {
                     Ok(s) => {
@@ -621,8 +651,20 @@ pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
                 }
             }
             visitor::walk_annotation(self, e);
+            self.in_annotation = previous;
         }
         fn visit_expr(&mut self, e: &'a Expr) {
+            if self.requested.annotation_constants && self.in_annotation
+                && let Some(result) = self.printer.annotation_constant(e)
+            {
+                match result {
+                    Ok(text) => {
+                        let range = e.range();
+                        self.rows.annotation_constants.insert((u32::from(range.start()), u32::from(range.end())), text);
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
             if self.requested.receivers
                 && let Expr::Call(call) = e
                 && let Expr::Attribute(attribute) = &*call.func
@@ -660,6 +702,7 @@ pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
         rows: Texts::default(),
         requested,
         error: None,
+        in_annotation: false,
     };
     c.visit_body(
         parsed

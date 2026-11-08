@@ -15,3 +15,10 @@
 .input call_text
 .decl call_function_text(n: node, s: symbol)
 .input call_function_text
+
+// Python repr(value) for non-string Constants within annotations, including nested literals.
+// Includes bytes, integers, floats, complex literals, booleans, None and Ellipsis.
+// Strings use str_const. Type wrappers retain the same lookup keys as annotation_text.
+// These rows share its demanded native parse and do not scan literals outside annotations.
+.decl annotation_constant_repr(n: node, s: symbol)
+.input annotation_constant_repr

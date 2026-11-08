@@ -529,6 +529,7 @@ pub(super) struct CoreRows {
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     annotation_text: Vec<[i64; 2]>,
+    annotation_constant_repr: Vec<[i64; 2]>,
     call_receiver_text: Vec<[i64; 2]>,
     call_text: Vec<[i64; 2]>,
     call_function_text: Vec<[i64; 2]>,
@@ -550,6 +551,9 @@ impl CoreRows {
             let span = (p.facts.start[id as usize], p.facts.end[id as usize]);
             if let Some(text) = rows.annotations.get(&span) {
                 self.annotation_text.push([p.global(local as u32), string(text) as i64]);
+            }
+            if let Some(text) = rows.annotation_constants.get(&span) {
+                self.annotation_constant_repr.push([p.global(local as u32), string(text) as i64]);
             }
             if dialect.name(&p.facts, original) == "call" {
                 let span = (p.facts.start[original as usize], p.facts.end[original as usize]);
@@ -894,6 +898,7 @@ impl CoreRows {
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("annotation_text", node_sym(&self.annotation_text)),
+            ("annotation_constant_repr", node_sym(&self.annotation_constant_repr)),
             ("call_receiver_text", node_sym(&self.call_receiver_text)),
             ("call_text", node_sym(&self.call_text)),
             ("call_function_text", node_sym(&self.call_function_text)),
