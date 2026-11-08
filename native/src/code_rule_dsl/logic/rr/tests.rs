@@ -2213,6 +2213,37 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0091 with the libraries held once (0089): the library is a part of its own, under its own names, made
+/// over every document read; each policy's rules still see only its scope. Policy B's cross-file rule (two calls of
+/// one name) would join a call only A's scope reads if the library's rows reached it unguarded.
+#[test]
+fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("held-once");
+    for (p, text) in [("a/x.py", "f()\n"), ("b/y.py", "f()\n"), ("b/z.py", "g()\n")] {
+        std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join("src").join(p), text).unwrap();
+    }
+    let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n.scope dirs \"{scope}\"\n{body}\n");
+    let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
+    let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
+    let run = |programs: &[&str], out: &str| -> Vec<String> {
+        let out = dir.join(out);
+        crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(|l| format!("{}:{}", l.split('\t').nth(1).unwrap(), l.split('\t').nth(3).unwrap())).collect();
+        got.sort();
+        got
+    };
+    let alone: Vec<String> = [run(&[&a], "out-a"), run(&[&b], "out-b")].concat();
+    assert_eq!(alone, ["Fn:a/x.py"]);
+    assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let rules_of = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).collect::<Vec<_>>();
+    assert!(!rules_of("call_name").is_empty() && rules_of("p0_call_name").is_empty(), "the library is held once, under its own names");
+    assert!(rules_of("call_name").iter().all(|r| r.body.iter().filter_map(|l| l.atom()).all(|x| !x.rel.contains("rr_scope_"))), "the library's rules are unguarded");
+    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's rule is guarded");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A grammar a rule names is one the language registry has (decision 0082): a dialect's label or a fragment.
 #[test]
 fn a_grammar_the_registry_does_not_have_is_refused() {

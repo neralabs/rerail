@@ -3,6 +3,7 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) struct Operator {
+    pub logical_analysis: Arc<Value>,
     pub run: session::Execution,
     pub result: String,
     pub improvements: String,
@@ -154,6 +155,15 @@ impl Operator {
             .iter()
             .filter_map(|r| r.program_relation().map(str::to_owned))
             .collect::<BTreeSet<_>>();
+        let mut properties = crate::code_rule_dsl::logic::analysis::ProgramAnalysis::default();
+        for relation in &dependencies {
+            let original = inputs.iter().find(|(_, table)| *table == relation).map_or(relation.as_str(), |(logical, _)| logical.as_str());
+            let original = original.strip_prefix("delta_").unwrap_or(original);
+            if let Some(keys) = trace.emitted.analysis.relation_keys.get(original) {
+                properties.relation_keys.insert(relation.clone(), keys.clone());
+            }
+        }
+        emitted.analysis = Arc::new(properties);
         emitted.inputs = dependencies.iter().cloned().collect();
         emitted.program.relations = vec![(result.clone(), spec.width)];
         emitted.program.partitions.clear();
@@ -250,6 +260,7 @@ impl Operator {
         )?;
         store.restrict_indexes(&improvements, &[])?;
         Ok(Self {
+            logical_analysis: trace.frames.first().and_then(|f|f.operators.get(id)).map(|op|Arc::clone(&op.logical_analysis)).unwrap_or_else(||Arc::new(json!(planned.values().map(reductions::Retained::explain).collect::<Vec<_>>()))),
             run,
             result,
             improvements,

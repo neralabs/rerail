@@ -27,6 +27,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     let mut failed = false;
     let mut sparse_batch = false;
     let mut files = 0;
+    let mut logical = false;
     for entry in std::fs::read_dir(directory.path().join("sql")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|s| s != "json") {
@@ -59,6 +60,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             if event["kind"] != "sql" {
                 continue;
             }
+            logical |= event["context"]["logicalAnalyses"].as_array().is_some_and(|a| !a.is_empty()) || event["context"]["logicalAnalysis"].is_object();
             let stage = event["context"]["stage"].as_str().unwrap_or("");
             cold |= stage == "cold rule";
             recursive |= event["context"].get("frame").is_some();
@@ -94,6 +96,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && inserts
             && failed
             && sparse_batch
+            && logical
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let output = std::process::Command::new("node")
@@ -129,6 +132,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
         report.contains("full query") && report.contains("delta query"),
         "{report}"
     );
+    assert!(report.contains("logical uniqueness and scalar summaries") && report.contains("support_uniqueness"),"{report}");
 }
 
 #[test]
@@ -148,6 +152,10 @@ fn profiled_session_child() {
             .unwrap();
     }
     e.run(PROGRAM.into(), "python".into(), None).unwrap();
+    let totals = e.sql_profile_totals();
+    let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
+    assert!(!explanation["executions"][0]["recursive"].as_array().unwrap().is_empty());
+    assert_eq!(e.sql_profile_totals(), totals, "explain must not execute SQL");
     let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
     e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     assert!(e.apply_changes(patch.clone(), None).is_err());

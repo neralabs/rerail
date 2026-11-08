@@ -413,10 +413,88 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
+    if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
+        let lines: String = programs
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                let first = text.lines().find(|l| l.trim_start().starts_with(".policy")).or_else(|| text.lines().find(|l| !l.trim().is_empty())).unwrap_or("");
+                format!("p{i}_\t{}\n", first.trim())
+            })
+            .collect();
+        let _ = std::fs::write(path, lines);
+    }
+    // Each program's library modules (decision 0089), when it names them by `#include`.
+    let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
+    } else {
+        vec![None]
+    };
     drop(parsing);
+    let makes_guests = parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
+    let bounds: Vec<u32> = parsed.iter().map(hiding::bound).collect();
+    // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
+    // bound of the documents they show, so the library's relations are the same for each.
+    // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
+    let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
+    let shared = !copied && modular.iter().flatten().count() > 1 && bounds.windows(2).all(|w| w[0] == w[1]);
+    crate::code_rule_dsl::logic::profile::decision("libraries (decision 0089)", || {
+        if shared {
+            format!("held once: {} of {} programs name their libraries as modules", modular.iter().flatten().count(), programs.len())
+        } else if copied {
+            "copied into each program (RERAIL_LIBRARIES=copied)".to_owned()
+        } else if modular.iter().flatten().count() > 1 {
+            "copied into each program: the programs show different documents (`.guests`)".to_owned()
+        } else {
+            "copied into each program: fewer than two programs name their libraries as modules".to_owned()
+        }
+    });
+    let mut library: Option<Program> = None;
+    if shared {
+        let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
+        let core = crate::code_rule_dsl::logic::rr::core_names();
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
+        for modules in modular.iter().flatten() {
+            for (path, _, names) in &modules.files {
+                if paths.contains(path) {
+                    continue;
+                }
+                for name in names.iter().filter(|n| !core.contains(*n)) {
+                    if let Some(other) = declared_in.insert(name, path) {
+                        return Err(Error::Plan(format!("{name} is declared by two library files of the run, {} and {}", other.display(), path.display())));
+                    }
+                }
+                paths.push(path.clone());
+            }
+        }
+        for (i, modules) in modular.iter().enumerate() {
+            let Some(modules) = modules else { continue };
+            for name in &modules.declared {
+                if let Some(file) = modules.files.iter().find(|(_, _, names)| names.contains(name) && !core.contains(name)) {
+                    return Err(Error::Plan(format!("program #{i} declares {name}, which {} it includes declares", file.0.display())));
+                }
+            }
+        }
+        library = Some(crate::code_rule_dsl::logic::rr::lower_library(&paths)?);
+        let mut cones = 0;
+        let mut kept = 0;
+        for (prog, modules) in parsed.iter_mut().zip(&modular) {
+            if let Some(modules) = modules {
+                let (dropped, cone) = own_part(prog, modules, core);
+                kept += dropped;
+                cones += cone;
+            }
+        }
+        let rules = library.as_ref().map_or(0, |l| l.rules.len());
+        crate::code_rule_dsl::logic::profile::decision("library relations", || {
+            format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} relations each copied for the program whose clauses add to them (a request's cone, §3)")
+        });
+    }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
-    // makes none is left as written.
-    if parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str()))) {
+    // makes none is left as written. With the libraries once, the combined program is bounded once (below).
+    if makes_guests && !shared {
         let _hiding = crate::code_rule_dsl::logic::profile::span(|| {
             format!("bound each program to the documents it shows ({} programs, {} rules; decision 0058)", parsed.len(), parsed.iter().map(|p| p.rules.len()).sum::<usize>())
         });
@@ -435,7 +513,10 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
-    for (i, mut prog) in parsed.into_iter().enumerate() {
+    // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
+    let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
+    for (unit, mut prog) in units {
+        let i = unit.unwrap_or(usize::MAX);
         let scope = prog.doc_scopes.clone();
         let (named, library) = front::globals(&prog.settings);
         prog.settings.retain(|(k, _)| k != front::GLOBAL);
@@ -471,12 +552,17 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             .keys()
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
+            // The library's relations keep their names (decision 0089 §2).
+            .filter(|_| unit.is_some())
             // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
             // a repository file a policy reads (`.input r(IO=…)`) is its own.
             .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(&r.as_str()))
             .cloned()
             .collect();
-        policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
+        // The library held once is no policy's: canonical by construction, made over every document read (0091 §3).
+        if unit.is_some() {
+            policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
+        }
         let rename = |rel: &str| -> String {
             if own.contains(rel) {
                 return format!("p{i}_{rel}");
@@ -543,6 +629,12 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
         }
     }
+    // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
+    // the same for every program, so one analysis gives what each program's would.
+    if shared && makes_guests {
+        let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({} rules; decision 0058)", all.rules.len()));
+        hiding::hide(&mut all, bounds[0]);
+    }
     // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0091).
     let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
     let report = scoping::guard(&mut all, &policies).map_err(Error::Plan)?;
@@ -560,6 +652,78 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         )
     });
     Ok(all)
+}
+
+/// Of a program whose text names its libraries as modules (decision 0089 §5), the part the run's library does not
+/// hold, taken out of `prog`: what is left is the program's own. A library relation goes to the library unless the
+/// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
+/// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
+/// of it the library's) goes with them. Returns the relations taken out, and the cone's.
+fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, usize) {
+    use front::Literal;
+    let library: BTreeSet<&str> = modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r)).collect();
+    let reads = |r: &front::Rule| -> Vec<String> {
+        r.body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let edges: Vec<(String, Vec<String>)> = prog
+        .rules
+        .iter()
+        .map(|r| (r.head.rel.clone(), reads(r)))
+        .chain(prog.natives.iter().map(|(rel, n)| (rel.clone(), n.reads().into_iter().map(str::to_owned).collect())))
+        .collect();
+    let mut cone: BTreeSet<String> = modules.heads.iter().filter(|h| library.contains(h.as_str())).cloned().collect();
+    loop {
+        let before = cone.len();
+        for (head, body) in &edges {
+            if !cone.contains(head) && body.iter().any(|b| cone.contains(b)) {
+                cone.insert(head.clone());
+            }
+        }
+        if cone.len() == before {
+            break;
+        }
+    }
+    let mut readers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (head, body) in &edges {
+        for b in body {
+            readers.entry(b.as_str()).or_default().insert(head.as_str());
+        }
+    }
+    let mut part: BTreeSet<String> = library.iter().filter(|r| !cone.contains(**r)).map(|r| (*r).to_owned()).collect();
+    let candidates: BTreeSet<String> = prog
+        .decls
+        .keys()
+        .chain(prog.rules.iter().map(|r| &r.head.rel))
+        .chain(prog.natives.keys())
+        .filter(|r| !library.contains(r.as_str()) && !core.contains(*r) && !cone.contains(*r))
+        .cloned()
+        .collect();
+    loop {
+        let before = part.len();
+        for c in &candidates {
+            if !part.contains(c) && readers.get(c.as_str()).is_some_and(|rs| !rs.is_empty() && rs.iter().all(|h| part.contains(*h))) {
+                part.insert(c.clone());
+            }
+        }
+        if part.len() == before {
+            break;
+        }
+    }
+    let taken = part.iter().filter(|r| prog.decls.contains_key(*r) || prog.rules.iter().any(|x| &x.head.rel == *r)).count();
+    prog.rules.retain(|r| !part.contains(&r.head.rel));
+    prog.decls.retain(|r, _| !part.contains(r));
+    prog.facts.retain(|r, _| !part.contains(r));
+    prog.natives.retain(|r, _| !part.contains(r));
+    prog.lattice.retain(|r, _| !part.contains(r));
+    prog.nullary.retain(|r| !part.contains(r));
+    let cones = cone.iter().filter(|r| library.contains(r.as_str())).count();
+    (taken, cones)
 }
 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
@@ -1008,15 +1172,25 @@ pub(crate) fn run_with_options(
                 Ok(atoms)
             })?;
             drop(lowering);
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
+            drop(_step);
             // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "push the file-local joins into the chunks".into());
             let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
+            drop(_step);
             // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
             let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
+            drop(_step);
             // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
             // are the relations over them, before the program splits.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "merge identical relations again".into());
             let merged = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
+            drop(_step);
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+            drop(_step);
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
             let mut kept = prepared_cache().lock().expect("the prepared programs");
             if kept.len() >= PREPARED_KEPT {
@@ -1344,6 +1518,9 @@ pub(crate) fn run_with_options(
     // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
     #[cfg(target_family = "wasm")]
     let (send, chunks_in) = std::sync::mpsc::channel::<Result<Option<Chunk>>>();
+    // Dropped when this thread stops on an error, so the builder's next send fails and it ends: else the scope waits
+    // for a builder blocked on a full channel, and the error is never reported.
+    let chunks_in = std::cell::RefCell::new(Some(chunks_in));
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -1971,15 +2148,23 @@ pub(crate) fn run_with_options(
     };
     // One batch's chunks, to its end; false when the builder has ended.
     let drain = |process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<bool> {
-        loop {
+        let got = (|| loop {
             main_doing.set("wait");
-            match crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || chunks_in.recv()) {
-                Err(_) => return Ok(false),
+            let next = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || match chunks_in.borrow().as_ref() {
+                Some(rx) => rx.recv().map_err(|_| ()),
+                None => Err(()),
+            });
+            match next {
+                Err(()) => return Ok(false),
                 Ok(Err(e)) => return Err(e),
                 Ok(Ok(None)) => return Ok(true),
                 Ok(Ok(Some(chunk))) => process(chunk)?,
             }
+        })();
+        if got.is_err() {
+            chunks_in.borrow_mut().take();
         }
+        got
     };
     drain(&mut process)?;
     // Requests answered inside the fixpoint (decision 0065 §2a). The cone of requests runs on a connection of its

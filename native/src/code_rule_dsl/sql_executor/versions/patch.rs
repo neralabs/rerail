@@ -51,6 +51,11 @@ impl Version {
             unchanged.extend(rows);
             return self.loaded(unchanged, false, true);
         }
+        // Empty destinations already have the exact validated replacement. Re-inserting
+        // every incoming row would rebuild all persistent paths a second time.
+        if self.len() == 0 {
+            return self.loaded(rows, false, true);
+        }
         // `loaded` checks arity, nullability, counts, and duplicate primary keys.
         // It also reuses the original row ID when a key receives a different value.
         let incoming = self.loaded(rows, false, true)?;

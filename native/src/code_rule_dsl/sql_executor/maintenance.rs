@@ -441,6 +441,13 @@ pub(super) fn maintain(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
+    let previous = std::mem::take(&mut w.summaries);
+    let result = maintain_pass(w, run, changes, limit);
+    w.summaries = previous;
+    result
+}
+fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
+    changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value> {
     if run.temporal.contains_key(&0) {
         return temporal::initial::apply(w, run, changes, limit);
     }
