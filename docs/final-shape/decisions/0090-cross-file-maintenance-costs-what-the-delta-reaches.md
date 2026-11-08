@@ -1,7 +1,7 @@
 # 0090: Cross-file maintenance costs what the delta reaches
 
-Status: accepted (2026-11-08). The direction, and its order of work. Nothing in §1–§5 is built yet; aggregates by
-changed group (0077 §3) and Typing-support's three O125 fixes are in.
+Status: accepted (2026-11-08). The direction, and its order of work. Step 1 (the profile) is built and measured;
+§1–§5 are not built yet. Aggregates by changed group (0077 §3) and Typing-support's three O125 fixes are in.
 
 ## Intro
 
@@ -131,8 +131,9 @@ same rewrite comes back.
 Each step is measured before the next. Each is measured on the O125 spike (`calls.rr`, 84 files: CPU, RSS,
 findings equal to a cold run) and on a pack's cross-file rules over the data layer.
 
-1. **Profile the session's linear costs.** Spans for digest, bind and measure, old sources, strata, copy-out and
-   retain, so that each later step shows what it removed.
+1. **Profile the session's linear costs** (built): spans `session/digest inputs`, `rewrite and old sources`,
+   `bind and measure kept`, `plan and evaluate`, `copy derived out` and `retain`, and the `session_costs`
+   measurement above.
 2. **Kept relations stay engine relations (§1, first half).** `Retained` holds the run's `InRel`s. `r__old` binds
    them with their indexes, and `held_rows` and `columns_source` go. The target is the copy-in, copy-out and
    re-indexing time, gone.
@@ -143,6 +144,28 @@ findings equal to a cold run) and on a pack's cross-file rules over the data lay
 6. **Per-definition node ids** with 0083 step 5a. The target is that a comment edit has an empty exported delta.
 
 The end target is O125's own: a one-function edit under 5% of a cold cross part, in 1 GB.
+
+## Measured: step 1 on this branch
+
+`session::tests::session_costs` (ignored; `RERAIL_SESSION_COST_FILES`): generated modules, each importing the next
+and one of a seventh of them. The program has `dep`, a recursive `reach`, `fan` as a count, and two findings. Each
+edit changes one file. All 11 strata are maintained every time, and none is derived again. CPU seconds, debug
+build, load 20–60:
+
+| 1,500 files (`reach`: about 1.1 M rows) | cold | edit 0 | edit 1 | edit 2 |
+|---|---:|---:|---:|---:|
+| cross part | 4.8–5.8 | 11.5 | 13.6 | 12.2 |
+| `CYC__del`: loading `reach__old` and indexing it | | 2.16 | 2.00 | 2.89 |
+| `reach__minus`, `reach__plus`: whole-relation diffs | | 2.02 | 1.94 | 2.50 |
+| `reach__del`: loading old rows | | 0.79 | 0.63 | 0.67 |
+| binding and measuring kept relations | | 1.19 | 1.13 | 1.13 |
+
+At 3,000 files (`reach` about 4.5 M rows), the cold part's evaluation is 22.1 s, and an edit's is 51–70 s, with
+5.5–6.2 s binding and measuring.
+
+That is O125's ratio, 2.3–3.2x a cold part, on a program with no typing at all. Half of an edit's CPU is the
+copies and diffs that §1 removes: copying old rows in and indexing them, diffing whole relations, and measuring
+kept rows. The joins over the deltas cost almost nothing (`reach__del`'s joins: 0.000 s).
 
 ## What the prior work says
 
