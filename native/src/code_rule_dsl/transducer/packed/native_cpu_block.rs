@@ -60,6 +60,19 @@ impl CompiledBlock {
         (self.entry as *const u8, self.delay)
     }
 
+    /// Every output's words over `len` bytes at `start` of `arena`, read in place: the bytes
+    /// around them are not the file's, and read as zero (the edge blocks' masks).
+    #[cfg(test)]
+    pub(super) fn run_in_place(&self, arena: &[u8], start: usize, len: usize) -> Vec<Vec<u64>> {
+        let blocks = (len + usize::from(self.delay)).div_ceil(64);
+        assert!(start >= 1 && start + 64 * blocks <= arena.len(), "a byte before and the blocks inside the arena");
+        let row = Row { bytes: start as u64, blocks: blocks as u64, len: len as u64, out: 0 };
+        let mut out = vec![0u64; self.outputs * blocks + self.extracts.len()];
+        // SAFETY: the row's blocks and the byte before them lie in `arena`; `out` holds its words.
+        unsafe { (self.entry)(arena.as_ptr(), &row, 1, out.as_mut_ptr()) };
+        (0..self.outputs).map(|k| undelay(&(0..blocks).map(|i| out[i * self.outputs + k]).collect::<Vec<_>>(), self.output_delays[k], len)).collect()
+    }
+
     /// Every output's words over `bytes`; bits past the end are zero.
     pub(super) fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
         self.extract(bytes).outputs
@@ -410,16 +423,63 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let mut values: Vec<Option<Value>> = Vec::with_capacity(native.insts.len());
         // The block's 64 bytes, loaded once for every compare and class.
         let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
+        // The general body reads the file's bytes only: a lane past its end, or the byte
+        // before its first, reads as zero, as in the interpreter's padded blocks. So a block
+        // program runs in place over a slice of a larger buffer (tier 2's `CHECK` over a token,
+        // as simdjson's `parse_number` reads the number where it is). A full block needs no mask.
+        // Lane `j` of part `k` is byte `16k + j` of the block. `rel` is how many of the block's
+        // bytes are the file's; a lane's byte before is the file's when `lane - lo < rel + 1 - lo`
+        // (unsigned), `lo` being 1 in the first block, whose lane 0 has none.
+        let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
+        let masks: Option<(Value, Value, Value)> = (!full && (reads || back)).then(|| {
+            let start = f.ins().ishl_imm(i, 6);
+            let left = f.ins().isub(len, start);
+            let zero = f.ins().iconst(types::I64, 0);
+            let all = f.ins().iconst(types::I64, 64);
+            let left = f.ins().smin(left, all);
+            let rel = f.ins().smax(left, zero);
+            let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
+            let lo = f.ins().uextend(types::I64, first);
+            let rel_before = f.ins().iadd_imm(rel, 1);
+            let rel_before = f.ins().isub(rel_before, lo);
+            let mut splat8 = |v: Value| {
+                let v = f.ins().ireduce(types::I8, v);
+                f.ins().splat(types::I8X16, v)
+            };
+            (splat8(rel), splat8(lo), splat8(rel_before))
+        });
+        let lane_of = |f: &mut FunctionBuilder<'_>, part: i64| {
+            let lanes: Vec<u8> = (0..16).map(|j| (16 * part + j) as u8).collect();
+            let handle = f.func.dfg.constants.insert(ConstantData::from(&lanes[..]));
+            f.ins().vconst(types::I8X16, handle)
+        };
         let chunks: Vec<Value> = if reads {
-            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
+            (0..4)
+                .map(|part| {
+                    let v = f.ins().load(types::I8X16, loads, base, (part * 16) as i32);
+                    let Some((rel, _, _)) = masks else { return v };
+                    let lane = lane_of(&mut f, part);
+                    let keep = f.ins().icmp(IntCC::UnsignedLessThan, lane, rel);
+                    f.ins().band(v, keep)
+                })
+                .collect()
         } else {
             vec![]
         };
         // The block's bytes one back (each byte's byte before), loaded once for every `pair`:
-        // unaligned loads at -1, the first block's reading `FRONT`'s zeros.
-        let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
+        // unaligned loads at -1, the first block's reading `FRONT`'s zeros (or, in place, the
+        // byte before, masked).
         let befores: Vec<Value> = if back {
-            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16 - 1)).collect()
+            (0..4)
+                .map(|part| {
+                    let v = f.ins().load(types::I8X16, loads, base, (part * 16 - 1) as i32);
+                    let Some((_, lo, rel_before)) = masks else { return v };
+                    let lane = lane_of(&mut f, part);
+                    let lane = f.ins().isub(lane, lo);
+                    let keep = f.ins().icmp(IntCC::UnsignedLessThan, lane, rel_before);
+                    f.ins().band(v, keep)
+                })
+                .collect()
         } else {
             vec![]
         };

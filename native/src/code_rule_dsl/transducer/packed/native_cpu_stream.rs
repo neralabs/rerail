@@ -48,8 +48,6 @@ struct Context {
     open: *mut u32,
     returns: *mut u32,
     stack_cap: u64,
-    /// A token, copied for its check: `FRONT` zero bytes, then the token, then zeros.
-    scratch: *mut u8,
     /// The check's output words.
     words: *mut u64,
     /// The check's row (`native_cpu_block::Row`).
@@ -80,11 +78,13 @@ impl CompiledStream {
     /// The nodes the words write over the stream (`starts`, `lasts`) of `bytes`, or where a word
     /// refused the file: as `stream::run`.
     pub(super) fn run(&self, bytes: &[u8], starts: &[u32], lasts: &[u32]) -> Result<Vec<Node>, Refused> {
-        let mut padded = bytes.to_vec();
-        padded.resize(bytes.len() + PADDING, 0);
+        // `FRONT` bytes before the file (a check's first block loads the byte before its token,
+        // and masks it) and `PADDING` after.
+        let mut padded = vec![0u8; FRONT];
+        padded.extend_from_slice(bytes);
+        padded.resize(FRONT + bytes.len() + PADDING, 0);
         let mut starts = starts.to_vec();
         starts.push(bytes.len() as u32);
-        let mut scratch = vec![0u8; FRONT + bytes.len() + 2 * PADDING + 16];
         let mut words = vec![0u64; bytes.len() / 64 + 3];
         let mut cap = 2 * starts.len() + 8;
         loop {
@@ -93,7 +93,7 @@ impl CompiledStream {
             let mut open = vec![0u32; cap];
             let mut returns = vec![0u32; cap];
             let mut cx = Context {
-                bytes: padded.as_ptr(),
+                bytes: padded[FRONT..].as_ptr(),
                 len: bytes.len() as u64,
                 starts: starts.as_ptr(),
                 nstarts: (starts.len() - 1) as u64,
@@ -106,7 +106,6 @@ impl CompiledStream {
                 open: open.as_mut_ptr(),
                 returns: returns.as_mut_ptr(),
                 stack_cap: cap as u64,
-                scratch: scratch.as_mut_ptr(),
                 words: words.as_mut_ptr(),
                 row: [0; 4],
                 node_count: 0,
@@ -114,7 +113,7 @@ impl CompiledStream {
                 pc: 0,
             };
             // SAFETY: every pointer is to a buffer of the size the context gives, `bytes` with
-            // `PADDING` after it, `starts` with its sentinel, `scratch` and `words` sized for the
+            // `FRONT` before it and `PADDING` after, `starts` with its sentinel, `words` sized for the
             // longest token, the file.
             match unsafe { (self.entry)(&mut cx) } {
                 0 => {
@@ -166,7 +165,6 @@ struct Inputs {
     open: Value,
     returns: Value,
     stack_cap: Value,
-    scratch: Value,
     words: Value,
 }
 
@@ -272,7 +270,6 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             open: field(&mut f, offset_of!(Context, open)),
             returns: field(&mut f, offset_of!(Context, returns)),
             stack_cap: field(&mut f, offset_of!(Context, stack_cap)),
-            scratch: field(&mut f, offset_of!(Context, scratch)),
             words: field(&mut f, offset_of!(Context, words)),
         };
         let var = |f: &mut FunctionBuilder<'_>| {
@@ -397,44 +394,21 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     let (address, delay) = checks[usize::from(check)].entry();
                     let (start, end) = (f.use_var(r.start), f.use_var(r.end));
                     let n = f.ins().isub(end, start);
-                    let from = f.ins().iadd(i.bytes, start);
-                    let to = f.ins().iadd_imm(i.scratch, FRONT as i64);
-                    // The token, 16 bytes at a time, into the scratch after its zeros.
-                    let (head, body, copied) = (f.create_block(), f.create_block(), f.create_block());
-                    f.append_block_param(head, types::I64);
+                    // The check runs where the token is, as simdjson's `parse_number`: its row
+                    // is the token's start in the file's bytes, its blocks and its length. The
+                    // block function's edge blocks read nothing outside the token.
                     let zero = f.ins().iconst(types::I64, 0);
-                    f.ins().jump(head, &[zero.into()]);
-                    f.switch_to_block(head);
-                    let k = f.block_params(head)[0];
-                    let more = f.ins().icmp(IntCC::UnsignedLessThan, k, n);
-                    f.ins().brif(more, body, &[], copied, &[]);
-                    f.switch_to_block(body);
-                    let src = f.ins().iadd(from, k);
-                    let v = f.ins().load(types::I8X16, any, src, 0);
-                    let dst = f.ins().iadd(to, k);
-                    f.ins().store(rw, v, dst, 0);
-                    let k16 = f.ins().iadd_imm(k, 16);
-                    f.ins().jump(head, &[k16.into()]);
-                    f.switch_to_block(copied);
-                    // Zeros after it, over every block the check reads.
-                    let z8 = f.ins().iconst(types::I8, 0);
-                    let z = f.ins().splat(types::I8X16, z8);
-                    let tail = f.ins().iadd(to, n);
-                    for part in 0..5 {
-                        f.ins().store(rw, z, tail, part * 16);
-                    }
                     let blocks_n = f.ins().iadd_imm(n, i64::from(delay) + 63);
                     let blocks_n = f.ins().ushr_imm(blocks_n, 6);
                     let row = offset_of!(Context, row) as i32;
-                    let front = f.ins().iconst(types::I64, FRONT as i64);
-                    f.ins().store(rw, front, i.cx, row);
+                    f.ins().store(rw, start, i.cx, row);
                     f.ins().store(rw, blocks_n, i.cx, row + 8);
                     f.ins().store(rw, n, i.cx, row + 16);
                     f.ins().store(rw, zero, i.cx, row + 24);
                     let rows = f.ins().iadd_imm(i.cx, i64::from(row));
                     let one = f.ins().iconst(types::I64, 1);
                     let callee = f.ins().iconst(ptr, address as i64);
-                    f.ins().call_indirect(check_sig, callee, &[i.scratch, rows, one, i.words]);
+                    f.ins().call_indirect(check_sig, callee, &[i.bytes, rows, one, i.words]);
                     // The check's one output: any bit refuses, a word per 64 bytes.
                     let (head, body, done) = (f.create_block(), f.create_block(), f.create_block());
                     f.append_block_param(head, types::I64);

@@ -1324,3 +1324,33 @@ pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
     let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
     bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
 }
+
+/// A block program runs in place (tier 2's `CHECK` over a token): over a slice of a larger
+/// buffer, the bytes around it read as zero, so its outputs equal the slice's on its own. Here
+/// `pair` (the byte before, here bytes 0x10 to 0xef after such a byte) and `within`, at every
+/// length to 200 and inside bytes that would change them.
+#[test]
+fn a_block_program_runs_in_place() {
+    let rows = "  block 0 table 0 lo=ffffffffffffffffffffffffffffffff hi=00ffffffffffffffffffffffffffff00
+  block 0 %0 = pair t0 t0 0x01
+  block 0 %1 = eq 0x00
+  block 0 %2 = within
+  block 0 %3 = and %1, %2
+  block 0 %4 = prev %3, 1
+  block 0 output %0
+  block 0 output %3
+  block 0 output %4
+";
+    let p = program(rows);
+    let compiled = native_cpu_block::compile(&native_ir::lower(&p).expect("lowers").block_programs.remove(0)).expect("compiles");
+    for len in 0..200usize {
+        let slice: Vec<u8> = (0..len).map(|j| if j % 7 == 3 { 0 } else { b'a' + (j % 5) as u8 }).collect();
+        for around in [0u8, 0xff, b'x'] {
+            let mut arena = vec![around; 1 + 3];
+            let start = arena.len();
+            arena.extend_from_slice(&slice);
+            arena.resize(arena.len() + 128, around);
+            assert_eq!(compiled.run_in_place(&arena, start, len), compiled.run(&slice), "{len} bytes, around {around:#04x}");
+        }
+    }
+}
