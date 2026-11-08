@@ -1762,7 +1762,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
-      "sha256": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
+      "sha256": "1ea98c7138d2a5bc1695ab83f6665c9abc7852e70e20bd345df2e216acf7e5a6",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/discovery.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1778,6 +1778,11 @@
           "before": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
           "after": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
           "reason": "Move global configuration and final ordering out of file-local and recursive request inputs"
+        },
+        {
+          "before": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
+          "after": "1ea98c7138d2a5bc1695ab83f6665c9abc7852e70e20bd345df2e216acf7e5a6",
+          "reason": "Separate discovery and assembly order and require the proven size-balanced worker-order regression"
         }
       ]
     }

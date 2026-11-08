@@ -45,6 +45,12 @@ CASES=[
     case('directory-cycle-pruned',[file('pkg/kept.py'),link('pkg/back','..')],['pkg']),
     case('normalized-relative-root',[file('impl/a.py')],['./impl//']),
     case('dot-root-prunes',[file('pkg/kept.py'),file('tmp/ignored.py'),file('.venv/ignored.py'),file('tests/ignored.py')],['.']),
+    case('weighted-worker-order',[
+         file('impl/a.py','#'+('x'*10000)+'\nfrom impl.helpers import helper_a\ndef main(): helper_a()\n'),
+         file('impl/a/__init__.py','from impl.helpers import helper_b\ndef main(): helper_b()\n'),
+         file('impl/helpers.py','def helper_a(): pass\ndef helper_b(): pass\n'),
+         file('data_layer/api.py','from impl.a import main\n'),
+         *[file(f'impl/filler_{i:02}.py','value = 1\n') for i in range(49)]],['impl']),
 ]
 FORMAT='rerail.survey-production-discovery/v1'
 
@@ -70,7 +76,7 @@ def program():
     return text+'''
 #include "data-layer/survey-discovery.rr"
 .violation DiscoveredPath(at: span, ordinal: number, path: symbol) code "DISCOVERED_PATH" "discovered"
-DiscoveredPath(@place("", 0), i, path) :- sgs_scan_path(path, i).
+DiscoveredPath(@place("", 0), i, path) :- sgd_discovery_path(path, i).
 .violation DemandedPath(at: span, path: symbol) code "DEMANDED_PATH" "demanded"
 DemandedPath(@place("", 0), path) :- sgs_graph_path(path).
 '''
@@ -99,6 +105,9 @@ def check_positives(cases):
     if scoped['paths']!=['impl/a.py'] or scoped['analysis']['unused_functions']!=['impl.a::dead']:raise ValueError('Missing export negative or unreachable positive')
     if by_id['component-path-order']['paths']!=['impl/a/z.py','impl/a-/x.py','impl/a.py','impl/a_/y.py']:raise ValueError('Path component order lost')
     if by_id['dot-root-prunes']['paths']!=['pkg/kept.py']:raise ValueError('Dot root must prune excluded trees')
+    weighted=by_id['weighted-worker-order']
+    if len(weighted['paths'])!=52 or weighted['analysis']['unused_functions']!=['impl.helpers::helper_a']:
+        raise ValueError('Missing size-balanced worker-order counterexample')
 
 
 def main():

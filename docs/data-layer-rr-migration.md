@@ -1663,6 +1663,25 @@ Above fifty files, Python scans size-balanced chunks. That changes which duplica
 The native library currently uses discovery order for graph assembly, so it reports `helper_b` where Python reports `helper_a`.
 The production default still refuses execution. No rule is marked accepted.
 
+### Mandatory worker-order regression
+
+The discovery corpus now requires the 52-file counterexample. It contains eighteen cases with no exclusions.
+All eighteen reference cases pass through the pinned production scanner.
+The native comparison completes all eighteen: seventeen pass and `weighted-worker-order` fails.
+Its selected paths and load-demand set match. Its complete finding lists expose the incorrect winning module definition.
+The [required regression receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-required-worker-order-red.json.gz) records this failure explicitly.
+The native command rejects the earlier seventeen-case baseline as incomplete.
+
+Discovery order now has its own `sgd_discovery_path` relation, separate from graph assembly's `sgs_scan_path`.
+They remain aliases until the size-balanced scanner-order producer is implemented.
+The production default continues to refuse execution. The inventory remains eighty-nine drafts and eleven absent translations.
+
+Broader native checks pass 86 frontend tests plus the answer-gating and program-facts tests.
+Together with focused kernels, these cover 92 distinct native tests.
+Two frontend utilities remain ignored: `write_rr_translations` writes generated files, and `hand_written_rules_lowering_report` prints a report.
+Neither utility contains test assertions. The tooling suite passes 135 tests and ninety subtests.
+This evidence supports the shared-engine changes. It does not clear the mandatory worker-order failure or complete rule 89.
+
 The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the source and raw-graph records, controls, complete programs, build identities, and regression logs.
 The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`, verified again on the final CLI.
 Self, super, module, and chained-reference resolution still need source-level integration. Complete edges, exported roots, discovery, and lifecycle acceptance remain open.

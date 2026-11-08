@@ -68,5 +68,9 @@ sgd_file(root, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(ro
 // NUL is not a filesystem component. A NUL separator preserves Python Path's
 // component comparison, including a directory a/ before a neighbouring a.py.
 sgd_key(i, @replace_all(path, "/", "\u0000")) :- sgd_root(i, root), sgd_file(root, path).
-sgs_scan_path(@replace_all(key, "\u0000", "/"), ordinal) :- ordered_rows(_, key, ordinal, sgd_key).
+.decl sgd_discovery_path(path: symbol, ordinal: number)
+sgd_discovery_path(@replace_all(key, "\u0000", "/"), ordinal) :- ordered_rows(_, key, ordinal, sgd_key).
+// The production scanner reorders more than fifty files into size-balanced
+// chunks. The mandatory weighted-worker-order regression records that gap.
+sgs_scan_path(path, ordinal) :- sgd_discovery_path(path, ordinal).
 sgs_graph_path(path) :- sgd_file(_, path).

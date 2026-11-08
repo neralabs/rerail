@@ -178,6 +178,8 @@ This avoids correlated file-ranking counts and aggregate feedback in the loading
 
 The seventeen-case checkpoint proves selected paths, load demand, and complete findings on its small fixtures.
 It does not prove scanner order above fifty files. A separate 52-file counterexample changes the reported unreachable helper.
+That counterexample is now mandatory in the eighteen-case corpus. Its native comparison currently fails.
+`sgd_discovery_path` records discovery order; `sgs_scan_path` names assembly order and still needs the weighted producer.
 The [linter](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_internal_dead_code.py#L969)
 builds its graph through the source [chunk partitioner](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1486).
 The source assembler consumes chunks in partition order, despite concurrent execution.
