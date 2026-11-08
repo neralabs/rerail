@@ -13,16 +13,28 @@ FUNCTIONS = ['analyze_file', 'analyze_source', '_facts_for_files', '_collect_cur
 METHODS = {'ConnectionParameterFinder': ['visit'], 'InternalTransactionFinder': ['visit', '_check_call']}
 
 
+def file_groups(rows):
+    """FactEngine returns complete file bundles in worker completion order."""
+    closed=set();current=None
+    for row in rows:
+        path=dict(row['items'])['file']
+        if path!=current:
+            if path in closed:raise ValueError('Source file groups must be contiguous')
+            if current is not None:closed.add(current)
+            current=path
+    return sorted(rows,key=lambda row:dict(row['items'])['file'])
+
+
 class Contract:
     def __init__(self, args):
         self.args=args; self.originals=[]; self.calls=[]; self.cases={}; self.collected=[]
-        self.depth=0; self.item=None; self.observed={}; self.semantic_fallbacks=[]; self.backend=None
+        self.depth=0; self.item=None; self.observed={}; self.semantic_fallbacks=[]; self.backend=None; self.comparison_contracts=[]
         self.baseline=read_json(args.baseline) if args.command=='native' else None
         if self.baseline:
             from suite import Suite
             self.backend=Suite(args.source,args.engine,['transaction_patterns'],args.part,args.parts,args.baseline,args.rule_root)
         self.harness={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in [Path(__file__),
-            *[Path(__file__).with_name(n) for n in ['ast_transport.py','callback_wrappers_port.py','replay.py','suite.py','dto.py']]]}
+            *[Path(__file__).with_name(n) for n in ['patterns_port.py','ast_transport.py','callback_wrappers_port.py','replay.py','suite.py','dto.py']]]}
 
     def value(self, value):
         if isinstance(value, ast.AST):return dict(syntax=ast_input(value)[0])
@@ -70,7 +82,13 @@ class Contract:
                         if self.baseline:
                             expected=[r for r in self.baseline['calls'] if r['test']==event['test']]
                             index=self.observed.get(event['test'],0);self.observed[event['test']]=index+1
-                            compare(expected[index],event)
+                            left,right=expected[index],event
+                            if entry in {'_collect_current_findings','_facts_for_files'} and 'return' in left and 'return' in right:
+                                left=dict(left,**{'return':file_groups(left['return'])})
+                                right=dict(right,**{'return':file_groups(right['return'])})
+                                self.comparison_contracts.append(dict(test=event['test'],entry=entry,
+                                    contract='Complete contiguous file groups may permute; every field, duplicate and in-file order remains exact'))
+                            compare(left,right)
                 return run
             self.originals.append((owner,name,original));setattr(owner,name,wrap(original,signature,entry))
         if self.backend:
@@ -107,7 +125,7 @@ class Contract:
         result=dict(format='rerail.transaction-patterns-original-contracts/v1',sourcePin=PIN,commit=PIN,
             pytest_exit_code=int(code),exitCode=int(code),events=[],source_mismatches=[],oracle=self.backend is None,
             fullMigrationAcceptance=False,part=self.args.part,parts=self.args.parts,collected=self.collected,
-            cases=self.cases,calls=self.calls,missingResults=missing,semanticFallbacks=self.semantic_fallbacks,
+            cases=self.cases,calls=self.calls,missingResults=missing,semanticFallbacks=self.semantic_fallbacks,comparisonContracts=self.comparison_contracts,
             casesWithoutCalls=[t for t in selected if not any(r['test']==t for r in self.calls)],harnessFiles=self.harness,
             sourceFiles={name:sha((self.args.source/name).read_bytes()) for name in
                 ['scripts/lint_transaction_patterns.py','scripts/tests/test_lint_transaction_patterns.py']})

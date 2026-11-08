@@ -1425,7 +1425,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "sha256": "580e06fe5a16b04b5d77b2b87682f25cd32736addccb3fa090931a7cc8b88ea6",
+      "sha256": "606b317190f8420cd0d04df5bb85a95c2a5a17e1645a53ede410e1bc30405e2b",
       "origin": "authored",
       "upstreamPath": "scripts/lint_transaction_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1662,7 +1662,7 @@
       "legacySha256": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "ruleSha256": "580e06fe5a16b04b5d77b2b87682f25cd32736addccb3fa090931a7cc8b88ea6"
+      "ruleSha256": "606b317190f8420cd0d04df5bb85a95c2a5a17e1645a53ede410e1bc30405e2b"
     },
     {
       "check": "lazy_result_usage",

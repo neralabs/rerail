@@ -5,7 +5,8 @@ from data_layer_rr_text import character_class
 
 def inference():
     q=json.dumps
-    layer=r'\Al'+character_class(str.isdecimal)+r'{4}_[^\n]'
+    # Source re.match accepts a prefix; the .rr match constraint matches the whole symbol.
+    layer=r'\Al'+character_class(str.isdecimal)+r'{4}_[^\n](?s:.*)'
     text=r'''
 .decl tp_infer_request(name: symbol, path: symbol)
 tp_infer_request(name, path) :- tp_function(f, name), tp_position(f, d, _, _, _), tp_doc(d, path).

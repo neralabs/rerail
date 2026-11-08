@@ -68,6 +68,11 @@ def scan(suite,module,entry,root,paths,categorized,provided=None):
 
 
 def install(suite,module):
+    constants=query(suite,'constants');groups={}
+    for row in constants:groups.setdefault(row['parameters']['kind'],[]).append(row['parameters']['value'])
+    for name,kind,constructor in [('CORE_LEGITIMATE_FUNCTIONS','core',set),('ALLOWED_INIT_CLASS_PATTERNS','init',set),
+        ('TS_BRIDGE_MODULE_PATTERNS','bridge',list)]:suite.replace(module,name,constructor(groups.get(kind,[])))
+    suite.replace(module,'BASELINE_PUBLIC_KEY_HEX',groups['key'][0]);suite.replace(module,'BASELINE_FILE',groups['file'][0])
     def infer(func_name,file_path):
         rows=query(suite,'_infer_category',dict(functionName=func_name,originalPath=file_path))
         return next(r['parameters']['category'] for r in rows if r['code']=='TP_INFER')
