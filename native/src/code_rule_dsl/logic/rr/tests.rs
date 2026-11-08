@@ -365,6 +365,24 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
+/// `root(a)`, tied to `s` only through a disjunction the context leaves out, would test that some root exists in any document (`ann_root(_)`), making
+/// every row depend on every file.
+#[test]
+fn a_context_leaves_out_literals_not_tied_to_its_variables() {
+    let p = parse(concat!(
+        ".decl root(t: node)\n.decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n",
+        ".input root, within, kind\n",
+        ".decl hit(e: node, s: node)\n.output hit\n",
+        "hit(r, s) :- root(a), (s = a ; within(s, a)), kind(s, \"string\"), parsed(s, \"annotation\", r).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty(), "the parse's demand has a context");
+    assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]

@@ -353,7 +353,7 @@ struct Prepared {
 fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
     use front::{Literal, Term};
     use std::io::Write;
-    const ORDER: [&str; 9] = ["config", "same-unit", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
+    const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.cross;
     let Ok((sccs, _)) = front::strata(cross) else { return };
@@ -403,6 +403,13 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 }
             }
         }
+        // `$a = $b` names one value twice.
+        for l in &rule.body {
+            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                parent.insert(ra, rb);
+            }
+        }
         let roots: BTreeSet<String> = seen.iter().map(|v| find(&mut parent, v)).collect();
         Some(roots.len())
     };
@@ -431,7 +438,9 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
             }
             v
         };
-        let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else { "lookup" };
+        // One positive atom with its documents projected away: a union of each document's rows.
+        let union = matches!(rule.body.as_slice(), [Literal::Atom(a)] if !a.neg && !carriers(&a.rel).is_empty() && carriers(&a.rel).iter().all(|&c| matches!(a.args.get(c), Some(Term::Wild))));
+        let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
         let mut bump = |c: &'static str, worst: &mut &'static str| {
             if rank(c) > rank(*worst) {
                 *worst = c;

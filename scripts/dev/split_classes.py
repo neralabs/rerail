@@ -1,6 +1,6 @@
 import sys, os, re, collections
 d, R = sys.argv[1], sys.argv[2]
-ORDER = ["file-local","config","same-unit","recursive-local","lookup","exists","grouped","total","recursive"]
+ORDER = ["file-local","config","same-unit","union","recursive-local","lookup","exists","grouped","total","recursive"]
 rank = ORDER.index
 checks = {}
 for f in sorted(os.listdir(d)):
