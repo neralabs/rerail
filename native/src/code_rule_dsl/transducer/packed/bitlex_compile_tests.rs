@@ -588,8 +588,10 @@ const JSON_STATE_BITS: usize = 15;
 /// keywords only is checked over its token's whole length, so `truee` is not `true`. A fixed
 /// length the compiler can prove would drop them. 85 and 15 when the number check moved from a
 /// program of its own, run per number in tier 2, into tier 1's masks (`JSON_NUMBER_CHECK_OPS`).
-const JSON_OPS: usize = 85;
-const JSON_CARRIED_WORDS: usize = 15;
+/// 86 and 16 when the check's span fills from the starts it takes (`start & taken`), one `and`
+/// and its field: the exemption of other rows' starts went with it.
+const JSON_OPS: usize = 86;
+const JSON_CARRIED_WORDS: usize = 16;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -839,8 +841,9 @@ fn json_number_check_is_tier1_masks() {
 }
 
 /// The check's operations (a ratchet). 100 as a program of its own run per number in tier 2;
-/// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`.
-const JSON_NUMBER_CHECK_OPS: usize = 43;
+/// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`; 44 when its
+/// span fills from the starts it takes.
+const JSON_NUMBER_CHECK_OPS: usize = 44;
 
 /// JSON's number check, as tier 1's masks, equals the reference's grammar on every word of up
 /// to five bytes over `-01.eEx`, and on longer ones: a file of the word alone is parsed, both

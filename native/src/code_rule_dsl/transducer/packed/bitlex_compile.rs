@@ -992,8 +992,8 @@ impl Lowering {
     ///   one `prev` of their sources' masks ORed.
     /// - a self-loop on bytes `L` keeps it there over a run: `fill(entered, ~L | start)`.
     ///
-    /// The machine cannot be re-entered inside a token once it has no state, so a token is refused
-    /// where its last byte is outside every accepting state. The states are taken in the order of
+    /// The machine cannot be re-entered inside a token once it has no state, so a checked token is
+    /// refused where its last byte is outside every accepting state. The states are taken in the order of
     /// their arms: a cycle through two or more states is refused.
     ///
     /// A token beginning with a byte the machine does not take is tier 2's: its switch refuses
@@ -1021,6 +1021,12 @@ impl Lowering {
             return Err("a cycle through two or more states: not compiled yet".into());
         }
         let zero = self.leaf(BlockOp::Const(0), false);
+        // The tokens the machine checks: those beginning with a byte it takes. Every mask below
+        // is made from these starts, so a block with none (and no state carried in) has every
+        // mask zero: the lowering may skip them (`native_cpu_lanes`, gates).
+        let takes = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]));
+        let taken = self.class_set(takes);
+        let checked = self.and(start, taken)?;
         let mut masks: Vec<Option<Val>> = vec![None; n];
         for &q in &order {
             // The arms into `q`, by their bytes: the sources of each.
@@ -1036,7 +1042,7 @@ impl Lowering {
                 let bytes = self.class_set(bytes);
                 // From the start (a self-loop on the start is entered at the first byte only).
                 if from.contains(&0) {
-                    let here = self.and(start, bytes)?;
+                    let here = self.and(checked, bytes)?;
                     first = self.or(first, here)?;
                 }
                 let mut sources = zero;
@@ -1070,15 +1076,11 @@ impl Lowering {
         for q in (0..n).filter(|&q| accept[q]) {
             good = self.or(good, masks[q].expect("every state"))?;
         }
-        // The tokens beginning with a byte the machine does not take: tier 2's.
-        let takes = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]));
-        let others = self.class_set(takes.map(|w| !w));
-        let theirs = self.and(start, others)?;
-        if !self.is_zero(theirs) {
-            let run = self.fill(theirs, start)?;
-            good = self.or(good, run)?;
-        }
-        let mut refused = self.andnot(last, good)?;
+        // The checked tokens' bytes, up to the next start: a token beginning with a byte the
+        // machine does not take is tier 2's (its switch takes a keyword or refuses the byte).
+        let span = self.fill(checked, start)?;
+        let ends = self.andnot(last, good)?;
+        let mut refused = self.and(span, ends)?;
         for w in words.iter().filter(|w| takes[usize::from(w[0] / 64)] >> (w[0] % 64) & 1 == 1) {
             let here = self.keyword(start, last, w)?;
             let back = self.prev(here, w.len() as u64 - 1)?;

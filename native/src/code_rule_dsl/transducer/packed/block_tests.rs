@@ -283,7 +283,7 @@ fn check_lowering(name: &str, p: &Program) {
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch), "{name}: the body's only branches are the loop's, the flattening's and the ASCII test's");
+    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
             assert!(lines.iter().any(|l| opcode(l) == "iadd_imm" && l.split(" ;").next().is_some_and(|l| l.ends_with(", 8"))), "{name}: {block} loops, not eight bits at a time");

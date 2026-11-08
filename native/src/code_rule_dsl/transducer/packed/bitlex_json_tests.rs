@@ -419,12 +419,29 @@ fn json_shapes() {
             })
             .collect();
         eprintln!("  hot loop blocks: {}; carried words {}", blocks.join(", "), super::block_tests::carried_params(&c.parser.tier1.clif) - super::block_tests::sink_params(&c.native.block_programs[0]));
+        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        for r in &plan.regions {
+            let insts = &c.native.block_programs[0].insts;
+            let gate = insts[r.gate];
+            let of: Vec<String> = gate.operands().iter().map(|&o| format!("%{o} = {:?}", insts[o])).collect();
+            eprintln!("  gated region: gate %{} = {gate:?} ({}), {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
+        }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
         eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
-        if std::env::var("RERAIL_DUMP").is_ok() {
-            eprintln!("{}", c.parser.tier1.disassembly);
+        match std::env::var("RERAIL_DUMP").as_deref() {
+            Ok("clif") => eprintln!("{}", c.parser.tier1.clif),
+            Ok("ops") => {
+                // Each value: on the byte vectors, made a mask, its region, its readers.
+                let insts = &c.native.block_programs[0].insts;
+                for (at, inst) in insts.iter().enumerate() {
+                    let users: Vec<String> = (0..insts.len()).filter(|&u| insts[u].operands().contains(&at)).map(|u| format!("%{u}")).collect();
+                    eprintln!("%{at} = {inst:?} lane={} mask={} full={:?} region={:?} users={}", plan.lanes[at], plan.mask[at], plan.full[at], plan.region_of[at], users.join(","));
+                }
+            }
+            Ok(_) => eprintln!("{}", c.parser.tier1.disassembly),
+            Err(_) => {}
         }
     }
 }
@@ -468,5 +485,36 @@ fn json_tier1_vectors_equal_the_interpreter() {
         let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
         assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
         assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
+    }
+}
+
+/// The gated regions (`native_cpu_lanes::Region`): skipped on a block without their gate's bytes
+/// and without their carried bits, so a number, an escape or a keyword must come out the same
+/// wherever it falls, a block edge inside it, or spanning a block, or ending one.
+#[test]
+fn json_gated_regions_equal_the_interpreter() {
+    let tokens: [&[u8]; 14] = [
+        b"1", b"-12.5e+30", b"0", b"01", b"1.", b"-", b"2e", b"123456789012345678901234567890", b"\"\\u00e9\"", b"\"\\ud83d\\ude00\"",
+        b"\"\\u12\"", b"true", b"nul", b"[1,2]",
+    ];
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        assert!(c.parser.tier1.gate_branches > 0, "{name}: no gated region");
+        let block = &c.program.block_programs()[0];
+        let mut files: Vec<Vec<u8>> = Vec::new();
+        for t in tokens {
+            for at in 0..140 {
+                // In a file of spaces, and at the file's end.
+                let mut f = vec![b' '; 200];
+                f[at..at + t.len()].copy_from_slice(t);
+                files.push(f[..at + t.len()].to_vec());
+                files.push(f);
+            }
+            // One file of the token over and over: every block holds one, or a part.
+            files.push(t.iter().chain(b" ").copied().cycle().take(400).collect());
+        }
+        for f in &files {
+            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+        }
     }
 }

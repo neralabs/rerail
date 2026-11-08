@@ -43,6 +43,39 @@ pub(super) struct Plan {
     pub(super) before: bool,
     /// The full-block body has an ASCII twin: some value is known on ASCII windows.
     pub(super) ascii_branch: bool,
+    /// Each value's word in a full block, when it is the same in every one: made of constants
+    /// and `within` only (all ones there), `prev`s of such values included.
+    pub(super) full: Vec<Option<u64>>,
+    /// The gated regions of the full body (`Region`), in the order they were chosen.
+    pub(super) regions: Vec<Region>,
+    /// Each value's region, if it is in one.
+    pub(super) region_of: Vec<Option<usize>>,
+}
+
+/// A gated region: values that are zero in a block where the gate is zero and their own carried
+/// bits came in zero, and values only they read. The full body computes them behind one branch,
+/// so a block with nothing for them (a block without numbers, for a number check) skips them,
+/// their class masks and their `prev`s included.
+#[derive(Debug)]
+pub(super) struct Region {
+    pub(super) gate: usize,
+    /// The values provably zero with the gate (the gate itself not among them).
+    pub(super) zero: Vec<usize>,
+    /// Every value the region computes, in order: `zero`, and values only the region reads.
+    pub(super) members: Vec<usize>,
+}
+
+/// What one operation costs, roughly, in instructions: for choosing the regions worth a branch.
+fn weight(inst: &BlockInst, lane: bool, mask: bool) -> usize {
+    match inst {
+        _ if lane => if mask { 12 } else { 0 },
+        BlockInst::Const(_) | BlockInst::Within(_) => 0,
+        BlockInst::Prev(..) => 6,
+        BlockInst::Fill(..) => 9,
+        BlockInst::Toggle(_) => 14,
+        BlockInst::Escaped(_) => 14,
+        _ => 1,
+    }
 }
 
 /// What may be true of a value over windows of ASCII bytes: whether it can be 0, whether 1.
@@ -120,12 +153,13 @@ impl Plan {
                     continue;
                 }
                 let demote = match *inst {
-                    // A `prev` read only as a mask, its operand's only reader: on the vectors it
-                    // makes the same one mask and needs no carried field. Otherwise its operand's
-                    // one mask, shifted, serves every `prev` of it.
+                    // A `prev` read only as a mask: on the vectors it shifts bytes and needs no
+                    // carried field, so a gated region can skip it and its operand. Only where the
+                    // operand is made a mask anyway, for a reader other than `prev`s, is the
+                    // mask shifted instead.
                     BlockInst::Prev(a, _) => {
                         let a = usize::from(a);
-                        output[a] || users[a].iter().any(|&u| u != at)
+                        output[a] || users[a].iter().any(|&u| u != at && !lanes[u] && !matches!(native.insts[u], BlockInst::Prev(..)))
                     }
                     BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => {
                         inst.operands().into_iter().all(|x| needs_mask(&lanes, x) || matches!(native.insts[x], BlockInst::Const(_)))
@@ -146,13 +180,164 @@ impl Plan {
         let before = native.insts.iter().enumerate().any(|(at, i)| lanes[at] && matches!(i, BlockInst::Prev(..)));
         // Worth a branch: a byte test or class known on ASCII bytes (not a constant).
         let ascii_branch = native.insts.iter().enumerate().any(|(at, i)| lanes[at] && ascii[at].is_some() && matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_)));
-        Plan { lanes, mask, shiftable, at_zero, ascii, before, ascii_branch }
+        let full = full_words(native, &lanes);
+        // The values with a carried field: a carry of their own, or a `prev` of them on masks.
+        let field: Vec<bool> = (0..n)
+            .map(|x| matches!(native.insts[x], BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Escaped(_)) || users[x].iter().any(|&u| matches!(native.insts[u], BlockInst::Prev(..)) && !lanes[u]))
+            .collect();
+        let (regions, region_of) = regions(native, &lanes, &mask, &users, &output, &field, &full);
+        Plan { lanes, mask, shiftable, at_zero, ascii, before, ascii_branch, full, regions, region_of }
     }
 
     /// Whether `prev` instruction `at` reads a carried word (it is not on the vectors).
     pub(super) fn carries(&self, at: usize) -> bool {
         !self.lanes[at]
     }
+}
+
+/// Each value's word in a full block when it is the same in every full block. A full block's
+/// `within` is all ones; the block before it is full too, or the file's first, where `within d`
+/// lacks its low `d` bits and a `prev` shifts in zeros. So the bits known of each value are
+/// followed in both kinds of block, and a `prev` in a full block knows the bits it shifts in when
+/// the top bits are known, and the same, in both.
+fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
+    /// The bits known of a value, and their values.
+    #[derive(Clone, Copy)]
+    struct Known {
+        known: u64,
+        value: u64,
+    }
+    const NONE: Known = Known { known: 0, value: 0 };
+    let all = |c: u64| Known { known: u64::MAX, value: c };
+    let not = |x: Known| Known { known: x.known, value: !x.value & x.known };
+    let and = |x: Known, y: Known| {
+        let ones = x.known & x.value & y.known & y.value;
+        let zeros = (x.known & !x.value) | (y.known & !y.value);
+        Known { known: ones | zeros, value: ones }
+    };
+    let or = |x: Known, y: Known| not(and(not(x), not(y)));
+    let xor = |x: Known, y: Known| Known { known: x.known & y.known, value: (x.value ^ y.value) & x.known & y.known };
+    let n = native.insts.len();
+    // (in a full block, in the first block)
+    let mut w: Vec<(Known, Known)> = vec![(NONE, NONE); n];
+    for (at, inst) in native.insts.iter().enumerate() {
+        let get = |x: u16| w[usize::from(x)];
+        let both = |f: &dyn Fn(Known, Known) -> Known, a: u16, b: u16| {
+            let ((xa, ya), (xb, yb)) = (get(a), get(b));
+            (f(xa, xb), f(ya, yb))
+        };
+        w[at] = match *inst {
+            BlockInst::Const(c) => (all(c), all(c)),
+            _ if lanes[at] => (NONE, NONE),
+            BlockInst::Within(d) => (all(u64::MAX), all(if d == 0 { u64::MAX } else { !((1u64 << d) - 1) })),
+            BlockInst::Not(a) => {
+                let (x, y) = get(a);
+                (not(x), not(y))
+            }
+            BlockInst::And(a, b) => both(&and, a, b),
+            BlockInst::Or(a, b) => both(&or, a, b),
+            BlockInst::Xor(a, b) => both(&xor, a, b),
+            BlockInst::AndNot(a, b) => both(&|x, y| and(x, not(y)), a, b),
+            BlockInst::Prev(a, k) => {
+                let (x, y) = get(a);
+                let low = (1u64 << k) - 1;
+                let top = |c: u64| c >> (64 - u32::from(k));
+                // Shifted in: the last block's top bits, known where both kinds agree on them.
+                let same = top(x.known) & top(y.known) & !(top(x.value) ^ top(y.value));
+                let full = Known { known: (x.known << k) | same, value: (x.value << k) | (top(x.value) & same) };
+                let first = Known { known: (y.known << k) | low, value: y.value << k };
+                (full, first)
+            }
+            _ => (NONE, NONE),
+        };
+    }
+    w.into_iter().map(|(full, _)| (full.known == u64::MAX).then_some(full.value)).collect()
+}
+
+/// The gated regions (`Region`). A gate is an `and` of a mask with a byte class, as a token's
+/// start and the bytes a check takes: sparse. A value is zero with it when, in a block where the
+/// gate is zero and the carried bits of these values came in zero, it must be: an `and` with
+/// one, an `and not` of one, an `or` or `xor` of two, a `prev` of one, a `fill` from one, a
+/// `toggle` or `escaped` of one. The regions worth a branch are chosen greedily, the largest
+/// first, each without the values of those before it.
+fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usize>], output: &[bool], field: &[bool], full: &[Option<u64>]) -> (Vec<Region>, Vec<Option<usize>>) {
+    const WORTH: usize = 24;
+    const MOST: usize = 4;
+    let n = native.insts.len();
+    let mut region_of: Vec<Option<usize>> = vec![None; n];
+    let mut gates = vec![false; n];
+    let mut out: Vec<Region> = Vec::new();
+    let zeros = |g: usize, region_of: &[Option<usize>]| -> Vec<bool> {
+        let mut z = vec![false; n];
+        z[g] = true;
+        for (at, inst) in native.insts.iter().enumerate().skip(g + 1) {
+            if lanes[at] || region_of[at].is_some() || full[at].is_some() {
+                continue;
+            }
+            let is = |x: u16| z[usize::from(x)] || matches!(native.insts[usize::from(x)], BlockInst::Const(0));
+            z[at] = match *inst {
+                BlockInst::And(a, b) => is(a) || is(b),
+                BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Fill(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => is(a),
+                BlockInst::Or(a, b) | BlockInst::Xor(a, b) => is(a) && is(b),
+                _ => false,
+            };
+        }
+        z[g] = false;
+        z
+    };
+    for _ in 0..MOST {
+        let mut worthy: Vec<(usize, usize, Vec<bool>, Vec<bool>)> = Vec::new();
+        for (g, inst) in native.insts.iter().enumerate() {
+            let candidate = !lanes[g]
+                && region_of[g].is_none()
+                && !gates[g]
+                && match *inst {
+                    // Inside a mask that is not a byte class and not the same in every full block:
+                    // a quote's bits, say, are in nearly every block.
+                    BlockInst::And(a, b) => lanes[usize::from(a)] != lanes[usize::from(b)] && [a, b].iter().all(|&x| lanes[usize::from(x)] || full[usize::from(x)].is_none()),
+                    BlockInst::AndNot(a, b) => !lanes[usize::from(a)] && lanes[usize::from(b)] && full[usize::from(a)].is_none(),
+                    _ => false,
+                };
+            if !candidate {
+                continue;
+            }
+            let z = zeros(g, &region_of);
+            // The values only the region reads, with no carried field of their own: made inside it.
+            let mut only = vec![false; n];
+            for x in (0..n).rev() {
+                if z[x] || x == g || gates[x] || region_of[x].is_some() || output[x] || field[x] || users[x].is_empty() || (lanes[x] && !mask[x]) {
+                    continue;
+                }
+                let inside = |u: usize| z[u] || only[u];
+                only[x] = if lanes[x] { users[x].iter().filter(|&&u| !lanes[u]).all(|&u| inside(u)) } else { users[x].iter().all(|&u| inside(u)) };
+            }
+            let w: usize = (0..n).filter(|&x| z[x] || only[x]).map(|x| weight(&native.insts[x], lanes[x], mask[x])).sum();
+            if w >= WORTH {
+                worthy.push((g, w, z, only));
+            }
+        }
+        let mut best = worthy.iter().max_by_key(|c| (c.1, std::cmp::Reverse(c.0)));
+        // A gate inside the region that skips nearly as much is sparser: the number check's, say,
+        // a token start with a number's first byte, inside a token start without some other
+        // byte.
+        while let Some(c) = best {
+            let inner = worthy.iter().filter(|d| d.0 != c.0 && (c.2[d.0] || c.3[d.0]) && d.1 * 4 >= c.1 * 3).max_by_key(|d| (d.1, std::cmp::Reverse(d.0)));
+            match inner {
+                Some(d) => best = Some(d),
+                None => break,
+            }
+        }
+        let best = best.cloned();
+        let Some((g, _, z, only)) = best else { break };
+        let r = out.len();
+        let members: Vec<usize> = (0..n).filter(|&x| z[x] || only[x]).collect();
+        for &x in &members {
+            region_of[x] = Some(r);
+        }
+        gates[g] = true;
+        out.push(Region { gate: g, zero: (0..n).filter(|&x| z[x]).collect(), members });
+    }
+    (out, region_of)
 }
 
 /// A value's 16 bytes: known (all zero or all ones), or a vector, complemented or not (a
@@ -193,6 +378,7 @@ impl Lane {
 
 /// The byte vectors of one block's body, and each byte-local value's chunks, made on demand.
 /// Chunk 0 is the 16 bytes before the block; chunks 1 to 4 are the block's.
+#[derive(Clone)]
 pub(super) struct Lanes<'a> {
     native: &'a BlockNative,
     plan: &'a Plan,
