@@ -517,6 +517,102 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     Ok((states, arms))
 }
 
+/// The extras (`extra K`): tokens the grammar does not name, which may come between any two
+/// others. Each goes where tree-sitter's parser puts it: in the lowest node holding the tokens
+/// on either side, after the nodes that end before it. A state's arms close those nodes when
+/// the next token comes; so an extra arm closes them first, writes the extra's leaf, and goes on
+/// in a copy of the state without those closes. That needs every way on from the state to close
+/// the same number: where they differ, the extra's place depends on the token after it, and the
+/// state has no extra arm (the file goes to tree-sitter). So too a nested level that may end
+/// where it could go on.
+///
+/// A state takes extras only where `apart(token, extra)` for each of its tokens: tier 2 tells a
+/// token's row by its first byte, so an extra there must not begin as one of the state's tokens
+/// (inside a string, say, where tier 1 makes no comment).
+///
+/// In state 0 nothing is open: the extra arm opens the root first (so the root starts at the
+/// extra) and goes on in a copy of state 0 whose arms do not open it.
+pub(super) fn with_extras(
+    mut states: Vec<StateRow>,
+    mut arms: Vec<ArmRow>,
+    extras: &[u16],
+    apart: &dyn Fn(u16, u16) -> bool,
+) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
+    if extras.is_empty() {
+        return Ok((states, arms));
+    }
+    if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {
+        return Err(format!("extra kind {} is a token of the grammar too", a.token));
+    }
+    if arms.iter().any(|a| a.to == 0 || a.push == Some(0)) {
+        return Err("extras with the root's start state entered again: not compiled yet".into());
+    }
+    let root = states[0].level;
+    let closes = |acts: &[Act]| acts.iter().take_while(|a| **a == Act::Close).count();
+    let leaf = Act::Leaf { field: 0, supers: vec![] };
+    let mut new_arms: Vec<ArmRow> = Vec::new();
+    // State 0: its arms all open the root first.
+    let first: Vec<&ArmRow> = arms.iter().filter(|a| a.from == 0).collect();
+    let open_root = match first.first().and_then(|a| a.acts.first()) {
+        Some(o @ Act::Open { kind, .. }) if *kind == root && first.iter().all(|a| a.acts.first() == Some(o)) => o.clone(),
+        _ => return Err("extras where state 0's arms do not all open the root: not compiled yet".into()),
+    };
+    let zero_takes = first.iter().all(|a| extras.iter().all(|&k| apart(a.token, k)));
+    let opened = states.len() as u16;
+    states.push(states[0].clone());
+    for a in first.iter().map(|a| (*a).clone()).collect::<Vec<_>>() {
+        arms.push(ArmRow { from: opened, acts: a.acts[1..].to_vec(), ..a });
+    }
+    if zero_takes {
+        for &k in extras {
+            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), leaf.clone()], to: opened, push: None });
+        }
+    }
+    // Every other state, and the copies made on the way.
+    let mut copies: HashMap<(u16, usize), u16> = HashMap::new();
+    let mut s = 1u16;
+    while usize::from(s) < states.len() {
+        let mine: Vec<ArmRow> = arms.iter().filter(|a| a.from == s).cloned().collect();
+        let nested = states[usize::from(s)].level != root;
+        let end = states[usize::from(s)].end;
+        // A nested state with no arms ends its level at once, taking no token.
+        if mine.is_empty() && nested || (nested && end.is_some()) {
+            s += 1;
+            continue;
+        }
+        if !mine.iter().all(|a| extras.iter().all(|&k| apart(a.token, k))) {
+            s += 1;
+            continue;
+        }
+        let mut ways: Vec<usize> = mine.iter().map(|a| closes(&a.acts)).collect();
+        ways.extend(end.map(usize::from));
+        let m = ways[0];
+        if ways.iter().all(|&w| w == m) {
+            let to = if m == 0 {
+                s
+            } else {
+                *copies.entry((s, m)).or_insert_with(|| {
+                    let c = states.len() as u16;
+                    states.push(StateRow { level: states[usize::from(s)].level, end: end.map(|e| e - m as u8) });
+                    for a in &mine {
+                        arms.push(ArmRow { from: c, acts: a.acts[m..].to_vec(), ..a.clone() });
+                    }
+                    c
+                })
+            };
+            let mut acts = vec![Act::Close; m];
+            acts.push(leaf.clone());
+            for &k in extras {
+                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: None });
+            }
+        }
+        s += 1;
+    }
+    arms.extend(new_arms);
+    arms.sort_by_key(|a| a.from);
+    Ok((states, arms))
+}
+
 /// A `check`'s grammar over a token's bytes to a byte state machine (doc 18 §4): its names are
 /// byte classes, its literals bytes. Glushkov's positions, each a set of bytes; then a state per
 /// set of positions reached (subset construction), the arms from one state on disjoint bytes.

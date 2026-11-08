@@ -79,7 +79,48 @@ pub(super) fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8)
         }
     }
     if atoms.len() > 12 {
-        return [u64::MAX; 4];
+        // Too many to try each: every free value unknown, in three-valued logic. Still sound (a
+        // byte for which the value is false whatever they are is left out), less sharp.
+        fn kleene(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, b: u8, atoms: &HashMap<(u16, u32), usize>) -> Option<bool> {
+            let e = |a: u16, l: u32| kleene(ops, tables, a, l, b, atoms);
+            if atoms.contains_key(&(at, lag)) {
+                return None;
+            }
+            match ops[usize::from(at)] {
+                BlockOp::Eq(c) => Some(c == b),
+                BlockOp::Class { table, bits } => Some(tables[usize::from(table)].member(b, bits)),
+                BlockOp::Not(a) => e(a, lag).map(|x| !x),
+                BlockOp::And(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                },
+                BlockOp::Or(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                },
+                BlockOp::Xor(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(x), Some(y)) => Some(x != y),
+                    _ => None,
+                },
+                BlockOp::AndNot(a, c) => match (e(a, lag), e(c, lag)) {
+                    (Some(false), _) | (_, Some(true)) => Some(false),
+                    (Some(true), Some(false)) => Some(true),
+                    _ => None,
+                },
+                BlockOp::Prev(a, k) => e(a, lag + u32::from(k)),
+                BlockOp::Const(c) => Some(c != 0),
+                _ => unreachable!("every other operation is free"),
+            }
+        }
+        let mut out = [0u64; 4];
+        for b in 0..=255u8 {
+            if kleene(ops, tables, v, 0, b, &atoms) != Some(false) {
+                out[usize::from(b / 64)] |= 1 << (b % 64);
+            }
+        }
+        return out;
     }
     fn eval(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, d: u32, b: u8, atoms: &HashMap<(u16, u32), usize>, set: u32) -> bool {
         let e = |a: u16, l: u32| eval(ops, tables, a, l, d, b, atoms, set);

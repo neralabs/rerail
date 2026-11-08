@@ -1,0 +1,77 @@
+# Step 13: JSON with comments (JSONC), `{"a": 1 /* one */, // two\n "b": 2}`.
+#
+# New: block comments, one more `fill` from each `/*` to the byte after the `*/` that closes
+# it. A comment of one kind holding the other's opener goes to tree-sitter.
+
+lexer ladder13
+
+class ws    = ' ' '\t' '\n' '\r' 0x0b 0x0c
+class op    = '{' '}' '[' ']' ',' ':'
+class quote = '"'
+class backslash = '\\'
+class lf    = '\n'
+class digit   = '0'..'9'
+class nonzero = '1'..'9'
+class expo    = 'e' 'E'
+class slash   = '/'
+class star    = '*'
+
+mask escaped  = escaped(backslash)
+mask q        = quote & ~escaped
+mask inside   = toggle(q)
+mask opening  = q & inside
+mask closing  = q & ~inside
+mask body     = inside & ~opening
+mask esc      = backslash & body & ~escaped   # an escape's backslash
+mask esc_last = escaped & body                # the byte it escapes
+mask content  = body & ~esc & ~esc_last
+mask outside  = ~inside & ~closing
+# A line comment: from `//` outside a string up to, not including, the end of the line. The
+# string state is computed without comments, so a quote in a comment would be wrong: such a file
+# goes to tree-sitter.
+mask line     = fill(outside & slash & next(slash), lf)
+# A block comment: from `/*` to the first `*/` after it, the opener's `*` not counted. One
+# `fill` from each opener up to the byte after a closing `/`.
+mask opener   = outside & slash & next(star)
+mask closer   = star & next(slash) & ~prev(opener, 1)   # the closing `*`
+mask block    = fill(opener, prev(closer, 2))
+mask shut     = block & prev(closer, 1)                 # the closing `/`
+mask comment  = line | block
+mask last_byte = ~next(~empty)
+mask code     = outside & ~comment
+
+token '"'             = start q
+token string_content  = start starts(content) last lasts(content)
+token escape_sequence = start esc last esc_last
+keywords escape_sequence {
+  "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
+  "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
+  "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
+} required
+# A comment starts at its opener, unless inside another comment of its kind; it ends at the
+# end of its line, or at its closing `/`.
+token comment        = start slash & (starts(line) | (opener & ~prev(block & ~shut, 1))) last lasts(line) | shut
+mask word            = code & ~ws & ~op & ~slash
+token number         = start starts(word) last lasts(word)
+keywords number { "true" -> true  "false" -> false  "null" -> null }
+token punctuation    = start code & op
+keywords punctuation { "{" "}" "[" "]" "," ":" } required
+
+skip code & ws
+error "newline in a string"   when body & lf
+error "a slash not starting a comment" when code & slash
+escape "a quote in a comment" when comment & quote
+escape "a comment opened in a comment" when (line & next(star) & slash) | (block & ~opener & slash & next(slash))
+error "an unclosed block comment" when block & ~shut & last_byte
+
+check number = ['-'] ('0' | nonzero digit*) ['.' digit*] [expo ['-'] digit+]
+
+tree ladder {
+  extra comment
+  node document = value
+  node object nested = '{' [pair (',' pair)*] '}'
+  node pair = key: string ':' value: value
+  node array nested = '[' [value (',' value)*] ']'
+  node string = '"' (string_content | escape_sequence)* '"'
+  choice value supertype _value = object | array | string | number | true | false | null
+}

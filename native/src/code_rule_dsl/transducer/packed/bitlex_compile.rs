@@ -244,6 +244,27 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 check: check_of.get(&r).copied(),
             });
         }
+        // The extras' arms (grammar::with_extras), in each state whose tokens begin with bytes
+        // apart from the extras': tier 2 tells a token's row by its first byte.
+        let (states, arms) = {
+            let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
+            let mut first: HashMap<u16, ByteSet> = HashMap::new();
+            for r in &rows {
+                if r.kind != 0 {
+                    let e = first.entry(r.kind).or_insert([0; 4]);
+                    (0..4).for_each(|i| e[i] |= r.first[i]);
+                }
+                for (w, k) in &r.keywords {
+                    let e = first.entry(*k).or_insert([0; 4]);
+                    e[usize::from(w[0] / 64)] |= 1 << (w[0] % 64);
+                }
+            }
+            let apart = |a: u16, b: u16| match (first.get(&a), first.get(&b)) {
+                (Some(x), Some(y)) => (0..4).all(|i| x[i] & y[i] == 0),
+                _ => false,
+            };
+            grammar::with_extras(states, arms, &extras, &apart)?
+        };
         let guards = bitlex_tier2::lower(&states, &arms, &rows, 0)?.guards;
         // A guard: a row beginning with a byte the switch gives another row.
         for &(r, set) in &guards {
@@ -254,9 +275,6 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         // The words again, now that the fallback's totals are known: each must be zero.
         let empties = low.fallback()?.len() as u16;
         let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties)?;
-        if !low.extra.is_empty() {
-            return Err("extra kinds in tier 2's words: not compiled yet".into());
-        }
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), checks, lowered.text, takes_last));
     }

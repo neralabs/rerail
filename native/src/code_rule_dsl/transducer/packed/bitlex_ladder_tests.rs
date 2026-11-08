@@ -37,7 +37,15 @@ fn steps() -> Vec<(String, String)> {
         .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
         .collect();
     out.sort();
+    // `RERAIL_LADDER`: only the steps whose names hold it.
+    let only = std::env::var("RERAIL_LADDER").ok();
+    out.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
     out
+}
+
+/// A step's seed, from its name: the same documents whichever steps run.
+fn seed(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
 /// What a step's documents are drawn from: its tree rules, and its tokens' keywords and checks.
@@ -50,11 +58,14 @@ struct Lang {
     classes: HashMap<String, Vec<(u32, u32)>>,
     /// The fewest tokens each rule can match, for a document's last level.
     least: HashMap<String, usize>,
+    /// Kinds that may come between any two tokens (`extra`).
+    extras: Vec<String>,
 }
 
 impl Lang {
     fn of(stmts: &[Stmt]) -> Lang {
         let (mut rules, mut order, mut keywords, mut checks, mut classes) = (HashMap::new(), Vec::new(), HashMap::new(), HashMap::new(), HashMap::new());
+        let mut extras = Vec::new();
         for s in stmts {
             match s {
                 Stmt::Class(n, r) => {
@@ -77,6 +88,7 @@ impl Lang {
                             Stmt::Check { kind, body } => {
                                 checks.insert(kind.clone(), body.clone());
                             }
+                            Stmt::Extra(kinds) => extras.extend(kinds.iter().cloned()),
                             _ => {}
                         }
                     }
@@ -87,7 +99,7 @@ impl Lang {
                 _ => {}
             }
         }
-        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new() };
+        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new(), extras };
         // The fewest tokens of each rule: a fixpoint from "unreachable".
         for _ in 0..32 {
             for name in &order {
@@ -162,6 +174,16 @@ impl Lang {
         if let Some(ws) = self.keywords.get(k) {
             return rng.pick(ws).clone();
         }
+        // An extra (a comment): line and block comments, with bytes that look like other tokens.
+        if self.extras.iter().any(|e| e == k) {
+            let text = if rng.below(8) == 0 {
+                // Ones a lexer may send to tree-sitter: a quote, or one kind's opener in the other.
+                *rng.pick(&["// a, [1] \"x", "/* \" */", "/* // */", "// /* x"])
+            } else {
+                *rng.pick(&["// c", "//", "// a, [1] x", "/* c */", "/**/", "/***/", "/* a * b / c */", "/* [ */", "/*\n\n*/"])
+            };
+            return text.as_bytes().to_vec();
+        }
         let n = if long { 60 + rng.below(100) } else { 1 + rng.below(6) };
         (0..n).flat_map(|_| rng.pick(&["a", "Z", "0", " ", "_", ".", "/", "é", "{", ","]).as_bytes().to_vec()).collect()
     }
@@ -201,22 +223,52 @@ impl Lang {
 /// A step's documents: sentences of its grammar with random white space between tokens (and a
 /// space where two would run together), then each with one byte changed, dropped or doubled, and
 /// the empty file and one space.
-fn documents(lang: &Lang, seed: u64) -> Vec<Vec<u8>> {
+fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> Vec<Vec<u8>> {
     let mut rng = Rng(0x1add_e700 ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     let root = Gram::Sym(lang.root.clone());
-    for _ in 0..60 {
+    let (mut accepted, mut rejected) = (0, 0);
+    for _ in 0..600 {
+        if accepted >= 60 {
+            break;
+        }
         let mut tokens = Vec::new();
         let depth = 1 + rng.below(5) as u32;
         lang.derive(&mut rng, &root, depth, &mut tokens);
         let mut doc: Vec<u8> = Vec::new();
+        let mut tokens: Vec<Vec<u8>> = tokens;
+        // The extras, between tokens and at either end.
+        if !lang.extras.is_empty() {
+            let mut with = Vec::new();
+            for t in tokens.drain(..).chain([Vec::new()]) {
+                while rng.below(3) == 0 {
+                    let e = lang.token(&mut rng, &lang.extras[0]);
+                    with.push(e);
+                }
+                if !t.is_empty() {
+                    with.push(t);
+                }
+            }
+            tokens = with;
+        }
         for t in tokens {
-            let space = *rng.pick(&["", "", " ", "\n", " \t "]);
+            // A line comment ends at the line's end.
+            let line = doc.windows(2).rposition(|w| w == b"//").is_some_and(|p| !doc[p..].contains(&b'\n') && !doc[..p].ends_with(b"*") && doc[..p].iter().filter(|&&b| b == b'"').count() % 2 == 0);
+            let space = if line { "\n" } else { *rng.pick(&["", "", " ", "\n", " \t "]) };
             let joins = doc.last().is_some_and(u8::is_ascii_alphanumeric) && t.first().is_some_and(u8::is_ascii_alphanumeric);
             doc.extend(if joins && space.is_empty() { " " } else { space }.as_bytes());
             doc.extend(t);
         }
         doc.extend(rng.pick(&["", "\n", " "]).as_bytes());
+        // Sentences the reference accepts, and some it does not (a sample token its lexer
+        // refuses, say): the mutations below make many more of those.
+        if accepts(&doc) {
+            accepted += 1;
+        } else if rejected < 20 {
+            rejected += 1;
+        } else {
+            continue;
+        }
         out.push(doc);
     }
     let valid = out.len();
@@ -373,12 +425,13 @@ fn check_shape(name: &str, c: &Compiled) {
 #[test]
 fn every_step_parses_as_the_reference() {
     let mut differ: Vec<String> = Vec::new();
-    for (k, (name, source)) in steps().iter().enumerate() {
+    for (name, source) in &steps() {
         let c = compile_step(name, source);
         check_shape(name, &c);
         let lang = Lang::of(&c.stmts);
-        let (mut parsed, mut fell, mut sitter) = (0usize, 0usize, 0usize);
-        for bytes in documents(&lang, k as u64) {
+        let (mut parsed, mut fell, mut sitter, mut with_extras) = (0usize, 0usize, 0usize, 0usize);
+        let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+        for bytes in documents(&lang, seed(name), &|b| reference(&c, b).is_some()) {
             let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
             let want = reference(&c, &bytes);
             let run = c.program.block_programs()[0].run_files(&[&bytes]).remove(0);
@@ -390,12 +443,15 @@ fn every_step_parses_as_the_reference() {
                 break;
             }
             if interp != want || compiled != want {
-                differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?}\n  compiled {compiled:?}", show()));
+                let why = stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
+                let fell = run.totals.iter().any(|&t| t != 0);
+                differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
                 break;
             }
             match &want {
                 Some(nodes) => {
                     parsed += 1;
+                    with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
                     if json_step(name) {
                         let ts = tree_sitter_json(&bytes);
                         let ours = named(&c, nodes);
@@ -409,8 +465,8 @@ fn every_step_parses_as_the_reference() {
                 None => fell += 1,
             }
         }
-        eprintln!("{name}: {parsed} parsed ({sitter} equal to tree-sitter-json), {fell} to tree-sitter, {} words", c.native.structural.len());
-        if parsed < 20 || fell < 10 {
+        eprintln!("{name}: {parsed} parsed ({sitter} equal to tree-sitter-json, {with_extras} with extras), {fell} to tree-sitter, {} words", c.native.structural.len());
+        if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
             differ.push(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
         }
     }
@@ -425,7 +481,7 @@ fn every_step_on_metal_equals_the_interpreter() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let steps = steps();
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
-    let docs: Vec<Vec<Vec<u8>>> = compiled.iter().enumerate().map(|(k, c)| documents(&Lang::of(&c.stmts), k as u64)).collect();
+    let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some())).collect();
     let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
     let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().flat_map(|(p, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
     let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
