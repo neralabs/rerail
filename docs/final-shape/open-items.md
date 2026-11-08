@@ -2261,6 +2261,33 @@ to run (an empty demand split); both are fixed (`77762bf31`).
 **Closure:** the full tree runs within the 1 GB budget by the OS's measure, at no more than a few times the
 script's CPU, with its findings equal to the script's; the s200 pack runs within 1 GB.
 
+**Pack memory, after the merge (2026-11-08).** The merge took the s200 pack from 1,257 MB to 2.6–3.0 GB. The cause
+was not the memo: the prepared 66-rule program is 775k fact rows (32 MB of `.rr`), stored as one document and read
+back off one tape for its check (decision 0074), and that parse peaked at about 1.5 GB in the stats phase. A
+stored program is now documents of at most 20,000 rows, each its own tape (`9298b00aa`): 1.56 GB peak, the same 61
+findings, and a warm run reads the parts back. Then (`42c30725a`):
+
+- *Semi-joins per relation.* `semijoin_bases` was all-or-nothing, so one cross-file walk in the pack held every
+  attribute whole. It is now a taint fixpoint per attribute. It also found that `tape(n, par, …)` is no attribute:
+  `par` is a parent node typed as a number, and the `rr_up` walks climb it.
+- *Options are constants.* `option`/`option_item` rows are the same in every chunk, so a relation built from them is
+  file-local (`bootstrap-engine-invariants`: 143 to 100 cross-file rules); the memo key folds in the options.
+- *Chunks sized to the run's budget.* A chunk adds at most three quarters of what is left of 1 GB
+  (`RERAIL_RUN_MB`), not a fixed 384 MB.
+
+Now: 61 findings, 861G instructions, 1,530 MB peak (`time -l`: 1.71 GB), load average 65–106. Where it goes, measured
+by live heap at each chunk: 374 MB before the first chunk (the prepared program, its plans and automata), then about
+50 MB more with each chunk, kept for the cross part. At the end that is 15.2M base values (`node`, `docof`, `line`,
+`text`, `child`, `field`, about 120 MB raw) and 1.5M per-value statistics (`Totals.vals`, about 60 MB). A chunk adds
+200–490 MB at its peak (4.4–7.7 KB a node). The base rows stay whole because cross-file rules reach nodes no export
+holds: `authentication-plan-purity` walks `field(x, f, v)` from a cross-file relation's nodes (so `node` and `text`
+stay whole), the pack's eleventh policy walks `child` (`docof`, `visit_index`), and a diagnostic decodes a tainted
+finding (`line`). Before options were constants, `bootstrap-engine-invariants` also enumerated every node of its
+documents cross-file (`bei_node(n, d) :- docof(n, d), bei_doc(d)`); it no longer does.
+
+**Next:** hold those base rows on disk (`x`, as the exports are), or keep, for a walk from held nodes, the rows of
+their children too; and bound the per-value statistics (a sketch, not a map).
+
 ## O114. `.scope` forms the run does not read
 
 The run now reads only the documents the policies' `.scope` globs (`dirs`, `include`, `exclude`, `tests false`)
