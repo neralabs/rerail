@@ -3,7 +3,7 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "data-layer/survey-source.rr"
+#include "data-layer/survey-body.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"
@@ -26,3 +26,9 @@ property_text(n, "base", i, text) :- sgs_base(n, i, text).
 Property(@place(path, 0), k, path, s, i, text) :- property_text(n, k, i, text), sgs_symbol(n, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
 .violation ClassAttribute(at: span, kind: symbol, path: symbol, symbol_ordinal: number, ordinal: number, name: symbol, text: symbol) code "SURVEY_CLASS_ATTRIBUTE" "attribute"
 ClassAttribute(@place(path, 0), "class_attribute", path, s, i, name, text) :- sgs_class_attribute(n, i, name, text), sgs_symbol(n, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
+.violation RawRef(at: span, kind: symbol, path: symbol, symbol_ordinal: number, ordinal: number, ref_kind: symbol, base: symbol, has_base: number, attr: symbol) code "SURVEY_RAW_REF" "reference"
+RawRef(@place(path, 0), "raw_ref", path, s, i, k, base, has, attr) :- sgb_raw_ref(f, i, k, base, has, attr), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
+.violation ExecutionHit(at: span, kind: symbol, path: symbol, symbol_ordinal: number, name: symbol) code "SURVEY_EXECUTION_HIT" "execution"
+ExecutionHit(@place(path, 0), "execution_hit", path, s, name) :- sgb_execution(f, name), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
+.violation LocalImport(at: span, kind: symbol, path: symbol, symbol_ordinal: number, name: symbol, target: symbol) code "SURVEY_LOCAL_IMPORT" "import"
+LocalImport(@place(path, 0), "local_import", path, s, name, target) :- sgb_local_import(f, name, target), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).

@@ -51,6 +51,9 @@ CASES = [
     ('body-except-and-patterns', {'a.py': 'def f():\n global external\n try:\n  action()\n except Error as error:\n  consume(error)\n match subject:\n  case pkg.C(value) if predicate(value):\n   consume(value)\n'}),
     ('body-conditional-visit-order', {'a.py': 'def f():\n result = consume(name) if (name := condition) else other(name)\n consume({(key := source): value, other: consume(key)})\n'}),
     ('body-relative-imports', {'__init__.py': 'def f():\n from . import skip\n from ..base import X\n', 'pkg/__init__.py': 'def f():\n from . import A\n from ..base import B\n'}),
+    ('body-non-simple-execution', {'a.py': 'def f():\n factory().grammar_fetch_opaque()\n registry[key].execute_grammar_opaque()\n self.worker.grammar_fetch_private()\n factory().execute()\n'}),
+    ('body-generator-arguments', {'a.py': 'def f():\n consume(transform(item) for item in source)\n consume(x for x in source if pred(x))\n consume(*(factory(x) for x in source), **keywords)\n'}),
+    ('body-more-binding-forms', {'a.py': 'def f():\n for first, *rest in source:\n  consume(first, rest)\n with manager() as resource:\n  consume(resource)\n x += x\n x\n callback = lambda *, only=default: consume(only)\n'}),
 ]
 
 
