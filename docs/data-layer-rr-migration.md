@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`0ab7966c9`. Merge `f286e6a13` adopts Final's first library-module implementation.
+`2b494d4ef`. Merge `60839bc48` adopts Final's equal-request sharing and stage-three measurement notes.
+Merge `f286e6a13` adopts Final's first library-module implementation.
 Merge `7a846bfca` adopts Final's parser-generator updates and the preceding library-module design.
 The preceding merge adds cross-file rows memoized by import component.
 The preceding merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
@@ -2064,3 +2065,29 @@ Earlier receipts remain evidence for their recorded engines only.
 This work does not complete rule 89 or the whole migration.
 Native CLI behavior, registry integration, remaining default-entry contracts, and eleven absent translations remain open.
 No production Python execution, new runtime mode, or Linear ticket was added.
+
+### 2026-11-08 — Final stage-two uptake after the reporting cohort
+
+Merge `60839bc48` adopts Final through `2b494d4ef` after the preceding acceptance cohort finishes.
+It includes equal-request sharing from `98f1f96f1` and the subsequent per-unit memo measurements.
+The earlier receipt retains its actual `0ab7966c9` base. It does not claim these later changes.
+
+A module fixture now runs three consumers through the current `logic` API.
+Two consumers request identical rows. The third requests different rows.
+The profile records two distinct requests for three asking programs.
+All three answers match the corresponding separate answers, including the repeated request.
+Both copy-comparison switches remain unset.
+
+The new root CLI and unit builds use source `8ccb4ce4e` and Final `2b494d4ef`.
+Compilation took 39.249 and 66.225 seconds respectively, separate from execution.
+The updated cohort passes all fifty-four reporting cases, four original assertions, eight workspace update steps, and eleven reporting controls.
+All 100 readers pass in one CLI invocation.
+All 104 focused native tests and 148 tooling tests pass, with 104 tooling subtests.
+The native total includes Final's new library-sharing regression.
+The AST-pattern test also passes cold and on two subsequent warm runs.
+
+The [stage-two receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-stage2-acceptance.json.gz)
+retains complete results, request-sharing profiles, builds, program snapshots, and harness snapshots.
+The wider graph corpus remains separately recorded in the preceding cohort.
+No full repository cold run occurred.
+Rule 89's CLI and registry work, eleven absent translations, and full migration acceptance remain outstanding.

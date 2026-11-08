@@ -9153,3 +9153,15 @@ The repaired CLI build took 27.992 seconds. The repaired unit build took 41.053 
 Compile time remains separate from execution time.
 No full repository cold run occurred.
 The [reporting receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-acceptance.json.gz) retains the fixture phase measurements and the failed cache experiment.
+
+### 2026-11-08 — Equal-request sharing adopted between acceptance cohorts
+
+Merge `60839bc48` adopts Final `2b494d4ef`, including request sharing by key.
+A three-consumer fixture produces two request keys: two equal requests share one cone, and the different request retains its own cone.
+All three answers match their separate runs.
+The profile records the two keys explicitly, with both copy-comparison switches unset.
+
+The updated CLI build took 39.249 seconds. The unit build took 66.225 seconds.
+These compile times remain separate from execution measurements.
+The [stage-two receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-stage2-acceptance.json.gz) retains the fixture profiles and exact source hashes.
+This check proves request sharing and isolation for the fixture. It does not establish a full repository performance improvement.

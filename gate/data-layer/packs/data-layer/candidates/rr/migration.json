@@ -2994,16 +2994,16 @@
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
     "upstreamMerge": "60839bc48b04abac24284399e4ef71a7fed0c68c",
     "cliArtifact": {
-      "engineCommit": "d744214d817643328810e820249e51dda11b7308",
-      "upstreamCommit": "0ab7966c9705e741974fa5e355b2d26fad599c91",
+      "engineCommit": "8ccb4ce4e96d549e41ee3848a713c4596febbb20",
+      "upstreamCommit": "2b494d4efa8aa2c7ec993f3f935aa59da3650742",
       "sourceTrees": {
-        "native": "fca68ec9f0ff9f1b5220626724dccf06ed6ef0c4",
+        "native": "b2b6709840ade6304c8b744fae25d06fa3223194",
         "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
       },
-      "path": ".rerail/modern-engine-alignment/cli-d9c04b9db10a7f57",
-      "sha256": "d9c04b9db10a7f5754e292de2ce5491ae672b8ab922b695791a33eeefe0bb897",
+      "path": ".rerail/modern-engine-alignment/cli-e03b012dab19311d",
+      "sha256": "e03b012dab19311dda12745c31067a460f617592de6160b561552cc8ae310555",
       "command": [
         "cargo",
         "build",
@@ -3014,7 +3014,7 @@
         "--bin",
         "rerail-engine"
       ],
-      "seconds": 27.992
+      "seconds": 39.249
     }
   }
 }
