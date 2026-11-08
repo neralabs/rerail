@@ -27,6 +27,12 @@ CASES = [
     ('relative-imports', {'pkg/sub/a.py': 'from . import one\nfrom ..base import Two as Alias\nfrom ... import three\nfrom ....b import Four\n', 'pkg/sub/__init__.py': 'from . import one\nfrom ..base import Two\n', 'a.py': 'from . import skip\nfrom ..base import X\n'}),
     ('duplicate-aliases', {'a.py': 'from first import a as x, b as x\nimport a as y, b as y\nfrom third import x\n'}),
     ('future-imports', {'a.py': 'from __future__ import annotations\ndef f(): pass\n'}),
+    ('signature-kinds', {'a.py': 'def f(pos: int, /, x: list[int], y=1, *args: str, z: A | None = None, **kwargs: object) -> tuple[int, str]: pass\nclass C:\n def m(self, cls: int, x: str, *, self: int = 0, cls: bool = True): pass\n'}),
+    ('signature-empty', {'a.py': 'def f(): pass\nclass C:\n def m(self, /, *args, **kwargs): pass\n'}),
+    ('signature-canonical', {'a.py': 'async def f(x: (((A| B))), y: "A") -> dict [str,list[tuple[A,B]]]: pass\n'}),
+    ('module-refs', {'a.py': 'import ignored\nvalue = target\ndef omitted(x=NoDefault) -> NoReturn:\n return NoBody\nclass C(NoBase):\n field: FieldType = DefaultValue\n @decorate(DecoratorArg)\n def m(self, x: NoParam = MethodDefault, *, y=KeywordDefault) -> NoResult:\n  return NoMethodBody\n'}),
+    ('conditional-module-refs', {'a.py': 'if flag:\n def f(x=Default):\n  return IncludedBody\nclass C:\n if flag:\n  def m(self, x=OtherDefault):\n   return IncludedMethodBody\n class Nested(Base):\n  def n(self): return NestedBody\n'}),
+    ('module-ref-bindings', {'a.py': 'values = [x for x in source if pred(x)]\na: Alias = factory()\nclass C:\n store = target\n def m(self, /, x=PosDefault, *, y=KwDefault): pass\n'}),
 ]
 
 
@@ -41,11 +47,17 @@ def source_rows(source, files):
             rows.append(dict(kind='symbol', path=path, module=module, ordinal=i, sid=s.symbol_id,
                              fq=s.fqname, name=s.name, qual=s.qualname, symbol_kind=s.kind,
                              line=s.line, owner=s.class_name or '', async_flag=int(s.is_async)))
+            if s.kind != 'class':
+                rows.append(dict(kind='return', path=path, symbol_ordinal=i, has_annotation=int(s.return_annotation is not None), text=s.return_annotation or ''))
+                for j, (name, ann) in enumerate(zip(s.param_names, s.param_annotations)):
+                    rows.append(dict(kind='parameter', path=path, symbol_ordinal=i, ordinal=j, name=name,
+                                     has_annotation=int(ann is not None), text=ann or ''))
         for name, ids in info.defined_names.items():
             for i, sid in enumerate(ids):
                 rows.append(dict(kind='defined', path=path, module=module, name=name, sid=sid, ordinal=i))
         for kind, values in [('imported', info.imported_symbols), ('import_module', info.imported_modules)]:
             rows.extend(dict(kind=kind, path=path, module=module, name=k, target=v) for k, v in values.items())
+        rows.extend(dict(kind='module_ref', path=path, module=module, name=name) for name in info.module_level_names)
     return ordered(rows)
 
 
