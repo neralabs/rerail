@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import migration
 from migration import ROOT, PIN, sha, git, write_json, compare, compare_inputs, fixtures_path
 from dto import canonical
 
@@ -73,6 +74,12 @@ class NativeRegexMatch:
 
 class Suite:
     def __init__(self, source, engine, checks, part, parts, baseline, rule_root=None):
+        manifest = migration.read_json(ROOT / migration.MANIFEST)
+        migration.verify_engine_alignment(ROOT, manifest['engineSource'])
+        for retired in ('.rerail/rr-migration-20261106/engine',
+                        '.rerail/data-layer-batch-seven/engine-source'):
+            if engine.resolve().is_relative_to((ROOT / retired).resolve()):
+                raise ValueError('Acceptance cannot use a binary from a retired engine checkout')
         self.source, self.engine, self.checks = source, engine, checks
         self.part, self.parts = part, parts
         self.rule_root = rule_root or ROOT / 'gate/data-layer/packs/data-layer/candidates/rr'

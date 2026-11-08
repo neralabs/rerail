@@ -39,7 +39,10 @@ It takes text values, with no AST traversal or Python execution.
 The manifest records all 21 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
-If the local Final shape branch advances, the audit rejects acceptance until this branch includes its new commits.
+The audit checks both the local Final shape branch and its fetched remote tip.
+If either tip advances, acceptance requires its commits in this branch.
+Native assertion suites run that audit before they start an execution worker.
+They also reject binaries inside either retired engine checkout.
 New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.

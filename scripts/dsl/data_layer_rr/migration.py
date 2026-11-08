@@ -235,18 +235,25 @@ def verify_engine_alignment(root, source):
         git(root, 'merge-base', '--is-ancestor', upstream, 'HEAD')
     except subprocess.CalledProcessError as error:
         raise ValueError('The engine does not include the adopted Final shape commit') from error
-    # A local sibling can advance after the recorded adoption. A fresh audit must
-    # not certify that older engine while the current branch is available here.
+    # Check both the sibling and the fetched remote. A stale local branch must
+    # not hide an upstream resolution that is already available in this clone.
     if branch := source.get('upstreamBranch'):
-        try:
-            current = git(root, 'rev-parse', '--verify', branch)
-        except subprocess.CalledProcessError:
-            current = None  # A standalone clone still checks the recorded commit.
-        if current:
+        refs = [('local', branch)]
+        if branch.startswith('refs/heads/'):
+            refs.append(('remote', 'refs/remotes/origin/' + branch.removeprefix('refs/heads/')))
+        checked = set()
+        for location, ref in refs:
+            try:
+                current = git(root, 'rev-parse', '--verify', ref)
+            except subprocess.CalledProcessError:
+                continue  # A standalone clone still checks the recorded commit.
+            if not current or current in checked:
+                continue
             try:
                 git(root, 'merge-base', '--is-ancestor', current, 'HEAD')
             except subprocess.CalledProcessError as error:
-                raise ValueError('Merge the newer local Final shape before migration acceptance') from error
+                raise ValueError(f'Merge the newer {location} Final shape before migration acceptance') from error
+            checked.add(current)
     reviewed = {item['path']: item['sha256'] for item in source['nativeExtensions']}
     for name in reviewed:
         if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)

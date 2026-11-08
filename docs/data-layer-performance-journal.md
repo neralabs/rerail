@@ -8984,3 +8984,27 @@ These results establish recorded-input parity, not a performance improvement.
 The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-render-raw-strings-native-contracts.json.gz) contains source/native observations, controls, failures, commands, hashes, and its validator.
 The inventory now contains 80 drafts and 20 absent translations. Full migration acceptance remains false.
 Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+
+# 2026-11-08: Check Final shape adoption before further migration
+
+The fetched Final rerail shape tip is `07a6b4171d8ca6aea400beefee04fabdbcc979f8`.
+The local sibling has the same tip. This branch already includes that commit through merge `0b094980e`.
+No new merge or engine source change was necessary for this checkpoint.
+
+The frontend, rule lowering, prepared-program storage, session, lowering pipeline, transducer, content store, and Bitlex match that tip.
+The engine is not entirely identical: 21 engine/build files contain reviewed generic extensions.
+These include Python text APIs, typed input projections, diagnostics, traversal repairs, registrations, and their tests.
+They also include the existing Boolean demand-normalization repair.
+The receipt lists their exact paths and hashes. No retired engine supplied source, libraries, or a build.
+
+Two gaps allowed acceptance without a current source audit.
+The audit checked the local branch, but ignored a newer fetched remote tip.
+The native assertion worker also started without an alignment audit.
+Regression tests first demonstrated both gaps. Native suites now audit the active root before they start their worker.
+Both retired engine paths also have rejection tests for executable selection.
+
+All 88 migration tooling tests pass. All five original raw-render tests pass again, including positives and ten complete API/property calls.
+The frozen executable still matches its recorded root source trees. No rebuild was necessary because engine source did not change.
+The in-progress 81st rule remains unfinished. This checkpoint does not claim full migration acceptance.
+
+Evidence: [Final shape source audit and native assertion replay](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-07a6-acceptance-guard.json.gz).
