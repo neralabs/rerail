@@ -6,6 +6,10 @@ mod recursive;
 mod registered_joins;
 mod scaling;
 mod updates;
+mod temporal;
+mod profiling;
+mod initial;
+mod cte;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
@@ -458,8 +462,10 @@ fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
             .unwrap()
             > 0
     );
-    // Programs cannot take the catalog's names, and a reset empties it.
-    assert!(executor.run(".decl rr_x(a: number)\nrr_x(1).\n.output rr_x\n".into(), "python".into(), None).is_err());
+    // Programs cannot take the catalog's names (its tables and typed views; the compiler's own helpers are
+    // `rr_` too), and a reset empties it.
+    assert!(executor.run(".decl rr_relation(a: number)\nrr_relation(1).\n.output rr_relation\n".into(), "python".into(), None).is_err());
+    assert!(executor.run(".decl rr_rel_x(a: number)\nrr_rel_x(1).\n.output rr_rel_x\n".into(), "python".into(), None).is_err());
     executor.reset().unwrap();
     assert_eq!(rows(&executor, "SELECT count(*) FROM rr_relation"), json!([[0]]));
     assert_eq!(rows(&executor, "SELECT count(*) FROM temp.sqlite_schema WHERE name = 'rr_rel_reach'"), json!([[0]]));

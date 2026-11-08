@@ -349,15 +349,48 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
-    /// Requests the runner answers inside the fixpoint (decision 0065 §2a), by request relation: the relations an
-    /// answer adds rows to. Each produced relation depends on its request (`strata`), and has no rules.
+    pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
+    pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
     pub(in crate::code_rule_dsl) answers: BTreeMap<String, Vec<String>>,
+    /// `.scope text`'s globs: a document matching one that has no grammar of the run (`.md`, `.rst`) is read as text
+    /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
+    /// one.
+    pub(in crate::code_rule_dsl) text_globs: Vec<String>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), each
-/// comment node (`kind(c, "comment")`), each node of another kind (`kind(c, "string_content")`), or each span an
-/// earlier pattern's group captured (decision 0081). The batch runs a pattern once per distinct text of a node or
-/// capture (decision 0042 §2), never once per node.
+/// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
+/// until the run's options are known: `rr-option:<form>:<name>`, `form` one of `dirs`, `include`, `exclude`. As a glob
+/// it holds no path; `resolve_scopes` adds the option's values beside it.
+pub(in crate::code_rule_dsl) const OPTION_GLOB: &str = "rr-option:";
+
+/// `scopes` with each option entry's values (`OPTION_GLOB`) added beside it, from the run's `options` as
+/// `option`/`option_item` read them: a directory under `dirs`, a glob under `include` or `exclude`. An option the run
+/// does not set adds nothing, and its entry still holds no path (an entry whose only globs are such reads none).
+pub(in crate::code_rule_dsl) fn resolve_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, options: &serde_json::Value) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+    let mut rows = crate::code_rule_dsl::facts::repository::Rows::default();
+    crate::code_rule_dsl::facts::repository::options(options, &mut rows);
+    let values = |name: &str| -> Vec<String> {
+        rows.option_item.iter().filter(|(n, _, _)| n == name).map(|(_, _, v)| v.clone()).chain(rows.option.iter().filter(|(n, _)| n == name).map(|(_, v)| v.clone())).collect()
+    };
+    let resolve = |globs: &Vec<String>| -> Vec<String> {
+        let mut out = Vec::new();
+        for g in globs {
+            out.push(g.clone());
+            let Some((form, name)) = g.strip_prefix(OPTION_GLOB).and_then(|r| r.split_once(':')) else { continue };
+            for v in values(name) {
+                out.push(if form == "dirs" { format!("{}/**", v.trim_end_matches('/')) } else { v });
+            }
+        }
+        out
+    };
+    scopes.as_ref().map(|entries| entries.iter().map(|(within, out)| (resolve(within), resolve(out))).collect())
+}
+
+pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
+    let glob = |g: &String| crate::code_rule_dsl::logic::strings::test("glob", path, g);
+    scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
@@ -839,7 +872,9 @@ pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
             Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
             _ => None,
         });
-        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel)) {
+        // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
+        // them: declared there.
+        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_")) {
             return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
         }
     }
@@ -992,6 +1027,27 @@ pub(in crate::code_rule_dsl) fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) 
         }
     }
     sccs
+}
+
+/// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
+pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
+    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
+    for r in &prog.rules {
+        body_of.entry(&r.head.rel).or_default().push(&r.body);
+    }
+    let (mut need, mut todo) = (BTreeSet::new(), roots);
+    while let Some(r) = todo.pop() {
+        if !need.insert(r.clone()) {
+            continue;
+        }
+        if let Some(native) = prog.natives.get(&r) {
+            todo.extend(native.reads().into_iter().map(str::to_owned));
+        }
+        for body in body_of.get(r.as_str()).into_iter().flatten() {
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+        }
+    }
+    need
 }
 
 /// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.

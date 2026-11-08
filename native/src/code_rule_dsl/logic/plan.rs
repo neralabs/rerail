@@ -241,9 +241,22 @@ pub(in crate::code_rule_dsl) struct Stats {
 }
 
 impl Stats {
-    fn new(db: &Connection, prog: &Program, inputs: &Inputs) -> Result<Self> {
-        if let Some(given) = &inputs.given {
-            return Ok(given.clone());
+    /// What the planner knows of `rel` (`RERAIL_DUMP_STATS`, a debugging aid): each column's (rows, distinct, sum of
+    /// squared postings, within documents), its cardinality, and its few-valued columns' value counts.
+    pub(in crate::code_rule_dsl) fn describe(&self, rel: &str) -> String {
+        let mut cols: Vec<String> = self.col.iter().filter(|((t, _), _)| t.contains(rel)).map(|((t, c), v)| format!("{t}.{c}={v:?}")).collect();
+        cols.sort();
+        let mut few: Vec<String> = self.dfreq.iter().filter(|((t, _), _)| t.contains(rel)).map(|((t, c), m)| format!("{t}.c{c}: {} values, {} rows", m.len(), m.values().sum::<i64>())).collect();
+        few.sort();
+        let mut card: Vec<String> = self.card.iter().filter(|(t, _)| t.contains(rel)).map(|(t, n)| format!("{t}={n}")).collect();
+        card.sort();
+        let kinds = if rel == "kind" { format!("; {} kinds, {} nodes", self.kfreq.len(), self.kfreq.values().sum::<i64>()) } else { String::new() };
+        format!("{rel}: card {}; {}; {}{kinds}", card.join(" "), cols.join(" "), few.join(" "))
+    }
+    /// The caller's statistics, taken (a corpus's measured values run to hundreds of MB), else T's.
+    fn new(db: &Connection, prog: &Program, inputs: &mut Inputs) -> Result<Self> {
+        if let Some(given) = inputs.given.take() {
+            return Ok(given);
         }
         Self::read(db, prog, inputs, true)
     }
@@ -1301,9 +1314,9 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 }
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
-fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
+fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
-    let mut stats = Stats::new(db, prog, &inputs)?;
+    let mut stats = Stats::new(db, prog, &mut inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
@@ -1381,6 +1394,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
         "tree_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
+        "ast_match" => &[&["n"], &["c"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -2050,6 +2064,8 @@ struct Run<'a, 'b> {
     native_rels: BTreeSet<String>,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
     why_not: Option<String>,
+    /// What kind of literal the native engine declined (`decline_class`), for the profile's SQLite fallbacks.
+    why_class: Option<String>,
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
@@ -2437,6 +2453,36 @@ fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
 
 /// A plan's step strings, which say whether a replan changed it.
 /// A stratum's name in the profile: its relations, cut at 80 characters.
+/// The kind of literal the native set engine has no step for, as the profile groups SQLite's fallbacks: an
+/// aggregate by its operator, a function by its name (the first one in the literal), a comparison by its operator,
+/// a read by its relation when it is an input, else by who holds it (a relation an earlier SQLite stratum made is
+/// a fallback that brings on the next).
+fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> String {
+    fn first_call(t: &Term) -> Option<&str> {
+        match t {
+            Term::Call(f, args) => Some(args.iter().find_map(first_call).filter(|_| f == "concat" || f == "add").unwrap_or(f.as_str())),
+            _ => None,
+        }
+    }
+    match lit {
+        Literal::Agg { op, .. } => format!("aggregate {}", match op {
+            super::front::AggOp::Count => "count",
+            super::front::AggOp::Min => "min",
+            super::front::AggOp::Max => "max",
+            super::front::AggOp::Sum => "sum",
+            super::front::AggOp::Join { .. } => "join (string concatenation)",
+        }),
+        Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
+        Literal::Atom(a) if native.contains(&a.rel) => format!("{}read of a relation the native engine holds", if a.neg { "negated " } else { "" }),
+        Literal::Atom(a) => format!("{}read of a relation an earlier SQLite stratum made", if a.neg { "negated " } else { "" }),
+        Literal::Cmp { l, op, r } => match first_call(l).or_else(|| first_call(r)) {
+            Some(f) => format!("function @{f}"),
+            None => format!("comparison {op}"),
+        },
+        other => format!("{}", other).split('(').next().unwrap_or("literal").to_owned(),
+    }
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -2601,6 +2647,8 @@ impl Run<'_, '_> {
             let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
             match &s.lit {
                 Literal::Atom(l) if !l.neg => l.args.iter().for_each(&mut add),
+                // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
+                Literal::Cmp { l, op, r: Term::Call(f, args) } if *op == "=" && f == "cat" => { add(l); args.iter().for_each(&mut add) }
                 Literal::Cmp { l, op, r } if *op == "=" => { add(l); add(r) }
                 Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone())); add(&Term::Var(a.clone())) }
                 Literal::Agg { var, .. } => add(&Term::Var(var.clone())),
@@ -2721,6 +2769,30 @@ impl Run<'_, '_> {
                 _ => None,
             }
         }
+        // `@concat(a, b)` (nested on either side) as `str_concat` functions of bound arguments, each into a slot of
+        // its own (`rr_concat<step>_<k>`); the term of the outermost one's slot.
+        fn concat(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
+            match t {
+                Term::Call(f, args) if f == "concat" && args.len() == 2 => {
+                    let a = concat(&args[0], idx, slots, lines)?;
+                    let b = concat(&args[1], idx, slots, lines)?;
+                    let bound = |t: &Term, slots: &HashMap<String, usize>| match t {
+                        Term::Var(v) => slots.contains_key(v),
+                        Term::Int(_) | Term::Str(_) => true,
+                        _ => false,
+                    };
+                    if !bound(&a, slots) || !bound(&b, slots) {
+                        return None;
+                    }
+                    let out = Term::Var(format!("rr_concat{idx}_{}", lines.len()));
+                    let (ta, tb) = (tok(&a, slots)?, tok(&b, slots)?);
+                    lines.push(format!("func str_concat {} {ta} {tb}", tok(&out, slots)?));
+                    Some(out)
+                }
+                Term::Call(..) => None,
+                t => Some(t.clone()),
+            }
+        }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
         let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>)> {
@@ -2783,6 +2855,37 @@ impl Run<'_, '_> {
                     let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
                 }
+                Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, args) } if f == "doc" && args.len() == 1 => {
+                    // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
+                    if !matches!(&args[0], Term::Var(v) if slots.contains_key(v)) {
+                        return None;
+                    }
+                    let tn = tok(&args[0], &mut slots)?;
+                    lines.push(format!("docof {} {tn}", tok(&Term::Var(d.clone()), &mut slots)?));
+                }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if (f == "in" || f == "equals")
+                        && let [x, Term::Call(set, members)] = args.as_slice()
+                        && set == crate::code_rule_dsl::logic::strings::SET
+                        && members.iter().all(|m| matches!(m, Term::Int(_)))
+                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                {
+                    // `@equals($q, {"a", "b"}) = 1` once lowered (the strings are symbols): membership, natively.
+                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(format!("in {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if crate::code_rule_dsl::logic::strings::is_test(f)
+                        && let [x, Term::Call(set, members)] = args.as_slice()
+                        && set == crate::code_rule_dsl::logic::strings::SET
+                        && members.iter().all(|m| matches!(m, Term::Int(_)))
+                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                {
+                    // `@contains($w, {"dolt_", "dolt log"}) = 1` once lowered (the patterns are symbols): one matcher
+                    // of the symbols' names, made with the spec.
+                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(format!("testset {f} {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
                 {
@@ -2790,6 +2893,8 @@ impl Run<'_, '_> {
                     // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
                     let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
                         Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
+                        // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
+                        None if matches!(&args[1], Term::Call(f, _) if f == "concat") => concat(&args[1], idx, &mut slots, &mut lines)?,
                         None => args[1].clone(),
                     };
                     // A constant string is a symbol (`Int`) once lowered.
@@ -2803,6 +2908,12 @@ impl Run<'_, '_> {
                     }
                     let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
                     lines.push(format!("test {f} {ts} {tp} {want}"));
+                }
+                Literal::Cmp { l: l @ Term::Var(_), op: "=", r: r @ Term::Call(f, _) } if f == "concat" => {
+                    // `$s = @concat(@concat($m, "."), $r)`: each concatenation a native function, inner ones first.
+                    let made = concat(r, idx, &mut slots, &mut lines)?;
+                    let (ta, tb) = (tok(l, &mut slots)?, tok(&made, &mut slots)?);
+                    lines.push(format!("eq {ta} {tb}"));
                 }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
                     if let Term::Call(f, args) = r
@@ -2896,6 +3007,11 @@ impl Run<'_, '_> {
                     let t0 = tok(&args[0], &mut slots)?;
                     head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
                 }
+                // `q(…, cat(m, ".", a))`: the concatenation made into a slot before the head reads it.
+                Term::Call(f, _) if f == "concat" => {
+                    let made = concat(t, order.len(), &mut slots, &mut lines)?;
+                    head.push(tok(&made, &mut slots)?);
+                }
                 _ => head.push(tok(t, &mut slots)?),
             }
         }
@@ -2928,12 +3044,15 @@ impl Run<'_, '_> {
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
+        self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+            self.why_class = Some("a lattice relation".into());
             return Ok(false);
         }
         if scc.iter().any(|r| prog.natives.contains_key(r)) {
             self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
+            self.why_class = Some("read of a dfs_first relation".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -2988,6 +3107,12 @@ impl Run<'_, '_> {
             let s = &order[k.saturating_sub(1)];
             format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
         };
+        // The same step's kind (`decline_class`).
+        let missing_class = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
+            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
+            let s = &order[k.saturating_sub(1)];
+            if s.mode == Some(Mode::Range) { "a range read inside a document".to_owned() } else { decline_class(&s.lit, prog, native_rels) }
+        };
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
@@ -3005,6 +3130,7 @@ impl Run<'_, '_> {
                     continue;
                 }
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
+                self.why_class = Some(missing_class(self, &r.head, &order, None));
                 return Ok(false);
             };
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
@@ -3056,6 +3182,7 @@ impl Run<'_, '_> {
                         continue;
                     }
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
+                    self.why_class = Some(missing_class(self, &r.head, &order, Some(at)));
                     return Ok(false);
                 };
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
@@ -3092,10 +3219,8 @@ impl Run<'_, '_> {
         drop(spec_span);
         // The O125 spike (`RERAIL_SPIKE_SPECS=<dir>`): each stratum named as it starts, its spec written out.
         if let Some(dir) = std::env::var_os("RERAIL_SPIKE_SPECS") {
-            let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            // SAFETY: `t` is a valid timespec for the call to fill.
-            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-            eprintln!("O125 stratum {name} ({} relations, {} rules) at {:.1} s CPU", rels.len(), rules.len(), t.tv_sec as f64 + t.tv_nsec as f64 / 1e9);
+            let cpu = { let (u, s) = corpus::thread_usage(); u + s };
+            eprintln!("O125 stratum {name} ({} relations, {} rules) at {:.1} s CPU", rels.len(), rules.len(), cpu);
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
@@ -3112,6 +3237,12 @@ impl Run<'_, '_> {
         }
         // One wave first: the seeds' rows give live statistics before the next wave, the first in which most
         // relations' deltas are all their rows and the probes run their whole plans.
+        // RDL_WAVE_TRACE: the component's planned joins, in probe order, before it runs (a stalled probe is named).
+        if std::env::var_os("RDL_WAVE_TRACE").is_some() {
+            for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+                eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
+            }
+        }
         let mut chunk: i64 = 1;
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
@@ -3598,7 +3729,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(prog, &db, Inputs::file(), None, None, None)
+    run(prog, &db, Inputs::file(), None, Hooks::default())
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
@@ -3613,7 +3744,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, None, None)
+    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -3632,7 +3763,7 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&lowered.program, db, inputs, Some(lowered), None, None);
+    let out = run(&lowered.program, db, inputs, Some(lowered), Hooks::default());
     super::native::flush_symbols(db)?;
     out
 }
@@ -3646,7 +3777,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    run_native_inputs(lowered, db, inputs, None)
+    run_native_inputs(lowered, db, inputs, Hooks::default())
 }
 
 /// `run_atoms_native` over input relations in schema `facts` (the bound vtabs are `main`'s; a cross-file pass reads
@@ -3666,26 +3797,39 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_over(
     native.remove("kseed");
     // The statistics schema is still read for document ranges (`stat_docrange`).
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs, None)
+    run_native_inputs(lowered, db, inputs, Hooks::default())
 }
 
-/// `run_atoms_native_over`, handing each kept relation to `hand_off` once no later stratum reads it, and dropping
-/// it then (`Outcome::handed`): the caller writes it where it goes, and the run does not hold every kept relation
-/// to its end.
-pub(in crate::code_rule_dsl) fn run_atoms_native_handing(
+/// What a run tells its caller as it goes, so neither holds every relation from the run's start to its end.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct Hooks<'a> {
+    /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
+    /// (`Outcome::handed`).
+    pub(in crate::code_rule_dsl) hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
+    /// Inputs a stratum is about to read for the first time: the caller binds their rows now.
+    pub(in crate::code_rule_dsl) load: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
+    /// Inputs no later stratum reads: the caller may drop their rows (the run has dropped its views of them).
+    pub(in crate::code_rule_dsl) unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
+    /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
+    pub(in crate::code_rule_dsl) answer: Option<Answer<'a>>,
+}
+
+/// `run_atoms_native_over`, telling `hooks` of each kept relation and input as its last reader runs, and of each
+/// input before its first.
+pub(in crate::code_rule_dsl) fn run_atoms_native_hooked(
     lowered: &lower::Lowered,
     db: &Connection,
     facts: &str,
     given: Stats,
     kept: BTreeSet<String>,
     modes: &str,
-    hand_off: &mut dyn FnMut(&str) -> Result<()>,
+    hooks: Hooks<'_>,
 ) -> Result<Outcome> {
     let mut native = native_modes(modes);
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs, Some(hand_off))
+    run_native_inputs(lowered, db, inputs, hooks)
 }
 
 /// `run_atoms_native_over`, with requests answered by `answer` inside the fixpoint (decision 0065 §2a).
@@ -3702,19 +3846,15 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering(
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_answering(lowered, db, inputs, None, Some(answer))
+    run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), ..Default::default() })
 }
 
-fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
-    run_native_answering(lowered, db, inputs, hand_off, None)
-}
-
-fn run_native_answering(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>, answer: Option<Answer<'_>>) -> Result<Outcome> {
+fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    let out = run(&lowered.program, db, inputs, Some(lowered), hand_off, answer);
+    let out = run(&lowered.program, db, inputs, Some(lowered), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());
@@ -3792,7 +3932,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
-fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>, answer: Option<Answer<'_>>) -> Result<Outcome> {
+fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
     let (normalized,sentinels)=sql_kernel::normalize(prog)?;
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
@@ -3865,7 +4005,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer, answered: BTreeMap::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -3948,8 +4088,25 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
     // and a gate's relations stay to the end).
     let last = last_reads(prog, &sccs, &run.views);
+    let first = first_reads(prog, &sccs, &run.views);
+    let mut unloaded: BTreeSet<String> = BTreeSet::new();
     let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
     let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
+    let mut pinned: BTreeSet<String> = stays.clone();
+    loop {
+        let more: Vec<String> = prog
+            .rules
+            .iter()
+            .filter(|r| pinned.contains(&r.head.rel) && run.views.contains(&r.head.rel))
+            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()))
+            .filter(|r| !pinned.contains(r))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        pinned.extend(more);
+    }
     // Kept relations given to the caller (`hand_off`) and dropped once no later stratum reads them.
     let mut handed: BTreeSet<String> = BTreeSet::new();
     let mut unindexed: BTreeSet<String> = BTreeSet::new();
@@ -3962,7 +4119,24 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // One that stays but that no later stratum reads keeps its rows only; a kept one the caller takes is handed
         // off and dropped.
         let read_out: Vec<String> = run.native_rels.iter().filter(|r| stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
-        if let Some(hand) = hand_off.as_deref_mut() {
+        // Inputs: bound before their first reader, dropped after their last; one no rule reads (an output as it
+        // came) is bound before the first stratum.
+        if let Some(load) = hooks.load.as_deref_mut() {
+            let now: Vec<String> = prog.inputs.iter().filter(|r| first.get(*r).copied().unwrap_or(0) == at).cloned().collect();
+            if !now.is_empty() {
+                load(&now)?;
+            }
+        }
+        if let Some(unload) = hooks.unload.as_deref_mut() {
+            // An output that is an input, or a view of one, is read once the run ends.
+            let gone: Vec<String> = prog.inputs.iter().filter(|r| !pinned.contains(*r) && last.get(*r).is_some_and(|&l| l < at) && !unloaded.contains(*r)).cloned().collect();
+            if !gone.is_empty() {
+                super::native::component::forget_inputs_of(db, &gone);
+                unload(&gone)?;
+                unloaded.extend(gone);
+            }
+        }
+        if let Some(hand) = hooks.hand_off.as_deref_mut() {
             let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
             for r in &give {
                 hand(r)?;
@@ -4110,6 +4284,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if !ran_native {
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
             super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
+            super::profile::fallback(&skey, run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() }));
             if recursive {outcome.iterations.insert(key,n as usize);}
             for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
                 if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}
@@ -4139,6 +4314,23 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.nodes = nodes;
     outcome.handed = handed;
     Ok(outcome)
+}
+
+/// Per relation, the first stratum whose rules read it; a view is read where its first reader runs.
+fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
+    let mut first: HashMap<String, usize> = HashMap::new();
+    for (j, scc) in sccs.iter().enumerate().rev() {
+        let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| first.get(r)).copied().min().unwrap_or(j) } else { j };
+        for r in prog.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+            for l in &r.body {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                    let e = first.entry(a.rel.clone()).or_insert(at);
+                    *e = (*e).min(at);
+                }
+            }
+        }
+    }
+    first
 }
 
 /// Per relation, the last stratum (an index into `sccs`) whose rules read it. A view is read where its readers run,

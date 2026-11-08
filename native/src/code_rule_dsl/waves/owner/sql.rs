@@ -8,11 +8,15 @@ pub(in crate::code_rule_dsl::waves) trait SqlOwner:
     Deref<Target = Connection>
 {
     fn storage(&self) -> &RefCell<Storage>;
+    fn profile_scope(&self, _: impl FnOnce()->serde_json::Value) -> Option<crate::code_rule_dsl::sql_profile::Context> { None }
     fn prepare_step(&self, sql: &str) -> rusqlite::Result<CachedStatement<'_>> {
         self.prepare_cached(sql)
     }
 }
 impl SqlOwner for Database {
+    fn profile_scope(&self, fields: impl FnOnce()->serde_json::Value) -> Option<crate::code_rule_dsl::sql_profile::Context> {
+        Database::profile_scope(self,fields)
+    }
     fn storage(&self) -> &RefCell<Storage> {
         &self.storage
     }

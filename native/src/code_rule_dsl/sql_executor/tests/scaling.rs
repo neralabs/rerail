@@ -104,6 +104,15 @@ pub(super) fn profile<T>(
     e: &mut CodeRuleSqlExecutor,
     run: impl FnOnce(&mut CodeRuleSqlExecutor) -> T,
 ) -> (T, Box<SqlWork>) {
+    if let Some(before) = e.sql_profile_totals() {
+        let result = run(e);
+        let after = e.sql_profile_totals().unwrap();
+        let work = Box::<SqlWork>::default();
+        work.vm.set(after[2] - before[2]);
+        work.scans.set(after[3] - before[3]);
+        work.data_scans.set(after[3] - before[3]);
+        return (result, work);
+    }
     use rusqlite::ffi;
     unsafe extern "C" fn trace(
         _: u32,

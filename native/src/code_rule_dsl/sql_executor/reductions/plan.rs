@@ -115,8 +115,14 @@ pub(super) fn rule(
     let mut fields_by_name = BTreeMap::new();
     let mut width = 0;
     for (at, item) in q.body.from.iter().enumerate() {
-        let Some(relation) = item.relation.program_relation() else {
-            return Ok(None);
+        let relation = match &item.relation {
+            // The splitter reads this closed integer domain. It participates in contexts
+            // like a fact relation, but never supplies an input delta.
+            Rel::Integers => "rdl_int",
+            r => match r.program_relation() {
+                Some(r) => r,
+                None => return Ok(None),
+            },
         };
         if matches!(item.relation, Rel::Derived { delta: true, .. }) {
             return Ok(None);
@@ -281,11 +287,6 @@ impl Rule {
         query
     }
     pub fn index(&self, db: &rusqlite::Connection, columns: &[usize]) -> Result<()> {
-        if super::super::super::facts::vtab::bound_source(db, &self.contexts)
-            .is_some_and(|s| s.writable())
-        {
-            return Ok(());
-        }
         let columns: Vec<_> = columns
             .iter()
             .copied()
@@ -293,6 +294,11 @@ impl Rule {
             .into_iter()
             .collect();
         if columns.is_empty() || columns.iter().copied().eq(0..columns.len()) {
+            return Ok(());
+        }
+        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts)
+        {
+            source.prepare_index(&columns);
             return Ok(());
         }
         let suffix = columns

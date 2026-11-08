@@ -215,91 +215,67 @@ const JSON_CASES: [&[u8]; 12] = [
     b"[1 // c\n]",
 ];
 
+/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0087): the starts
+/// extract is every token's first byte; the lasts extract is the last byte of each token whose
+/// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
 #[test]
-fn json_rows_equal_the_evaluator_on_every_executor() {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let kind = |name: &str| {
-        let id = match grammar.id_for_node_kind(name, true) {
-            0 => grammar.id_for_node_kind(name, false),
-            id => id,
-        };
-        (id != 0).then_some(id)
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+fn json_stream_equals_the_evaluator_on_every_executor() {
+    use ::bitlex::syntax::Stmt;
+    let (p, compiled) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
-    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
-    let ops = compiled.rows.lines().filter(|l| l.contains(" = ")).count();
-    let carried = compiled.rows.lines().filter(|l| [" = fill ", " = toggle ", " = escaped ", " = prev "].iter().any(|op| l.contains(op))).count();
-    eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
-    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let prepared = Executors::new(&p);
-    let tier2 = native_cpu_tier2::compile(&p.block_programs()[0], &compiled.fallbacks).unwrap_or_else(|e| panic!("tier 2 compiles: {e}"));
-    let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
-    // A token row's tokens: its kind's and its keywords' kinds (the evaluator retypes them).
-    let members = |row: &str| -> Vec<String> {
-        let mut out = vec![row.to_owned()];
-        for s in &stmts {
-            if let ::bitlex::syntax::Stmt::Keywords { kind, words, .. } = s
-                && kind == row
-            {
-                out.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
+    let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
+    // The kinds whose tokens' last bytes are in the stream: rows with a last byte of their own,
+    // and their keywords, unless every token of the row is a keyword.
+    let mut late: Vec<String> = Vec::new();
+    for s in &stmts {
+        if let Stmt::Token { kind, last, through, .. } = s
+            && (last.is_some() || through.is_some())
+        {
+            let keywords = stmts.iter().find_map(|k| match k {
+                Stmt::Keywords { kind: k, words, required, .. } if k == kind => Some((words, *required)),
+                _ => None,
+            });
+            match keywords {
+                Some((_, true)) => {}
+                Some((words, false)) => {
+                    late.push(kind.clone());
+                    late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
+                }
+                None => late.push(kind.clone()),
             }
         }
-        out
-    };
+    }
+    assert_eq!(late, ["string_content", "number", "true", "false", "null"]);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
     for bytes in cases {
         let n = bytes.len();
-        let tables = std::collections::HashMap::new();
-        let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).unwrap_or_else(|e| panic!("evaluates: {e}"));
-        let tree = out.tree.as_ref().expect("a tree section");
-        let token_mask = |kind: &str, last: bool| {
-            let mut w = vec![0u64; n.div_ceil(64)];
-            let kinds = members(kind);
-            for t in out.tokens.iter().filter(|t| kinds.contains(&t.kind)) {
-                let i = if last { t.end - 1 } else { t.start };
-                w[i / 64] |= 1 << (i % 64);
+        let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &std::collections::HashMap::new()).unwrap_or_else(|e| panic!("evaluates: {e}"));
+        if !out.errors.is_empty() {
+            rejected += 1;
+            continue;
+        }
+        let mut want_starts = vec![0u64; n.div_ceil(64)];
+        let mut want_lasts = vec![0u64; n.div_ceil(64)];
+        for t in &out.tokens {
+            want_starts[t.start / 64] |= 1 << (t.start % 64);
+            if late.contains(&t.kind) {
+                want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
             }
-            w
-        };
-        let want = |label: &str| -> Option<Vec<u64>> {
-            let words: Vec<&str> = label.split(' ').collect();
-            match words.as_slice() {
-                // Tier-2 nodes are the writer's: the evaluator has masks only for tier 1's.
-                ["node", k, side] => match tree.nodes.iter().find(|r| r.0 == *k) {
-                    Some(r) => Some(if *side == "start" { r.1.w.clone() } else { r.2.w.clone() }),
-                    None => tokens.contains(k).then(|| token_mask(k, *side == "end")),
-                },
-                ["code", _, name] => Some(tree.facts.iter().find(|f| f.1 == *name).expect("a fact").3.w.clone()),
-                _ => None,
-            }
-        };
+        }
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            // Tier 1 refuses by a fallback bit; tier 2 (which reads them too) by tokens that make
-            // no tree.
-            let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
-            let cuts: Vec<Vec<u64>> = got.iter().map(|w| cut(w.clone(), n)).collect();
-            if !out.errors.is_empty() {
-                assert!(tier2.write(&cuts, &bytes).is_none(), "{executor}, {n} bytes: the evaluator rejects ({:?}) but the file does not fall back", out.errors);
-                rejected += 1;
-                continue;
-            }
-            if falls {
+            if compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0)) {
                 conservative += 1;
                 continue;
             }
-            for (label, k) in &compiled.labels {
-                if let Some(want) = want(label) {
-                    assert_eq!(cut(got[usize::from(*k)].clone(), n), cut(want, n), "{label}, {executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
-                }
-            }
+            let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
+            assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
+            assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
             compared += 1;
         }
     }
@@ -323,7 +299,7 @@ fn json_msl_is_one_kernel() {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles");
-    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let text = compiled.text();
     let p = rir::assemble(&text).expect("assembles");
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
@@ -385,8 +361,8 @@ fn batch_programs() -> Vec<Program> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
-        let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
-        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
+        let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+        rir::assemble(&text).expect("assembles")
     };
     let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
     vec![
@@ -465,34 +441,6 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    // Tier 2, generated: the function alone over laid-out files, then `write` whole (the layout,
-    // the call, the nodes copied out).
-    let now = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `t` is a valid timespec to write.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
-    let tier2 = json_tier2();
-    if let Some(path) = std::env::var_os("RERAIL_DUMP_TIER2") {
-        std::fs::write(&path, format!("{}\n\n{}", tier2.clif, tier2.disassembly)).expect("writes");
-    }
-    let mut laid: Vec<_> = runs.iter().zip(&bytes).map(|(r, b)| tier2.lay_out(&r.outputs, b)).collect();
-    let (mut best, mut nodes) = (f64::MAX, 0);
-    for _ in 0..5 {
-        let start = now();
-        nodes = tier2.call_laid(&mut laid);
-        best = best.min(now() - start);
-    }
-    println!("tier 2, the function: {:.3} ns per block, {nodes} nodes, {:.2} ns per node (CPU time, best of 5)", best / blocks as f64 * 1e9, best / nodes as f64 * 1e9);
-    let mut best = f64::MAX;
-    for _ in 0..3 {
-        let start = now();
-        let n: usize = runs.iter().zip(&bytes).filter_map(|(r, b)| tier2.write(&r.outputs, b)).map(|(n, _)| n.len()).sum();
-        best = best.min(now() - start);
-        assert_eq!(n as u64, nodes);
-    }
-    println!("tier 2, write (layout, call, copy out): {:.3} ns per block (CPU time, best of 3)", best / blocks as f64 * 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
@@ -539,33 +487,12 @@ pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(src).expect("parses");
-    let rows = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
-    rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles").block_programs()[0].clone()
+    let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+    rir::assemble(&text).expect("assembles").block_programs()[0].clone()
 }
 
 /// `json.bitlex`'s text.
 pub(super) const JSON_BITLEX: &str = JSON;
-
-/// JSON's rows as doc 16 §3 has them: the pair found from the token after its string, with
-/// the rule from the left kept as its `also`. The one-byte kinds are the punctuation token's
-/// keywords, which tier 2 reads from the token's byte: they are not tier 1's outputs, so tier 1
-/// stays simdjson's stage 1 (its ratchets hold).
-#[test]
-fn json_rows_read_kinds_as_designed() {
-    let p = json_program();
-    let b = &p.block_programs()[0];
-    let kw = |w: &[u8]| b.keywords.iter().find(|k| k.word == w).map(|k| k.kind).expect("a keyword");
-    let (colon, comma, lbrace) = (kw(b":"), kw(b","), kw(b"{"));
-    let pair = b.nodes.iter().find(|r| r.also.is_some()).expect("the pair row has an also rule");
-    assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![colon], vec![], None));
-    let also = pair.also.clone().expect("also");
-    assert_eq!((also.after, also.before), (vec![lbrace, comma], vec![]));
-    assert!(also.parent.is_some());
-    let one_byte: Vec<&[u8]> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| &k.word[..]).collect();
-    assert_eq!(one_byte, [&b"{"[..], b"}", b"[", b"]", b",", b":"]);
-    let rows: std::collections::BTreeSet<u16> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| k.node).collect();
-    assert_eq!(rows.len(), 1, "one token row: the punctuation");
-}
 
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
@@ -579,168 +506,6 @@ fn json_fallbacks() -> Vec<u16> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
-}
-
-/// JSON's tier 2, generated (`native_cpu_tier2`), with JSON's fallbacks.
-fn json_tier2() -> native_cpu_tier2::CompiledTier2 {
-    native_cpu_tier2::compile(&json_block_program(), &json_fallbacks()).unwrap_or_else(|e| panic!("tier 2 compiles: {e}"))
-}
-
-/// JSON's tier 1 on Cranelift.
-fn json_tier1() -> native_cpu_block::CompiledBlock {
-    native_cpu_block::compile(&native_ir::lower(&json_program()).expect("lowers").block_programs.remove(0)).expect("compiles")
-}
-
-/// The tape the two tiers write (decision 0068) equals tree-sitter's byte for byte, for every
-/// file that does not go to tree-sitter; a file tree-sitter finds an error in always goes to it.
-/// Tier 2 is the generated function, over tier 1's masks from the interpreter and from Cranelift.
-#[test]
-fn json_tapes_equal_tree_sitter_byte_for_byte() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let block = json_block_program();
-    let (tier1, tier2) = (json_tier1(), json_tier2());
-    let mut cases = inputs();
-    cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
-    let (mut equal, mut fallback) = (0, 0);
-    for bytes in cases {
-        let Ok(source) = std::str::from_utf8(&bytes) else { continue };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        let want = parsed.to_bytes().expect("bytes");
-        for (executor, outputs) in [("interpreter", block.interpret(&bytes)), ("cranelift", tier1.run(&bytes))] {
-            match tier2.tape(&outputs, &grammar, source).unwrap_or_else(|e| panic!("{executor}: {e}")) {
-                None => fallback += 1,
-                Some(_) if has_error => {
-                    let mut parser = tree_sitter::Parser::new();
-                    {
-                        use ast_grep_language::LanguageExt;
-                        parser.set_language(&GrammarDialect::Json.get_ts_language()).expect("json");
-                    }
-                    let tree = parser.parse(source, None).expect("parses");
-                    panic!("{executor}: a tape for a file tree-sitter finds an error in: {source:?}: {}", tree.root_node().to_sexp());
-                }
-                Some(tape) => {
-                    assert!(tape.to_bytes().expect("bytes") == want, "{executor}: tape differs for {source:?}");
-                    equal += 1;
-                }
-            }
-        }
-    }
-    eprintln!("{equal} tapes equal, {fallback} to tree-sitter");
-    assert!(equal > 0);
-}
-
-/// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
-/// (one path a line), on Cranelift's batch: each file's tape equals tree-sitter's byte for byte,
-/// or the file goes to tree-sitter; never a tape where tree-sitter finds an error. Run by name.
-#[test]
-#[ignore = "a corpus check; run by name with RERAIL_JSON_FILES"]
-fn json_corpus_tapes_equal_tree_sitter() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
-    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let (tier1, tier2) = (json_tier1(), json_tier2());
-    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
-    let runs = native_cpu_block::run_batch(&[&tier1], &files);
-    let (mut equal, mut fallback, mut not_utf8, mut differ) = (0, 0, 0, Vec::new());
-    for ((path, bytes), run) in paths.iter().zip(&bytes).zip(&runs) {
-        let Ok(source) = std::str::from_utf8(bytes) else {
-            not_utf8 += 1;
-            continue;
-        };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        match tier2.tape(&run.outputs, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
-            None => {
-                fallback += 1;
-                if !has_error {
-                    eprintln!("{path}: valid JSON to tree-sitter");
-                }
-            }
-            Some(_) if has_error => panic!("{path}: a tape where tree-sitter finds an error"),
-            Some(tape) if tape.to_bytes().expect("bytes") == parsed.to_bytes().expect("bytes") => equal += 1,
-            Some(_) => differ.push(path.clone()),
-        }
-    }
-    eprintln!("{} files: {equal} tapes equal, {fallback} to tree-sitter, {not_utf8} not UTF-8, {} differ", paths.len(), differ.len());
-    assert!(differ.is_empty(), "tapes differ: {:?}", &differ[..differ.len().min(10)]);
-}
-
-/// Doc 16 §8's trace: `{"a":[1,"x"]}` is 19 nodes, each with its kind, start and size.
-#[test]
-fn json_tier2_writes_doc_16s_nodes() {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let source = br#"{"a":[1,"x"]}"#;
-    let (nodes, _) = json_tier2().write(&json_tier1().run(source), source).expect("a tape");
-    let got: Vec<(&str, u32, u32)> = nodes.iter().map(|n| (grammar.node_kind_for_id(n.kind).unwrap_or("?"), n.start, n.size)).collect();
-    let q = "\"";
-    let want = [
-        ("document", 0, 19),
-        ("object", 0, 18),
-        ("{", 0, 1),
-        ("pair", 1, 15),
-        ("string", 1, 4),
-        (q, 1, 1),
-        ("string_content", 2, 1),
-        (q, 3, 1),
-        (":", 4, 1),
-        ("array", 5, 9),
-        ("[", 5, 1),
-        ("number", 6, 1),
-        (",", 7, 1),
-        ("string", 8, 4),
-        (q, 8, 1),
-        ("string_content", 9, 1),
-        (q, 10, 1),
-        ("]", 11, 1),
-        ("}", 12, 1),
-    ];
-    assert_eq!(got, want);
-}
-
-/// The `br_table`s of tier 2's CLIF, each as its number of arms (the default included).
-fn br_tables(clif: &str) -> Vec<usize> {
-    clif.lines()
-        .filter(|l| l.contains("br_table"))
-        .map(|l| 1 + l.split_once('[').and_then(|(_, r)| r.split_once(']')).map_or(0, |(arms, _)| arms.split(',').filter(|a| !a.trim().is_empty()).count()))
-        .collect()
-}
-
-/// Tier 2 dispatches on the token that starts at a byte: one `br_table`, with an arm per token
-/// row and one for a byte where no token starts (an end only). The rows are cases, not data.
-#[test]
-fn json_tier2_has_one_case_per_token_row() {
-    let tokens = json_block_program().nodes.iter().filter(|r| r.leaf).count();
-    let t = json_tier2();
-    let tables = br_tables(&t.clif);
-    assert_eq!(tables.iter().filter(|&&n| n == tokens + 1).count(), 1, "one dispatch of {} arms; br_tables {tables:?}", tokens + 1);
-}
-
-/// Tier 2's function reads only its arguments: the masks, the bytes, and the columns it writes.
-/// No global, no data object, no table of the program's: its rows are its code.
-#[test]
-fn json_tier2_reads_no_rows() {
-    let t = json_tier2();
-    let signature = t.clif.lines().next().expect("a signature");
-    assert_eq!(signature.matches("i64").count(), 9, "eight pointer and length arguments, one result: {signature}");
-    for word in ["global_value", "symbol_value", "func_addr", "gv0", "stack_load", "stack_store"] {
-        assert!(!t.clif.contains(word), "tier 2 uses {word}");
-    }
-}
-
-/// Tier 2 calls nothing per token but the built-in validators: one call site per row with one.
-#[test]
-fn json_tier2_calls_nothing_per_token_but_its_validator() {
-    let checks = json_block_program().nodes.iter().filter(|r| r.check.is_some()).count();
-    let t = json_tier2();
-    let calls = t.clif.lines().filter(|l| l.contains(" call ") || l.contains("call_indirect")).count();
-    assert_eq!(calls, checks, "{calls} calls, {checks} validators");
 }
 
 
@@ -812,18 +577,11 @@ fn json_state_is_bits() {
 /// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0071).
 const JSON_STATE_BITS: usize = 4;
 
-/// A token without `through` is its start byte alone, so its last byte is its start: no carry
-/// finds it. JSON has two: the structural bytes (one row, kinds by text) and `"`.
-#[test]
-fn one_byte_tokens_end_at_their_start() {
-    let program = json_program();
-    let p = &program.block_programs()[0];
-    let same = p.nodes.iter().filter(|n| matches!((n.start, n.end), (block::RowStart::At(s), block::RowEnd::At(e)) if s == e)).count();
-    assert_eq!(same, 2, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
-}
-
-/// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 41;
+/// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
+/// tier 1 began to hand tier 2 its stream (decision 0087): the starts' four ORs, as simdjson's
+/// structural mask; one OR of the last bytes; and a guard of two (a number starting at a quote)
+/// that a sharper first-byte analysis would drop. The four token-row outputs went.
+const JSON_OPS: usize = 40;
 const JSON_CARRIED_WORDS: usize = 4;
 
 #[test]
@@ -853,10 +611,11 @@ fn json_loop_keeps_values_in_registers() {
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
 /// the carried state (decision 0070) raised the instructions once, 1915 -> 1939, for 405 -> 164
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
-/// 0071) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a full-block body with folded
-/// logic to 178; the target is
-/// stage 1's 150.
-const JSON_LOOP: usize = 178;
+/// 0071) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a
+/// full-block body with folded logic to 178, and one word token with the number check in tier 2
+/// (decision 0086) to 174; the stream's two extracts (decision 0087) to 182, three outputs
+/// in place of ten, and two counts. The target is stage 1's 150.
+const JSON_LOOP: usize = 182;
 const JSON_LOOP_STACK: usize = 0;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -917,4 +676,546 @@ fn json_tier1_is_simdjsons_stage1() {
     assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
     assert!(bits <= 4, "json tier 1: {bits} state bits (at most 4)");
     assert!(lines.len() <= 150 && stack == 0, "json tier 1 loop: {} instructions (at most 150), {stack} stack loads or stores (0)", lines.len());
+}
+
+/// JSON's tier 2 (doc 18 §3): the grammar's state machine, as `rir` text, pinned whole. Kinds:
+/// 15 document, 17 object, 18 pair, 19 array, 20 string, 16 `_value`; tokens 1 `{`, 3 `}`,
+/// 5 `[`, 6 `]`, 2 `,`, 4 `:`, 7 `"`, 8 string_content, 9 escape_sequence, 10 number, 11 true,
+/// 12 false, 13 null; fields 1 key, 2 value. The states, by simdjson's stage-2 labels: 0 the
+/// root's start, 2 `document_end`; 1 `object_begin`, 11 and 14 `object_field`, 15 and 18
+/// `object_continue`, 17 after `,`; 3 `array_begin`, 12 `array_value`, 7 and 13
+/// `array_continue`; 4, 5, 8, 16 `parse_string` (root, key, array, pair value); 10 after a root
+/// string; 6 and 9 `scope_end`. A pair closes on the `,` or `}` after its value.
+#[test]
+fn json_tier2_states_print_as_designed() {
+    let got = json_compiled().1.machine;
+    assert_eq!(got, JSON_STATES, "\n{got}");
+}
+
+const JSON_STATES: &str = "\
+state 0 level 15\n\
+state 1 level 17\n\
+state 2 level 15 end 0\n\
+state 3 level 19\n\
+state 4 level 15\n\
+state 5 level 17\n\
+state 6 level 17 end 0\n\
+state 7 level 19\n\
+state 8 level 19\n\
+state 9 level 19 end 0\n\
+state 10 level 15 end 1\n\
+state 11 level 17\n\
+state 12 level 19\n\
+state 13 level 19\n\
+state 14 level 17\n\
+state 15 level 17\n\
+state 16 level 17\n\
+state 17 level 17\n\
+state 18 level 17\n\
+arm 0 token 1 to 1 push 2 do open 15 open 17 s 16 leaf\n\
+arm 0 token 5 to 3 push 2 do open 15 open 19 s 16 leaf\n\
+arm 0 token 7 to 4 do open 15 open 20 s 16 leaf\n\
+arm 0 token 10 to 2 do open 15 leaf s 16\n\
+arm 0 token 11 to 2 do open 15 leaf s 16\n\
+arm 0 token 12 to 2 do open 15 leaf s 16\n\
+arm 0 token 13 to 2 do open 15 leaf s 16\n\
+arm 1 token 7 to 5 do open 18 open 20 f 1 leaf\n\
+arm 1 token 3 to 6 do leaf\n\
+arm 3 token 1 to 1 push 7 do open 17 s 16 leaf\n\
+arm 3 token 5 to 3 push 7 do open 19 s 16 leaf\n\
+arm 3 token 7 to 8 do open 20 s 16 leaf\n\
+arm 3 token 10 to 7 do leaf s 16\n\
+arm 3 token 11 to 7 do leaf s 16\n\
+arm 3 token 12 to 7 do leaf s 16\n\
+arm 3 token 13 to 7 do leaf s 16\n\
+arm 3 token 6 to 9 do leaf\n\
+arm 4 token 8 to 4 do leaf\n\
+arm 4 token 9 to 4 do leaf\n\
+arm 4 token 7 to 10 do leaf\n\
+arm 5 token 8 to 5 do leaf\n\
+arm 5 token 9 to 5 do leaf\n\
+arm 5 token 7 to 11 do leaf\n\
+arm 7 token 2 to 12 do leaf\n\
+arm 7 token 6 to 9 do leaf\n\
+arm 8 token 8 to 8 do leaf\n\
+arm 8 token 9 to 8 do leaf\n\
+arm 8 token 7 to 13 do leaf\n\
+arm 11 token 4 to 14 do close leaf\n\
+arm 12 token 1 to 1 push 7 do open 17 s 16 leaf\n\
+arm 12 token 5 to 3 push 7 do open 19 s 16 leaf\n\
+arm 12 token 7 to 8 do open 20 s 16 leaf\n\
+arm 12 token 10 to 7 do leaf s 16\n\
+arm 12 token 11 to 7 do leaf s 16\n\
+arm 12 token 12 to 7 do leaf s 16\n\
+arm 12 token 13 to 7 do leaf s 16\n\
+arm 13 token 2 to 12 do close leaf\n\
+arm 13 token 6 to 9 do close leaf\n\
+arm 14 token 1 to 1 push 15 do open 17 f 2 s 16 leaf\n\
+arm 14 token 5 to 3 push 15 do open 19 f 2 s 16 leaf\n\
+arm 14 token 7 to 16 do open 20 f 2 s 16 leaf\n\
+arm 14 token 10 to 15 do leaf f 2 s 16\n\
+arm 14 token 11 to 15 do leaf f 2 s 16\n\
+arm 14 token 12 to 15 do leaf f 2 s 16\n\
+arm 14 token 13 to 15 do leaf f 2 s 16\n\
+arm 15 token 2 to 17 do close leaf\n\
+arm 15 token 3 to 6 do close leaf\n\
+arm 16 token 8 to 16 do leaf\n\
+arm 16 token 9 to 16 do leaf\n\
+arm 16 token 7 to 18 do leaf\n\
+arm 17 token 7 to 5 do open 18 open 20 f 1 leaf\n\
+arm 18 token 2 to 17 do close close leaf\n\
+arm 18 token 3 to 6 do close close leaf\n\
+";
+
+/// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0087): `grammar` makes
+/// them and `bitlex_tier2` lowers them to the transducer's words, which tier 2 runs as. Nothing
+/// else reads them, and nothing walks them to parse a file. A file outside this list that reads
+/// them fails here.
+#[test]
+fn only_the_compiler_reads_tier2s_states() {
+    const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_compile.rs", "bitlex_tier2.rs", "bitlex_compile_tests.rs"];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer");
+    // The table's types and its arms (`.states` is a common name; a state row is read through
+    // its type).
+    let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
+    let mut readers = Vec::new();
+    let mut dirs = vec![root];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("reads the source") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+            if !(name.ends_with(".rs") || name.ends_with(".metal")) || ALLOWED.contains(&name.as_str()) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("reads a source file");
+            if needles.iter().any(|n| text.contains(n)) {
+                readers.push(path.display().to_string());
+            }
+        }
+    }
+    assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
+}
+
+/// JSON's number check (doc 18 §4, decision 0086): simdjson's `parse_number` steps as
+/// straight-line operations over the token's window. One `fill` per run (the integer, the
+/// fraction, the exponent), shifts by one byte, and logic; no loop, no other carry. Its size is a
+/// ratchet: lower it as the compiler improves.
+#[test]
+fn json_number_check_is_straight_line() {
+    use super::block::BlockOp::*;
+    let program = json_program();
+    let check = &program.block_programs()[0].checks[0].program;
+    let fills = check.ops.iter().filter(|op| matches!(op, Fill(..))).count();
+    let other: Vec<&block::BlockOp> = check.ops.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(0) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
+    eprintln!("json number check: {} operations, {fills} fills", check.ops.len());
+    assert_eq!((fills, other.len()), (3, 0), "{other:?}");
+    assert!(check.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", check.ops.len());
+}
+
+const JSON_NUMBER_CHECK_OPS: usize = 100;
+
+/// JSON's number check, as straight-line operations, equals the reference's grammar on every
+/// word of up to five bytes over `-01.eEx`, and on longer ones: run on the block interpreter over
+/// the token's bytes, it fails exactly the words the reference refuses.
+#[test]
+fn json_number_check_equals_the_reference() {
+    let program = json_program();
+    let check = &program.block_programs()[0].checks[0].program;
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let tables = std::collections::HashMap::new();
+    let alphabet = b"-01.eEx";
+    let mut words: Vec<Vec<u8>> = vec![];
+    let mut frontier: Vec<Vec<u8>> = vec![vec![]];
+    for _ in 0..5 {
+        frontier = frontier.iter().flat_map(|w| alphabet.iter().map(move |&b| [w.as_slice(), &[b]].concat())).collect();
+        words.extend(frontier.iter().cloned());
+    }
+    words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5"].map(<[u8]>::to_vec));
+    // Tokens over 64 bytes: the check runs word by word, its carries passed on, as tier 1 runs
+    // over a file; never sent to tree-sitter (decision 0086). Lengths around the word's edges.
+    for n in [63, 64, 65, 127, 128, 129, 200, 1000] {
+        let digits = vec![b'7'; n];
+        words.push([&b"-1"[..], &digits].concat());
+        words.push([&b"1."[..], &digits, b"e-", &digits].concat());
+        words.push([&b"0"[..], &digits].concat());
+        words.push([&digits[..], b"."].concat());
+        words.push([&digits[..], b"e"].concat());
+        words.push([&digits[..], b"x", &digits].concat());
+        words.push([&digits[..], b"-"].concat());
+        words.push([&digits[..n - 1], b"-", &digits].concat());
+    }
+    let mut refused = 0;
+    for w in &words {
+        // The word alone is a file of one number token (or a keyword, which no word here is).
+        let out = ::bitlex::eval::Ev::run(&stmts, w, &tables).expect("evaluates");
+        let want = out.errors.iter().any(|e| e.contains("fails its check"));
+        let got = check.interpret(w)[0].iter().any(|&x| x != 0);
+        assert_eq!(got, want, "{:?}", String::from_utf8_lossy(w));
+        refused += usize::from(want);
+    }
+    assert!(refused > 0 && refused < words.len());
+}
+
+/// A check whose byte machine cycles through two or more states (`('a' 'b')*`) would need a loop
+/// over the token's bytes: the compiler refuses it. One whose only cycles are runs (`digit+`,
+/// `'-' digit* '.'`) compiles to straight-line operations.
+#[test]
+fn a_check_that_needs_a_byte_loop_is_refused() {
+    use ::bitlex::syntax::Gram;
+    let classes = std::collections::HashMap::from([("digit".to_owned(), vec![(0x30, 0x39)])]);
+    let lit = |s: &str| Gram::Lit(s.to_owned());
+    let compile = |g: Gram| super::grammar::byte_check(&g, &classes).and_then(|(accept, arms)| super::grammar::check_program(&accept, &arms));
+    let cycle = compile(Gram::Star(Box::new(Gram::Seq(vec![lit("a"), lit("b")])))).expect_err("a two-state cycle");
+    assert!(cycle.contains("loop over the bytes"), "{cycle}");
+    for g in [Gram::Plus(Box::new(Gram::Sym("digit".into()))), Gram::Seq(vec![lit("-"), Gram::Star(Box::new(Gram::Sym("digit".into()))), lit(".")])] {
+        let p = compile(g).expect("runs only");
+        assert!(p.ops.iter().all(|op| !matches!(op, block::BlockOp::Toggle(_) | block::BlockOp::Escaped(_))), "{:?}", p.ops);
+    }
+}
+
+// --- Tier 2: the transducer's words (decision 0087) ----------------------------------------------
+
+/// JSON compiled whole: its program, and the compiler's output (labels, fallbacks, machine).
+fn json_compiled() -> (Program, bitlex_compile::Compiled) {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let text = compiled.text();
+    (rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}")), compiled)
+}
+
+/// A node as ids: kind, field, supertypes (sorted), start, end, size.
+type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+
+/// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
+fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => grammar.id_for_node_kind(name, false),
+        id => id,
+    };
+    let out = ::bitlex::eval::Ev::run(stmts, bytes, &std::collections::HashMap::new()).ok()?;
+    if !out.errors.is_empty() {
+        return None;
+    }
+    let nodes = ::bitlex::tree::nodes(out.tree.as_ref()?, &out.tokens, bytes.len()).ok()?;
+    Some(
+        nodes
+            .iter()
+            .map(|n| {
+                let field = n.field.as_deref().map_or(0, |f| grammar.field_id_for_name(f).expect("a field").get());
+                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
+                supers.sort_unstable();
+                (kind(&n.kind), field, supers, n.start, n.end, n.size)
+            })
+            .collect(),
+    )
+}
+
+/// JSON files for tier 2: the cases, small files of every kind and error, nesting, and tokens
+/// longer than a 64-byte block.
+fn json_tier2_files() -> Vec<Vec<u8>> {
+    let mut files: Vec<Vec<u8>> = JSON_CASES.iter().map(|c| c.to_vec()).collect();
+    let long = "9".repeat(150);
+    files.extend(
+        [
+            "[]", "{}", "[[]]", "[{}]", "{\"a\":[]}", " 1 ", "true", "null", "[true,false,null]", "\"\"", "\"\\n\"", "\"a\\\"b\"",
+            "\"\\x\"", "[1,]", "{\"a\"}", "{\"a\":}", "[1 2]", "-", "1.", "1.e5", "-0.0e-0", "01", "tru", "truex", "[nul]",
+            "{\"a\":1,\"b\":{\"c\":[1,{\"d\":null}]}}", "  [ 1 , 2 ]  \n", "[\"a\" , \"b\"]",
+        ]
+        .map(|s| s.as_bytes().to_vec()),
+    );
+    files.push(format!("[{long}, -{long}.{long}e-{long}]").into_bytes());
+    files.push(format!("{{\"{long}\": \"{long}\\t{long}\"}}").into_bytes());
+    files
+}
+
+/// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the file
+/// goes to tree-sitter (a fallback bit, or a word that refuses).
+fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNode>> {
+    let block = &p.block_programs()[0];
+    let run = block.run_files(&[bytes]).remove(0);
+    if fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
+        return None;
+    }
+    let nodes = stream::run(p, bytes, &run.positions[0], &run.positions[1]).ok()?;
+    Some(
+        nodes
+            .into_iter()
+            .map(|n| {
+                let mut supers = n.supers;
+                supers.sort_unstable();
+                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+            })
+            .collect(),
+    )
+}
+
+/// JSON's tier 2 is the transducer's words (decision 0087): it reads the stream, switches on
+/// bytes and writes nodes; it has no word of the tree walker's, and its loops all pass a `TOKEN`
+/// (the verifier's rule, which the program passed to assemble).
+#[test]
+fn json_tier2_is_transducer_words() {
+    let (p, _) = json_compiled();
+    let text = rir::disassemble(&p, None);
+    assert_eq!(rir::assemble(&text).expect("reassembles").plain_digest(), p.plain_digest(), "the words round trip");
+    let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
+    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "CHECK", "WORD"] {
+        assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
+    }
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
+        assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
+    }
+}
+
+/// JSON's tier 2, on the words' interpreter, writes the reference parser's nodes, and goes to
+/// tree-sitter where it does: the test cases, nesting, every token kind, long numbers.
+#[test]
+fn json_tier2_nodes_equal_the_reference() {
+    let (p, compiled) = json_compiled();
+    let fallbacks = compiled.fallbacks;
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let files = json_tier2_files();
+    let mut parsed = 0;
+    for f in &files {
+        let want = reference_nodes(&stmts, f);
+        let got = tier2_nodes(&p, &fallbacks, f);
+        assert_eq!(got, want, "{}", String::from_utf8_lossy(f));
+        parsed += usize::from(want.is_some());
+    }
+    assert!(parsed > files.len() / 2, "{parsed} of {} parsed", files.len());
+}
+
+/// JSON's tier 2 on Cranelift (`native_cpu_stream`, the words lowered as `native_ir` decodes
+/// them): over the stream tier 1 writes, the same nodes as the words' interpreter, read back
+/// from the tape the compiled words write, and a refusal at the same word. A compiled `CHECK`
+/// runs the compiled check.
+#[test]
+fn json_tier2_on_cranelift_equals_the_interpreter() {
+    let (p, _) = json_compiled();
+    let compiled = native_cpu_stream::Tier2Cpu::new(&native_ir::lower(&p).expect("lowers")).unwrap_or_else(|_| panic!("compiles"));
+    let block = &p.block_programs()[0];
+    let mut refused = 0;
+    for f in json_tier2_files() {
+        let run = block.run_files(&[&f]).remove(0);
+        let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+        let want = stream::run(&p, &f, starts, lasts)
+            .map(|nodes| nodes.into_iter().map(|mut n| {
+                n.supers.sort_unstable();
+                n
+            }).collect::<Vec<_>>())
+            .map_err(|r| r.pc);
+        refused += usize::from(want.is_err());
+        let got = compiled.tape(&f, starts, lasts).map(|t| native_cpu_stream::nodes_of(&t)).map_err(|r| r.pc);
+        assert_eq!(got, want, "{}", String::from_utf8_lossy(&f));
+    }
+    assert!(refused > 3, "{refused} refused");
+}
+
+/// Both tiers compiled: tier 1 (`native_cpu_block`) and tier 2 (`native_cpu_stream`).
+struct JsonCpu {
+    tier1: native_cpu_block::CompiledBlock,
+    tier2: native_cpu_stream::Tier2Cpu,
+    fallbacks: Vec<u16>,
+    grammar: std::sync::Arc<crate::code_rule_dsl::tape::Grammar>,
+}
+
+impl JsonCpu {
+    fn new() -> Self {
+        let (p, compiled) = json_compiled();
+        let native = native_ir::lower(&p).expect("lowers");
+        Self {
+            tier1: native_cpu_block::compile(&native.block_programs[0]).expect("compiles"),
+            tier2: native_cpu_stream::Tier2Cpu::new(&native).unwrap_or_else(|_| panic!("compiles")),
+            fallbacks: compiled.fallbacks,
+            grammar: crate::code_rule_dsl::tape::Grammar::new(crate::code_rule_dsl::language::GrammarDialect::Json).expect("json"),
+        }
+    }
+
+    /// The tape both tiers write for `source` after tier 1's run `run`, or `None` where the
+    /// file goes to tree-sitter; and the passes tier 2 took.
+    fn tape(&self, run: &block::BlockRun, source: &str) -> Option<(crate::code_rule_dsl::tape::TapeImage, u8)> {
+        if self.fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
+            return None;
+        }
+        let c = self.tier2.tape(source.as_bytes(), &run.positions[0], &run.positions[1]).ok()?;
+        let image = crate::code_rule_dsl::tape::TapeImage::from_columns(c.code, c.size, c.base, c.off, c.tail, c.shape.widths(), &c.codes, &self.grammar, source)
+            .expect("an image");
+        Some((image, c.passes))
+    }
+}
+
+/// Tree-sitter's tape for `source`, and whether its tree has an error.
+fn tree_sitter_tape(grammar: &crate::code_rule_dsl::tape::Grammar, source: &str) -> (Vec<u8>, bool) {
+    let parsed = crate::code_rule_dsl::tape::TapeImage::parse(grammar, source, &|| false).expect("parses").expect("encodes").primary;
+    let error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
+    (parsed.to_bytes().expect("bytes"), error)
+}
+
+/// The tape the two compiled tiers write (decision 0088) equals tree-sitter's byte for byte,
+/// for every file that does not go to tree-sitter; a file tree-sitter finds an error in always
+/// goes to it.
+#[test]
+fn json_tapes_equal_tree_sitter_byte_for_byte() {
+    let cpu = JsonCpu::new();
+    let mut files = inputs();
+    files.extend(JSON_CASES.iter().map(|c| c.to_vec()));
+    files.extend(json_tier2_files());
+    let (mut equal, mut fallback) = (0, 0);
+    for bytes in files {
+        let Ok(source) = std::str::from_utf8(&bytes) else { continue };
+        let (want, error) = tree_sitter_tape(&cpu.grammar, source);
+        let run = cpu.tier1.extract(&bytes);
+        match cpu.tape(&run, source) {
+            None => fallback += 1,
+            Some(_) if error => panic!("a tape for a file tree-sitter finds an error in: {source:?}"),
+            Some((tape, _)) => {
+                assert!(tape.to_bytes().expect("bytes") == want, "the tape differs for {source:?}");
+                equal += 1;
+            }
+        }
+    }
+    eprintln!("{equal} tapes equal, {fallback} to tree-sitter");
+    assert!(equal > 20, "{equal} tapes equal");
+}
+
+/// The widths are guessed before the file, and a second pass runs only where the guess was
+/// wrong: here a string longer than two bytes can count, whose tail needs four.
+#[test]
+fn json_widths_speculated_once() {
+    let cpu = JsonCpu::new();
+    for (source, passes) in [("[1, 2, \"a\"]".to_owned(), 1), (format!("[\"{}\"]", "a".repeat(70_000)), 2)] {
+        let run = cpu.tier1.extract(source.as_bytes());
+        let (tape, got) = cpu.tape(&run, &source).expect("a tape");
+        assert_eq!(got, passes, "{} bytes", source.len());
+        assert!(tape.to_bytes().expect("bytes") == tree_sitter_tape(&cpu.grammar, &source).0);
+    }
+}
+
+/// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
+/// (one path a line), tier 1 on Cranelift's batch: each file's tape equals tree-sitter's byte
+/// for byte, or the file goes to tree-sitter; never a tape where tree-sitter finds an error.
+#[test]
+#[ignore = "a corpus check; run by name with RERAIL_JSON_FILES"]
+fn json_corpus_tapes_equal_tree_sitter() {
+    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
+    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
+    let cpu = JsonCpu::new();
+    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+    let runs = native_cpu_block::run_batch(&[&cpu.tier1], &files);
+    let (mut equal, mut fallback, mut second, mut not_utf8, mut differ) = (0, 0, 0, 0, Vec::new());
+    for ((path, bytes), run) in paths.iter().zip(&bytes).zip(&runs) {
+        let Ok(source) = std::str::from_utf8(bytes) else {
+            not_utf8 += 1;
+            continue;
+        };
+        let (want, error) = tree_sitter_tape(&cpu.grammar, source);
+        match cpu.tape(run, source) {
+            None => {
+                fallback += 1;
+                if !error {
+                    eprintln!("{path}: valid JSON to tree-sitter");
+                }
+            }
+            Some(_) if error => panic!("{path}: a tape where tree-sitter finds an error"),
+            Some((tape, passes)) => {
+                second += usize::from(passes == 2);
+                if tape.to_bytes().expect("bytes") == want { equal += 1 } else { differ.push(path.clone()) }
+            }
+        }
+    }
+    eprintln!("{equal} equal, {fallback} to tree-sitter, {second} took a second pass, {not_utf8} not UTF-8, {} differ", differ.len());
+    assert!(differ.is_empty(), "tapes differ: {differ:?}");
+}
+
+/// Both tiers' CPU time over the files listed in `RERAIL_JSON_FILES`, best of 20, to set beside
+/// simdjson's two stages on the same files (`docs/parser-generators/19`): tier 1's function, its
+/// extract pass (the positions), and tier 2's function writing the tape. Run by name.
+#[test]
+#[ignore = "a measurement; run by name with RERAIL_JSON_FILES"]
+fn json_corpus_cost_against_simdjson() {
+    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
+    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
+    let cpu = JsonCpu::new();
+    let now = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec to write.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let total: usize = bytes.iter().map(Vec::len).sum();
+    let tier1: f64 = bytes.iter().map(|b| cpu.tier1.cpu_seconds(b, 20)).sum();
+    let extract: f64 = bytes
+        .iter()
+        .map(|b| {
+            (0..20)
+                .map(|_| {
+                    let s = now();
+                    std::hint::black_box(cpu.tier1.extract(b));
+                    now() - s
+                })
+                .fold(f64::MAX, f64::min)
+        })
+        .sum();
+    let (mut tier2, mut tokens) = (0.0, 0usize);
+    for b in &bytes {
+        let run = cpu.tier1.extract(b);
+        tokens += run.positions[0].len();
+        tier2 += cpu.tier2.call_cpu_seconds(b, &run.positions[0], &run.positions[1], 20).expect("a tape");
+    }
+    println!("{} files, {total} bytes, {tokens} tokens", bytes.len());
+    println!("tier 1, the function: {:.3} ms, {:.3} ns/byte", tier1 * 1e3, tier1 / total as f64 * 1e9);
+    println!("tier 1 with its extract pass (host): {:.3} ms, {:.3} ns/byte", extract * 1e3, extract / total as f64 * 1e9);
+    println!("tier 2, the function writing the tape: {:.3} ms, {:.3} ns/byte, {:.2} ns/token", tier2 * 1e3, tier2 / total as f64 * 1e9, tier2 / tokens as f64 * 1e9);
+}
+
+/// JSON's tier 2 as Cranelift IR and machine code, at the guessed widths of a small file, and
+/// its words, into the directory `RERAIL_DUMP`; and tier 1's machine code. Run by name.
+#[test]
+#[ignore = "a dump; run by name with RERAIL_DUMP"]
+fn dump_json_tier2_code() {
+    let dir = std::path::PathBuf::from(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP: a directory"));
+    let (p, _) = json_compiled();
+    let cpu = JsonCpu::new();
+    let (clif, asm) = cpu.tier2.code(native_cpu_stream::Shape::guess(0)).unwrap_or_else(|_| panic!("compiles"));
+    std::fs::write(dir.join("tier2.clif"), clif).expect("writes");
+    std::fs::write(dir.join("tier2.s"), asm).expect("writes");
+    std::fs::write(dir.join("tier2.rir"), rir::disassemble(&p, None)).expect("writes");
+    std::fs::write(dir.join("tier1.s"), &cpu.tier1.disassembly).expect("writes");
+}
+
+/// Tier 2's CPU time per token on files of one kind of value each (an array of 100,000), to see
+/// each path's cost. Run by name.
+#[test]
+#[ignore = "a measurement; run by name"]
+fn json_tier2_cost_per_path() {
+    let cpu = JsonCpu::new();
+    let many = |v: &str| format!("[{}]", vec![v; 100_000].join(","));
+    for (name, file) in [
+        ("numbers 1", many("1")),
+        ("numbers 12345.5", many("12345.5")),
+        ("true", many("true")),
+        ("strings \"a\"", many("\"a\"")),
+        ("empty arrays", many("[]")),
+        ("objects {\"a\":1}", many("{\"a\":1}")),
+    ] {
+        let run = cpu.tier1.extract(file.as_bytes());
+        let tokens = run.positions[0].len();
+        let s = cpu.tier2.call_cpu_seconds(file.as_bytes(), &run.positions[0], &run.positions[1], 10).expect("a tape");
+        println!("{name}: {tokens} tokens, {:.2} ns/token", s / tokens as f64 * 1e9);
+    }
 }

@@ -172,6 +172,176 @@ user + sys, load average 25–75:
 
 What would make it pay is in O114.
 
+### 8. Made to pay: closure-local rules, replay without deriving (2026-11-08, O114)
+
+**The program.** `typing/programs/calls_cx.rr` is `calls.rr` with every cross-file lookup a function of the reader's
+import closure. `fixtures/python/calls/make_cx.py` writes it from `calls.rr`, naming each text it replaces, so it
+follows `calls.rr`'s edits.
+- `components.rr` gives each document its closure, `rr_cx_reach(d, e)`, and the modules the closure holds,
+  `rr_cx_sees(d, q)`. The engine adds `components.rr` to any program that reads an `rr_cx_` relation.
+- The lookups read through the closure. For example, a name's binding is found in the modules the reader's
+  closure holds, not in every module with that name:
+
+  ```
+  // calls.rr: any module named q, anywhere in the run
+  pv(n, k, v) :- qn(n, q), qv(q, k, v).
+  // calls_cx.rr: the module m that binds it, if the reader's document reaches m's
+  pv(n, k, v) :- qn(n, q), qv(m9, q, k, v), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+  ```
+- Lookups that some reader asked for are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class
+  asked. `found` is not cut to the names readers ask for.
+- Closed-world `self`, and an annotation's subclasses, reach the subclasses in the reader's closure, not every
+  importer's.
+- Generics' heads are made for every subscript argument. A star import binds every public name of its module.
+  An instance attribute's assignment is keyed by the assignment.
+- Two engine fixes this needed. A memoised relation is never demand-split (0048). Every module imports
+  `builtins`, which was a missing edge.
+
+**Soundness, checked.** `RERAIL_CROSS_MEMO=verify` over an edited corpus is the test of the contract's dynamic half.
+The rows are stored over the full corpus; then half its files are cut to their imports, and the run is verified.
+A component whose closure is unchanged is found, and its stored rows are compared with rows derived without its
+importers' bodies.
+- The first pass found rows that existed only because an importer asked for them: generics, star imports,
+  instance attributes, and the benchmark's own spans. Those are the last four fixes above.
+- After them, 82 of 135 components were found and all 82 matched.
+
+**What changed in the engine.**
+- `.pragma "cross-memo" "*"` declares every relation the static contract admits: 280 of 283 for `calls_cx`, which
+  is 4.02 M rows over 133 components.
+- The guard `$d = @doc($n)` has a native step. Before, it sent every memoised stratum to the SQL kernel.
+- When every component is found, only the copies run, plus what other relations read.
+- The plan digest leaves out empty fact entries and the file system's answers (`world`). With the empty entries
+  in, a store run's rows were never found again. With the answers in, a file added anywhere missed every component.
+
+**Measured** on the 84-file Jedi corpus (267 files, 748 documents), debug builds. The `calls_cx` memo-off row
+comes from the build before the last four rule fixes; every other row is from the last build. CPU is user + sys; the
+load average was 40–125, so compare the cross part:
+
+| run | CPU | cross part | peak RSS | Jedi agree |
+| --- | ---: | ---: | ---: | ---: |
+| `calls.rr`, memo off | 100.2 s | 35.7 s | 849 MB | 6,299 |
+| `calls_cx`, memo off | 83.2 s | 37.6 s | 847 MB | 6,299 |
+| `calls_cx`, store (133 derived, 4.02 M rows) | 116.2 s | 48.7 s (7.8 s writing) | 846 MB | 6,299 |
+| `calls_cx`, replay (133 found) | 53.7 s | 7.8 s (5.9 s reading rows) | 837 MB | 6,299 |
+| edited corpus, memo off | 66.9 s | 26.6 s | 844 MB | 4,166 |
+| edited corpus, replay (135 found) | 44.3 s | 5.2 s | 838 MB | 4,166 |
+| one file edited (92 found, 41 derived and stored) | 87.7 s | 39.3 s (4.8 s writing) | 945 MB | 6,299 |
+
+- **It pays.** A replay's cross part is about a fifth of a derived one: 7.8 s against 35.7 s for `calls.rr`. The
+  answers are the same, and every run is under 1 GB.
+- `calls_cx` derived costs about what `calls.rr` does on today's engine.
+  - Its lookups through the closure cost more join work: subclasses of `object` fan out, and `fv` is per reader.
+  - `calls.rr`'s own fixpoint grew across the final-rerail-shape merge, from 53 relations and 8.1 s to 74
+    relations and 20.9 s (O133).
+- What a replay still spends is reading and binding 4 M rows (5.9 s). The next step is reading them in place.
+- **An edit does not pay yet.** One comment added to a widely imported file (`l1100_exceptions/exceptions.py`)
+  misses the 41 components that reach it. The guarded rules then run their joins over every replayed row and drop
+  the rows about found documents only at the end. So the cross part costs what deriving everything does. Cutting a
+  guarded rule to the missing documents before its joins is what that case needs (O114).
+
+### 9. Rows read by key, a guard on the first node, and a warm run that does little (2026-11-08, O114)
+
+**Where the rows are.** A component's rows were a zstd blob, found by a name binding. A run made three store
+calls per component and decoded every blob, so finding 133 components was a loop of statements. The rows are now in two
+store tables, each row cascading from a source (like the facts memo):
+- `cross_components(digest, source_id)`: a component's descriptor digest (the plan, its key, its documents' keys) to
+  the source holding that descriptor.
+- `cross_rows(source_id, rel, seq, c0..c7)`, clustered by `(source_id, rel)`.
+
+A run makes two queries, each one statement over JSON arrays of keys, so SQLite plans each whole:
+
+```sql
+-- every component, found by its digest: a primary-key probe each
+SELECT x.digest, x.source_id FROM json_each(?1) j JOIN cross_components x ON x.digest = j.value;
+-- every found component's rows of the relations still read: a key range per (source, relation)
+SELECT r.rel, r.c0, …, r.c7, r.source_id
+  FROM json_each(?1) s CROSS JOIN json_each(?2) n
+  CROSS JOIN cross_rows r ON r.source_id = s.value AND r.rel = n.value;
+```
+
+`CROSS JOIN` fixes the order. Left to choose, SQLite read every row of a source and tested each against all 281
+names: 2.18 M rows took 33 s. A test pins both plans with `EXPLAIN QUERY PLAN`. When every component is found,
+the run first drops the memoised rules, then reads only the relations whose copies something still reads: 365 K
+rows, not 4.02 M. The rows become in-memory columns that the engine reads in place.
+
+**The guard, earlier.** A guarded rule now tests `!rr_cross_doc` on every node that its same-document atoms join to
+the head's node, not only on the head's node. A guest shares its host's component, so each test admits the same
+rows. The planner applies each test as soon as its node is bound:
+
+```
+rr_in_annotation_0_fret($f, $k, $v) :- rr_in_annotation_0_retval($f, $r), pv($r, $k, $v),
+    $rr_xd = @doc($f), !rr_cross_doc($rr_xd), $rr_xd1 = @doc($r), !rr_cross_doc($rr_xd1)
+```
+
+**The per-file memo, which now stores on this corpus.**
+- Rows of a guest (an annotation's tree) belong to its host file (O109 had held them back).
+- A memo hit's exports are written with one `INSERT … SELECT` per relation, not one statement per row. That was
+  455 K statements for each large relation, and 12.4 s of a warm run.
+- A run read wholly from the memo now plans with tree counts (O134).
+
+**Measured** on the 84-file Jedi corpus (267 files, 748 documents), `calls_cx` with both memos on, one debug
+build. CPU is user + sys of the main thread; the load average was 60–90:
+
+| run | CPU | cross part | local part | stats | peak RSS | Jedi agree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| prime (both memos stored) | 99.1 s | 56.5 s | 30.5 s | 10.6 s | 917 MB | 6,299 |
+| warm (133 found, 267 files from the memo) | 13.2 s | 2.3 s | 5.0 s | 4.3 s | 841 MB | 6,299 |
+| one file edited (92 found, 41 derived) | 53.8 s | 42.2 s | 5.8 s | 4.4 s | 1,029 MB | 6,299 |
+| one file edited, both memos off | 57.0 s | 29.9 s | 23.3 s | 2.2 s | 847 MB | 6,299 |
+
+The warm run's answers equal the prime's. The edited run's answers equal the run with both memos off.
+
+- **Warm: 13.2 s, against 53.7 s before (§8).** What is left:
+  - the per-file memo's replay (5.0 s);
+  - measuring the replayed base relations' statistics (4.3 s, in Rust);
+  - the components' closure, `rr_cx_reach` (1.2 s);
+  - parsing the store's entries.
+- **One file edited: the cross memo does not pay.** The cross part is 42.2 s, against 29.9 s with the memo off.
+  - The guarded fixpoint costs a little less: 12.5 s against 15.4 s.
+  - Storing the 41 components' rows costs 6.9 s, and replaying 2.18 M rows costs 3.5 s.
+  - The edited file is imported widely. The 41 components that reach it hold most of the calls, so most of the work
+    is still derived.
+  - Peak RSS is just over the 1 GB budget.
+
+**What an edit needs next: keys over what was read, which other branches are building.** A component's key is a
+digest of its files' bytes (`rr_cx_own`), so a comment misses every importer. A survey of the other worktrees
+(2026-11-08) found that keying is being worked on in three places:
+
+- **0083, final-rerail-shape-phased-facts (proposed).** It supersedes this decision's per-component keys for typing.
+  - The unit of change is the definition: a symbol, with a digest of its subtree.
+  - Exported facts name symbols, not node ids, and positions move to `struct.span`. A comment or a body edit then
+    leaves the exported rows byte-identical.
+  - Node ids are numbered per definition, not per document.
+  - Typing runs as phases over separate fact spaces: P1 reads structure, P2 resolves types, P3 types bodies.
+  - The stored fixpoint is maintained by deltas. Name-to-hash keys remain only for facts shared beyond one store
+    and for the memo of searches.
+  - Its first steps:
+    - a layout-invariance test;
+    - checking whether one added import misses every file's per-file memo (§5);
+    - `struct.rr` with the target that the `exceptions.py` comment edit gives an empty delta. That is this
+      benchmark's edit.
+- **0077, More-ergonomic-rule-syntax (accepted, stages 1–2 built).**
+  - A session keeps the cross-file part: input digests and derived rows, within a 256 MB budget.
+  - An edit runs only the strata it reaches, and maintains them natively by delete-and-rederive. 0083 §2 builds on
+    this.
+  - Still open there: inputs are digested whole, and maintenance scans whole relations.
+- **Final-shape-quality (uncommitted).** The per-file memo's key folds in the run's options only for a file-local
+  part that reads them. This is the same question as 0083 §5: the plan digest should hash only the facts the cut
+  reads.
+
+Typing-support-final-shape settled 0065 §2 on component keys read in bulk, and made the same bulk replay of memo
+hits as §9 here (`c7b16e6b3`). 0064, a cutoff per document that recorded reads inside the engine, was withdrawn
+at +60% CPU.
+
+So this branch does not build its own early cutoff. The parts of this decision that 0083 keeps for programs that
+declare them are:
+- the store tables and their one-query reads (§9);
+- the guard;
+- the soundness check by verifying over an edited corpus.
+
+Also found here, and needed under any keying: a run read from a memo must plan with the replayed files' statistics
+(O134).
+
 ## What the prior work says
 
 - **The spike has no cross-file evidence.** It ran "no data-flow, call-graph or cross-file analysis

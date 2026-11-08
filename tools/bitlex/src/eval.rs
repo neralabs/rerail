@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, FactWhen, MachineDef, Nest, NodeEnd, NodeStart, Stmt, UClass};
+use crate::syntax::{Arg, Expr, Gram, MachineDef, Stmt, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -36,20 +36,14 @@ pub struct Token {
     pub soft: bool,
 }
 
-/// A `tree` section's declarations, its masks evaluated.
+/// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
 #[derive(Clone, Default)]
 pub struct TreeDecl {
-    /// Each node kind in order (its rank): kind, start mask, end mask, level (a count after each
-    /// byte).
-    pub nodes: Vec<(String, Mask, Mask, Option<Vec<i32>>)>,
-    /// Code facts: whether a field (else a supertype), its name, the kinds, the mask.
-    pub facts: Vec<(bool, String, Vec<String>, Mask)>,
+    /// Each `node` rule in order: kind, nested, content. The first is the root.
+    pub rules: Vec<(String, bool, crate::syntax::Gram)>,
+    /// Each `choice`: name, supertype, alternatives.
+    pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
-    pub untoken: Vec<String>,
-    /// The section has tier-2 rules (decision 0071): conditions on the token stream, ends with a
-    /// child, nesting on the writer's stack. Their executor is the engine's tape writer, checked
-    /// against tree-sitter; this evaluator keeps the masks only.
-    pub tier2: bool,
 }
 
 pub struct Output {
@@ -95,6 +89,9 @@ pub struct Ev<'a> {
     skip: Mask,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
+    /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
+    byte_classes: HashMap<String, Vec<(u32, u32)>>,
+    checks: Vec<(String, Gram)>,
 }
 
 type R<T> = Result<T, String>;
@@ -155,6 +152,8 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             tables,
             tree: None,
+            byte_classes: HashMap::new(),
+            checks: vec![],
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
@@ -185,6 +184,7 @@ impl<'a> Ev<'a> {
         match s {
             Stmt::Lexer(_) => {}
             Stmt::Class(name, items) => {
+                self.byte_classes.insert(name.clone(), items.clone());
                 let m = Mask::from_fn(self.n, |i| {
                     let b = self.src[i] as u32;
                     items.iter().any(|&(lo, hi)| lo <= b && b <= hi)
@@ -336,38 +336,10 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, start, when, end, level, .. } => {
-                let (NodeStart::At(start), None, NodeEnd::At(end), None | Some(Nest::Level(_))) = (start, when, end, level) else {
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                };
-                if matches!(start, Expr::Name(n) if !self.vars.contains_key(n)) {
-                    // Another node kind's starts: a tier-2 rule.
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                }
-                let (start, end) = (self.mask(start)?, self.mask(end)?);
-                let level = match level {
-                    Some(Nest::Level(l)) => match self.vars.get(l) {
-                        Some(Val::C(c)) => Some(c.clone()),
-                        _ => return Err(format!("node {kind}: level `{l}` is not a count")),
-                    },
-                    _ => None,
-                };
-                self.tree.get_or_insert_with(TreeDecl::default).nodes.push((kind.clone(), start, end, level));
-            }
-            Stmt::Fact { field, name, kinds, expr } => {
-                let FactWhen::Mask(expr) = expr else {
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                };
-                let m = self.mask(expr)?;
-                self.tree.get_or_insert_with(TreeDecl::default).facts.push((*field, name.clone(), kinds.clone(), m));
-            }
-            // A validator runs once per token, in tier 2 (or as masks the compiler writes).
-            Stmt::Check { .. } => self.tree.get_or_insert_with(TreeDecl::default).tier2 = true,
+            Stmt::Node { kind, nested, body } => self.tree.get_or_insert_with(TreeDecl::default).rules.push((kind.clone(), *nested, body.clone())),
+            Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
+            Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
-            Stmt::Untoken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untoken.extend(kinds.iter().cloned()),
             Stmt::Error(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
@@ -1051,6 +1023,14 @@ impl<'a> Ev<'a> {
                 }
             }
         }
+        for (kind, g) in &self.checks {
+            for t in toks.iter().filter(|t| &t.kind == kind) {
+                let text = &self.src[t.start..t.end];
+                if !byte_ends(g, text, 0, &self.byte_classes)?.contains(&text.len()) {
+                    self.errors.push(format!("{kind} {:?} fails its check (byte {})", String::from_utf8_lossy(text), t.start));
+                }
+            }
+        }
         Ok(toks)
     }
 }
@@ -1069,4 +1049,62 @@ fn decode(b: &[u8]) -> (u32, usize) {
         return (0xfffd, 1);
     }
     (b[1..len].iter().fold(init, |a, &x| (a << 6) | (x & 0x3f) as u32), len)
+}
+
+/// Where a `check` grammar may end over `text` from byte `at`: every way, so no order matters.
+/// Its names are byte classes; its literals, bytes.
+fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u32, u32)>>) -> R<Vec<usize>> {
+    let union = |a: &mut Vec<usize>, b: Vec<usize>| {
+        for x in b {
+            if !a.contains(&x) {
+                a.push(x);
+            }
+        }
+    };
+    Ok(match g {
+        Gram::Lit(s) => text[at..].starts_with(s.as_bytes()).then_some(at + s.len()).into_iter().collect(),
+        Gram::Sym(name) => {
+            let ranges = classes.get(name).ok_or(format!("check: `{name}` is no class"))?;
+            match text.get(at) {
+                Some(&b) if ranges.iter().any(|&(lo, hi)| lo <= b as u32 && b as u32 <= hi) => vec![at + 1],
+                _ => vec![],
+            }
+        }
+        Gram::Seq(items) => {
+            let mut here = vec![at];
+            for item in items {
+                let mut next = vec![];
+                for p in here {
+                    union(&mut next, byte_ends(item, text, p, classes)?);
+                }
+                here = next;
+            }
+            here
+        }
+        Gram::Alt(alts) => {
+            let mut out = vec![];
+            for a in alts {
+                union(&mut out, byte_ends(a, text, at, classes)?);
+            }
+            out
+        }
+        Gram::Opt(a) => {
+            let mut out = vec![at];
+            union(&mut out, byte_ends(a, text, at, classes)?);
+            out
+        }
+        Gram::Star(a) | Gram::Plus(a) => {
+            let mut out = if matches!(g, Gram::Star(_)) { vec![at] } else { vec![] };
+            let mut frontier = byte_ends(a, text, at, classes)?;
+            while let Some(p) = frontier.pop() {
+                if out.contains(&p) {
+                    continue;
+                }
+                out.push(p);
+                frontier.extend(byte_ends(a, text, p, classes)?.into_iter().filter(|&q| q > p));
+            }
+            out
+        }
+        Gram::Field(..) => return Err("check: a field in a byte grammar".into()),
+    })
 }

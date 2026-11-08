@@ -1,6 +1,7 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
+pub use super::logic::profile::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
@@ -14,6 +15,21 @@ pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Re
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
 pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
+    let profiling = super::logic::profile::on();
+    let _run = profiling.then(super::logic::profile::one_run);
+    if profiling { super::logic::profile::reset(); }
+    let span = super::logic::profile::span(||"SQL extension request".into());
+    let result = sql_request(store,request);
+    drop(span);
+    if profiling {
+        if let Some(directory) = super::logic::profile::directory() {
+            super::logic::profile::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
+        }
+    }
+    result
+}
+
+fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Query {
@@ -175,6 +191,16 @@ pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
 pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
     serde_json::Value::Array(paths.iter().map(|path| {
         match super::logic::rr::read_file(path) {
+            // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
+            // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
+            Ok((program, _)) if let Err(error) = super::logic::rr::print(&program)
+                .map_err(|e| e.to_string())
+                .and_then(|text| super::logic::plan::corpus::combine(&[text.as_str()], "").map_err(|e| e.to_string()))
+                // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
+                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+            {
+                serde_json::json!({"path": path, "status": "types-failed", "error": error})
+            }
             Ok((program, files)) => serde_json::json!({
                 "path": path, "status": "reader-passed", "rules": program.rules.len(),
                 "outputs": program.outputs,
@@ -516,6 +542,20 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
+        // A file another one `#include`s is a library of it (`…confusables.rr`), not a program of its own: alone it
+        // has neither the declarations it reads nor the rules that fill its inputs.
+        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| {
+                text.lines()
+                    .filter_map(|l| l.trim().strip_prefix("#include"))
+                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         files.iter().map(|path| crate::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]

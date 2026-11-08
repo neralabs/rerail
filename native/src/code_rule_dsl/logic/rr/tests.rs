@@ -384,7 +384,6 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
 #[test]
 fn unlowered_constructs_are_named() {
     for (src, what) in [
-        (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
     ] {
         let e = parse(src).unwrap_err().to_string();
@@ -1164,6 +1163,43 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0081: `match_all` over nodes the rules bind to a kind, through derived columns that join kinds, and over
+/// another pattern's captures; a distinct text is scanned once, and containers with equal text each get their spans.
+/// A capture inside `count : { … }` reads its text from the rule.
+#[test]
+fn match_all_over_nodes_of_a_kind_and_over_captures_gives_spans() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchkinds");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = \"/x/{id}/{name}\"\nb = \"/x/{id}/{name}\"\nc = 'k9 zz'\n# note AB12 CD3\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl str_or_comment(s: node)
+str_or_comment(s) :- kind(s, "string").
+str_or_comment(s) :- kind(s, "comment").
+.decl param(k: symbol, l: number, c: number)
+param(x, l, c) :- str_or_comment(s), match_all("\\{(?<k>[a-z]+)\\}", s), text(k, x), line(k, l), col(k, c).
+.decl wd(w: span)
+wd(w) :- kind(c, "comment"), match_all("(?<w>[A-Z]+[0-9]+)", c).
+.decl digit(x: symbol)
+digit(x) :- wd(w), match_all("(?<d>[0-9])", w), text(d, x).
+.decl ndig(t: symbol, n: number)
+ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
+.output param, digit, ndig
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    // Two strings with one text: each its own spans, at its own line and column.
+    assert_eq!(read("param"), "id\t1\t9\nid\t2\t9\nname\t1\t14\nname\t2\t14");
+    assert_eq!(read("digit"), "1\n2\n3");
+    assert_eq!(read("ndig"), "AB12\t2\nCD3\t1");
+}
+
 /// `match_all` over a node's own text, and over an earlier match's captures (decision 0081): each group is a span
 /// placed in the file, with its text and line. Strings and comments in one relation give both; the same text in two
 /// strings is matched once and placed at each.
@@ -1872,6 +1908,117 @@ outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
     assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
 }
 
+/// `.scope` selects a repository's files (`core.rr`): a finding in a document outside `dirs`, or under a `tests`
+/// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
+#[test]
+fn scope_drops_findings_outside_the_policy_files() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope");
+    for p in ["impl/a.py", "impl/tests/test_a.py", "other/b.py"] {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(p), "f()\n").unwrap();
+    }
+    let program = r#"
+.policy "t:scope" revision 1
+.language python
+.scope dirs "other",   // a comment, then the line goes on
+    "impl"
+.scope exclude "other/**"
+.scope tests false
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.input node, line, doc
+.violation Call(at: node) "a call"
+Call(c) :- node(_, c, "call", _, _).
+"#;
+    let paths = |program: &str| {
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| l.split('\t').nth(3).unwrap().to_owned()).collect();
+        got.sort();
+        got
+    };
+    assert_eq!(paths(program), ["impl/a.py"]);
+    assert_eq!(paths(&format!("{program}.scope given\n")), ["impl/a.py", "impl/tests/test_a.py", "other/b.py"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other `.scope` forms (O117): `dirs option("…")` takes its directories from the run's options, `text` reads
+/// documents of no grammar as text only (lines, no tree), `report dirs` drops findings outside its directories while
+/// facts still come from the whole scope, and `embedded false` is `.guests off`.
+#[test]
+fn scope_takes_option_dirs_text_documents_and_report_dirs() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope-forms");
+    for (p, text) in [("impl/a.py", "f()\n"), ("app/x/c.py", "g()\n"), ("other/b.py", "h()\n"), ("docs/d.md", "intro\nTODO one\n"), ("docs/e.txt", "TODO two\n"), ("tools/t.py", "k()\n")] {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(p), text).unwrap();
+    }
+    let program = r#"
+.policy "t:scope-forms" revision 1
+.language python
+#include "python/ast.rr"
+.scope include "impl/**", "docs/**", "tools/**"
+.scope dirs option("roots")
+.scope text "**/*.md"
+.scope report dirs "impl", "app", "docs"
+.violation Call(at: node) "a call"
+Call(c) :- kind(c, "call").
+.violation Todo(at: loc) "a todo"
+Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
+"#;
+    // The program with its includes, as the corpus reads it.
+    let rule = dir.with_extension("scope-forms.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let paths = |options: serde_json::Value| {
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[flat.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| format!("{}:{}", l.split('\t').nth(3).unwrap(), l.split('\t').nth(4).unwrap())).collect();
+        got.sort();
+        got
+    };
+    // `docs/d.md` is read as text (its TODO line); `docs/e.txt` matches no text glob; `tools/` is read but reports
+    // nothing; `app/` only with the option.
+    assert_eq!(paths(serde_json::json!({})), ["docs/d.md:2", "impl/a.py:1"]);
+    assert_eq!(paths(serde_json::json!({"roots": ["app"]})), ["app/x/c.py:1", "docs/d.md:2", "impl/a.py:1"]);
+    let lowered = crate::code_rule_dsl::logic::rr::parse(&format!("{flat}\n.scope embedded false\n")).unwrap();
+    assert_eq!(lowered.text_globs, ["**/*.md"]);
+    let off = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| r == &vec![crate::code_rule_dsl::logic::front::Value::Str("library".into()), crate::code_rule_dsl::logic::front::Value::Str("off".into())]);
+    assert!(off, "embedded false is guests off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An AST pattern literal (O103): ``n ~ `$O[:-$K]` `` holds at each match, and `$K` binds K to the node it captured;
+/// a slice with a start is another pattern's, and a negated pattern holds where none matches.
+#[test]
+fn pattern_literals_match_and_bind_their_metavariables() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("pattern");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "t = name[:-4]\nu = name[1:-7]\nv = other[:-13]\n").unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "t:pattern" revision 1
+.language python
+.violation Cut(at: node, k: symbol) "{k}"
+Cut(n, k) :- n ~ `$O[:-$K]`, text(K, k).
+.violation Plain(at: node) "no step"
+Plain(n) :- kind(n, "subscript"), !(n ~ `$O[:-$K]`).
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap();
+    assert_eq!(program.ast_patterns.len(), 1);
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&text, &dir.join("src"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| {
+        let f: Vec<&str> = l.split('\t').collect();
+        format!("{}:{}", f[1], f[4])
+    }).collect();
+    got.sort();
+    assert_eq!(got, ["Cut:1", "Cut:3", "Plain:2"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// O101: a program whose reads make demands (`parsed`, `@parse`, `@splice`, `file_line`) prints back as itself.
 /// The printed text declares the demands it was lowered with, so reading it makes none again.
 #[test]
@@ -1920,6 +2067,32 @@ group(n) :- n = count : { order(_, _) }.
     assert_eq!(order, ["1\t2", "1\t3", "2\t3"]);
     assert_eq!(select, ["3"]);
     assert_eq!(group, ["3"]);
+}
+
+/// The native steps a string rule takes: a concatenation (`q = cat("m", ".", x)`), a split read back
+/// (`split_dot`'s `$s = @cat($m, $x)`), a set of constant patterns (`contains(…, {…})` once they are symbols) and
+/// a set membership (`x = "a" ; x = "b"` as `@equals`). Their rows are the SQL backend's.
+#[test]
+fn string_steps_give_the_rows_sql_gives() {
+    let rule = r#"
+.decl ident(n: node, x: symbol)
+ident(n, x) :- kind(n, "identifier"), text(n, x).
+.decl dotted(n: node, q: symbol)
+dotted(n, q) :- ident(n, x), q = cat("m", ".", x).
+.decl last(n: node, x: symbol)
+last(n, x) :- dotted(n, q), split_dot(q, m, x), m != "".
+.decl hit(x: symbol)
+hit(x) :- ident(_, x), (contains("ol", x) ; contains("et", x)).
+.decl one(x: symbol)
+one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
+.output last, hit, one
+"#;
+    let [last, hit, one] = <[Vec<String>; 3]>::try_from(guests_run("stringsteps", &[("a.py", "alpha = beta + gamma\nwolf = 1\n")], rule, &["last", "hit", "one"])).unwrap();
+    let mut words: Vec<String> = last.iter().map(|l| l.split('\t').nth(1).unwrap().to_owned()).collect();
+    words.sort();
+    assert_eq!(words, ["alpha", "beta", "gamma", "wolf"]);
+    assert_eq!(hit, ["beta", "wolf"]);
+    assert_eq!(one, ["alpha", "beta"]);
 }
 
 /// A grammar a rule names is one the language registry has (decision 0082): a dialect's label or a fragment.

@@ -1,9 +1,8 @@
 # 0081: Span captures over a node's own text, and span regexes as block programs
 
-Status: accepted (2026-11-08). §1–§2 built; §3 built as a prefilter run by the CPU interpreter, its device launch
-not wired.
+Status: accepted (2026-11-08). §1–§3 built; §3's programs run on Metal under the device binding.
 
-(Numbered past 0080, which Parser-generators and wolfeel use for tier 2.)
+(Parser-generators' tier-2 decisions are 0085 to 0088 on wolfeel.)
 
 ## Intro
 
@@ -83,9 +82,12 @@ The output is delayed one byte, so a match ending at the file's end has a bit.
 - A pattern that matches the empty string, or that grows past 2,048 operations, has no program and is scanned as
   before.
 
-The batch runs each source or line pattern's program over the file first. A line with no mark in it is not
-scanned; a file with none is not scanned at all. The host regex runs, captures and all, only where a match can
-end. `RERAIL_SPAN_PREFILTER=off` turns this off.
+The batch runs every source or line pattern's program over every file first, as one batch of block programs
+(decision 0066's shape, `regex_block::ends_batch`): one Metal launch under the device binding (`--metal`,
+`Binding::Metal`), each lane a chunk of a file, split while the device refuses it for capacity; the CPU
+interpreter otherwise, or where the device is missing or refuses a lone file. The profile records which ran
+(`span prefilter: metal | cpu`). A line with no mark in it is not scanned; a file with none is not scanned at all.
+The host regex runs, captures and all, only where a match can end. `RERAIL_SPAN_PREFILTER=off` turns this off.
 
 Tests:
 
@@ -93,12 +95,41 @@ Tests:
   contain every end `find_iter` gives; for the exact patterns they equal every end of every matching substring.
 - `a_patterns_block_program_runs_alike_on_every_executor`: the CPU interpreter, Cranelift, and Metal (interpreter
   and generated MSL, every lane width and class strategy) give the same words.
+- `a_batch_of_span_programs_marks_each_file_as_it_alone_would`: three programs over seven files in one batch, on
+  Metal and on the CPU, give each file the words its program gives it alone.
 
 Measured: `noqa-sec-ratchet.rr` (`match_all("(?<m>SEC\d+)")` over every line) on one 4.4 MB file of 60,000 lines.
 CPU time is 12.9–13.4 s user with the prefilter and 12.9–13.3 s without (debug build, load 64). This pattern starts
 with a literal, so the host regex already skips to `SEC` with a SIMD search and the block program saves nothing.
 The block program pays where the host has no literal to search for, and on the device, which scans the bytes
 anyway.
+
+On the device: the same program over 40 files of 3,000 definitions (1.78 M nodes, per-file memo off), 7 batches.
+The prefilter's span is 0.551 s CPU on the interpreter and 0.041 s with `--metal`; the findings are equal (load
+64, debug build).
+
+### 4. Merged from a parallel build (the final-shape branch's 0081)
+
+The same O80 was built twice; the merge keeps the code above and these parts of the other build:
+
+- **A context that feeds a scan keeps its derived atoms.** In
+  `ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.`
+  the helper that binds `w` used to be `text(w, t)` alone, which holds every node, so the scan had no kind.
+  When the helper's variables are a `match_all`'s text, the derived atom `wd(w)` stays (`span_context`).
+- **`count` and `sum` over `match_all`** keep the groups as columns of the body's helper, so each match is its
+  own row: `AB12` counts 2, not 1.
+- **A declared relation nothing derives scans empty**, instead of being refused.
+
+Measured on Ruff's own fixtures (one `run-rr` each, compared by line with Ruff's snapshot):
+
+| rule | found | Ruff | missing | extra |
+|---|---|---|---|---|
+| RUF001 | 12 | 9 | 0 | 3: `−`, `ρ`, `∗`, which Ruff's test allows by setting |
+| RUF002 | 2 | 1 | 0 | 1: the same |
+| RUF003 | 5 | 3 | 0 | 2: the same |
+| FAST003 | 64 | 31 | 0 | 33: a parameter with no default is not seen (O121) |
+
+`perf403` (a column bound by any expression) is still refused: O122.
 
 ## What the prior work says
 
@@ -121,9 +152,9 @@ anyway.
 
 ## Open
 
-- **The device launch.** The block program runs on the CPU interpreter in the batch. Metal's executors give the
-  same words (tested), but the batch does not launch them: the binding (`Binding::Metal`) does not reach the
-  batch's build, and the programs of a batch would go in one `metal_block_program::run_batch`.
+- **The device launch** is a launch of its own, before the batch's projection. It could join the transducer's
+  launch over the same bytes (one read of the file for both); that waits on the tape being made on the device in
+  real runs.
 - **Node, comment and capture spans** are matched on the host, once per distinct text (§2). On the device they
   would be the vocabulary's strings, matched by the same programs.
 - **Repetition of a group** (`(ab)*`) is widened to every later position; exact would need a loop, which block

@@ -69,6 +69,9 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
+            // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
+            // must be all of a document's, not those a reader outside the closure asked for.
+            || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {
@@ -239,6 +242,12 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         let own = candidates.contains(rule.head.rel.as_str()).then(|| Literal::Atom(Atom { rel: format!("demand_{}", rule.head.rel), args: rule.head.args.clone(), neg: false, gated: false }));
         if let Some(own) = &own {
             kept.insert(0, own);
+        }
+        // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
+        // relation any engine makes, so the rule stays as it is.
+        if kept.is_empty() {
+            rules.push(rule.clone());
+            continue;
         }
         let mut bound = BTreeSet::new();
         for l in &kept {

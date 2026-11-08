@@ -514,6 +514,7 @@ pub(super) struct CoreRows {
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
+    ast_match: Vec<[i64; 4]>,
     /// A pattern's matches in a node's or capture's text, by pattern and text, for the batch (decision 0081): each
     /// distinct text is scanned once. Each match's groups as (match, group, start, end), offsets in the text.
     rx_memo: HashMap<(usize, Box<str>), std::sync::Arc<[(u32, u32, u32, u32)]>>,
@@ -730,7 +731,7 @@ impl CoreRows {
     /// earlier pattern's group captured (`SpanIn`). The source is scanned once per pattern (decision 0042 §3). A
     /// line's, node's or capture's text is scanned once per distinct text in the batch (0042 §2, `rx_memo`), and its
     /// matches placed at each span holding it: nodes of one kind seldom nest, and a capture lies inside its text.
-    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], ends: &[Option<Vec<u64>>], string: &mut dyn FnMut(&str) -> usize) {
         use crate::code_rule_dsl::logic::front::SpanIn;
         let facts = std::sync::Arc::clone(&p.facts);
         let src = facts.source.as_str();
@@ -759,6 +760,8 @@ impl CoreRows {
         // Patterns whose containers wait on each other (a cycle of captures) run in order, with what is made by then.
         let mut done = vec![false; patterns.len()];
         let mut force = false;
+        // Bytes scanned, reported as profile work.
+        let mut scanned = 0u64;
         loop {
             let mut progressed = false;
             for (i, (within, pattern, re, prefilter)) in patterns.iter().enumerate() {
@@ -782,8 +785,13 @@ impl CoreRows {
                     SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
                 };
                 let names: Vec<Option<&str>> = re.capture_names().enumerate().map(|(g, n)| if g == 0 { Some("") } else { n }).collect();
-                // The bytes a match can end after (decision 0081 §3): a source or line where none can is not scanned.
-                let ends = prefilter.as_ref().map(|f| f.ends(src.as_bytes()));
+                // The bytes a match can end after (decision 0081 §3), from the batch's run of the block programs: a
+                // source or line where none can is not scanned.
+                let ends = match (&ends[i], prefilter) {
+                    (Some(e), _) => Some(std::borrow::Cow::Borrowed(e.as_slice())),
+                    (None, Some(f)) => Some(std::borrow::Cow::Owned(f.ends(src.as_bytes()))),
+                    (None, None) => None,
+                };
                 for ([a, b], c) in containers {
                     if let Some(ends) = &ends
                         && !crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::any_in(ends, a as usize, b as usize)
@@ -796,12 +804,12 @@ impl CoreRows {
                         true => match self.rx_memo.get(&(pat as usize, Box::from(text))) {
                             Some(f) => std::sync::Arc::clone(f),
                             None => {
-                                let f = scan(re, &names, text);
+                                let f = { scanned += text.len() as u64; scan(re, &names, text) };
                                 self.rx_memo.insert((pat as usize, Box::from(text)), std::sync::Arc::clone(&f));
                                 f
                             }
                         },
-                        false => scan(re, &names, text),
+                        false => { scanned += text.len() as u64; scan(re, &names, text) },
                     };
                     for &(j, g, s0, e0) in found.iter() {
                         let name = names[g as usize].expect("a named group");
@@ -816,6 +824,42 @@ impl CoreRows {
                 break;
             }
             force = !progressed;
+        }
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
+    }
+
+    /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
+    /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
+    /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
+    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+        if patterns.is_empty() {
+            return;
+        }
+        let f = &*p.facts;
+        let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
+        for local in 0..p.len() {
+            let id = p.core[local as usize];
+            at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
+        }
+        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        let node_of = |n: &ast_grep_core::Node<'_, _>| {
+            let r = n.range();
+            at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
+        };
+        let empty = string("") as i64;
+        for (text, pattern) in patterns {
+            let pat = string(text) as i64;
+            let names = crate::code_rule_dsl::logic::rr::single_metavars(text);
+            for m in tree.root().find_all(pattern) {
+                let Some(n) = node_of(&m) else { continue };
+                let captures: Option<Vec<(i64, i64)>> = names
+                    .iter()
+                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .collect();
+                let Some(captures) = captures else { continue };
+                self.ast_match.push([pat, n, empty, n]);
+                self.ast_match.extend(captures.into_iter().map(|(g, c)| [pat, n, g, c]));
+            }
         }
     }
 
@@ -921,6 +965,7 @@ impl CoreRows {
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
+            ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
     }
 }

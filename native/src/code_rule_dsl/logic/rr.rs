@@ -114,6 +114,21 @@ pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json
     Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
 }
 
+/// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
+/// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
+pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
+    let filter = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
+    program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
+    for r in &mut program.rules {
+        r.body.retain(|l| !l.atom().is_some_and(|a| filter.contains(&a.rel.as_str())));
+    }
+    filter.iter().for_each(|f| {
+        program.decls.remove(*f);
+    });
+    program.settings.push(("scope".to_owned(), "given".to_owned()));
+    program.doc_scopes = None;
+}
+
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
     read_file(path).map(|(program, _)| program)
@@ -304,4 +319,28 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen)?;
     Ok((out, read_files))
+}
+
+/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
+pub(in crate::code_rule_dsl) fn single_metavars(pattern: &str) -> Vec<String> {
+    let b = pattern.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && b[j] == b'$' {
+            j += 1;
+        }
+        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+        let name = &pattern[j..k];
+        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
+            out.push(name.to_owned());
+        }
+        i = k.max(i + 1);
+    }
+    out
 }

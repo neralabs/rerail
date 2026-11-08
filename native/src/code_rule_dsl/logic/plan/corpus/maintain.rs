@@ -22,8 +22,21 @@
 //!
 //! An overdeleted row is a superset of the rows that lost every derivation; a survivor holds in the new rows. A new
 //! row not among the old has a derivation using a gained row at some position, by induction on its derivation, so
-//! the insert rules reach it. A stratum with an aggregate, a native operator, a lattice, an `ast` or `nearest`
-//! literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
+//! the insert rules reach it.
+//!
+//! An aggregate over a changed relation `a` is a position too, by its groups: the atom's correlated variables `g`
+//! over `a`'s rows gone and new are the groups whose value may have changed.
+//!
+//! ```text
+//! grp(g)      :- a__minus(..).   grp(g) :- a__plus(..).
+//! overdelete  h__del(..) :- grp(g), B over old rows (the aggregate over a__old)
+//! insert      h__ins(..) :- grp(g), B over new rows
+//! ```
+//!
+//! A head row that read an unchanged group read the same value before and after, so the other positions' rules cover
+//! it (with the aggregate over old rows in an overdelete). A stratum with a native operator, a lattice, an `ast` or
+//! `nearest` literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules
+//! unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};
@@ -68,6 +81,10 @@ fn maintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule], 
                 && rule.body.iter().all(|l| match l {
                     Literal::Atom(a) => !a.gated && (!changed.contains(&a.rel) || scc.contains(&a.rel) || old(&a.rel)),
                     Literal::Cmp { .. } => true,
+                    // An aggregate over an earlier stratum's relation (never this one's: aggregation is not recursive).
+                    Literal::Agg { atom: a, .. } => {
+                        !a.gated && !scc.contains(&a.rel) && a.args.iter().all(|t| !matches!(t, Term::Call(..))) && (!changed.contains(&a.rel) || old(&a.rel))
+                    }
                     _ => false,
                 })
         })
@@ -121,9 +138,61 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         // A read that can change: an atom of this stratum, or a changed relation (positive or negated).
         let moves = |a: &Atom| scc.contains(&a.rel) || changed.contains(&a.rel);
         let old_of = |a: &Atom| if moves(a) { named(&a.rel, "old") } else { a.rel.clone() };
-        for rule in &mine {
+        // A literal over old rows: an atom, or an aggregate's atom, that moves reads `r__old`.
+        let old_lit = |l: &Literal| match l {
+            Literal::Atom(b) => atom(old_of(b), b.args.clone(), b.neg),
+            Literal::Agg { var, op, over, atom: b } => {
+                Literal::Agg { var: var.clone(), op: op.clone(), over: over.clone(), atom: Atom { rel: old_of(b), ..b.clone() } }
+            }
+            other => other.clone(),
+        };
+        for (r, rule) in mine.iter().enumerate() {
             let h = &rule.head.rel;
             for (k, lit) in rule.body.iter().enumerate() {
+                if let Literal::Agg { var, op, over, atom: at } = lit
+                    && moves(at)
+                {
+                    // The groups whose aggregate changed: the atom's correlated variables (all but the aggregated
+                    // ones, as `plan::ready` reads them) over its rows gone and new. A row of the head that read one
+                    // is deleted with the old value and inserted with the new; the other groups' values held.
+                    let mut g = at.vars();
+                    g.remove(var);
+                    if let Some(o) = over {
+                        g.remove(o);
+                    }
+                    if let front::AggOp::Join { by, .. } = op {
+                        by.iter().for_each(|b| {
+                            g.remove(b);
+                        });
+                    }
+                    let grp = format!("{h}__grp{r}_{k}");
+                    let cols = &part.program.decls[&at.rel];
+                    let mut decl: Vec<(String, String)> = g
+                        .iter()
+                        .map(|v| {
+                            let c = at.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("a group variable is the atom's");
+                            (v.clone(), cols[c].1.clone())
+                        })
+                        .collect();
+                    let mut key: Vec<Term> = g.iter().cloned().map(Term::Var).collect();
+                    if decl.is_empty() {
+                        decl.push(("rr_unit".to_owned(), "int".to_owned()));
+                        key.push(Term::Int(1));
+                        part.program.nullary.insert(grp.clone());
+                    }
+                    part.program.decls.insert(grp.clone(), decl);
+                    for d in ["minus", "plus"] {
+                        rules.push(Rule { head: Atom { rel: grp.clone(), args: key.clone(), neg: false, gated: false }, body: vec![atom(named(&at.rel, d), at.args.clone(), false)] });
+                    }
+                    deltas.insert(at.rel.clone());
+                    let mut over_old = vec![atom(grp.clone(), key.clone(), false)];
+                    over_old.extend(rule.body.iter().map(old_lit));
+                    rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old });
+                    let mut over_new = vec![atom(grp, key, false)];
+                    over_new.extend(rule.body.iter().cloned());
+                    rules.push(Rule { head: Atom { rel: named(h, "ins"), args: rule.head.args.clone(), neg: false, gated: false }, body: over_new });
+                    continue;
+                }
                 let Literal::Atom(at) = lit else { continue };
                 if !moves(at) {
                     continue;
@@ -142,8 +211,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                     .enumerate()
                     .map(|(j, l)| match l {
                         Literal::Atom(b) if j == k => atom(lose.clone(), b.args.clone(), false),
-                        Literal::Atom(b) => atom(old_of(b), b.args.clone(), b.neg),
-                        other => other.clone(),
+                        other => old_lit(other),
                     })
                     .collect();
                 rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over });
@@ -151,7 +219,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                 rules.push(Rule { head: Atom { rel: named(h, "ins"), args: rule.head.args.clone(), neg: false, gated: false }, body: ins });
             }
             for b in rule.body.iter().filter_map(|l| match l {
-                Literal::Atom(b) if moves(b) && !scc.contains(&b.rel) => Some(b),
+                Literal::Atom(b) | Literal::Agg { atom: b, .. } if moves(b) && !scc.contains(&b.rel) => Some(b),
                 _ => None,
             }) {
                 olds.insert(b.rel.clone());

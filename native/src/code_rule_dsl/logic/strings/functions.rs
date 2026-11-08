@@ -38,6 +38,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
+    // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
+    ("str_concat", &[Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -173,6 +175,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "json_str" => Some(json_str(t(0))),
         "lower" => Some(t(0).to_lowercase()),
+        "str_concat" => Some(format!("{}{}", t(0), t(1))),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())
