@@ -117,7 +117,39 @@ Their closures are then equal, so the final reachable set does not depend on Pyt
 Eight fixtures agree across eight Python hash seeds. Twelve native mutation controls cover bridge requirements and refusal when the proof fails.
 The raw reference facts retain their ambiguity. This proof does not authorize other consumers to join alternatives.
 See the [mixin receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-mixin-choices.json.gz).
-Final shape has since advanced; those results do not certify the new engine.
+The complete cohort also passes on adopted Final `79fabb23d`: 130 analyses, 106 producer cases, all original/helper assertions, and forty controls.
+See the [registered-cohort acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-final79-acceptance.json.gz).
+Later Final commits require their own build and evidence.
+
+## Discovery and facade scope target
+
+The workspace runner now leaves document selection to policy scope and native loading.
+The direct scanner runner retains its explicit `inputFiles` batch. It cannot prove production discovery behavior.
+Both runners share file transport, artifact enforcement, process execution, and consumed-program checks.
+
+The scope probes establish these native behaviors:
+
+- A named directory relation can drive `dir_entry` and `load`, including when the initial scope contains no files.
+- A constant `dir_entry` request currently returns no entries. Request discovery inspects rule heads but ignores fact-only requests.
+  A named relation supplies a valid request rule, so the port can proceed without a rule-specific engine change.
+- A loaded document has a canonical absolute path and the module label supplied by the request.
+  It still has role `primary`; that role does not distinguish graph input from facade resources.
+- `loaded` records the canonical path. It can identify the document corresponding to the requested logical path.
+
+Implement the scope boundary explicitly:
+
+1. Produce the graph's wanted logical paths in the source discovery order. Keep facade resource paths in a separate relation.
+2. Load each physical document once. Use the same module label for either demand, with a prefix and its logical path.
+3. Recover each loaded document's logical path from that label. Retain ordinary relative paths for initial documents.
+4. Add a required `sgs_scan_file(document)` input to the source inventory. Its caller defines graph membership from wanted graph paths.
+5. Derive path and package metadata for both graph and facade documents. Emit symbols, method tables, and body facts only for graph members.
+6. Extract facade imports and direct definition names independently of graph membership. Resolve their fqnames against the scanned graph.
+
+The resource reader can share parsed document tapes. This does not authorize a graph inventory over the union of graph and facade scopes.
+The facade producer must preserve explicit exports, relative imports, first assignments, duplicates, and source resolution precedence.
+Add positive cases where an unscanned facade defines a dead-looking function: that function must never enter the graph or its findings.
+Include empty graph scopes, nested facade directories, duplicate module paths, renamed files, deletions, and incremental updates before production acceptance.
+The [scope-transport receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-workspace-transport.json.gz) retains the executable probes and transport tests.
 
 The `survey-exports.rr` library now constructs facade export rows, exported root sets, and exported class sets.
 It follows direct `data_layer/*.py` paths, sorted filenames, direct imports and definitions, and import precedence over local definitions.

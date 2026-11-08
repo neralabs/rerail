@@ -1823,3 +1823,19 @@ All four `raw_execute_regression` tests pass in the pinned source suite, with fi
 They include two positive findings, a clean materializer, a clean raising compatibility stub, and a relative-path result.
 The [raw-execute source receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-original-source.json.gz) preserves every assertion and observation.
 This source recording does not implement or certify the native rule. Its translation remains absent in the inventory.
+
+### 2026-11-08 — Workspace scope transport
+
+Commit `cffd1a844` first exposes the missing production-scope execution boundary.
+The direct API runner deliberately sets `inputFiles`; its contract preserves the exact supplied batch, including hidden or out-of-scope files.
+The new workspace runner omits that override. Native scope and loading then select documents from the same physical fixture workspace.
+Both APIs use one implementation for artifact checks, file transport, process execution, and program-input verification.
+The full tooling suite passes all 125 tests and sixty-four subtests.
+
+The native probes confirm facade loading through a named directory relation, with and without primary documents.
+Loaded documents retain role `primary` and use canonical absolute paths. Graph membership therefore needs its own explicit input relation.
+Constant directory requests also expose a genuine request-discovery bug: fact-only requests are ignored.
+The named directory producer works through existing generic engine capabilities. No new production mode, engine fork, or Linear issue is necessary.
+The [scope-transport receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-workspace-transport.json.gz) retains exact programs, outputs, and the failing/working request shapes.
+The [scope target](data-layer-survey-graph.md#discovery-and-facade-scope-target) defines the next implementation boundary.
+Rule 89's production default still refuses execution until that boundary and its acceptance tests are complete.

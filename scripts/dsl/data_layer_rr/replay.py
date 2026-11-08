@@ -56,6 +56,20 @@ def result(record, diagnostics):
 
 
 def execute_native(engine, rule, files, options, sources=None, workspace_name='corpus'):
+    """Direct scanner API: preserve the caller's exact batch, bypassing discovery."""
+    if 'inputFiles' in options:
+        raise ValueError('inputFiles is controlled by the supplied document batch')
+    return _execute(engine,rule,files,dict(options,inputFiles=[file['path'] for file in files]),sources,workspace_name)
+
+
+def execute_workspace(engine, rule, files, options, sources=None, workspace_name='corpus'):
+    """Production workspace API: policy scope and native loading select documents."""
+    if 'inputFiles' in options:
+        raise ValueError('Workspace acceptance cannot override inputFiles')
+    return _execute(engine,rule,files,dict(options),sources,workspace_name)
+
+
+def _execute(engine, rule, files, options, sources, workspace_name):
     import migration
     manifest=migration.read_json(ROOT/migration.MANIFEST)
     migration.verify_source_cohort(ROOT,manifest['engineSource'])
@@ -81,9 +95,7 @@ def execute_native(engine, rule, files, options, sources=None, workspace_name='c
                 raise ValueError(f'Missing source for {path}')
             target.write_text(source)
         option_file = root / 'options.json'
-        if 'inputFiles' in options:
-            raise ValueError('inputFiles is controlled by the supplied document batch')
-        write_json(option_file, dict(options, inputFiles=[file['path'] for file in files]))
+        write_json(option_file, options)
         command = [str(engine), 'run-rr', str(rule), str(corpus), str(root / 'out'), str(option_file)]
         run = subprocess.run(command, text=True, capture_output=True, timeout=100)
         if run.returncode:
