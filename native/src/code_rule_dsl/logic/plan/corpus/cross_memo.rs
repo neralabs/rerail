@@ -320,8 +320,19 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
 
 /// Drops the memoised relations' rules but their copies from `<rel>__cross`: for a run where every component was
 /// found, whose guards (`!rr_cross_doc`) every other rule's rows fail.
-pub(super) fn keep_copies(cross: &mut front::Program, plan: &Plan) {
+/// What only those rules read is dropped too (`rr_cx_reach`); `kept` names what the run reads besides its outputs.
+pub(super) fn keep_copies(cross: &mut front::Program, plan: &Plan, kept: &BTreeSet<String>) {
     cross.rules.retain(|r| !plan.memo.contains_key(&r.head.rel) || r.body.iter().any(|l| matches!(l, front::Literal::Atom(a) if a.rel.ends_with(SUFFIX))));
+    loop {
+        let read: BTreeSet<&str> = cross.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
+        let unread = |rel: &str| !read.contains(rel) && !kept.contains(rel) && !cross.outputs.iter().any(|o| o == rel);
+        let dead: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).chain(cross.natives.keys().cloned()).filter(|r| unread(r)).collect();
+        if dead.is_empty() {
+            return;
+        }
+        cross.rules.retain(|r| !dead.contains(&r.head.rel));
+        cross.natives.retain(|rel, _| !dead.contains(rel));
+    }
 }
 
 /// Each document's component and key, and the components' edges, from the component sub-program's rows.

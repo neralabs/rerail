@@ -1802,7 +1802,7 @@ pub(crate) fn run_with_options(
         (Some(plan), Some((_, found))) if cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty() => {
             let mut cross = cross;
             let before = cross.program.rules.len();
-            cross_memo::keep_copies(&mut cross.program, plan);
+            cross_memo::keep_copies(&mut cross.program, plan, &wanted);
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
                 format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
             });
