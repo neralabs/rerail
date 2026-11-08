@@ -608,12 +608,17 @@ pub struct ContentStore {
 
 impl Drop for ContentStore {
     /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
-    /// writes them if this fails, and nothing durable names them meanwhile.
+    /// writes them if this fails, and nothing durable names them meanwhile. The store's last
+    /// handle then closes the process's connections to its file: the arena outlives it (the
+    /// planner's symbols keep it), its file stays closed until next read.
     fn drop(&mut self) {
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))
         {
             eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        }
+        if self.connection.close() {
+            self.atoms.release_reader();
         }
     }
 }
@@ -639,10 +644,7 @@ impl ContentStore {
         drop(connection);
         Ok(Self {
             database_path: path.to_path_buf(),
-            connection: ThreadConnection {
-                database_path: path.to_path_buf(),
-                identity,
-            },
+            connection: ThreadConnection::new(path.to_path_buf(), identity),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
                 DEFAULT_READ_CACHE_BYTES,

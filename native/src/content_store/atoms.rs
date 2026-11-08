@@ -385,6 +385,18 @@ impl Atoms {
         Ok(self.with_str(atom, str::to_owned))
     }
 
+    /// Reads into the arena the atoms the database holds that it does not (an arena made after the store was
+    /// written holds none of them).
+    pub(crate) fn read_stored(&self) -> StoreResult<()> {
+        self.catch_up()
+    }
+
+    /// Closes this process's connection for reading other processes' segments (reopened when next needed): the
+    /// store's last handle closed, and the arena, which the planner's symbols keep, must not hold its file open.
+    pub(crate) fn release_reader(&self) {
+        self.reader.lock().take();
+    }
+
     /// The atom of each of `values`, giving out new ones (pending) under the lease.
     pub(crate) fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         {

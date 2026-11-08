@@ -63,6 +63,24 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
     assert_eq!(run(&["SELECT CAST(sym_atom('first') AS TEXT)", "SELECT sym_text(1)"]), ["2", "second"]);
 }
 
+/// A run in a process that never held a store's atoms reads them: `sym_text` and `sym_cat` of atoms the store holds,
+/// before the run interns anything.
+#[test]
+fn a_fresh_arena_reads_the_stores_atoms() {
+    use crate::content_store::ContentStore;
+    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    {
+        let other = ContentStore::open(&elsewhere).unwrap();
+        assert_eq!(other.intern_atoms(&["a", "b"]).unwrap(), [1, 2]);
+    }
+    // A copy at a path this process never opened: its arena starts empty.
+    Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    let db = Connection::open(&path).unwrap();
+    super::register_symbols(&db).unwrap();
+    let text: String = db.query_row("SELECT sym_text(2) || ',' || sym_text(sym_cat(1, 2))", [], |r| r.get(0)).unwrap();
+    assert_eq!(text, "b,a.b");
+}
+
 fn pairs(db: &Connection, sql: &str) -> Vec<(i64, i64)> {
     let mut statement = db.prepare(sql).unwrap();
     statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
