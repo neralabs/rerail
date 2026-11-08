@@ -1397,3 +1397,17 @@ The [legacy rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync
 [wrapper red rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-wrapper-red.json.gz) preserve the TDD progression.
 The receipt does not certify production plugin reporting, registry/scope, CLI enforcement, persistent workspaces, or broader legacy helper APIs.
 Those contracts remain required for global acceptance. The inventory remains 88 drafts and 12 absent translations.
+
+## 2026-11-08 — Next source contract: internal dead code
+
+The next missing translation is `internal_dead_code`, followed by `imperative_private_functions`.
+Its four unchanged original tests pass in 0.43 seconds. The recording retains four complete, nonempty helper results.
+It records supplied graph state before and after each call, including restoration of exported roots.
+The suite imports the script by its plain module name; the recorder binds that name and its package alias to one module.
+The [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-internal-dead-code-original-source.json.gz) is an offline oracle, not native acceptance.
+
+The original suite covers literal dynamic-import references, dynamic roots, excluded paths, and execution-target selection.
+It does not exercise the main dead-code analysis or the real symbol-graph builder.
+Native acceptance therefore also needs source-derived graph cases for exports, inheritance, annotations, call reachability, import references, and confidence categories.
+The native rule must use the current engine's symbol and traversal interfaces. Calling the Python graph builder from a rule would violate the migration constraint.
+No native translation or completion is claimed for this next rule. The inventory remains 88 drafts and 12 absent translations.
