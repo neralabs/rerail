@@ -1600,7 +1600,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3",
+      "sha256": "1d0176629e7cb7cda5478db0fb225d748a5d109f3a5573339ece79a7e1eca944",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1630,6 +1630,16 @@
           "before": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
           "after": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3",
           "reason": "Feed the report formatter from native discovered-source analysis, without supplied expected result rows; preserve explicit ambiguity refusals"
+        },
+        {
+          "before": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3",
+          "after": "a75dc61919e6464c4bcf197d033a6b9988ac0958e918988ce673b54d229d10be",
+          "reason": "Keep native report formatting outside an unproven source graph; a graph refusal must not emit empty success output"
+        },
+        {
+          "before": "a75dc61919e6464c4bcf197d033a6b9988ac0958e918988ce673b54d229d10be",
+          "after": "1d0176629e7cb7cda5478db0fb225d748a5d109f3a5573339ece79a7e1eca944",
+          "reason": "State the remaining default-entry work accurately now that native source production and reporting have tested implementations"
         }
       ]
     },
@@ -2269,7 +2279,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3"
+      "ruleSha256": "1d0176629e7cb7cda5478db0fb225d748a5d109f3a5573339ece79a7e1eca944"
     },
     {
       "check": "imperative_private_functions",

@@ -20,7 +20,7 @@ IDCItem(@place("", 0), "", "", 0) :- option("entryPoint", _), 1 = 0.
 IDCTarget(@place("", 0), "", "", 0) :- option("entryPoint", _), 1 = 0.
 .violation IDCKeepResults(at: span) code "IDC_KEEP_RESULTS" "keep input"
 IDCKeepResults(@place("", 0)) :- option("entryPoint", _), 1 = 0.
-.violation IDCSourceGraphRequired(at: span) code "IDC_SOURCE_GRAPH_REQUIRED" "Native source graph production is not yet implemented for this draft"
+.violation IDCSourceGraphRequired(at: span) code "IDC_SOURCE_GRAPH_REQUIRED" "Default entry awaits native CLI and registry integration"
 IDCSourceGraphRequired(@place("", 0)) :- !option("entryPoint", _).
 
 .decl idc_execute_category(i: number, category: symbol)
@@ -139,8 +139,8 @@ srep_mode("json") :- option("entryPoint", "_print_json").
 srep_mode("worst") :- option("entryPoint", "_worst_files").
 .decl idc_graph_report()
 idc_graph_report() :- option("entryPoint", entry), (entry = "report_text" ; entry = "report_json").
-srep_mode("text") :- option("entryPoint", "report_text").
-srep_mode("json") :- option("entryPoint", "report_json").
+srep_mode("text") :- option("entryPoint", "report_text"), !idc_source_unproven().
+srep_mode("json") :- option("entryPoint", "report_json"), !idc_source_unproven().
 srep_category(i, category) :- srep_mode(_), option_item("resultCategories", i, category).
 srep_item(category, i, sid) :- srep_mode(_), idc_supplied(category, sid, i).
 srep_category(i, category) :- idc_graph_report(), idc_category(i, category), !idc_source_unproven().
