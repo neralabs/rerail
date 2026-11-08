@@ -38,10 +38,23 @@ class SurveySourceContractTests(unittest.TestCase):
             contract.native_rows([dict(parameters=dict(kind='graph_symbol',sid='missing',order_file=0))])
 
     def recording(self):
-        return dict(format='rerail.survey-source-inventory/v1', sourcePin=contract.PIN,
+        value=dict(format='rerail.survey-source-inventory/v1', sourcePin=contract.PIN,
                     cases=[dict(id=name, files=[dict(path=p, source=t) for p,t in files.items()],
                                 expected=[dict(kind='module', path=next(iter(files)), module='recorded')])
                            for name,files in contract.CASES])
+        by_id={case['id']:case for case in value['cases']}
+        for label,owner,name,target,kind,has in contract.TARGET_CONTRACTS:
+            by_id[label]['expected'].append(dict(kind='graph_name_call',owner=owner,name=name,target=target,target_kind=kind,has_target=has))
+        return value
+
+    def test_source_fixture_cannot_silently_lose_its_positive_branch(self):
+        value=self.recording()
+        contract.check_target_contracts(value['cases'])
+        case=next(c for c in value['cases'] if c['id']=='name-call-method-before-class')
+        case['expected'][-1]['target']='a::target'
+        case['expected'][-1]['target_kind']='function'
+        with self.assertRaisesRegex(ValueError,'method-before-class'):
+            contract.check_target_contracts(value['cases'])
 
     def run_native(self, root, value, actual):
         baseline=root/'source.json'; baseline.write_text(json.dumps(value))

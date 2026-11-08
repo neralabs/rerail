@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`066ab66ad`. Merge `13874e415` adopts Final's regex scans over node kinds and captures.
+`3de761e18`. Merge `eae3e8e01` adopts Final's live run dumps and span memory profiling.
+Merge `13874e415` adopts Final's regex scans over node kinds and captures.
 It also adopts Final's 64-bit boundary for corpus row bindings.
 Earlier merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
 Earlier merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
@@ -1513,3 +1514,51 @@ The [definition-property receipt](../gate/data-layer/fixtures/host/data-layer-po
 Final shape remains at `066ab66ad`, already merged. These changes extend the modern root engine only.
 Body references, final graph assembly, resolved edges, exported roots, ordered class accessors, and production integration remain incomplete.
 The migration still has 89 drafts and eleven absent translations. This is source-producer progress, not full acceptance of rule 89.
+
+## 2026-11-08 — Survey body facts, dictionary assembly, and bare-name targets
+
+The source producer now collects ordered body references, local imports, and execution names in shared Datalog libraries.
+The offline oracle uses the pinned `_ModuleVisitor` and `SymbolGraph` builder. Native execution reads those recordings and never imports the source algorithms.
+Literal builtin and execution-name tables are generated from the pinned source bytes.
+The source's builtin set differs from the modern resolver's set. Its nested-body and local-name behavior also differs from normal Python scope resolution.
+
+The first body rung adds fourteen fixtures. Eighteen of thirty-seven comparisons fail against the earlier producer (`a39edd546`).
+The initial translation passes all thirty-seven. Three additional fixtures expose two failures: generator arguments produce an extra reference, and complex receivers lose execution-prefix hits.
+`a4f1d8f8c` repairs both failures. All forty complete comparisons then pass.
+Local-name checks now start from actual name demands, rather than pairing every body node with every name.
+
+The graph-assembly rung records final symbols, modules, fqnames, class-name occurrences, methods, bases, subclasses, and reexport resolution.
+All fifty comparisons fail before assembly (`7abe64ff6`). All fifty pass after native assembly (`400da46e5`).
+The fixtures retain duplicate definitions, first dictionary positions, latest values, module-path collisions in both orders, and ambiguous global classes.
+They also preserve imported function bases, local definitions that block global fallback, and bases that do not follow reexports.
+
+The next rung adds contextual bare-name targets. Twenty-four of fifty-six comparisons fail before their translation (`f5c01ad60`).
+All fifty-six pass after the translation. Own methods precede module definitions; module definitions prefer their first function or method.
+An unresolved module import still blocks a function-local import. Reexports and local plain imports retain the source's behavior.
+Graph dictionaries now expose native file/local order keys. Only the test DTO transport sorts them into dictionary indices.
+This removes graph-wide dense-rank counts from the producer. Repeated method definitions also share their deterministic symbol ID without a second last-occurrence reduction.
+
+A fixture audit catches an accidental weakening: a new function replaces the class whose lookup precedence the fixture should test.
+The cases are now separate. Six source-target contracts enforce selected positive and unresolved branches before native comparisons start.
+A tooling test proves that changing the source target rejects that fixture, even if parity alone could remain green.
+The final corpus has sixty-one supplemental source fixtures, 174 ordered raw-reference rows, and 144 bare-name query rows.
+Eleven query rows resolve to real targets, including local classes, methods, imported classes, shadowed functions, and hoisted imports.
+All seventeen mutations cause DTO mismatches through successful native execution.
+
+Final shape advances during the expanded run. The guard stops acceptance before further native execution.
+Merge `eae3e8e01` adopts `3de761e18`, including live profile dumps and span memory accounting, with no conflicts.
+The root CLI rebuild takes 74.686 seconds. The standard native test build takes 119.007 seconds.
+These are compilation times, recorded separately from execution. No additional native engine implementation was added in this producer work.
+
+Frozen CLI `6ca2d592d261c761` passes all sixty-one source comparisons and all seventeen controls.
+It also passes the four original dead-code tests, thirty-six supplied-graph cases, and 100 policy readers.
+All 107 tooling tests and 34 subtests pass.
+Six focused native tests pass: definition text, both canonical printers, regex spans, extrema projection, and the new memory-profile regression.
+These correctness checks use small fixtures. No full-repository benchmark ran.
+
+The [producer receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-producer-parity.json.gz) includes recordings, complete comparisons, controls, consumed programs, tooling results, builds, and native test logs.
+Earlier [body](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-body-parity.json.gz) and
+[assembly](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-assembly-parity.json.gz) receipts preserve the intermediate rungs.
+The production draft still emits `IDC_SOURCE_GRAPH_REQUIRED` for source-only execution; a current-engine probe verifies that refusal.
+Ordered member lookup, complete call and class-use edges, exported roots, discovery, production integration, and lifecycle acceptance remain incomplete.
+The inventory remains 89 drafts and eleven absent translations. This checkpoint does not complete rule 89 or the migration.

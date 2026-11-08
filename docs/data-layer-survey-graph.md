@@ -2,7 +2,8 @@
 
 `internal_dead_code` and `imperative_private_functions` use the same upstream symbol graph.
 The native contract lives in `docs/rule-syntax/lib/data-layer/survey-graph.rr`.
-The consumer currently takes a supplied graph argument. The source producer has an independently tested inventory and import projection.
+The consumer currently takes a supplied graph argument.
+The source producer has tested inventory, body references, dictionary assembly, base resolution, reexports, and bare-name call targets.
 It does not yet construct a complete graph from repository source.
 This document does not certify either rule as complete.
 
@@ -32,9 +33,9 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Assemble final symbol and module maps from the tested occurrences. Preserve replacement order, class ownership, and duplicate definition lists.
-2. Derive imports, reexports, definitions, `__all__`, module references, exported roots, and literal dynamic-import roots.
-3. Derive bases, method tables, calls, class uses, and legacy synthetic edges. Compare with the pinned graph builder before using the rows for findings.
+1. Implement ordered class traversal and member lookup for self, super, imported objects, annotated parameters, and chained attributes.
+2. Emit complete calls, class uses, callers, and legacy synthetic edges from the resolved references.
+3. Derive `__all__`, exported roots, and source-derived literal dynamic-import roots. Preserve the original discovery scope and ordering.
 4. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
 
 Reuse the modern engine's implementations where their meanings match.
@@ -46,7 +47,7 @@ Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
 
 The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
-Twenty-three source fixtures compare inventory fields with the pinned `_ModuleVisitor`.
+Sixty-one source fixtures compare producer fields with the pinned `_ModuleVisitor` and graph builder.
 They cover symbol occurrences, definition lists, module names, imports, signatures, decorators, bases, abstract flags, class attributes, and module references.
 They include nested classes, omitted nested functions, duplicate definitions, Unicode names, package paths, and imports from nested scopes.
 The native command reads an offline source recording. It does not import the Python scanner.
@@ -54,8 +55,24 @@ Annotations, class bases, and decorators use the shared native canonical printer
 The `class_base_text` and `decorator_text` columns share its demanded parse and expose typed rows keyed by expression nodes.
 They do not format unrelated body expressions or invoke Python.
 The checks retain the source's positional-only and variadic parameter exclusions, plus its different treatment of direct and conditional function bodies.
-These checks do not certify body references, final graph assembly, call edges, roots, findings, or production integration.
+The `survey-body.rr` library retains ordered raw references, duplicate argument references, local imports, execution names, and sequential local-name suppression.
+Its literal name tables are generated from the pinned source. They do not substitute the modern resolver's different builtin and scope rules.
+The `survey-assembly.rr` library retains first dictionary positions, latest symbol contents, repeated class-name occurrences, method tables, bases, and reexports.
+The `survey-name-calls.rr` library implements bare-name target selection, including unresolved references and namespace precedence.
+Eleven resolved target rows exercise positive branches. Source-side assertions prevent fixture edits from silently removing selected branches.
+
+Global dictionary order uses native file/local keys. The test transport sorts those keys to serialize dictionary DTOs.
+It does not compute targets or graph decisions. This removes the unnecessary graph-wide dense-rank counts from the producer.
+The source's worker completion can change scan order; the comparisons use an explicit supplied producer order.
+
+Seventeen mutations cause DTO mismatches through successful native execution.
+The [producer receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-producer-parity.json.gz) contains full comparisons, controls, programs, and build identity.
+These checks do not certify all member targets, complete call edges, roots, findings from source, or production integration.
 Invalid-file handling and lifecycle updates also need source comparisons before the producer can replace the supplied-graph contract.
+
+The source implementations are [body collection](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L427),
+[dictionary assembly](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1866), and
+[bare-name resolution](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1952).
 
 ## Ordered class accessors
 
@@ -69,6 +86,13 @@ A property or private method does not claim a public method name before an eligi
 Include the source's constructor dunders and exclude its `PUBLIC_METHOD_SKIP` names.
 The source implementation is [public method selection](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2364).
 The existing legacy hierarchy's fixed widening limit does not prove exact behavior for arbitrary graphs.
+
+The next traversal rung must compare cycles, diamonds, reversed base order, repeated bases, and inheritance deeper than 64 levels.
+The source base walk starts from the ordered direct bases with an empty visited set. A cycle can therefore return the original class.
+Public method selection starts from the class itself and applies its own visited-name and eligibility rules.
+Do not replace either walk with unordered reachability or depth-first traversal.
+Keep any native traversal primitive generic and batch all demanded roots through the existing engine's relation interfaces.
+The relevant source is [ordered base traversal](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1715).
 
 ## Acceptance still required
 

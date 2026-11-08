@@ -65,7 +65,8 @@ CASES = [
     ('graph-generic-spelling', {'a.py': 'class Base: pass\nclass C(Base[int], pkg.Base[Other], factory(Base)): pass\n'}),
     ('graph-reexport-cycles', {'a.py': 'from b import Alias\nfrom c import concrete as Reexport\ndef direct(): pass\n', 'b.py': 'from a import Alias\n', 'c.py': 'from missing import concrete\ndef concrete(): pass\n'}),
     ('name-call-own-priority', {'a.py': 'def target(): pass\nclass C:\n def run(self): target()\n def target(self): pass\n'}),
-    ('name-call-method-before-class', {'a.py': 'class target: pass\nclass One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef target(): pass\ndef run(): target()\n'}),
+    ('name-call-method-before-class', {'a.py': 'class target: pass\nclass One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef run(): target()\n'}),
+    ('name-call-method-before-function', {'a.py': 'class One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef target(): pass\ndef run(): target()\n'}),
     ('name-call-imports-and-reexports', {'a.py': 'def target(): pass\nclass C: pass\n', 'bridge.py': 'from a import target as Alias\n', 'entry.py': 'from bridge import Alias\nfrom a import C\ndef run():\n Alias()\n C()\n missing()\n'}),
     ('name-call-local-plain-import', {'a.py': 'def target(): pass\n', 'entry.py': 'def run():\n import a.target as callback\n callback()\n'}),
     ('name-call-unresolved-import-blocks-local', {'a.py': 'def target(): pass\n', 'entry.py': 'from missing import callback\ndef run():\n import a.target as callback\n callback()\n'}),
@@ -75,6 +76,29 @@ CASES = [
     ('name-call-hoisted-import', {'a.py': 'def first(): pass\n', 'b.py': 'def target(): pass\n', 'entry.py': 'def run():\n from a import first as callback\n callback()\ndef later():\n from b import target as callback\n'}),
     ('name-call-reexport-cycle', {'a.py': 'from b import Alias\n', 'b.py': 'from a import Alias\n', 'entry.py': 'from a import Alias\ndef run(): Alias()\n'}),
 ]
+
+
+# These assertions guard the fixtures' intended positive branches. In particular,
+# defining a function with a class's name replaces its symbol and can accidentally
+# turn a method-before-class fixture into a different test while parity stays green.
+TARGET_CONTRACTS = [
+    ('name-call-method-before-class','a::run','target','a::One.target','method',1),
+    ('name-call-method-before-function','a::run','target','a::One.target','method',1),
+    ('name-call-own-priority','a::C.run','target','a::C.target','method',1),
+    ('name-call-local-class','a::run','Target','a::Target','class',1),
+    ('name-call-hoisted-import','entry::run','callback','b::target','function',1),
+    ('name-call-unresolved-import-blocks-local','entry::run','callback','','',0),
+]
+
+
+def check_target_contracts(cases):
+    by_id={case['id']:case for case in cases}
+    for label,owner,name,target,kind,has in TARGET_CONTRACTS:
+        rows=by_id[label]['expected']
+        if not any(row['kind']=='graph_name_call' and
+                   (row['owner'],row['name'],row['target'],row['target_kind'],row['has_target']) == (owner,name,target,kind,has)
+                   for row in rows):
+            raise ValueError(f'The source fixture no longer covers {label}: {owner}/{name}')
 
 
 def source_rows(source, files):
@@ -180,6 +204,7 @@ def main():
         for label, files in CASES:
             evidence['cases'].append(dict(id=label, files=[dict(path=p, source=t) for p,t in files.items()],
                                           expected=source_rows(args.source, files)))
+        check_target_contracts(evidence['cases'])
     else:
         from replay import execute_native
         baseline = json.loads(args.baseline.read_text())
@@ -189,6 +214,7 @@ def main():
             parser.error('The source recording identity differs')
         if recorded != required or any(not case['expected'] for case in baseline['cases']):
             parser.error('The complete source fixture recording is required')
+        check_target_contracts(baseline['cases'])
         evidence['baselineSha256'] = sha(args.baseline.read_bytes())
         evidence['engineSha256'] = sha(args.engine.read_bytes())
         for case in baseline['cases']:
