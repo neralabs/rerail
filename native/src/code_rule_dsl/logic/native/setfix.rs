@@ -518,7 +518,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
-                eprintln!("      wave {waves} probe {pi} starts, delta {d}");
+                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
             }
             let n = run_join(j, p.head, store, &mut syms, &mut fresh);
             visits += n;

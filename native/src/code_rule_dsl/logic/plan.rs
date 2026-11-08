@@ -3003,6 +3003,12 @@ impl Run<'_> {
         self.fx().open(&lines.join("\n"))?;
         // One wave first: the seeds' rows give live statistics before the next wave, the first in which most
         // relations' deltas are all their rows and the probes run their whole plans.
+        // RDL_WAVE_TRACE: the component's planned joins, in probe order, before it runs (a stalled probe is named).
+        if std::env::var_os("RDL_WAVE_TRACE").is_some() {
+            for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+                eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
+            }
+        }
         let mut chunk: i64 = 1;
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;

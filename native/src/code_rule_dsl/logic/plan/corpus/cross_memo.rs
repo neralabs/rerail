@@ -182,7 +182,7 @@ fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String
     }
 }
 
-pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, local: &[u8; 32]) -> Result<Option<Plan>> {
+pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, local: &[u8; 32], same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Option<Plan>> {
     use front::{Atom, Literal, Rule, Term};
     let heads: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
     if !heads.contains(COMPONENT) {
@@ -317,9 +317,34 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             continue;
         }
         if let Some(Term::Var(v)) = rule.head.args.get(first) {
-            let d = "rr_xd".to_owned();
-            rule.body.push(Literal::Cmp { l: Term::Var(d.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(v.clone())]) });
-            rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned(), args: vec![Term::Var(d)], neg: true, gated: false }));
+            // The guard on the head's node, and on every node the body's same-document atoms join to it
+            // (`cross_rounds::same_document`): each has the head's document, or a guest or host of it, which shares
+            // its component (`components.rr`), so each guard admits the same rows. The planner applies each as soon
+            // as its node is bound, so a found document's rows stop at the first atom that binds one, before the
+            // rest of the join (O114).
+            let nodes: BTreeSet<&str> = rule
+                .body
+                .iter()
+                .filter_map(|l| l.atom().filter(|a| !a.neg))
+                .flat_map(|a| {
+                    let decl = cross.decls.get(&a.rel);
+                    a.args.iter().enumerate().filter_map(move |(i, t)| match (t, decl.and_then(|d| d.get(i))) {
+                        (Term::Var(x), Some((_, ty))) if ty == "node" => Some(x.as_str()),
+                        _ => None,
+                    })
+                })
+                .collect();
+            let mut guarded: Vec<String> = vec![v.clone()];
+            for x in crate::code_rule_dsl::typing::cross_rounds::same_document(&rule.body, same_doc, v) {
+                if x != *v && nodes.contains(x.as_str()) {
+                    guarded.push(x);
+                }
+            }
+            for (i, x) in guarded.into_iter().enumerate() {
+                let d = if i == 0 { "rr_xd".to_owned() } else { format!("rr_xd{i}") };
+                rule.body.push(Literal::Cmp { l: Term::Var(d.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(x)]) });
+                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned(), args: vec![Term::Var(d)], neg: true, gated: false }));
+            }
         }
     }
     Ok(Some(Plan { components, memo, digest }))

@@ -2300,3 +2300,18 @@ brought final-shape's guest hiding (O110) and lowering changes, which put more g
 (`rr_in_annotation_*`) and `base` into that stratum. Not investigated further: the code is final-shape's.
 
 **Closure:** the cause is named, and the fixpoint's cost is back near 8 s or the growth is shown to be needed.
+
+**2026-11-08: the cause is named. The growth is O110's correctness fix, not a planner regression.**
+- Before O110, guest hiding read a reader's atom from the guest copy only (`rr_in_annotation_0_base`, …). A
+  derived column that may hold host nodes lost those rows. O110 splits such a rule into a host rule and a guest
+  clone, so the host relations are now derived too.
+- That puts `base`, `fcall`, `fgp`, `fret`, `pcall`, `rret`, `wbind` and `wcall` into the fixpoint. `base` is
+  recursive with `pv` through the guest clone of `sub`: `pv :- cret, rr_in_annotation_0_sub` and
+  `rr_in_annotation_0_sub :- sub, base`, where `base :- basex, pv(e, "cls", b)`. Join work rose from 16.2 M to
+  52.2 M steps. The largest new costs are the host and guest copies of one join (`ifn` over `icall` and over
+  `rr_in_annotation_0_icall`), each run over more waves.
+- The demand split choosing `ownvar` and `mro_dropped` (decision 0048) also changed: `demand_ownvar` is computed
+  from readers inside the fixpoint. Refusing a split that would make a demand relation recursive cut the stratum
+  from 74 to 58 relations but not its time (23.4 s, against 22.6 s, under load). It was not kept.
+- Whether every host copy is needed is final-shape's to judge (hiding.rs). A copy whose rows are all guest-only
+  could still be specialised. `RERAIL_DUMP_CROSS=<file>` writes the cross-file rules for that analysis.
