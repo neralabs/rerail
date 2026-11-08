@@ -32,7 +32,7 @@ use super::*;
 use ::bitlex::syntax::{Gram, Stmt, parse};
 use std::collections::HashMap;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_ladder");
+pub(super) const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_ladder");
 
 /// The ladder's files, in order.
 fn steps() -> Vec<(String, String)> {
@@ -182,7 +182,8 @@ impl Lang {
         }
         // An extra (a comment): line and block comments, with bytes that look like other tokens.
         if self.extras.iter().any(|e| e == k) {
-            let (clean, odd) = COMMENTS.split_at(COMMENTS.len() - 4);
+            let samples = comments(k);
+            let (clean, odd) = samples.split_at(samples.len() - 4);
             let text = if rng.below(8) == 0 { rng.pick(odd).0 } else { rng.pick(clean).0 };
             return text.as_bytes().to_vec();
         }
@@ -222,23 +223,51 @@ impl Lang {
     }
 }
 
-/// Comment samples, and whether each runs to the end of its line. The last four hold what the
-/// lexer sends to tree-sitter: a hash (the text quote), or one kind's opener in the other.
-const COMMENTS: [(&str, bool); 13] = [
-    ("-- c", true),
-    ("--", true),
-    ("-- a; (1) x", true),
-    ("{- c -}", false),
-    ("{--}", false),
-    ("{---}", false),
-    ("{- a - b } c -}", false),
-    ("{- ( -}", false),
-    ("{-\n\n-}", false),
-    ("-- #x", true),
-    ("{- # -}", false),
-    ("{- -- -}", false),
-    ("-- {- x", true),
+/// Comment samples by the extra's kind, and whether each runs to the end of its line. The last
+/// four of each hold what the lexers send to tree-sitter: the text quote, or one kind's opener
+/// in the other.
+const COMMENTS: [(&str, [(&str, bool); 13]); 2] = [
+    (
+        "commentaire",
+        [
+            ("-- c", true),
+            ("--", true),
+            ("-- a; (1) x", true),
+            ("{- c -}", false),
+            ("{--}", false),
+            ("{---}", false),
+            ("{- a - b } c -}", false),
+            ("{- ( -}", false),
+            ("{-\n\n-}", false),
+            ("-- #x", true),
+            ("{- # -}", false),
+            ("{- -- -}", false),
+            ("-- {- x", true),
+        ],
+    ),
+    (
+        "comment",
+        [
+            ("// c", true),
+            ("//", true),
+            ("// a, [1] é\r", true),
+            ("/* c */", false),
+            ("/**/", false),
+            ("/***/", false),
+            ("/* a * b / c */", false),
+            ("/* [ */", false),
+            ("/*\n\n*/", false),
+            ("// \"x", true),
+            ("/* \" */", false),
+            ("/* // */", false),
+            ("// /* x", true),
+        ],
+    ),
 ];
+
+fn comments(kind: &str) -> &'static [(&'static str, bool); 13] {
+    &COMMENTS.iter().find(|c| c.0 == kind).unwrap_or_else(|| panic!("no comment samples for `{kind}`")).1
+}
 
 /// A step's documents: sentences of its grammar with random white space between tokens (and a
 /// space where two would run together), then each with one byte changed, dropped or doubled, and
@@ -275,7 +304,7 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Ve
         for t in tokens {
             // A line comment ends at the line's end.
             let space = if line { "\n" } else { *rng.pick(&["", "", " ", "\n", " \t "]) };
-            line = COMMENTS.iter().any(|(c, l)| *l && c.as_bytes() == &t[..]);
+            line = lang.extras.iter().any(|k| comments(k).iter().any(|(c, l)| *l && c.as_bytes() == &t[..]));
             let joins = doc.last().is_some_and(u8::is_ascii_alphanumeric) && t.first().is_some_and(u8::is_ascii_alphanumeric);
             doc.extend(if joins && space.is_empty() { " " } else { space }.as_bytes());
             doc.extend(t);
@@ -312,9 +341,9 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Ve
 }
 
 /// Nodes as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+pub(super) type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
 
-fn as_ids(nodes: Vec<stream::Node>) -> Vec<IdNode> {
+pub(super) fn as_ids(nodes: Vec<stream::Node>) -> Vec<IdNode> {
     nodes
         .into_iter()
         .map(|n| {
@@ -326,15 +355,15 @@ fn as_ids(nodes: Vec<stream::Node>) -> Vec<IdNode> {
 }
 
 /// A step compiled: its program, tier 1 and tier 2 on Cranelift, and its kinds' names by id.
-struct Compiled {
-    stmts: Vec<Stmt>,
-    ids: Ids,
-    program: Program,
-    native: native_ir::NativeModule,
-    parser: native_cpu_stream::Parser,
+pub(super) struct Compiled {
+    pub(super) stmts: Vec<Stmt>,
+    pub(super) ids: Ids,
+    pub(super) program: Program,
+    pub(super) native: native_ir::NativeModule,
+    pub(super) parser: native_cpu_stream::Parser,
 }
 
-fn compile_step(name: &str, source: &str) -> Compiled {
+pub(super) fn compile_step(name: &str, source: &str) -> Compiled {
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
@@ -364,7 +393,7 @@ fn refusal(c: &Compiled, bytes: &[u8]) -> String {
 }
 
 /// The reference's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
-fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
+pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     let out = ::bitlex::eval::Ev::run(&c.stmts, bytes, &HashMap::new()).ok()?;
     if !out.errors.is_empty() {
         return None;

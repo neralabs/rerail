@@ -732,33 +732,48 @@ impl Parser {
     pub(super) fn parse(&self, bytes: &[u8]) -> Result<Vec<Node>, Refused> {
         let mut batch = super::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
+        let mut tape = self.tape(&batch);
+        self.words(&batch, &mut tape)?;
+        Ok(tape.nodes())
+    }
+
+    /// Tier 1's stream `e` in `batch` (its first file), as tier 1 wrote it: its positions (room
+    /// for two past its count) and count.
+    fn stream<'b>(&self, batch: &'b super::native_cpu_block::Batch, e: Option<usize>) -> (&'b [u32], usize) {
+        let row = batch.rows[0];
+        match e {
+            Some(e) => {
+                let at = (row.positions + e as u64 * row.capacity) as usize;
+                (&batch.positions[at..at + row.capacity as usize], batch.counts[row.counts as usize + e] as usize)
+            }
+            None => (&batch.positions[..0], 0),
+        }
+    }
+
+    /// A tape for the stream tier 1 wrote in `batch`.
+    pub(super) fn tape(&self, batch: &super::native_cpu_block::Batch) -> Tape {
+        self.tier2.tape(self.stream(batch, self.tier2.starts).1)
+    }
+
+    /// Tier 2's function over tier 1's buffers in `batch` (one file), into `tape`; or the word
+    /// that refused the file.
+    pub(super) fn words(&self, batch: &super::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
-        // Each stream as tier 1 wrote it: its positions (room for two past its count) and count.
-        let stream = |e: Option<usize>| -> (&[u32], usize) {
-            match e {
-                Some(e) => {
-                    let at = (row.positions + e as u64 * row.capacity) as usize;
-                    (&batch.positions[at..at + row.capacity as usize], batch.counts[row.counts as usize + e] as usize)
-                }
-                None => (&batch.positions[..0], 0),
-            }
-        };
-        let (starts, lasts) = (stream(self.tier2.starts), stream(self.tier2.lasts));
+        let (starts, lasts) = (self.stream(batch, self.tier2.starts), self.stream(batch, self.tier2.lasts));
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
             Some(t) if !t.is_empty() => t,
             _ => &none[..],
         };
         debug_assert!(starts.0.len() >= starts.1 + 2 || self.tier2.starts.is_none());
-        let mut tape = self.tier2.tape(starts.1);
         // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
-        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, totals, &mut tape) };
+        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, totals, tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }
-        Ok(tape.nodes())
+        Ok(())
     }
 }
