@@ -3,8 +3,8 @@
 Status: withdrawn (2026-11-07); the code is removed. Replaced by 0065.
 
 **Why withdrawn.** It made the library a second, separate run (a "stage"), and copied its rows into every round of
-the workspace run. Both are wrong in shape. A library's documents are ordinary documents, the normal fixpoint
-derives their rows, and the store records them (0065). The measurements below are kept as evidence: replay into
+the workspace run. Both are wrong in shape. Nothing about a library is special: its files are documents like any
+other, and their facts are stored and reused like any file's because their contents are unchanged (0065). The measurements below are kept as evidence: replay into
 bounded rounds cost more than it saved.
 
 ## Intro
