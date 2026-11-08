@@ -27,7 +27,7 @@ use super::{
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -90,6 +90,9 @@ pub struct FactsMemo {
     pub results: HashMap<[u8; 32], FactsResult>,
     /// plan digest → (path dependent, counts)
     pub completed: HashMap<[u8; 32], (bool, Vec<u8>)>,
+    /// Stored rows that did not decode (O112), read as missing: the file is evaluated again and its new rows replace
+    /// them.
+    pub damaged: usize,
 }
 
 impl FactsMemo {
@@ -144,6 +147,27 @@ impl ContentStore {
         self.put_source(bytes, &all)
     }
 
+    /// Every path-dependent result under `plan` at `fact_schema` whose source is one of `sources`, by path, still
+    /// compressed: a reader decompresses a frame's head or the whole frame when it needs it (`FactsFrame`).
+    pub fn facts_frames_of_plan(&self, plan: [u8; 32], fact_schema: u32, sources: &HashSet<i64>) -> StoreResult<Vec<FactsFrame>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT source_id,path,codec_id,raw_length,frame FROM facts_results \
+             WHERE plan_digest=?1 AND fact_schema=?2 AND path<>?3 ORDER BY path",
+        )?;
+        let rows = statement.query_map(params![&plan[..], i64::from(fact_schema), CONTENT_PURE], |row| {
+            Ok(FactsFrame { source: SourceId(row.get(0)?), path: row.get(1)?, codec: row.get(2)?, raw_length: row.get(3)?, frame: row.get(4)? })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let frame = row?;
+            if sources.contains(&frame.source.0) {
+                out.push(frame);
+            }
+        }
+        Ok(out)
+    }
+
     /// Every memo row of `key`'s content, content-pure and at `key.path`, for `key.fact_schema`.
     pub fn facts_memo(&self, key: FactsMemoKey<'_>) -> StoreResult<FactsMemo> {
         let connection = self
@@ -167,10 +191,10 @@ impl ContentStore {
         })?;
         for row in rows {
             let (path, plan, codec, raw_length, frame) = row?;
-            let plan = digest(&plan)?;
-            // A row whose frame does not decode to its length is a miss (O112): the clause runs again, and its
-            // result replaces the row.
-            let Ok(entry) = decode(codec, raw_length, frame) else { continue };
+            let (Ok(plan), Ok(entry)) = (digest(&plan), decode(codec, raw_length, &frame)) else {
+                memo.damaged += 1;
+                continue;
+            };
             memo.results.insert(
                 plan,
                 FactsResult {
@@ -199,8 +223,8 @@ impl ContentStore {
         for (path, set, words, codec, raw_length, counts) in rows {
             let set = digest(&set)?;
             let plans = self.plan_set(&connection, set)?;
-            // Undecodable counts are a miss for the row's plans (O112); the next write replaces them.
-            let Some(mut counts) = decode(codec, raw_length, counts).ok().and_then(|raw| decode_counts(&raw).ok()) else {
+            let Ok(mut counts) = decode(codec, raw_length, &counts).and_then(|b| decode_counts(&b)) else {
+                memo.damaged += 1;
                 continue;
             };
             for (ordinal, plan) in plans.iter().enumerate() {
@@ -253,6 +277,7 @@ impl ContentStore {
                 .iter()
                 .map(|c| (set.plans[c.ordinal as usize], (c.path_dependent, c.counts.clone())))
                 .collect(),
+            damaged: 0,
         }
         .run_digest(set);
         let schema = i64::from(key.fact_schema);
@@ -420,15 +445,16 @@ fn merge_completion(
         })
         .optional()?;
     let (mut merged_words, mut merged_counts) = match stored {
-        // A stored row that does not decode is replaced, not merged (O112).
-        Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, frame).ok().and_then(|raw| decode_counts(&raw).ok()) {
-            Some(counts) => (
+        // A stored row that does not decode (O112) is replaced, not merged: its completions are lost, and their files
+        // are evaluated again when next read.
+        Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, &frame).and_then(|b| decode_counts(&b)) {
+            Ok(counts) => (
                 w.chunks_exact(8)
                     .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
                     .collect::<Vec<_>>(),
                 counts,
             ),
-            None => (Vec::new(), HashMap::new()),
+            Err(_) => (Vec::new(), HashMap::new()),
         },
         None => (Vec::new(), HashMap::new()),
     };
@@ -469,13 +495,38 @@ fn word_bit(words: &[u8], ordinal: usize) -> bool {
         .is_some_and(|w| u64::from_le_bytes(w.try_into().expect("eight bytes")) >> (ordinal % 64) & 1 == 1)
 }
 
+/// One stored result frame, compressed as it is stored.
+pub struct FactsFrame {
+    pub source: SourceId,
+    pub path: String,
+    codec: i64,
+    raw_length: i64,
+    frame: Vec<u8>,
+}
+impl FactsFrame {
+    /// The first `n` bytes of the entry, decompressing no more of the frame than they need.
+    pub fn head(&self, n: usize) -> StoreResult<Vec<u8>> {
+        use std::io::Read as _;
+        if self.codec != CODEC_ZSTD {
+            return Err(StoreError::Corrupt(format!("unsupported facts memo codec {}", self.codec)));
+        }
+        let mut out = vec![0; n];
+        zstd::stream::read::Decoder::new(Cursor::new(&self.frame[..]))?.read_exact(&mut out)?;
+        Ok(out)
+    }
+    /// The whole entry.
+    pub fn bytes(&self) -> StoreResult<Vec<u8>> {
+        decode(self.codec, self.raw_length, &self.frame)
+    }
+}
+
 fn digest(bytes: &[u8]) -> StoreResult<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| StoreError::Corrupt("facts plan digest is not 32 bytes".to_owned()))
 }
 
-fn decode(codec: i64, raw_length: i64, frame: Vec<u8>) -> StoreResult<Vec<u8>> {
+fn decode(codec: i64, raw_length: i64, frame: &[u8]) -> StoreResult<Vec<u8>> {
     if codec != CODEC_ZSTD {
         return Err(StoreError::Corrupt(format!("unsupported facts memo codec {codec}")));
     }

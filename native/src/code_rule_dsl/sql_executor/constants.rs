@@ -5,11 +5,45 @@ use super::super::logic::sql::{
 };
 use super::*;
 
+pub(super) fn uses_integer_domain(query: &Query) -> bool {
+    fn block(select: &Select) -> bool {
+        let mut found = select
+            .from
+            .iter()
+            .any(|i| matches!(i.relation, Rel::Integers));
+        for e in select
+            .columns
+            .iter()
+            .map(|(e, _)| e)
+            .chain(&select.predicates)
+            .chain(select.from.iter().flat_map(|i| match &i.join {
+                super::super::logic::sql::select::Join::On(on) => on.iter(),
+                _ => [].iter(),
+            }))
+        {
+            e.visit(&mut |e| {
+                if let E::Scalar(q) | E::Exists { query: q, .. } = e {
+                    found |= block(&q);
+                }
+            });
+        }
+        found
+    }
+    query
+        .ctes
+        .iter()
+        .flat_map(|c| &c.arms)
+        .chain([&query.body])
+        .any(block)
+}
+
 pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<usize> {
     let e = Arc::make_mut(&mut run.emitted);
     let mut count = 0;
     for (id, (step, query)) in e.program.steps.iter_mut().zip(&mut e.queries).enumerate() {
-        if query.is_some() {
+        // A SQL producer's step has no parsed query either, but it is not immutable: what it
+        // reads changes, and maintenance recomputes it (`maintenance`).
+        if query.is_some() || run.producers.contains_key(&step.output) {
             continue;
         }
         let width = e

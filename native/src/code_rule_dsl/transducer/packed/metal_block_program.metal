@@ -9,10 +9,10 @@
 // eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands
 // a and b, and an immediate (eq's byte; const's pattern as b = low half, imm = high half; plane's
 // bit), and the carried operations 8 prev (imm the distance), 9 toggle, 10 escaped, 12 fill
-// (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay).
+// (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay); 15 phase (a = k | r << 8, its period's bits as b, imm).
 struct BlockStep { uint op, a, b, imm; };
 // A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts
-// (output indices, at `outs[ext0..]`).
+// (output indices, at `outs[ext0..]`, each with its output's delay in the top byte).
 struct ProgramRow { uint step0, steps, out0, outs, ext0, exts, pad0, pad1; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
@@ -110,16 +110,29 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
         break;
       }
       case 13u: v = M(within_lane<M>(f.len + s.imm, gl * W) & ~within_lane<M>(s.imm, gl * W)); break;
+      case 15u: {
+        // `phase`: k and r in a, the period's bits in b and imm.
+        const uint k = s.a & 0xffu, r = s.a >> 8u;
+        v = M((ulong(s.b) | (ulong(s.imm) << 32u)) << ((r + k - (gl * W) % k) % k));
+        break;
+      }
       default: break;
     }
     slots[at * 32u + l] = v;
   }
-  for (uint k = 0u; k < pr.outs; k++) out[f.out_base + k * lanes + gl] = slots[outs[pr.out0 + k] * 32u + l];
+  // The sinks (`metal_block_sinks.metal`): each output at its delay (its value and delay in
+  // `outs`), then each counted output: its output, its extract (0xff: a total only), its delay.
+  for (uint k = 0u; k < pr.outs; k++) {
+    const uint x = outs[pr.out0 + k];
+    write_output(out, f.out_base + k * lanes, gl, f.len, x >> 24u, slots[(x & 0xffffffu) * 32u + l]);
+  }
   const uint capacity = max(f.len, 1u);
-  for (uint e = 0u; e < pr.exts; e++) {
-    const M v = slots[outs[pr.out0 + outs[pr.ext0 + e]] * 32u + l];
-    if (!extract_write(v, gl, g, l, f.len, ext_states + f.ext_base + e * f.groups, positions + f.pos_base + e * capacity,
-                       capacity, counts + f.ext_base + e * f.groups, spins * 64u))
+  for (uint c = 0u; c < pr.exts; c++) {
+    const uint x = outs[pr.ext0 + c];
+    const uint e = (x >> 16u) & 0xffu;
+    const M v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * 32u + l];
+    if (!count_sink(v, gl, g, l, f.groups, f.len, x >> 24u, ext_states + f.ext_base + c * f.groups, positions + f.pos_base + e * capacity,
+                    capacity, e != 0xffu, counts + f.tot_base + c, spins * 64u))
       return false;
   }
   return true;

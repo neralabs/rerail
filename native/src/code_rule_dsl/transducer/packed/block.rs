@@ -61,6 +61,10 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// with this, so no value has bits outside the stream. No carry: each executor knows the
     /// length and the position, so `within` at a delay is never a `prev` of `within`.
     Within(u8),
+    /// The bytes at stream positions `i` with `i % k == r` (`k` in 1..=63, `r < k`): a residue
+    /// of the position, for a period that does not divide 64 (`Const` holds the others). No
+    /// carry: each executor knows the position, as for `within`.
+    Phase(u8, u8),
 }
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
@@ -143,13 +147,14 @@ impl BlockOp {
             BlockOp::Fill(a, b) => two("fill", a, b),
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
+            BlockOp::Phase(k, r) => format!("phase {k} {r}"),
         }
     }
 
     /// The values the operation reads.
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
                 vec![a, b]
@@ -160,7 +165,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
@@ -216,6 +221,10 @@ impl BlockOp {
                 Ok(d) if (1..=63).contains(&d) => Ok(BlockOp::Within(d)),
                 _ => Err(format!("a bad within delay `{d}`")),
             },
+            ["phase", k, r] => match (k.parse::<u8>(), r.parse::<u8>()) {
+                (Ok(k), Ok(r)) if (1..=63).contains(&k) && r < k => Ok(BlockOp::Phase(k, r)),
+                _ => Err(format!("a bad phase `{k} {r}`")),
+            },
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -255,6 +264,7 @@ impl BlockOp {
             // `within` alone keeps its byte; at a delay, a new one and the delay.
             BlockOp::Within(0) => out.push(13),
             BlockOp::Within(d) => out.extend([14, d]),
+            BlockOp::Phase(k, r) => out.extend([15, k, r]),
         }
     }
 }
@@ -275,119 +285,15 @@ impl ClassTable {
     }
 }
 
-/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1, decision
-/// 0071): its grammar id, where its nodes start and end, and its tier-2 rules, which the tape
-/// writer runs once per token. Its place in `BlockProgram::nodes` is its rank.
+/// A token's `check` (doc 18 §4, decision 0086): straight-line operations over the token's bytes,
+/// 64 at a time with carries, which tier 2's `CHECK` runs, as simdjson's stage 2 parses a
+/// number. Bit `i` is the token's byte `i`, `within 0` its bytes; its one output fails the
+/// token where it has a bit.
+/// No loop over the bytes: the compiler refuses a check that would need one. A token of any
+/// length is checked; none goes to tree-sitter.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct NodeRow {
-    /// Its grammar id. A token row's kind may be 0: each of its tokens is a keyword, which gives
-    /// its kind, and one that is not goes to tree-sitter.
-    pub(super) kind: u16,
-    pub(super) start: RowStart,
-    pub(super) end: RowEnd,
-    /// The kind's nodes carry the extra flag.
-    pub(super) extra: bool,
-    /// A token's row: the tokens tile the file (apart from the skipped bytes), and `after` reads
-    /// the previous one.
-    pub(super) leaf: bool,
-    /// On the writer's stack of nested nodes, at most this deep: an end closes the innermost
-    /// open nested node, which must be of this row.
-    pub(super) nested: Option<u8>,
-    /// A node starts only where the previous token's kind is one of these (none: anywhere).
-    /// Kinds, not rows: a token's kind is its keyword's, known at its start.
-    pub(super) after: Vec<u16>,
-    /// A node starts only where the innermost open node is of this kind.
-    pub(super) parent: Option<u16>,
-    /// A node starts only where the token after its first child is of one of these kinds
-    /// (none: anywhere): the token after a string, for a key. Read from the right.
-    pub(super) before: Vec<u16>,
-    /// The same nodes by another rule. A target uses one of the two and checks the other; a
-    /// file where they differ goes to tree-sitter.
-    pub(super) also: Option<RowCond>,
-    /// A `nested` row's closes find their opens by a scan over the entries, not by a barrier
-    /// in pass B (`match scan`; docs/parser-generators/14-tier-2-design.md §4).
-    pub(super) match_scan: bool,
-    /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
-    pub(super) check: Option<(u16, Validator)>,
-}
-
-/// A row's start condition: `after`, `before` and `parent` as `NodeRow`'s.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct RowCond {
-    pub(super) after: Vec<u16>,
-    pub(super) before: Vec<u16>,
-    pub(super) parent: Option<u16>,
-}
-
-/// Where a row's nodes start: at each bit of an output, where a token of a kind starts (its
-/// kind after its keywords), or at the first token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowStart {
-    At(u16),
-    Kind(u16),
-    FirstToken,
-}
-
-/// Where a row's node ends: at the first bit of an output at or after its start; where a token
-/// of a kind ends; with its child that has field `With`'s id; or with the last token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum RowEnd {
-    At(u16),
-    Kind(u16),
-    With(u16),
-    LastToken,
-}
-
-/// A built-in validator of a token's text (decision 0071): one check per token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Validator {
-    /// JSON's number: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)?`, tree-sitter-json's.
-    JsonNumber,
-}
-
-impl Validator {
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Validator::JsonNumber => "json_number",
-        }
-    }
-
-    pub(super) fn named(name: &str) -> Option<Self> {
-        [Validator::JsonNumber].into_iter().find(|v| v.name() == name)
-    }
-}
-
-/// A fact of a node kind's code: its field, or one of its supertypes, where its test holds at the
-/// node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct CodeRow {
-    /// The node row the fact is about.
-    pub(super) node: u16,
-    /// A field (else a supertype), by grammar id.
-    pub(super) field: bool,
-    pub(super) id: u16,
-    pub(super) when: Fact,
-}
-
-/// A code fact's test at a node's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Fact {
-    /// A bit of an output.
-    At(u16),
-    /// A node of this row starts at the same byte; or does not.
-    StartOf(u16),
-    NotStartOf(u16),
-    /// The previous token's kind is one of these.
-    After(Vec<u16>),
-    Always,
-}
-
-/// A keyword of a token row: a token of the row whose text is `word` has kind `kind`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct KeywordRow {
-    pub(super) node: u16,
-    pub(super) word: Vec<u8>,
-    pub(super) kind: u16,
+pub(in crate::code_rule_dsl) struct CheckRow {
+    pub(super) program: BlockProgram,
 }
 
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
@@ -401,6 +307,10 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
+    /// Values, each also an output, whose set bits each executor counts over the whole stream:
+    /// a total per file (`BlockRun::totals`). Tier 2 reads them (`EMPTY`): the fallback's
+    /// masks are totals, and a file with any bit goes to tree-sitter.
+    pub(super) totals: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -409,12 +319,9 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
-    /// The tree section's node kinds, code facts and keywords, for the tape writer; every mask
-    /// an output. `skip`: the bytes between tokens that belong to none.
-    pub(super) nodes: Vec<NodeRow>,
-    pub(super) codes: Vec<CodeRow>,
-    pub(super) keywords: Vec<KeywordRow>,
-    pub(super) skip: Option<u16>,
+    /// The token checks tier 2's `CHECK` runs (decision 0086). Tier 2 itself is the program's
+    /// words (decision 0087).
+    pub(super) checks: Vec<CheckRow>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -425,12 +332,13 @@ pub(in crate::code_rule_dsl) struct BatchFile<'a> {
     pub(in crate::code_rule_dsl) program: usize,
 }
 
-/// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
-/// order).
+/// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
+/// order), and each total's count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BlockRun {
     pub(super) outputs: Vec<Vec<u64>>,
     pub(super) positions: Vec<Vec<u32>>,
+    pub(super) totals: Vec<u64>,
 }
 
 impl BlockProgram {
@@ -451,32 +359,20 @@ impl BlockProgram {
             }
             // Up to 63 bytes: the halo is one 64-bit word on every executor.
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
+            BlockOp::Phase(k, r) => (1..=63).contains(&k) && r < k,
             _ => true,
         });
-        // The extract pass writes undelayed positions only (a delay comes with the tape writer).
-        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v)) && (self.extracts.is_empty() || self.delay == 0);
+        // The extract pass writes positions from the undelayed outputs.
+        let extracts = self.extracts.iter().chain(&self.totals).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
-        let output = |v: u16| self.outputs.contains(&v);
-        let row = |r: u16| usize::from(r) < self.nodes.len();
-        let keyworded = |r: usize| self.keywords.iter().any(|k| usize::from(k.node) == r);
-        let nodes = self.nodes.iter().enumerate().all(|(i, r)| {
-            !matches!(r.start, RowStart::At(v) if !output(v))
-                && !matches!(r.end, RowEnd::At(v) if !output(v))
-                // A token's start and end are masks; a kind-0 row's tokens are all keywords.
-                && (!r.leaf || matches!((r.start, r.end), (RowStart::At(_), RowEnd::At(_))))
-                && (r.kind != 0 || r.leaf && keyworded(i))
-        }) && self.codes.iter().all(|c| {
-            row(c.node)
-                && match &c.when {
-                    Fact::At(v) => output(*v),
-                    Fact::StartOf(r) | Fact::NotStartOf(r) => row(*r),
-                    Fact::After(_) | Fact::Always => true,
-                }
-        }) && self.keywords.iter().all(|k| row(k.node) && self.nodes[usize::from(k.node)].leaf && !k.word.is_empty() && k.word.len() <= 8)
-            && self.skip.is_none_or(output);
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
+        // A check: a verified straight-line program with one output, and no checks of its own.
+        let checks = self.checks.iter().all(|c| {
+            let q = &c.program;
+            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.totals.is_empty() && q.delay <= 1 && q.checks.is_empty()
+        });
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -505,7 +401,15 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        // Likewise the delay, tagged (a program with a delay has no extracts).
+        // Likewise the totals, tagged.
+        if !self.totals.is_empty() {
+            out.extend_from_slice(b"totals");
+            out.extend_from_slice(&(self.totals.len() as u32).to_le_bytes());
+            for v in &self.totals {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
@@ -515,10 +419,9 @@ impl BlockProgram {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
-        // And the tree section's rows.
-        if !self.nodes.is_empty() || !self.codes.is_empty() {
-            // The rows' text (`rir`), which names every field of every row.
-            out.extend_from_slice(b"tree2");
+        // And the token checks, as their text (`rir`).
+        if !self.checks.is_empty() {
+            out.extend_from_slice(b"checks4");
             let mut text = String::new();
             super::rir::tree_rows(&mut text, 0, self);
             out.extend_from_slice(&(text.len() as u32).to_le_bytes());
@@ -544,6 +447,14 @@ impl BlockProgram {
             .collect()
     }
 
+    /// Each total's output index.
+    pub(super) fn total_outputs(&self) -> Vec<usize> {
+        self.totals
+            .iter()
+            .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a total is an output"))
+            .collect()
+    }
+
     /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
     /// sized by its count before it is written (`extract`).
     pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
@@ -552,10 +463,11 @@ impl BlockProgram {
 
     /// `run` over several files at once (`interpret_files`).
     pub(super) fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
-        let extracts = self.extract_outputs();
+        let (extracts, totals) = (self.extract_outputs(), self.total_outputs());
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
+                let totals = totals.iter().map(|&k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()).collect();
                 let positions = extracts
                     .iter()
                     .map(|&k| {
@@ -564,7 +476,7 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
-                BlockRun { outputs, positions }
+                BlockRun { outputs, positions, totals }
             })
             .collect()
     }
@@ -616,6 +528,7 @@ impl BlockProgram {
             let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
             let words: Vec<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
+                BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
@@ -734,6 +647,19 @@ pub(super) fn within(at: usize, len: usize) -> u64 {
 }
 
 /// `within` at delay `d` for block `at`: the bits `d <= i < len + d`.
+/// Multiples of `k` below 64 (`k` in 1..=63): `phase`'s word at a position that is one.
+pub(in crate::code_rule_dsl) fn period_bits(k: u8) -> u64 {
+    (0..64).step_by(usize::from(k)).fold(0u64, |acc, i| acc | 1 << i)
+}
+
+/// `phase k r`'s word for the 64 bytes from position `at`: bit `j` where `(at + j) % k == r`,
+/// the period's bits shifted up by the first such `j`.
+pub(super) fn phase(at: usize, k: u8, r: u8) -> u64 {
+    let k = usize::from(k);
+    let first = (usize::from(r) + k - at % k) % k;
+    period_bits(k as u8) << first
+}
+
 pub(super) fn within_at(at: usize, len: usize, d: u8) -> u64 {
     within(at, len + usize::from(d)) & !within(at, usize::from(d))
 }

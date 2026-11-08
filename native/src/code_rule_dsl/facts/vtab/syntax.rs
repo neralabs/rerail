@@ -70,6 +70,8 @@ pub(crate) struct Projection {
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    /// The AST patterns the program matches (`front::Program::ast_patterns`): rows of `ast_match`.
+    pub(crate) ast_patterns: Vec<String>,
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
     text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
@@ -80,7 +82,7 @@ pub(crate) struct Projection {
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -98,7 +100,7 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -334,6 +336,10 @@ pub(crate) struct Document {
 /// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
 /// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
 pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+    // A document read as text only has no nodes.
+    if doc.facts.len() == 0 {
+        return Ok(Vec::new());
+    }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // A guest's nodes are its root's subtree.
@@ -785,6 +791,8 @@ impl Batch {
         } else {
             Vec::new()
         };
+        // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
+        let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
         // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): on Metal
         // under the device binding, the CPU interpreter otherwise. `span_ends[doc][pattern]`.
         let span_ends: Vec<Vec<Option<Vec<u64>>>> = {
@@ -831,8 +839,16 @@ impl Batch {
             k
         };
         let mut withheld_at = Vec::with_capacity(documents.len());
+        // A document of no nodes (one read as text only, `core::text_only`) has no tag of its own: it is read in the
+        // batch's dialect, its rows (`doc`, `source`, `src_line`) the same in any.
+        let batch_tag = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).find(|&t| t != 0)
+            .or_else(|| crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python))
+            .unwrap_or(0);
         for (j, d) in documents.iter().enumerate() {
-            let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+            let tag = match crate::code_rule_dsl::facts::core::facts_tag(&d.facts) {
+                0 if d.facts.len() == 0 => batch_tag,
+                t => t,
+            };
             if !dialects.contains_key(&tag) {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
@@ -847,6 +863,18 @@ impl Batch {
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
+            }
+            if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
+                && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
+            {
+                let compiled = ast_patterns.entry(tag).or_insert_with(|| {
+                    projection
+                        .ast_patterns
+                        .iter()
+                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
+                        .collect()
+                });
+                c.patterns(&p, dialect, lang, compiled, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));

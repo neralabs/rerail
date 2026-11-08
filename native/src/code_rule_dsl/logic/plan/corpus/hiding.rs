@@ -193,8 +193,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     }
                     specialized.insert(name.clone(), (orig, cols));
                 }
-                a.rel = name;
-                changed = true;
+                // An atom that reads the copy already is not a change: a copy whose head holds a constant at the
+                // seeded column is never carried as scoped there, so the same copy is found each round (a loop
+                // that did not end on `ruff-perf401`).
+                if a.rel != name {
+                    a.rel = name;
+                    changed = true;
+                }
             }
         }
         for (rule, seed) in copies {
@@ -514,5 +519,26 @@ mod tests {
         // A column only guest nodes fill is the guest's: its reader is specialized, not split.
         assert!(outs.iter().any(|r| r.contains("only(") && r.contains("rr_in_sql_0_asg(")), "{outs:#?}");
         assert!(!outs.iter().any(|r| r.contains("only(") && r.contains(" asg(")), "{outs:#?}");
+    }
+
+    /// A copy whose head holds a constant at the seeded column (`unset` is -1) is never carried as scoped there, so
+    /// every round found the same copy again and counted it a change: `ruff-perf401` did not end (decision 0084's
+    /// dump found it). Reading the copy already is no change, and the rounds end.
+    #[test]
+    fn a_copy_with_a_constant_at_its_seeded_column_ends() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+            ".decl none(n: node)\nnone(-1) :- parsed(_, _, _).\n",
+            ".decl out(r: node)\n.output out\nout(r) :- parsed(_, \"sql\", r), none(r).\n",
+        ))
+        .unwrap();
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            hide(&mut p, 1 << 30);
+            let _ = done.send(p);
+        });
+        let p = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
+        let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
+        assert!(out.contains("rr_in_sql_0_none("), "{out}");
     }
 }

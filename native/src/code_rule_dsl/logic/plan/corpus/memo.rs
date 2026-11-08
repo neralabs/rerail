@@ -9,14 +9,14 @@
 //! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
 //! it (decision 0053); the document key is in the entry, and an entry under another key is a miss.
 
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
+use crate::content_store::{ContentStore, FactsFrame, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
-const SCHEMA: u32 = 4;
+const SCHEMA: u32 = 5;
 const _: () = {
     let retired = crate::content_store::RETIRED_CORPUS_MEMO_SCHEMAS;
     let mut i = 0;
@@ -26,9 +26,15 @@ const _: () = {
     }
 };
 
+/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
+/// file hands on its base rows as an evaluated one does.
+pub(super) fn base_key(rel: &str) -> String {
+    format!("base:{rel}")
+}
+
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Entry {
+pub(in crate::code_rule_dsl) struct Entry {
     /// The document key the rows were made under (`doc_keys`): their node ids are `key << 32 | index`.
     pub key: i64,
     /// The document's nodes (for the run's report).
@@ -37,9 +43,6 @@ pub(super) struct Entry {
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
     /// Per file-local output: its node columns and its lines.
     pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
-    /// Per base relation the cross-file part reads: the relation's columns, those it holds, and its rows of them,
-    /// flat (decision 0063).
-    pub base: BTreeMap<String, (Vec<String>, Vec<usize>, Vec<i64>)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
@@ -76,15 +79,22 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of the file-local program: its rules, declarations, inputs and outputs as lowered, and the facts of the
-/// relations its rules read (a file's rows depend on no others: the answers a round of `world` gives the cross-file
-/// part change none of them).
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
+/// engine reads (a guest policy) as well as those its rules read.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    let read: std::collections::BTreeSet<&str> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().filter(|(rel, _)| read.contains(rel.as_str())).collect();
+    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v2\0");
+    hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
+    hash.finalize().into()
+}
+
+/// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
+pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-options/v1\0");
+    hash.update(digest);
+    hash.update(options.to_string().as_bytes());
     hash.finalize().into()
 }
 
@@ -105,6 +115,25 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
+}
+
+/// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
+/// JSON), and its documents' frames, still compressed, by path. A frame's document key is `frame_key`, its entry
+/// `decode_frame`.
+pub(in crate::code_rule_dsl) fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMap<String, String>, Vec<FactsFrame>)>> {
+    let Some((plan, sources, relations)) = store.corpus_run_of(root)? else { return Ok(None) };
+    let sources: HashSet<i64> = sources.into_iter().collect();
+    Ok(Some((relations.into_iter().collect(), store.facts_frames_of_plan(plan, SCHEMA, &sources)?)))
+}
+
+/// The document key of a frame's entry: its first eight bytes, decompressing no more.
+pub(in crate::code_rule_dsl) fn frame_key(frame: &FactsFrame) -> StoreResult<i64> {
+    Ok(i64::from_le_bytes(frame.head(8)?.try_into().expect("8 bytes")))
+}
+
+/// A frame's entry.
+pub(in crate::code_rule_dsl) fn decode_frame(frame: &FactsFrame) -> StoreResult<Entry> {
+    decode(&frame.bytes()?)
 }
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
@@ -229,22 +258,6 @@ fn encode(entry: &Entry) -> Vec<u8> {
             text(&mut out, line);
         }
     }
-    put(&mut out, entry.base.len() as u64);
-    for (rel, (have, held, values)) in &entry.base {
-        text(&mut out, rel);
-        put(&mut out, have.len() as u64);
-        for c in have {
-            text(&mut out, c);
-        }
-        put(&mut out, held.len() as u64);
-        for c in held {
-            put(&mut out, *c as u64);
-        }
-        put(&mut out, values.len() as u64);
-        for v in values {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-    }
     out
 }
 
@@ -285,17 +298,6 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         let columns = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
         let lines = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
         entry.lines.insert(rel, (columns, lines));
-    }
-    for _ in 0..r.u64()? {
-        let rel = r.text()?;
-        let have = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
-        let held = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
-        let n = r.u64()? as usize;
-        let mut values = Vec::with_capacity(n);
-        for _ in 0..n {
-            values.push(i64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes")));
-        }
-        entry.base.insert(rel, (have, held, values));
     }
     if r.at != bytes.len() {
         return Err(StoreError::Invalid("a corpus memo entry has trailing bytes".into()));

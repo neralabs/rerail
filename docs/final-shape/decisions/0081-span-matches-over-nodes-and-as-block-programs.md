@@ -2,7 +2,7 @@
 
 Status: accepted (2026-11-08). §1–§3 built; §3's programs run on Metal under the device binding.
 
-(Numbered past 0080, which Parser-generators and wolfeel use for tier 2.)
+(Parser-generators' tier-2 decisions are 0085 to 0088 on wolfeel.)
 
 ## Intro
 
@@ -107,6 +107,29 @@ anyway.
 On the device: the same program over 40 files of 3,000 definitions (1.78 M nodes, per-file memo off), 7 batches.
 The prefilter's span is 0.551 s CPU on the interpreter and 0.041 s with `--metal`; the findings are equal (load
 64, debug build).
+
+### 4. Merged from a parallel build (the final-shape branch's 0081)
+
+The same O80 was built twice; the merge keeps the code above and these parts of the other build:
+
+- **A context that feeds a scan keeps its derived atoms.** In
+  `ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.`
+  the helper that binds `w` used to be `text(w, t)` alone, which holds every node, so the scan had no kind.
+  When the helper's variables are a `match_all`'s text, the derived atom `wd(w)` stays (`span_context`).
+- **`count` and `sum` over `match_all`** keep the groups as columns of the body's helper, so each match is its
+  own row: `AB12` counts 2, not 1.
+- **A declared relation nothing derives scans empty**, instead of being refused.
+
+Measured on Ruff's own fixtures (one `run-rr` each, compared by line with Ruff's snapshot):
+
+| rule | found | Ruff | missing | extra |
+|---|---|---|---|---|
+| RUF001 | 12 | 9 | 0 | 3: `−`, `ρ`, `∗`, which Ruff's test allows by setting |
+| RUF002 | 2 | 1 | 0 | 1: the same |
+| RUF003 | 5 | 3 | 0 | 2: the same |
+| FAST003 | 64 | 31 | 0 | 33: a parameter with no default is not seen (O121) |
+
+`perf403` (a column bound by any expression) is still refused: O122.
 
 ## What the prior work says
 

@@ -99,13 +99,15 @@ impl Source for Overlay {
 /// Scratch modules are removed on success, failure, or a budget interruption.
 pub(super) struct Overlays<'a> {
     db: &'a rusqlite::Connection,
+    profiler: Option<&'a super::super::sql_profile::Profiler>,
     modules: Modules,
     names: Vec<String>,
 }
 impl<'a> Overlays<'a> {
-    pub fn new(db: &'a rusqlite::Connection) -> Self {
+    pub fn new(db: &'a rusqlite::Connection, profiler: Option<&'a super::super::sql_profile::Profiler>) -> Self {
         Self {
             db,
+            profiler,
             modules: Modules::default(),
             names: vec![],
         }
@@ -150,6 +152,7 @@ impl<'a> Overlays<'a> {
 }
 impl Drop for Overlays<'_> {
     fn drop(&mut self) {
+        if let Some(p) = self.profiler { p.explain_pending(self.db); }
         for name in &self.names {
             let _ = self.modules.unregister(self.db, name);
         }

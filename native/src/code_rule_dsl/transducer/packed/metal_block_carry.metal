@@ -11,6 +11,13 @@ using namespace metal;
 // `prev` needs no scan: its carry is a halo, the 64 bits before a lane, from the lanes before it
 // in the group and the group before's last 64 bits (published in its round, read in later ones).
 
+// The lane word's bits, as a 64-bit value with nothing above the lane's width. The parity is of
+// those bits only: for 16-bit lanes Metal's compiler has been seen to count bits above 16 that the
+// conversion to `ushort` should have dropped (a `prev` by 25 to 31 there, in the Bitlex corpus).
+template <typename M> static inline ulong lane_bits(M a) {
+  return ulong(a) & (~0ul >> (64u - uint(sizeof(M)) * 8u));
+}
+
 // A look-back state: a flag in the top two bits (1: the group's aggregate, 2: its inclusive
 // prefix), the value below.
 constant uint CARRY_AGGREGATE = 1u << 30;
@@ -94,7 +101,7 @@ static inline ulong halo_last(uint a) { return (ulong(simd_broadcast(a, 31u)) <<
 static inline ulong halo_last(ulong a) { return broadcast64(a, 31); }
 // `prev` by k (1..63): the word shifted up, the newest k bits of the halo below.
 template <typename M> static inline M apply_prev(M a, uint k, ulong before) {
-  return M((ulong(a) << k) | (before >> (64u - k)));
+  return M(lane_bits(M((ulong(a) << k) | (before >> (64u - k)))));
 }
 // The halo of group g's lanes: the group before's last 64 bits (zero for the first group).
 static inline ulong halo_of_group_before(device const ulong* halos, uint g) {
@@ -133,7 +140,7 @@ static inline ulong prefix_xor(ulong x) {
   x ^= x << 1u; x ^= x << 2u; x ^= x << 4u; x ^= x << 8u; x ^= x << 16u; x ^= x << 32u;
   return x;
 }
-template <typename M> static inline uint summary_toggle(M a) { return uint(popcount(a)) & 1u; }
+template <typename M> static inline uint summary_toggle(M a) { return uint(popcount(lane_bits(a))) & 1u; }
 template <typename M> static inline M apply_toggle(M a, uint cin) { return M(prefix_xor(a) ^ M(M(0) - M(cin))); }
 
 // simdjson's find_escaped_branchless on a lane word, with the carry in; `overflow` is the carry out.

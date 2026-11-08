@@ -18,14 +18,15 @@
 //! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
 use super::*;
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::block::BatchFile;
-use crate::code_rule_dsl::transducer::packed::block::{BlockRun, undelay};
+use crate::code_rule_dsl::transducer::packed::block::BlockRun;
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
-/// The extract pass (`metal_block_extract.metal`), shared likewise.
-const EXTRACT: &str = include_str!("metal_block_extract.metal");
+/// The sinks: outputs at their delays, extracts and totals (`metal_block_sinks.metal`), shared
+/// likewise.
+const SINKS: &str = include_str!("metal_block_sinks.metal");
 /// The interpreter's source: the shared helpers, then its kernels.
 static INTERPRETER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!("{CARRY}\n{}\n{}", batch_helpers(), include_str!("metal_block_program.metal"))
@@ -78,7 +79,8 @@ struct FileRow {
     pos_base: u32,
     /// The batch's slab binding the file's bytes are in (`SLAB_BUFFERS`).
     slab: u32,
-    pad: u32,
+    /// Where the file's counts start (one per counted output: `native_cpu_block::counted`).
+    tot_base: u32,
 }
 
 /// A program of a batch, as the interpreter reads it (`ProgramRow` in the interpreter).
@@ -113,6 +115,11 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
+        // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
+        BlockInst::Phase(k, r) => {
+            let bits = super::block::period_bits(k);
+            [15, u32::from(k) | u32::from(r) << 8, bits as u32, (bits >> 32) as u32]
+        }
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
@@ -194,7 +201,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
         return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
     }
     // The file table, and each base after the files before.
-    let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base) = (0, 0, 0, 0, 0, 0);
+    let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
+    let counted: Vec<Vec<usize>> = forms.iter().map(super::native_cpu_block::counted).collect();
     let mut rows = Vec::with_capacity(files.len());
     let mut group_file: Vec<u32> = Vec::new();
     for (i, file) in files.iter().enumerate() {
@@ -213,15 +221,16 @@ pub(in crate::code_rule_dsl) fn run_batch(
             ext_base: fit(ext_base)?,
             pos_base: fit(pos_base)?,
             slab: slab_of[i],
-            pad: 0,
+            tot_base: fit(tot_base)?,
         });
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
         group0 += groups;
         out_base += n.outputs.len() * groups * GROUP;
         state_base += carried[file.program] * groups;
         halo_base += carried[file.program] * groups * 3;
-        ext_base += n.extracts.len() * groups;
+        ext_base += counted[file.program].len() * groups;
         pos_base += n.extracts.len() * len.max(1);
+        tot_base += counted[file.program].len();
     }
     let total = group0;
     let table = super::blocks::upload(&rows)?;
@@ -230,7 +239,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
     let states = super::blocks::zeroed::<u32>(state_base.max(1))?;
     let halos = super::blocks::zeroed::<u32>(halo_base.max(1))?;
     let ext_states = super::blocks::zeroed::<u32>(ext_base.max(1))?;
-    let counts = super::blocks::zeroed::<u32>(ext_base.max(1))?;
+    let counts = super::blocks::zeroed::<u32>(tot_base.max(1))?;
     let positions = super::blocks::zeroed::<u32>(pos_base.max(1))?;
     let tickets = super::blocks::zeroed::<u32>(2)?;
     let done = super::blocks::zeroed::<u32>(total)?;
@@ -257,7 +266,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
     let pipeline = match executor {
         Executor::Interpreter => {
             let (mut steps, mut table, mut outs) = (Vec::new(), Vec::new(), Vec::new());
-            for n in &forms {
+            for (pi, n) in forms.iter().enumerate() {
                 let mut carry = 0u32;
                 let step0 = fit(steps.len())?;
                 for inst in &n.insts {
@@ -265,10 +274,13 @@ pub(in crate::code_rule_dsl) fn run_batch(
                     carry += u32::from(inst.carried());
                 }
                 let out0 = fit(outs.len())?;
-                outs.extend(n.outputs.iter().map(|&v| u32::from(v)));
+                // Each output: its value, and its delay in the top byte.
+                outs.extend(n.outputs.iter().enumerate().map(|(k, &v)| u32::from(v) | u32::from(n.output_delays[k]) << 24));
                 let ext0 = fit(outs.len())?;
-                for &k in &n.extracts {
-                    outs.push(fit(k)?);
+                // Each counted output: its index, its extract (0xff: a total only) and its delay.
+                for (c, &k) in counted[pi].iter().enumerate() {
+                    let e = if c < n.extracts.len() { c as u32 } else { 0xff };
+                    outs.push(fit(k)? | e << 16 | u32::from(n.output_delays[k]) << 24);
                 }
                 table.push(ProgramRow {
                     step0,
@@ -276,7 +288,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
                     out0,
                     outs: fit(n.outputs.len())?,
                     ext0,
-                    exts: fit(n.extracts.len())?,
+                    exts: fit(super::native_cpu_block::counted(n).len())?,
                     pad: [0; 2],
                 });
             }
@@ -319,31 +331,32 @@ pub(in crate::code_rule_dsl) fn run_batch(
         }
     }
     let lanes_bytes = out.read::<u8>(out_base * word);
-    let counts = counts.read::<u32>(ext_base);
+    let counts = counts.read::<u32>(tot_base);
     let positions = positions.read::<u32>(pos_base);
     let mut results = Vec::with_capacity(files.len());
     for row in &rows {
         let n = &forms[row.program as usize];
         let (len, groups) = (row.len as usize, row.groups as usize);
         let lanes = groups * GROUP;
-        let words = (len + usize::from(n.delay)).div_ceil(64);
-        let outputs = (0..n.outputs.len())
+        // The kernel wrote the stream's words, at their delays and cut to the stream: read back.
+        let words = len.div_ceil(64);
+        let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
             .map(|k| {
                 let at = (row.out_base as usize + k * lanes) * word;
-                let w: Vec<u64> = lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
-                undelay(&w, n.output_delays[k], len)
+                lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
             })
             .collect();
         let capacity = len.max(1);
+        let count = |c: usize| counts[row.tot_base as usize + c];
         let positions = (0..n.extracts.len())
             .map(|e| {
-                let at = row.ext_base as usize + e * groups;
-                let count: usize = counts[at..at + groups].iter().map(|&c| c as usize).sum();
                 let from = row.pos_base as usize + e * capacity;
-                positions[from..from + count.min(capacity)].to_vec()
+                positions[from..from + (count(e) as usize).min(capacity)].to_vec()
             })
             .collect();
-        results.push(BlockRun { outputs, positions });
+        let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
+        let _ = groups;
+        results.push(BlockRun { outputs, positions, totals });
     }
     Ok(BatchRun { files: results, launches, seconds })
 }
@@ -561,16 +574,17 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
 /// The helpers both executors share: the file table's row, reading a file's bytes, and the
 /// look-backs.
 fn batch_helpers() -> String {
-    format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXTRACT}\n", table_helpers(1))
+    format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{SINKS}\n", table_helpers(1))
 }
 
 /// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
 /// at and past its length (a neighbour's bytes never read as its own).
 const FILE_ROW: &str = "// A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
 // out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
-// three words from halo_base + (j * groups + g) * 3); extract e's state and count of group g at
-// ext_base + e * groups + g, its positions from pos_base + e * max(len, 1).
-struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, pad; };
+// three words from halo_base + (j * groups + g) * 3); counted output c's state of group g at
+// ext_base + c * groups + g, and its total at tot_base + c; extract e's positions from
+// pos_base + e * max(len, 1).
+struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base; };
 static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
   const uint chunks = max((f.len + 15u) / 16u, 1u);
   const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];
@@ -789,15 +803,23 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
             _ => unreachable!("placement"),
         }
     }));
+    // The sinks (`metal_block_sinks.metal`): each output at its delay, cut to the stream; then
+    // each counted output's count carry, its positions and its total. The counts' look-backs
+    // poll longer than the carries' (still bounded).
     for (k, v) in native.outputs.iter().enumerate() {
-        out.push_str(&format!("  out[f.out_base + {k}u * lanes + gl] = v{v};\n"));
+        match native.output_delays[k] {
+            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + gl] = stream_cut(v{v}, gl, len, 0u);\n")),
+            d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, v{v});\n")),
+        }
     }
-    // The extract pass: each extract's positions, at offsets found by look-back
-    // (`extract_write`). It polls longer than the carries do (still bounded).
-    for (e, &k) in native.extracts.iter().enumerate() {
+    for (c, &k) in super::native_cpu_block::counted(native).iter().enumerate() {
+        let e = (c < native.extracts.len()).then_some(c);
         out.push_str(&format!(
-            "  if (!extract_write(v{}, gl, g, l, len, ext_states + f.ext_base + {e}u * f.groups, positions + f.pos_base + {e}u * max(len, 1u), max(len, 1u), counts + f.ext_base + {e}u * f.groups, spins * {EXTRACT_POLLS}u)) return false;\n",
-            native.outputs[k]
+            "  if (!count_sink(v{}, gl, g, l, f.groups, len, {}u, ext_states + f.ext_base + {c}u * f.groups, positions + f.pos_base + {}u * max(len, 1u), max(len, 1u), {}, counts + f.tot_base + {c}u, spins * {EXTRACT_POLLS}u)) return false;\n",
+            native.outputs[k],
+            native.output_delays[k],
+            e.unwrap_or(0),
+            e.is_some(),
         ));
     }
     out.push_str("  return true;\n}\n\n");
@@ -909,6 +931,11 @@ fn emit(
             // The bits of the word's bytes below the stream's end.
             BlockInst::Within(0) => format!("within_lane<{m}>(len, {offset})"),
             BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
+            // The period's bits shifted up to the word's first byte of the residue.
+            BlockInst::Phase(k, r) => {
+                let bits = super::block::period_bits(k);
+                format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
+            }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));

@@ -160,3 +160,8 @@ serde_json = "1.0"
 tree-sitter-generate = { version = "=0.27.1", default-features = false }
 # Reads (and, with RERAIL_GENERATE_PARSERS=1, writes) the generated parser SQL commits gzipped (build.rs's committed_parser).
 flate2 = "=1.1.10"
+
+[[example]]
+name = "sql-session-verify"
+path = "examples/sql_session_verify.rs"
+required-features = ["headless"]

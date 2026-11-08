@@ -15,6 +15,7 @@ mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) use connection::sqlite_on_jemalloc;
+mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;
@@ -56,7 +57,7 @@ pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub use atoms::Sym;
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
 pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
@@ -308,6 +309,7 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 

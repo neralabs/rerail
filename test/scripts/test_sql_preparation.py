@@ -1,4 +1,4 @@
-"""Exercise production vocabulary SQL, including empty results and rollback."""
+"""Exercise the retained D SQL vocabulary baseline, including empty results and rollback."""
 import importlib.util
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SQL = ROOT / "native/src/code_rule_dsl/matcher/anchors/sql"
+SQL = ROOT / "native/src/code_rule_dsl/matcher/d_anchors/sql"
 
 
 class VocabularyTests(unittest.TestCase):

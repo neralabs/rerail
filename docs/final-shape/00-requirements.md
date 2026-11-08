@@ -163,12 +163,12 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | I10 | I | R0 per file, inside the GPU dispatch; R1..Rk across files over interface summaries, with interface-digest cutoff; bounded rounds, not a global fixpoint | Typing 21:25 | §13; under revision, 0065 (draft) |
 | I11 | X | k = 2 cross-file rounds | Typing (open) | §13; under revision, 0065 (draft) |
 | I12 | I | Interned type terms: named type with arguments, union with an `open` flag, `⊤`, variable with bounds, callable, tuple, literal, reference; widen at depth about 4; must/may trait bitmasks; `type_term`/`type_arg` | Typing 21:31, 22:30 | §13 |
-| I13 | I | Generic instantiation: receiver, then explicit arguments, then one-way matching, then one callback step, then bound fallback; variance declared for libraries, unknown for user types | Typing 21:31 | §13 |
+| I13 | I | Generic instantiation: receiver, then explicit arguments, then one-way matching, then one callback step, then bound fallback; variance declared for libraries, unknown for user types | Typing 21:31 | §13; under revision, 0065 (draft): variance as the source declares it, in any file |
 | I14 | I | `proven:` / `possible:` combine with `not` and `some`/`every`; a bare `type:` keeps today's semantics | Typing 21:31, 23:44 | §13 |
 | I15 | X | Findings reached only through unknown share the rule's code and carry a tag | Typing (open) | §13 |
 | I16 | I | `assert` and type guards narrow for the rest of the block; `cast`/`as` only for the expression | Typing (open; recommended) | §13 |
 | I17 | I | `rerail.types/v1` declarations are written in the language's own syntax | Typing 21:31 | §13 |
-| I18 | I | Dependencies produce interface summaries only (no findings, no tapes), content-addressed per (package version, module file), machine-wide; read on demand through the magic-set relation; identity from lockfiles and `RECORD`; "pending" ≠ `⊤` | Typing 21:37, 22:30 | §13 |
+| I18 | I | Dependencies produce interface summaries only (no findings, no tapes), content-addressed per (package version, module file), machine-wide; read on demand through the magic-set relation; identity from lockfiles and `RECORD`; "pending" ≠ `⊤` | Typing 21:37, 22:30 | §13; under revision, 0065 (draft): a dependency's file is a document like any other |
 
 ## J. Output contract
 

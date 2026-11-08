@@ -92,10 +92,18 @@ pub(super) struct Held(MutexGuard<'static, Option<Session>>, bool);
 
 impl Held {
     pub(super) fn as_ref(&self) -> Option<&Session> {
-        self.0.as_ref().filter(|_| !self.1)
+        self.0.as_ref().filter(|s| !self.1 && Self::ours(s))
     }
     pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
-        self.0.as_mut().filter(|_| !self.1)
+        let full = self.1;
+        self.0.as_mut().filter(|s| !full && Self::ours(s))
+    }
+    /// Whether a run on this thread is the session's: always, outside tests.
+    fn ours(_session: &Session) -> bool {
+        #[cfg(test)]
+        return _session.thread == std::thread::current().id();
+        #[cfg(not(test))]
+        true
     }
 }
 
@@ -111,6 +119,7 @@ mod tests {
     /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
     #[test]
     fn a_session_reruns_what_an_edit_changed() {
+        let _session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
