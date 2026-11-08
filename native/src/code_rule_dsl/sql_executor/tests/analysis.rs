@@ -76,7 +76,7 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
             super::scaling::profile(&mut e, |e| e.apply_changes(patch.to_string(), None));
         let report: Value = serde_json::from_str(&result.unwrap()).unwrap();
         assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
-        assert_eq!(report["programs"][0]["reducer_groups"], 2, "{report}");
+        assert_eq!(report["programs"][0]["reducer_groups"], 1, "{report}");
         assert!(work.data_scans.get() < 100, "{work:?}");
         cold(&e);
     }

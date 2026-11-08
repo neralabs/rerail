@@ -73,6 +73,9 @@ impl Reducer {
             .join(" AND ");
         *from += &format!(" LEFT JOIN {} {alias} ON {on}", quote(&self.groups));
     }
+    pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage_explain(&self) -> Value {
+        json!({"group":self.groups,"value_index":self.values,"context_consumers":self.pool_consumers,"lookup_members":self.combined.as_ref().map(|s|&s.members)})
+    }
     pub(in crate::code_rule_dsl::sql_executor::reductions) fn shared_lookup_owner(&self) -> bool {
         self.combined.as_ref().is_some_and(|s| s.owner)
     }

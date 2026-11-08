@@ -11,6 +11,7 @@ mod profiling;
 mod initial;
 mod cte;
 mod analysis;
+mod sharing;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

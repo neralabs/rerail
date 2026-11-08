@@ -15,6 +15,7 @@ enum Kind {
 #[derive(Clone)]
 pub(super) struct Reducer {
     combined: Option<combined::Shared>,
+    pool_consumers: usize,
     pub original: E,
     kind: Kind,
     pub relation: String,
@@ -267,6 +268,7 @@ impl Reducer {
         let native_keys = native && outer_keys.iter().any(|e| !matches!(e, E::Qualified { .. }));
         Ok(Some(Self {
             combined: None,
+            pool_consumers: 1,
             original: original.clone(),
             kind,
             relation: relation.into(),
@@ -344,7 +346,7 @@ impl Reducer {
             .join(",");
         db.execute_batch(&format!(
             "CREATE INDEX {} ON {}({columns})",
-            quote(&format!("{}_contexts", self.groups)),
+            quote(&self.combined.as_ref().map_or_else(||format!("{}_contexts",self.groups),|s|format!("{}_s{}_contexts",rule.contexts,s.members[0]))),
             quote(&rule.contexts)
         ))
         .map_err(error)

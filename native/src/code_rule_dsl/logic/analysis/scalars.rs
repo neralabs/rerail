@@ -61,6 +61,12 @@ pub(in crate::code_rule_dsl) struct Scalar {
 }
 impl Scalar {
     pub fn compatible(&self, other: &Self) -> Decision {
+        self.compatibility(other, true)
+    }
+    pub fn same_bag(&self, other: &Self) -> Decision {
+        self.compatibility(other, false)
+    }
+    fn compatibility(&self, other: &Self, lookup: bool) -> Decision {
         let reason = if matches!(self.kind, Kind::OrderedJoin | Kind::Exists)
             || matches!(other.kind, Kind::OrderedJoin | Kind::Exists)
         {
@@ -73,7 +79,7 @@ impl Scalar {
             Some("Nullable values require a separate null-count contract")
         } else if self.source != other.source
             || self.keys != other.keys
-            || self.lookup != other.lookup
+            || lookup && self.lookup != other.lookup
             || self.predicates != other.predicates
         {
             Some("Input, grouping keys, correlation mapping, or filters differ")
@@ -115,6 +121,7 @@ pub(in crate::code_rule_dsl) struct Layout {
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Family {
     pub members: Vec<usize>,
+    pub witness: usize,
     pub layout: Layout,
     pub lookup: Decision,
 }
@@ -131,12 +138,18 @@ pub(in crate::code_rule_dsl) struct Analysis {
     pub checks: Vec<Check>,
 }
 pub(in crate::code_rule_dsl) fn analyze(inputs: Vec<Scalar>) -> Analysis {
+    analyze_mode(inputs, true)
+}
+pub(in crate::code_rule_dsl) fn analyze_bags(inputs: Vec<Scalar>) -> Analysis {
+    analyze_mode(inputs, false)
+}
+fn analyze_mode(inputs: Vec<Scalar>, lookup: bool) -> Analysis {
     let mut result = Analysis {
         inputs,
         ..Default::default()
     };
     for i in 0..result.inputs.len() {
-        let eligible = result.inputs[i].compatible(&result.inputs[i]);
+        let eligible = result.inputs[i].compatibility(&result.inputs[i], lookup);
         let can_share = eligible.proven;
         result.checks.push(Check {
             left: i,
@@ -148,20 +161,17 @@ pub(in crate::code_rule_dsl) fn analyze(inputs: Vec<Scalar>) -> Analysis {
             if !can_share {
                 break;
             }
-            let mut accepted = true;
-            // Check every member: count must not bridge two different value expressions.
-            for &j in &family.members {
-                let decision = result.inputs[i].compatible(&result.inputs[j]);
-                accepted &= decision.proven;
-                result.checks.push(Check {
-                    left: j,
-                    right: i,
-                    decision,
-                });
-                if !accepted {
-                    break;
-                }
-            }
+            // A non-count witness fixes the family's value expression. This
+            // invariant prevents count from bridging different values without
+            // recording a quadratic number of equivalent pairwise proofs.
+            let j = family.witness;
+            let decision = result.inputs[i].compatibility(&result.inputs[j], lookup);
+            let accepted = decision.proven;
+            result.checks.push(Check {
+                left: j,
+                right: i,
+                decision,
+            });
             if accepted {
                 selected = Some(f);
                 break;
@@ -170,6 +180,7 @@ pub(in crate::code_rule_dsl) fn analyze(inputs: Vec<Scalar>) -> Analysis {
         let f = selected.unwrap_or_else(|| {
             result.families.push(Family {
                 members: vec![],
+                witness: i,
                 layout: Layout::default(),
                 lookup: Decision::new(can_share, if can_share {
                     "Complete grouping keys select at most one summary row; preserve missing groups"
@@ -181,6 +192,10 @@ pub(in crate::code_rule_dsl) fn analyze(inputs: Vec<Scalar>) -> Analysis {
         });
         let family = &mut result.families[f];
         family.members.push(i);
+        if result.inputs[family.witness].kind == Kind::Count && result.inputs[i].kind != Kind::Count
+        {
+            family.witness = i;
+        }
         match result.inputs[i].kind {
             Kind::Count => family.layout.count = true,
             Kind::Sum => family.layout.sum = true,
@@ -196,9 +211,13 @@ impl Analysis {
     /// A retained summary can produce the first answer if changing evaluation order
     /// introduces no additional effects. Range checks still occur at each sum use.
     pub fn initial_evaluation(&self, expressions: &[Expression]) -> Decision {
-        let reason = if self.inputs.is_empty() {
-            Some("No scalar summary to reuse")
-        } else if self.inputs.iter().any(|s| !s.compatible(s).proven) {
+        if self.inputs.is_empty() {
+            return Decision::new(false, "No scalar summary to reuse");
+        }
+        self.evaluation_order(expressions)
+    }
+    pub fn evaluation_order(&self, expressions: &[Expression]) -> Decision {
+        let reason = if self.inputs.iter().any(|s| !s.compatible(s).proven) {
             Some("A scalar has dependent, opaque, nullable, or ordered semantics")
         } else if expressions.iter().any(|e| !e.stable()) {
             Some("Outer expressions have no evaluation-order proof")
@@ -206,7 +225,7 @@ impl Analysis {
             None
         };
         Decision::new(reason.is_none(), reason.unwrap_or(
-            "Pure outer expressions and independent summaries can produce the initial answer once",
+            "Pure outer expressions and independent summaries preserve evaluation order and range checks at scalar uses",
         ))
     }
 }

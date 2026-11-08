@@ -1,5 +1,6 @@
 //! Adapt the logical language to executor-independent key and scalar proofs.
-use super::{keys, scalars};
+use super::{bags, keys, scalars};
+mod storage;
 use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -8,12 +9,14 @@ pub(in crate::code_rule_dsl) struct RuleAnalysis {
     pub head: String,
     pub uniqueness: keys::Proof,
     pub scalars: scalars::Analysis,
+    pub contribution_storage: super::storage::Projection,
 }
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct ProgramAnalysis {
     pub relation_keys: keys::Keys,
     pub key_inferences: Vec<KeyInference>,
     pub rules: Vec<RuleAnalysis>,
+    pub scalar_storage: bags::Analysis,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -253,16 +256,23 @@ impl ProgramAnalysis {
                 break;
             }
         }
-        let rules = program
+        let rules: Vec<RuleAnalysis> = program
             .rules
             .iter()
             .map(|r| RuleAnalysis {
                 head: r.head.rel.clone(),
                 uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),
                 scalars: scalars::analyze(scalar_inputs(&r.body)),
+                contribution_storage: storage::analyze(r),
             })
             .collect();
+        let scalar_storage = bags::analyze(rules.iter().enumerate().flat_map(|(rule, r)| {
+            r.scalars.inputs.iter().cloned().enumerate().map(move |(scalar, input)| {
+                (bags::Site { rule, head: r.head.clone(), scalar }, input)
+            })
+        }));
         Self {
+            scalar_storage,
             relation_keys,
             key_inferences,
             rules,

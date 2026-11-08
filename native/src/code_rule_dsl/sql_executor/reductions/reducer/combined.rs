@@ -2,7 +2,7 @@
 use super::*;
 use crate::code_rule_dsl::logic::{analysis::scalars, sql::properties};
 mod phase;
-mod publication;
+pub(in crate::code_rule_dsl::sql_executor::reductions) mod publication;
 
 #[derive(Clone)]
 pub(super) struct Shared {
@@ -95,6 +95,19 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
     analysis
 }
 
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn already_shared(r: &Reducer) -> bool { r.combined.is_some() }
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage(r: &Reducer) -> (String, String, Query, bool) {
+    (r.groups.clone(), r.values.clone(), r.projection.clone(), r.combined.is_some())
+}
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn share(
+    r: &mut Reducer, groups: &str, values: &str, projection: &Query,
+    layout: &scalars::Layout, members: &[usize], owner: bool, consumers: usize,
+) {
+    r.combined = Some(Shared { owner, layout: layout.clone(), members: members.to_vec() });
+    r.groups = groups.into(); r.values = values.into(); r.projection = projection.clone();
+    r.pool_consumers = consumers;
+}
+
 pub(super) fn initialize(
     r: &Reducer,
     shared: &Shared,
@@ -102,7 +115,7 @@ pub(super) fn initialize(
     objects: &mut Vec<(String, bool)>,
     storage: Option<&versions::Store>,
 ) -> Result<()> {
-    if !shared.owner {
+    if !shared.owner || objects.iter().any(|(name, _)| name == &r.groups) {
         return Ok(());
     }
     let k = r.keys();
@@ -182,6 +195,14 @@ pub(super) fn apply(
     else {
         return Ok(None);
     };
+    if r.pool_consumers > 1 {
+        if let Some(result) = super::super::pool::recalled(w, &r.groups)? { return Ok(result); }
+    }
+    let result = apply_once(r, shared, w, delta)?;
+    if r.pool_consumers > 1 { super::super::pool::remember(w, &r.groups, &result, r.keys())?; }
+    Ok(result)
+}
+fn apply_once(r: &Reducer, shared: &Shared, w: &mut Work<'_>, delta: &Delta) -> Result<Option<(String,u64)>> {
     if w.versions.is_some() {
         return phase::apply(r, shared, w, delta);
     }

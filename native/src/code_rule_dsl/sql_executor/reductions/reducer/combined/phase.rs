@@ -28,7 +28,7 @@ pub(super) fn apply(
     let mut phase = Phase::default();
     let mut publications = vec![];
     if w.profiler.is_some() {
-        phase.analyses.push(json!({"operation":"shared scalar summaries","members":shared.members,"layout":shared.layout,"extrema_access":"Persistent ordered probes plus changed values","sum_contract":"Exact 128-bit state; 64-bit range checked only at rule lookup"}));
+        phase.analyses.push(json!({"operation":"shared scalar summaries","storage_group":r.groups,"context_consumers":r.pool_consumers,"storage_proof":"Same non-null bag, grouping keys, pure filters and value; each consumer retains its own lookup mapping","members":shared.members,"layout":shared.layout,"extrema_access":"Persistent ordered probes plus changed values","sum_contract":"Exact 128-bit state; 64-bit range checked only at rule lookup"}));
     }
     let mut incoming = vec![];
     for (table, sign, count) in [

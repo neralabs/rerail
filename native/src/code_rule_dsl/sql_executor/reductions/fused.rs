@@ -66,6 +66,16 @@ pub(super) fn append(
     changes: &BTreeMap<String, Delta>,
     phase: &mut phase::Phase,
 ) -> Result<(String, String)> {
+    append_with(state, w, changes, phase, &BTreeMap::new(), &mut vec![])
+}
+pub(super) fn append_with(
+    state: &Retained,
+    w: &mut Work<'_>,
+    changes: &BTreeMap<String, Delta>,
+    phase: &mut phase::Phase,
+    extra: &BTreeMap<usize, Vec<String>>,
+    pending: &mut Vec<reducer::combined::publication::Publication>,
+) -> Result<(String, String)> {
     let store = w
         .versions
         .ok_or_else(|| error("fused cache requires native storage"))?;
@@ -97,21 +107,55 @@ pub(super) fn append(
             }
         }
         let removed = phase.relation(rule.width, &union(removed, rule.width, false));
+        if let Some(queries) = extra.get(&rule.step) {
+            let rows = phase.view(rule.width, &union(queries.clone(), rule.width, false));
+            added.push(format!(
+                "SELECT * FROM {rows} EXCEPT SELECT * FROM {removed}"
+            ));
+        }
         let added = phase.relation(rule.width, &union(added, rule.width, false));
         let dirty = phase.relation(
             rule.width,
             &format!("SELECT * FROM {removed} UNION SELECT * FROM {added}"),
         );
         let evaluated = phase.relation(rule.width + width, &rule.evaluation(&added).render());
-        phase.patch_computed(store, &rule.contexts, &dirty, &added)?;
-        phase.patch_computed(store, &rule.contributions, &dirty, &evaluated)?;
+        if store.available(&rule.contexts).is_some()
+            || rule.atoms.iter().any(|a| {
+                changes
+                    .get(&a.relation)
+                    .is_some_and(|d| d.inserted + d.deleted > 0)
+            })
+        {
+            reducer::combined::publication::append(
+                w,
+                phase,
+                pending,
+                &rule.contexts,
+                &dirty,
+                &added,
+                rule.width,
+                rule.width,
+            )?;
+        }
+        if !rule.contribution_view {
+            reducer::combined::publication::append(
+                w,
+                phase,
+                pending,
+                &rule.contributions,
+                &dirty,
+                &evaluated,
+                rule.width,
+                rule.width + width,
+            )?;
+        }
         let heads = (0..width)
             .map(|c| format!("c.h{c}"))
             .collect::<Vec<_>>()
             .join(",");
         weights.push(format!(
             "SELECT {heads},-1 FROM {dirty} d CROSS JOIN {} c WHERE {}",
-            quote(&rule.contributions),
+            rule.contribution_source(),
             equal("c", "d", rule.width)
         ));
         weights.push(format!(
@@ -133,7 +177,16 @@ pub(super) fn append(
         width + 1,
         &format!("SELECT {cols},c{width} FROM {totals} WHERE c{width}>0"),
     );
-    phase.patch_computed(store, &state.heads, &head_keys, &head_rows)?;
+    reducer::combined::publication::append(
+        w,
+        phase,
+        pending,
+        &state.heads,
+        &head_keys,
+        &head_rows,
+        width,
+        width + 1,
+    )?;
     let (keys, next) = if let Some(lattice) = &state.lattice {
         let k = lattice.keys;
         let keys = phase.relation(
@@ -173,7 +226,9 @@ pub(super) fn append(
         );
         (head_keys, next)
     };
-    phase.patch_computed(store, &state.output, &keys, &next)?;
+    if store.available(&state.output).is_some() {
+        phase.patch_computed(store, &state.output, &keys, &next)?;
+    }
     Ok((keys, next))
 }
 

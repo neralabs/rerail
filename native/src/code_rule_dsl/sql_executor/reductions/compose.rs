@@ -3,7 +3,11 @@ use super::*;
 
 impl Retained {
     pub(in crate::code_rule_dsl::sql_executor) fn phase_arms(&self) -> usize {
-        self.rules.len() * 4 + 6
+        self.rules
+            .iter()
+            .map(|r| if r.contribution_view { 2 } else { 4 })
+            .sum::<usize>()
+            + 6
     }
     pub(in crate::code_rule_dsl::sql_executor) fn declare_phase(
         &self,
@@ -40,18 +44,33 @@ impl Retained {
                 .map(|i| format!("h{i} INTEGER NOT NULL"))
                 .collect::<Vec<_>>()
                 .join(",");
-            owned_phase(
-                db,
-                objects,
-                &rule.contributions,
-                &format!(
-                    "{},{heads},PRIMARY KEY({})",
-                    schema(rule.width),
-                    names("", rule.width)
-                ),
-                Some(store),
-                true,
-            )?;
+            if !rule.contribution_view {
+                owned_phase(
+                    db,
+                    objects,
+                    &rule.contributions,
+                    &format!(
+                        "{},{heads},PRIMARY KEY({})",
+                        schema(rule.width),
+                        names("", rule.width)
+                    ),
+                    Some(store),
+                    true,
+                )?;
+            } else {
+                let columns = rule
+                    .contribution_storage
+                    .heads
+                    .iter()
+                    .filter_map(|e| match e {
+                        crate::code_rule_dsl::logic::analysis::scalars::Expression::Column(c) => {
+                            Some(*c)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                rule.index(db, &columns)?;
+            }
             for atom in &rule.atoms {
                 rule.index(
                     db,
@@ -69,7 +88,11 @@ impl Retained {
         phase: &mut crate::code_rule_dsl::sql_executor::phase::Phase,
         full: bool,
     ) -> Result<(String, String)> {
-        if w.profiler.is_some() { phase.analyses.push(json!({"full_rebuild":full,"analysis":self.explain()})); }
+        if w.profiler.is_some() {
+            phase
+                .analyses
+                .push(json!({"full_rebuild":full,"analysis":self.explain()}));
+        }
         if !full {
             return fused::append(self, w, changes, phase);
         }
@@ -82,7 +105,9 @@ impl Retained {
                 &rule.evaluation(&contexts).render(),
             );
             phase.replace_all(store, &rule.contexts, &contexts)?;
-            phase.replace_all(store, &rule.contributions, &evaluated)?;
+            if !rule.contribution_view {
+                phase.replace_all(store, &rule.contributions, &evaluated)?;
+            }
             contributions.push(format!(
                 "SELECT {} FROM {evaluated}",
                 (rule.width..rule.width + self.width)
@@ -98,10 +123,7 @@ impl Retained {
             contributions.join(" UNION ALL ")
         };
         let values = phase.view(self.width, &values);
-        let heads = phase.relation(
-            self.width + 1,
-            &self.head_query(&cols, &values),
-        );
+        let heads = phase.relation(self.width + 1, &self.head_query(&cols, &values));
         phase.replace_all(store, &self.heads, &heads)?;
         let result = phase.relation(
             self.width,

@@ -3,15 +3,15 @@
 use super::*;
 use crate::code_rule_dsl::sql_executor::phase::{Counts, Phase};
 
-pub(super) struct Publication {
-    table: String,
-    keys: String,
+pub(in crate::code_rule_dsl::sql_executor::reductions) struct Publication {
+    pub table: String,
+    pub keys: String,
     rows: String,
     key_width: usize,
 }
 
 /// Both queries have unique prefix keys; every returned row belongs to the selected key set.
-pub(super) fn append(
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn append(
     w: &mut Work<'_>,
     phase: &mut Phase,
     pending: &mut Vec<Publication>,
@@ -46,7 +46,7 @@ pub(super) fn append(
     Ok(())
 }
 
-pub(super) fn publish(
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn publish(
     w: &Work<'_>,
     pending: &[Publication],
     counts: &BTreeMap<String, Counts>,

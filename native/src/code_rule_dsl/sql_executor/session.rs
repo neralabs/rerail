@@ -14,7 +14,7 @@ pub(super) struct Execution {
     pub counts: BTreeMap<String, u64>,
     pub outputs: Vec<String>,
     pub max_waves: u32,
-    pub reductions: Option<BTreeMap<String, reductions::Retained>>,
+    pub reductions: Option<reductions::pool::Plans>,
     pub recursive: BTreeMap<u32, recursive::Partitioned>,
     pub temporal: BTreeMap<u32, temporal::Trace>,
 }

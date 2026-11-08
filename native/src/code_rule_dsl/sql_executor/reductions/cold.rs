@@ -23,9 +23,12 @@ pub(super) fn eligibility(
     if rules.is_empty() {
         return Decision::new(false, "No retained scalar rules");
     }
+    if rules.iter().all(|r| r.reducers.is_empty()) {
+        return Decision::new(false, "No scalar summaries to reuse");
+    }
     for rule in rules {
-        if !rule.initial_evaluation.proven {
-            return rule.initial_evaluation.clone();
+        if !rule.evaluation_order.proven {
+            return rule.evaluation_order.clone();
         }
     }
     let steps = &run.emitted.program.steps;
@@ -91,12 +94,20 @@ pub(in crate::code_rule_dsl::sql_executor) fn after_walks(
     run: &mut session::Execution,
 ) -> Result<()> {
     let old = run.reductions.take().unwrap_or_default();
-    let mut states = planned(w.db, run, false)?;
-    for (output, state) in old {
-        if state.ready {
-            states.insert(output, state);
-        }
+    let mut states = plan_local(w.db, run, false)?;
+    states.retain(|output, _| !old.states.contains_key(output));
+    let mut plans = pool::Plans {
+        states,
+        storage: vec![],
+    };
+    pool::combine(&mut plans, &run.emitted.queries);
+    // Walk lowering changes only previously unsupported CTE rules. Preserve
+    // every existing descriptor, including consumers initialized later: splitting
+    // a shared pool would apply the same source delta twice.
+    for (output, state) in old.states {
+        plans.states.insert(output, state);
     }
-    run.reductions = Some(states);
+    plans.storage.extend(old.storage);
+    run.reductions = Some(plans);
     Ok(())
 }

@@ -163,7 +163,7 @@ pub(super) struct Trace {
 
 impl Trace {
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+        json!({"scalar_storage_boundary":"Wave gates retain separate input versions and maintenance histories","frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole

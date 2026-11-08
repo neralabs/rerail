@@ -156,3 +156,45 @@ fn initial_summary_evaluation_requires_pure_outer_expressions_and_independent_si
     assert!(!dependent.families[0].lookup.proven);
     assert!(!dependent.initial_evaluation(&[]).proven);
 }
+
+#[test]
+fn bag_storage_ignores_outer_mapping_but_preserves_value_and_effect_barriers() {
+    use scalars::{Expression as E,Kind};
+    let p=rr::parse(".decl event(k:number,v:number,w:number)\n.decl owner(a:number,b:number)\n.input event,owner\n.decl x(a:number,n:number,s:number)\nx(a,n,s) :- owner(a,_), n=count : {event(a,_,_)}, s=sum v : {event(a,v,_)}.\n.decl y(b:number,m:number)\ny(b,m) :- owner(_,b), m=max v : {event(b,v,_)}.\n.output x,y\n").unwrap();
+    let a=ProgramAnalysis::analyze(&p);
+    assert_eq!(a.scalar_storage.bags.families.len(),1);
+    let mut other=a.scalar_storage.bags.inputs[0].clone();
+    other.lookup=vec![E::Column(999)];
+    assert!(other.same_bag(&a.scalar_storage.bags.inputs[1]).proven);
+    assert!(!other.compatible(&a.scalar_storage.bags.inputs[1]).proven);
+    other.dependent=true;assert!(!other.same_bag(&other).proven);
+    let mut sum=a.scalar_storage.bags.inputs[1].clone();sum.kind=Kind::Sum;
+    let mut other_value=sum.clone();other_value.value=E::Column(2);
+    let analysis=scalars::analyze_bags(vec![sum, a.scalar_storage.bags.inputs[0].clone(),other_value]);
+    assert_eq!(analysis.families.len(),2);
+    let simple=storage::projection(2,vec![E::Column(1),E::Integer(0)],vec![]);
+    assert!(simple.decision.proven);
+    assert!(!storage::projection(2,vec![E::Apply("Add".into(),vec![E::Column(1),E::Integer(1)])],vec![]).decision.proven);
+    assert!(!storage::projection(2,vec![E::Column(0)],vec![E::Opaque("checked predicate".into())]).decision.proven);
+}
+
+#[test]
+fn cross_rule_storage_proofs_and_explain_grow_linearly_for_many_sites() {
+    let p=rr::parse(".decl event(g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,n:number)\nout(g,n) :- owner(g), n=count : {event(g,_)}.\n.output out\n").unwrap();
+    let scalar=ProgramAnalysis::analyze(&p).rules[0].scalars.inputs[0].clone();
+    let analysis=bags::analyze((0..10000).map(|rule| {
+        let mut s=scalar.clone();s.lookup=vec![scalars::Expression::Column(rule)];
+        (bags::Site {rule,head:format!("out{rule}"),scalar:0},s)
+    }));
+    assert_eq!(analysis.bags.families.len(),1);
+    assert!(analysis.bags.checks.len()<=20000);
+    assert!(serde_json::to_vec(&analysis).unwrap().len()<12_000_000);
+}
+
+#[test]
+fn cross_rule_counts_keep_local_value_lookups_when_stores_are_shared() {
+    let p=rr::parse(".decl event(g:number,v:number,w:number)\n.decl owner(g:number)\n.input event,owner\n.decl first(g:number,n:number,s:number)\nfirst(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum v : {event(g,v,_)}.\n.decl second(g:number,n:number,s:number)\nsecond(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum w : {event(g,_,w)}.\n.output first,second\n").unwrap();
+    let a=ProgramAnalysis::analyze(&p);
+    assert_eq!(a.scalar_storage.bags.families[0].members,vec![0,1]);
+    assert_eq!(a.scalar_storage.bags.families[1].members,vec![2,3]);
+}
