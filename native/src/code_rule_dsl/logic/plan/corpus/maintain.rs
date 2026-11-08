@@ -120,7 +120,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             } else if mine.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.gated))) {
                 "a gated atom"
             } else if mine.iter().any(|r| r.body.iter().any(|l| !matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))) {
-                "an aggregate or other literal"
+                "an `ast` or `nearest` literal, or an aggregate over this stratum or a computed term"
             } else if mine.iter().any(|r| !r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)))) {
                 "a computed head"
             } else {
