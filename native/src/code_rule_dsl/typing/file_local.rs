@@ -313,6 +313,19 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
 /// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0052).
 pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
+    let (local, locations, same, _) = split_explained(prog);
+    (local, locations, same)
+}
+
+/// Why each derived relation is cross-file, by the first rule the split found not to join one document: a root
+/// cause ("joins 2 documents: {n} {m}", "reads field with no location", "made natively") or "reads cross-file r".
+/// Read through the second kind to the first to see what makes a check run over the whole corpus.
+pub(crate) fn cross_causes(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeMap<String, String> {
+    split_explained(prog).3
+}
+
+#[allow(clippy::type_complexity)]
+fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, String>) {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
@@ -399,8 +412,9 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
     }
     // A relation made natively (`dfs_first`) reads the whole program's rows: never file-local.
     let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
+    let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| prog.natives.contains_key(**r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
     loop {
-        let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
+        let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
             // Each read relation's location variables; the rule's locations must form one component.
             let mut groups: Vec<BTreeSet<String>> = Vec::new();
             let placed = value_tapes(rule);
@@ -411,7 +425,7 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
             for (index, literal) in rule.body.iter().enumerate() {
                 let atom = match literal {
                     Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
-                    Literal::Ast { .. } => return false,
+                    Literal::Ast { .. } => return Err("an AST pattern".to_owned()),
                     Literal::Nearest { n, a, .. } => {
                         groups.push(BTreeSet::from([n.clone(), a.clone()]));
                         continue;
@@ -425,7 +439,7 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
                     continue;
                 }
                 if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {
-                    return false;
+                    return Err(format!("reads cross-file {}", atom.rel));
                 }
                 let columns = if derived.contains(atom.rel.as_str()) { locations[&atom.rel].clone() } else { base_locations(&atom.rel) };
                 let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| if let Some(Term::Var(v)) = atom.args.get(c) { Some(v.clone()) } else { None }).collect();
@@ -447,7 +461,7 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
                 }
                 if vars.is_empty() {
                     // A read with no location variable (`field(_, "left", _)`'s rows, a count over them): any file's.
-                    return false;
+                    return Err(format!("reads {} with no location", atom.rel));
                 }
                 groups.push(vars);
             }
@@ -464,18 +478,26 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
             }
             // A constant-only rule has no document owner. Run it once in the cross-file phase,
             // including an empty corpus. Vocabulary filters remain per-chunk producers.
-            merged.len() == 1 || (merged.is_empty() && filters.contains(&rule.head.rel))
+            if merged.len() == 1 || (merged.is_empty() && filters.contains(&rule.head.rel)) {
+                Ok(())
+            } else if merged.is_empty() {
+                Err("reads no location".to_owned())
+            } else {
+                let parts: Vec<String> = merged.iter().map(|m| m.iter().filter(|v| !v.starts_with("rr_value")).cloned().collect::<Vec<_>>().join(" ")).collect();
+                Err(format!("joins {} documents: {{{}}}", merged.len(), parts.join("} {")))
+            }
         };
         let before = local.len();
-        let failing: Vec<String> = prog.rules.iter().filter(|r| local.contains(&r.head.rel) && !rule_local(r)).map(|r| r.head.rel.clone()).collect();
-        for rel in failing {
+        let failing: Vec<(String, String)> = prog.rules.iter().filter(|r| local.contains(&r.head.rel)).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.clone(), why))).collect();
+        for (rel, why) in failing {
             local.remove(&rel);
+            causes.entry(rel).or_insert(why);
         }
         if local.len() == before {
             let mut same: BTreeMap<String, Vec<usize>> =
                 prog.inputs.iter().filter(|i| !derived.contains(i.as_str())).map(|i| (i.clone(), base_locations(i))).collect();
             same.extend(local.iter().map(|rel| (rel.clone(), locations[rel].clone())));
-            return (local, locations, same);
+            return (local, locations, same, causes);
         }
     }
 }

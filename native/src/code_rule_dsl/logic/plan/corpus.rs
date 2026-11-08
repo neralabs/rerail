@@ -940,6 +940,14 @@ pub(crate) fn run_with_options(
             split.exports.iter().chain(split.local.outputs.iter().filter(|o| !split.exports.contains(o))).filter(|e| split.locations.get(*e).is_none_or(Vec::is_empty)).collect::<BTreeSet<_>>()
         )
     });
+    crate::code_rule_dsl::logic::profile::decision("cross-file causes", || {
+        // Root causes only: a relation cross-file because it reads another is listed under that one.
+        let causes = crate::code_rule_dsl::typing::file_local::cross_causes(&lowered.program);
+        let mut roots: Vec<String> = causes.iter().filter(|(_, why)| !why.starts_with("reads cross-file ")).map(|(rel, why)| format!("{rel}: {why}")).collect();
+        let total = roots.len();
+        roots.truncate(60);
+        format!("{total} relations cross-file of their own ({} by reading them): {}", causes.len() - total, roots.join("; "))
+    });
     crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
