@@ -1380,7 +1380,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
-        "tree_digest" | "annotation_text" | "annotation_constant_repr" | "call_receiver_text" | "call_text" | "call_function_text" => &[&["n"], &["s", "n"]],
+        "tree_digest" | "annotation_text" | "annotation_constant_repr" | "call_receiver_text" | "call_text" | "call_function_text" | "decorator_text" | "class_base_text" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],

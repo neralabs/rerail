@@ -22,3 +22,11 @@
 // These rows share its demanded native parse and do not scan literals outside annotations.
 .decl annotation_constant_repr(n: node, s: symbol)
 .input annotation_constant_repr
+
+// Canonical definition expressions, keyed by the actual expression node.
+// Class bases exclude metaclass and **keyword arguments; decorators retain calls.
+// These columns share the demanded file batch and native parse above.
+.decl decorator_text(n: node, s: symbol)
+.input decorator_text
+.decl class_base_text(n: node, s: symbol)
+.input class_base_text

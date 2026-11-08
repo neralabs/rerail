@@ -1221,7 +1221,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/print.rr",
-      "sha256": "20617a0d26bf295bb33dfeae5b656951c3d87c6da780311ff89c167124ff4554",
+      "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055",
       "origin": "authored",
       "importedSha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
       "repairs": [
@@ -1234,6 +1234,11 @@
           "before": "7b1a1d6e2fdfee9108c92ad49a1a13f7ebd98608d7499898fdd1701635ec3842",
           "after": "20617a0d26bf295bb33dfeae5b656951c3d87c6da780311ff89c167124ff4554",
           "reason": "Expose batched runtime representations of non-string annotation constants required by grammar escape-hatch findings"
+        },
+        {
+          "before": "20617a0d26bf295bb33dfeae5b656951c3d87c6da780311ff89c167124ff4554",
+          "after": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055",
+          "reason": "Expose canonical decorator and class base text in the shared demanded native printer"
         }
       ]
     },
@@ -2614,11 +2619,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "2418f222c5ddc88063cc48a10191ccdaaead9603d3dc14ec1cb22573b6e65dc0"
+        "sha256": "bcb54ba7cf0a901b5e7e6899df5dba4c797be67cdbe01cddf7738fe2c7341cd2"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "5323d6e8f2f8abe944c423286ebf2574fca5e5db622ae607e5b30ef037b8da19"
+        "sha256": "0683f21bd9ff0039d43e2a0061b1adc7b34565d9bcf3c23265c70f8a0628ab69"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2626,7 +2631,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "bdf218e6a7a4e8a00303edaf5d6a4134d8d78d4d518b8c659a5dec630948931b"
+        "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
@@ -2654,7 +2659,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "1cee6db34f66427a348d43d29e391eb33ee97e63858a8bf0cddebaf15f7e70a5"
+        "sha256": "e2cafeb0934a1bd9fd32f814e50c1d2c078ded11e413effcb6e2c8163f49cd53"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",

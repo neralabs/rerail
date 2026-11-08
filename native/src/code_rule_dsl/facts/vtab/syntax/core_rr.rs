@@ -533,6 +533,8 @@ pub(super) struct CoreRows {
     call_receiver_text: Vec<[i64; 2]>,
     call_text: Vec<[i64; 2]>,
     call_function_text: Vec<[i64; 2]>,
+    decorator_text: Vec<[i64; 2]>,
+    class_base_text: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
     ast_match: Vec<[i64; 4]>,
 }
@@ -555,6 +557,12 @@ impl CoreRows {
             }
             if let Some(text) = rows.annotation_constants.get(&span) {
                 self.annotation_constant_repr.push([p.global(local as u32), string(text) as i64]);
+            }
+            if let Some(text) = rows.decorators.get(&span) {
+                self.decorator_text.push([p.global(local as u32), string(text) as i64]);
+            }
+            if let Some(text) = rows.bases.get(&span) {
+                self.class_base_text.push([p.global(local as u32), string(text) as i64]);
             }
             if dialect.name(&p.facts, original) == "call" {
                 let span = (p.facts.start[original as usize], p.facts.end[original as usize]);
@@ -995,6 +1003,8 @@ impl CoreRows {
             ("call_receiver_text", node_sym(&self.call_receiver_text)),
             ("call_text", node_sym(&self.call_text)),
             ("call_function_text", node_sym(&self.call_function_text)),
+            ("decorator_text", node_sym(&self.decorator_text)),
+            ("class_base_text", node_sym(&self.class_base_text)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]

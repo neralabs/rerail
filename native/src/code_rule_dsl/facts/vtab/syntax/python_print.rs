@@ -627,6 +627,8 @@ pub(super) struct Texts {
     pub receivers: HashMap<(u32, u32), String>,
     pub calls: HashMap<(u32, u32), String>,
     pub functions: HashMap<(u32, u32), String>,
+    pub decorators: HashMap<(u32, u32), String>,
+    pub bases: HashMap<(u32, u32), String>,
 }
 
 /// Columns requested by the program's relation projection, not runtime feature flags.
@@ -637,6 +639,8 @@ pub(super) struct Requested {
     pub receivers: bool,
     pub calls: bool,
     pub functions: bool,
+    pub decorators: bool,
+    pub bases: bool,
 }
 
 /// One parse for the demanded text columns. Call columns use actual Call keys, never wrapper nodes.
@@ -656,6 +660,38 @@ pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
         in_annotation: bool,
     }
     impl<'a> Visitor<'a> for Collect<'a> {
+        fn visit_decorator(&mut self, decorator: &'a ast::Decorator) {
+            if self.requested.decorators {
+                let expression = &decorator.expression;
+                match self.printer.expr(expression, TEST) {
+                    Ok(text) => {
+                        let range = expression.range();
+                        self.rows.decorators.insert((u32::from(range.start()), u32::from(range.end())), text);
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            visitor::walk_decorator(self, decorator);
+        }
+
+        fn visit_stmt(&mut self, stmt: &'a ast::Stmt) {
+            if self.requested.bases
+                && let ast::Stmt::ClassDef(class) = stmt
+                && let Some(arguments) = &class.arguments
+            {
+                for base in &arguments.args {
+                    match self.printer.expr(base, TEST) {
+                        Ok(text) => {
+                            let range = base.range();
+                            self.rows.bases.insert((u32::from(range.start()), u32::from(range.end())), text);
+                        }
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+            visitor::walk_stmt(self, stmt);
+        }
+
         fn visit_annotation(&mut self, e: &'a Expr) {
             let previous = self.in_annotation;
             self.in_annotation = true;

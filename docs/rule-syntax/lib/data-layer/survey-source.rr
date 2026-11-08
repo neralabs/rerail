@@ -68,3 +68,22 @@ sgs_module_expression(d, e) :- sgs_direct_module_method(d, f), sig_param(f, _, _
 .decl sgs_module_ref(d: number, name: symbol)
 sgs_module_ref(d, @nfkc(name)) :- sgs_module_expression(d, e), ast_name(e, name).
 sgs_module_ref(d, @nfkc(name)) :- sgs_module_expression(d, e), ast_name(n, name), within(n, e).
+
+.decl sgs_decorator(n: node, ordinal: number, value: symbol)
+sgs_decorator(n, ordinal, @replace_all(text, "(?s)\\(.*", "")) :- sgs_definition(n, _, _, _, _, _), decorator(n, e), decorator_text(e, text), ordinal = count : { decorator(n, other), earlier(other, e) }.
+.decl sgs_class_decorator(n: node, ordinal: number, value: symbol)
+sgs_class_decorator(n, ordinal, text) :- sgs_definition(n, _, _, _, "method", _), nearest(n, c, "class_definition"), sgs_decorator(c, ordinal, text).
+.decl sgs_base_site(c: node, e: node, value: symbol)
+sgs_base_site(c, e, text) :- sgs_definition(c, _, _, _, "class", _), field(c, "superclasses", args), child(args, e, _), class_base_text(e, text).
+.decl sgs_base(c: node, ordinal: number, value: symbol)
+sgs_base(c, ordinal, text) :- sgs_base_site(c, e, text), ordinal = count : { sgs_base_site(c, other, _), earlier(other, e) }.
+.decl sgs_class_attribute_site(c: node, a: node, name: symbol, value: symbol)
+sgs_class_attribute_site(c, a, @nfkc(name), text) :- sgs_definition(c, _, _, _, "class", _), field(c, "body", body), body_stmt(body, stmt, _), asgstmt(a, stmt), assign_ann(a, annotation), field(a, "left", target), kind(target, "identifier"), text(target, name), annotation_text(annotation, text).
+.decl sgs_class_attribute(c: node, ordinal: number, name: symbol, value: symbol)
+sgs_class_attribute(c, ordinal, name, text) :- sgs_class_attribute_site(c, a, name, text), ordinal = count : { sgs_class_attribute_site(c, other, _, _), earlier(other, a) }.
+.decl sgs_is_abstract(n: node)
+sgs_is_abstract(n) :- sgs_base(n, _, text), contains("ABC", text).
+sgs_is_abstract(n) :- sgs_definition(n, _, _, _, k, _), k != "class", sgs_decorator(n, _, text), suffix("abstractmethod", text).
+.decl sgs_abstract(n: node, flag: number)
+sgs_abstract(n, 1) :- sgs_is_abstract(n).
+sgs_abstract(n, 0) :- sgs_definition(n, _, _, _, _, _), !sgs_is_abstract(n).
