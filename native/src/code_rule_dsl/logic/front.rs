@@ -349,15 +349,33 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+    /// The AST patterns (``n ~ `$O[:-$K]` ``) the rules read: the batch matches each over every document of the
+    /// program's language and makes `ast_match(p, n, g, c)` for them (`rr::lower`).
+    pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
+    /// The documents the policies' `.scope` selects (`rr::lower`'s scope filter): a document is read when an entry
+    /// holds it, its path matching one of the entry's first globs (any path, when there are none) and none of its
+    /// second. `None`: every document (no scope, `.scope given`, or a combined program with a policy of no scope).
+    pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
-/// comment node (`kind(c, "comment")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Whether `doc_scopes` reads the document at `path`.
+pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
+    let glob = |g: &String| crate::code_rule_dsl::logic::strings::test("glob", path, g);
+    scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
+}
+
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), each
+/// comment node (`kind(c, "comment")`), each node of some kinds (`kind(c, "string")`, through derived columns too),
+/// or each span another pattern's group captured (decision 0081).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
     Comment,
+    /// The nodes of these kinds.
+    Kinds(std::collections::BTreeSet<String>),
+    /// The spans group `.1` of pattern `.0` captured (as `rx_span` names them).
+    Capture(String, String),
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
@@ -978,6 +996,27 @@ pub(in crate::code_rule_dsl) fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) 
         }
     }
     sccs
+}
+
+/// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
+pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
+    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
+    for r in &prog.rules {
+        body_of.entry(&r.head.rel).or_default().push(&r.body);
+    }
+    let (mut need, mut todo) = (BTreeSet::new(), roots);
+    while let Some(r) = todo.pop() {
+        if !need.insert(r.clone()) {
+            continue;
+        }
+        if let Some(native) = prog.natives.get(&r) {
+            todo.extend(native.reads().into_iter().map(str::to_owned));
+        }
+        for body in body_of.get(r.as_str()).into_iter().flatten() {
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+        }
+    }
+    need
 }
 
 /// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.

@@ -4,6 +4,7 @@
 #[path = "sql/coverage.rs"]
 mod coverage;
 #[allow(dead_code)]
+#[path = "sql/snapshot.rs"]
 pub(in crate::code_rule_dsl) mod snapshot;
 #[path = "sql/timing.rs"]
 mod timing;
@@ -16,6 +17,7 @@ use std::fs::{File, create_dir_all};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
 use timing::{Started, Timing};
@@ -74,6 +76,7 @@ pub(in crate::code_rule_dsl) enum FrameEvent {
     Lookup,
     Next,
     Column,
+    Insert,
     IndexBuild = 5,
     IndexedRows,
 }
@@ -134,8 +137,8 @@ struct State {
     running: HashMap<usize, Running>,
     ids: HashMap<String, usize>,
     queries: Vec<Value>,
-    context: Value,
     sql_time: Timing,
+    totals: [u64; 6],
     error: Option<String>,
     events: usize,
     sql_started: usize,
@@ -177,7 +180,19 @@ impl State {
 pub(in crate::code_rule_dsl) struct Profiler {
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
+    context: Arc<parking_lot::Mutex<Value>>,
     stem: PathBuf,
+}
+
+/// Context can nest around mutable session methods without borrowing the connection.
+pub(in crate::code_rule_dsl) struct Context {
+    context: Arc<parking_lot::Mutex<Value>>,
+    previous: Value,
+}
+impl Drop for Context {
+    fn drop(&mut self) {
+        *self.context.lock() = std::mem::take(&mut self.previous);
+    }
 }
 
 // SAFETY: rusqlite's Connection may move between workers. Its callback is invoked synchronously
@@ -185,20 +200,46 @@ pub(in crate::code_rule_dsl) struct Profiler {
 unsafe impl Send for Profiler {}
 
 impl Profiler {
+    /// Cumulative executions, wall nanoseconds, VM steps, scans, sorts, and autoindex rows.
+    pub(in crate::code_rule_dsl) fn totals(&self) -> [u64;6] { self.state.borrow().totals }
+    /// Untimed API outcome. Measured work remains in SQL and native operator events.
+    pub(in crate::code_rule_dsl) fn result(&self, name:&str, error:Option<String>) {
+        let mut state=self.state.borrow_mut();
+        let query=state.query(&format!("API {name} result"),"operator");
+        let mut context=self.context.lock().clone();
+        context["error"]=json!(error);
+        state.write(json!({"kind":"operator","query":query,"startNs":now(),"timed":false,
+            "wallNs":0,"cpuNs":0,"selfWallNs":0,"selfCpuNs":0,"rows":null,
+            "completed":true,"outcome":if error.is_some(){"error"}else{"ok"},"context":context,"thread":format!("{:?}",std::thread::current().id())}));
+    }
     pub(in crate::code_rule_dsl) fn context(&self, value: Value) {
-        self.state.borrow_mut().context = value;
+        *self.context.lock() = value;
     }
 
     pub(in crate::code_rule_dsl) fn stage(&self, value: &str) {
-        self.state.borrow_mut().context["stage"] = json!(value);
+        self.context.lock()["stage"] = json!(value);
+    }
+
+    pub(in crate::code_rule_dsl) fn scope(&self, fields: Value) -> Context {
+        let mut context = self.context.lock();
+        let previous = context.clone();
+        if !context.is_object() { *context = json!({}); }
+        if let Some(fields) = fields.as_object() {
+            for (key, value) in fields { context[key] = value.clone(); }
+        }
+        Context {context:self.context.clone(), previous}
     }
     /// # Safety
     /// The returned profiler must be dropped before its connection closes.
     pub(in crate::code_rule_dsl) unsafe fn configured(
         connection: &Connection,
     ) -> rusqlite::Result<Option<Box<Self>>> {
-        DIRECTORY
-            .as_ref()
+        let directory = DIRECTORY.clone().or_else(|| {
+            crate::code_rule_dsl::logic::profile::on()
+                .then(crate::code_rule_dsl::logic::profile::directory).flatten()
+                .map(|p| p.join("sql"))
+        });
+        directory.as_ref()
             // SAFETY: forwarded from the caller; Session owns the callback and connection.
             .map(|path| unsafe { Self::new(connection, path) })
             .transpose()
@@ -222,6 +263,7 @@ impl Profiler {
                 writer: Some(BufWriter::new(file)),
                 ..State::default()
             }),
+            context: Arc::new(parking_lot::Mutex::new(Value::Null)),
             stem,
         });
         let _ = *ORIGIN;
@@ -247,7 +289,7 @@ impl Profiler {
     ) -> Operation<'_> {
         let mut state = self.state.borrow_mut();
         let query = state.query(sql, "operator");
-        let mut context = state.context.clone();
+        let mut context = self.context.lock().clone();
         if !context.is_object() {
             context = json!({});
         }
@@ -258,7 +300,7 @@ impl Profiler {
         {
             context[key] = value.clone();
         }
-        let previous = std::mem::replace(&mut state.context, context);
+        let previous = std::mem::replace(&mut *self.context.lock(), context);
         Operation {
             profiler: self,
             query,
@@ -305,6 +347,11 @@ impl Profiler {
                 let plan_sql = plan_sql(&sql);
                 let plan = explain(connection, &format!("EXPLAIN QUERY PLAN {plan_sql}"));
                 let bytecode = explain(connection, &format!("EXPLAIN {plan_sql}"));
+                if crate::code_rule_dsl::logic::profile::on() {
+                    crate::code_rule_dsl::logic::profile::note(format!("plan:{}",crate::code_rule_dsl::logic::profile::normal(&sql)),|| {
+                        plan.as_array().map(|rows|rows.iter().map(|r|r[3].as_str().unwrap_or("")).collect::<Vec<_>>().join("\n")).unwrap_or_else(||plan.to_string())
+                    });
+                }
                 let mut state = self.state.borrow_mut();
                 state.queries[id]["planSql"] = json!(plan_sql);
                 state.queries[id]["plan"] = plan;
@@ -370,7 +417,6 @@ pub(in crate::code_rule_dsl) struct Operation<'a> {
 }
 
 impl Operation<'_> {
-    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn finish(mut self, rows: usize) {
         self.rows = Some(rows);
         self.completed = true;
@@ -386,13 +432,13 @@ impl Drop for Operation<'_> {
         let elapsed = self.started.elapsed();
         let mut state = self.profiler.state.borrow_mut();
         let sql = state.sql_time.since(self.sql_time);
-        let context = state.context.clone();
+        let context = self.profiler.context.lock().clone();
         state.write(json!({"kind":"operator","query":self.query,"startNs":self.start_ns,
             "wallNs":elapsed.wall,"cpuNs":elapsed.cpu,
             "selfWallNs":elapsed.wall.saturating_sub(sql.wall),"selfCpuNs":elapsed.cpu.saturating_sub(sql.cpu),
             "rows":self.rows,"completed":self.completed,"context":context,
             "thread":format!("{:?}",std::thread::current().id())}));
-        state.context = self.previous.take().unwrap_or(Value::Null);
+        *self.profiler.context.lock() = self.previous.take().unwrap_or(Value::Null);
     }
 }
 
@@ -486,7 +532,7 @@ unsafe extern "C" fn trace(
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
                 state.origin_started[origin] += 1;
-                let context = state.context.clone();
+                let context = profiler.context.lock().clone();
                 let counters = STATUSES.map(|status| unsafe {
                     i64::from(ffi::sqlite3_stmt_status(pointer, status, 0))
                 });
@@ -537,6 +583,11 @@ unsafe extern "C" fn trace(
                     .collect();
                 let changes = unsafe { ffi::sqlite3_total_changes64(profiler.database) }
                     .saturating_sub(running.changes);
+                for (total,delta) in state.totals.iter_mut().zip([1,elapsed.wall,counters[0] as u64,counters[1] as u64,counters[2] as u64,counters[3] as u64]) { *total += delta; }
+                if crate::code_rule_dsl::logic::profile::on() {
+                    let text = state.queries[running.query]["sql"].as_str().unwrap().to_owned();
+                    crate::code_rule_dsl::logic::profile::sql(text, elapsed.wall, counters[0] as u64, counters[1] as u64, counters[2] as u64, counters[3] as u64);
+                }
                 state.write(json!({"kind":"sql","origin":ORIGINS[running.origin],"query":running.query,"startNs":running.start_ns,
                     "wallNs":elapsed.wall,"cpuNs":elapsed.cpu,"selfWallNs":elapsed.wall,"selfCpuNs":elapsed.cpu,
                     "rows":running.rows,"changes":changes,"counters":counters,"frame":frame,

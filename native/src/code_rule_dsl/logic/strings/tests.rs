@@ -198,3 +198,26 @@ fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
     assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 1);
     assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
 }
+
+/// A test of each of a constant table's values (`contains(x, t)` for each surface x) gains the test of the whole
+/// table as one set before it, which the vocabulary answers once per string; the per-value test still decides.
+#[test]
+fn a_test_of_a_constant_tables_values_gains_the_whole_table_as_one_set() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl table(k: symbol, x: symbol)
+table("dead", "alpha"). table("dead", "beta"). table("live", "gamma").
+.decl surface(x: symbol)
+surface(x) :- table("dead", x).
+.decl finding(d: number, l: number, x: symbol)
+finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    let specs: Vec<_> = vocabulary.specs.iter().map(|(op, p)| format!("{op} {p:?}")).collect();
+    assert_eq!(specs, [r#"contains ["alpha", "beta"]"#], "only the dead rows, as one set");
+    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    assert!(rendered.contains("strtest_") && rendered.contains("@contains"), "the set first, then each value: {rendered}");
+    assert_eq!(vocabulary.rows(&["an alpha".into(), "gamma".into()], &[1, 2]), [vec![1]]);
+}

@@ -17,6 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 mod catalog;
 mod constants;
+// A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
+#[cfg(target_pointer_width = "64")]
 mod corpus;
 mod documents;
 mod indexes;
@@ -24,9 +26,11 @@ mod live;
 mod maintenance;
 mod overlay;
 mod producers;
+mod profiling;
 mod recursive;
 mod reductions;
 mod scratch;
+mod temporal;
 mod updates;
 mod versions;
 mod walks;
@@ -71,6 +75,10 @@ pub struct CodeRuleSqlExecutor {
     live_inputs: BTreeMap<String, Arc<live::Live>>,
     documents: Option<documents::Documents>,
     scratch: scratch::Pool,
+    versions: versions::Store,
+    next_trace: usize,
+    #[cfg(test)]
+    cold_oracle: bool,
 }
 
 #[napi]
@@ -97,6 +105,10 @@ impl CodeRuleSqlExecutor {
             live_inputs: BTreeMap::new(),
             documents: None,
             scratch: scratch::Pool::default(),
+            versions: versions::Store::default(),
+            next_trace: 0,
+            #[cfg(test)]
+            cold_oracle: false,
         })
     }
 
@@ -104,10 +116,12 @@ impl CodeRuleSqlExecutor {
     /// Build everything before replacing bindings; a malformed/unparsed file fails the call.
     #[napi]
     pub fn bind_snapshot(&mut self, snapshot_json: String) -> Result<()> {
-        let (docs, sources) = documents::bind(&self.store, &snapshot_json)?;
-        self.replace_sources(sources.into_iter().collect())?;
-        self.documents = Some(docs);
-        Ok(())
+        self.profiled("bind_snapshot", |this| {
+            let (docs, sources) = documents::bind(&this.store, &snapshot_json)?;
+            this.replace_sources(sources.into_iter().collect())?;
+            this.documents = Some(docs);
+            Ok(())
+        })
     }
 
     /// Maintain retained SQL results across a complete replacement snapshot. Only changed
@@ -118,7 +132,9 @@ impl CodeRuleSqlExecutor {
         snapshot_json: String,
         max_waves: Option<u32>,
     ) -> Result<String> {
-        self.change_snapshot(snapshot_json, max_waves)
+        self.profiled("apply_snapshot", |this| {
+            this.change_snapshot(snapshot_json, max_waves)
+        })
     }
 
     /// Apply an atomic {upsert: [snapshot files], delete: [paths]} batch. Unmentioned files
@@ -129,41 +145,45 @@ impl CodeRuleSqlExecutor {
         changes_json: String,
         max_waves: Option<u32>,
     ) -> Result<String> {
-        self.change_files(changes_json, max_waves)
+        self.profiled("apply_file_changes", |this| {
+            this.change_files(changes_json, max_waves)
+        })
     }
 
     /// Bind current core facts from the database, without source files or a new snapshot.
     /// With no path list, use every currently bound core document in `scope`.
     #[napi]
     pub fn bind_stored(&mut self, scope: String, paths: Option<Vec<String>>) -> Result<()> {
-        let paths = match paths {
-            Some(paths) => paths,
-            None => {
-                let prefix = format!("{scope}#core:");
-                self.db.prepare("SELECT substr(sym_text(name_atom), length(?1) + 1) FROM name_bindings WHERE substr(sym_text(name_atom), 1, length(?1)) = ?1 AND digest <> zeroblob(32) ORDER BY name_atom").map_err(error)?
-                    .query_map([prefix], |r| r.get::<_, String>(0)).map_err(error)?
-                    .collect::<rusqlite::Result<Vec<_>>>().map_err(error)?
+        self.profiled("bind_stored", |this| {
+            let paths = match paths {
+                Some(paths) => paths,
+                None => {
+                    let prefix = format!("{scope}#core:");
+                    this.db.prepare("SELECT substr(sym_text(name_atom), length(?1) + 1) FROM name_bindings WHERE substr(sym_text(name_atom), 1, length(?1)) = ?1 AND digest <> zeroblob(32) ORDER BY name_atom").map_err(error)?
+                        .query_map([prefix], |r| r.get::<_, String>(0)).map_err(error)?
+                        .collect::<rusqlite::Result<Vec<_>>>().map_err(error)?
+                }
+            };
+            if paths.iter().collect::<BTreeSet<_>>().len() != paths.len() {
+                return Err(error("stored document paths must be distinct"));
             }
-        };
-        if paths.iter().collect::<BTreeSet<_>>().len() != paths.len() {
-            return Err(error("stored document paths must be distinct"));
-        }
-        let documents =
-            super::waves::matches::documents(&self.store, &scope, &paths).map_err(error)?;
-        if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
-            return Err(error(
-                "requested stored documents have missing or incomplete core facts",
-            ));
-        }
-        let sources = syntax::shaped(&self.store, documents.clone(), &syntax::Projection::core())
-            .map_err(error)?;
-        syntax::fresh(&self.store, &documents).map_err(error)?;
-        self.replace_sources(
-            sources
-                .into_iter()
-                .map(|(n, s)| (n.to_owned(), s))
-                .collect(),
-        )
+            let documents =
+                super::waves::matches::documents(&this.store, &scope, &paths).map_err(error)?;
+            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
+                return Err(error(
+                    "requested stored documents have missing or incomplete core facts",
+                ));
+            }
+            let sources = syntax::shaped(&this.store, documents.clone(), &syntax::Projection::core())
+                .map_err(error)?;
+            syntax::fresh(&this.store, &documents).map_err(error)?;
+            this.replace_sources(
+                sources
+                    .into_iter()
+                    .map(|(n, s)| (n.to_owned(), s))
+                    .collect(),
+            )
+        })
     }
 
     /// Bind integer or symbol facts, including rows emitted by a native AST matcher.
@@ -171,80 +191,82 @@ impl CodeRuleSqlExecutor {
     /// decimal integers preserve values outside JavaScript's safe range.
     #[napi]
     pub fn bind_relation(&mut self, relation_json: String) -> Result<()> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Input {
-            name: String,
-            columns: Vec<String>,
-            rows: Vec<Vec<Value>>,
-            types: Option<Vec<String>>,
-        }
-        let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
-        let logical_arity = input.columns.len();
-        let logical_types = input.types.clone();
-        if let Some(types) = &input.types {
-            if types.len() != input.columns.len()
-                || types
-                    .iter()
-                    .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc"))
+        self.profiled("bind_relation", |this| {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                name: String,
+                columns: Vec<String>,
+                rows: Vec<Vec<Value>>,
+                types: Option<Vec<String>>,
+            }
+            let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
+            let logical_arity = input.columns.len();
+            let logical_types = input.types.clone();
+            if let Some(types) = &input.types {
+                if types.len() != input.columns.len()
+                    || types
+                        .iter()
+                        .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc"))
+                {
+                    return Err(error(
+                        "fact types must match columns and be number, symbol, node, or loc",
+                    ));
+                }
+            }
+            let boolean = input.columns.is_empty();
+            if boolean && input.rows.iter().any(|row| !row.is_empty()) {
+                return Err(error("Boolean fact rows must have zero columns"));
+            }
+            let mut input = input;
+            if boolean {
+                input.columns.push("__presence".into());
+                for row in &mut input.rows {
+                    row.push(json!(1));
+                }
+                input.types = None;
+            }
+            let columns: BTreeSet<String> = input
+                .columns
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
+            if input.columns.is_empty()
+                || columns.len() != input.columns.len()
+                || !input.columns.iter().all(|c| identifier(c))
             {
-                return Err(error(
-                    "fact types must match columns and be number, symbol, node, or loc",
-                ));
+                return Err(error("fact columns must be distinct SQL identifiers"));
             }
-        }
-        let boolean = input.columns.is_empty();
-        if boolean && input.rows.iter().any(|row| !row.is_empty()) {
-            return Err(error("Boolean fact rows must have zero columns"));
-        }
-        let mut input = input;
-        if boolean {
-            input.columns.push("__presence".into());
-            for row in &mut input.rows {
-                row.push(json!(1));
+            if input.rows.iter().any(|r| r.len() != input.columns.len()) {
+                return Err(error("a fact row does not have the declared arity"));
             }
-            input.types = None;
-        }
-        let columns: BTreeSet<String> = input
-            .columns
-            .iter()
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-        if input.columns.is_empty()
-            || columns.len() != input.columns.len()
-            || !input.columns.iter().all(|c| identifier(c))
-        {
-            return Err(error("fact columns must be distinct SQL identifiers"));
-        }
-        if input.rows.iter().any(|r| r.len() != input.columns.len()) {
-            return Err(error("a fact row does not have the declared arity"));
-        }
-        self.check_input(&input.name, &input.columns, logical_arity)?;
-        let symbols: BTreeSet<&str> = input
-            .rows
-            .iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
-        let names: Vec<&str> = symbols.into_iter().collect();
-        let atoms = self.store.intern_atoms(&names).map_err(error)?;
-        let symbols: BTreeMap<_, _> = names.into_iter().zip(atoms).collect();
-        let values = input
-            .rows
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .enumerate()
-                    .map(|(i, value)| {
-                        wire::fact(&symbols, value, input.types.as_ref().map(|t| t[i].as_str()))
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .collect::<Result<BTreeSet<_>>>()?;
-        let source = Arc::new(live::Live::from_rows(input.columns, values));
-        self.install_input(input.name.clone(), source.clone(), logical_arity, logical_types, true)?;
-        self.live_inputs.insert(input.name, source);
-        Ok(())
+            this.check_input(&input.name, &input.columns, logical_arity)?;
+            let symbols: BTreeSet<&str> = input
+                .rows
+                .iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let names: Vec<&str> = symbols.into_iter().collect();
+            let atoms = this.store.intern_atoms(&names).map_err(error)?;
+            let symbols: BTreeMap<_, _> = names.into_iter().zip(atoms).collect();
+            let values = input
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .enumerate()
+                        .map(|(i, value)| {
+                            wire::fact(&symbols, value, input.types.as_ref().map(|t| t[i].as_str()))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .collect::<Result<BTreeSet<_>>>()?;
+            let source = Arc::new(live::Live::from_rows(input.columns, values));
+            this.install_input(input.name.clone(), source.clone(), logical_arity, logical_types, true)?;
+            this.live_inputs.insert(input.name, source);
+            Ok(())
+        })
     }
 
     /// Whether `name` may be bound as a fact relation of these columns.
@@ -297,6 +319,17 @@ impl CodeRuleSqlExecutor {
     /// reads them (`corpus`). `relations` limits which are bound; a name the run's memo does not hold is an error.
     #[napi]
     pub fn bind_corpus(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let _ = (root, relations);
+            return Err(error("bindCorpus needs a 64-bit target: its rows are document << 32 | row"));
+        }
+        #[cfg(target_pointer_width = "64")]
+        self.bind_corpus_64(root, relations)
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    fn bind_corpus_64(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
         let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
         let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
             .map_err(error)?
@@ -340,7 +373,7 @@ impl CodeRuleSqlExecutor {
     /// Clear generated results while keeping bound facts and connection-local extensions.
     #[napi]
     pub fn reset(&mut self) -> Result<()> {
-        self.clear_results()
+        self.profiled("reset", |this| this.clear_results())
     }
 
     /// Atomically insert/delete fact rows and maintain dependent retained programs.
@@ -350,7 +383,9 @@ impl CodeRuleSqlExecutor {
         changes_json: String,
         max_waves: Option<u32>,
     ) -> Result<String> {
-        self.change_facts(changes_json, max_waves)
+        self.profiled("apply_changes", |this| {
+            this.change_facts(changes_json, max_waves)
+        })
     }
 
     /// Limits apply independently to each subsequent run/query. An empty object removes limits.
@@ -363,39 +398,45 @@ impl CodeRuleSqlExecutor {
     /// Reuse an index on a session-owned result for later rules and ad hoc queries.
     #[napi]
     pub fn create_index(&self, relation: String, columns: Vec<u32>) -> Result<()> {
-        self.result_index(&relation, &columns)
+        self.profiled_read("create_index", |this| {
+            this.result_index(&relation, &columns)
+        })
     }
 
     /// Register SQL functions implementing an associative, commutative, idempotent lattice join.
     /// The aggregate and binary merge must agree; widening must terminate ascending chains.
     #[napi]
     pub fn register_lattice(&mut self, name: String, specification_json: String) -> Result<()> {
-        if !identifier(&name) || matches!(name.as_str(), "flat" | "min" | "max") {
-            return Err(error("custom lattices need a distinct SQL identifier"));
-        }
-        let mut value: Value = serde_json::from_str(&specification_json).map_err(error)?;
-        let top = wire::exact(&value["top"])?;
-        value["top"] = json!(top);
-        let ops: schedule::LatticeOperations = serde_json::from_value(value).map_err(error)?;
-        lattices::validate(&self.db, &ops)?;
-        self.clear_results()?;
-        self.lattice_extensions.insert(name, ops);
-        Ok(())
+        self.profiled("register_lattice", |this| {
+            if !identifier(&name) || matches!(name.as_str(), "flat" | "min" | "max") {
+                return Err(error("custom lattices need a distinct SQL identifier"));
+            }
+            let mut value: Value = serde_json::from_str(&specification_json).map_err(error)?;
+            let top = wire::exact(&value["top"])?;
+            value["top"] = json!(top);
+            let ops: schedule::LatticeOperations = serde_json::from_value(value).map_err(error)?;
+            lattices::validate(&this.db, &ops)?;
+            this.clear_results()?;
+            this.lattice_extensions.insert(name, ops);
+            Ok(())
+        })
     }
 
     /// Lower an inline `.rr` program to SQL without running it. Its `.input` declarations read
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
     pub fn lower(&self, program: String, dialect: String) -> Result<String> {
-        let program = producers::prune(rr::parse(&program).map_err(error)?);
-        let arities: BTreeMap<_, _> = program
-            .decls
-            .iter()
-            .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
-            .collect();
-        let (emitted, _) = self.compile(program, &dialect)?;
-        serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
-            .map_err(error)
+        self.profiled_read("lower", |this| {
+            let program = producers::prune(rr::parse(&program).map_err(error)?);
+            let arities: BTreeMap<_, _> = program
+                .decls
+                .iter()
+                .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
+                .collect();
+            let (emitted, _) = this.compile(program, &dialect)?;
+            serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
+                .map_err(error)
+        })
     }
 
     /// Run the emitted SQL waves to a fixpoint. The returned plan can be inspected or replayed;
@@ -407,11 +448,13 @@ impl CodeRuleSqlExecutor {
         dialect: String,
         max_waves: Option<u32>,
     ) -> Result<String> {
-        self.run_program(
-            producers::prune(rr::parse(&program).map_err(error)?),
-            &dialect,
-            max_waves.unwrap_or(1024),
-        )
+        self.profiled("run", |this| {
+            this.run_program(
+                producers::prune(rr::parse(&program).map_err(error)?),
+                &dialect,
+                max_waves.unwrap_or(1024),
+            )
+        })
     }
 
     /// As `run`, with `core.rr` and the file's includes read by the normal rule front end.
@@ -422,11 +465,13 @@ impl CodeRuleSqlExecutor {
         dialect: String,
         max_waves: Option<u32>,
     ) -> Result<String> {
-        self.run_program(
-            producers::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
-            &dialect,
-            max_waves.unwrap_or(1024),
-        )
+        self.profiled("run_file", |this| {
+            this.run_program(
+                producers::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
+                &dialect,
+                max_waves.unwrap_or(1024),
+            )
+        })
     }
 
     /// One parameterized read query, including CTEs and joins over stored, virtual and derived
@@ -439,51 +484,55 @@ impl CodeRuleSqlExecutor {
         parameters_json: Option<String>,
         max_rows: Option<u32>,
     ) -> Result<String> {
-        let parameters: Vec<Value> =
-            serde_json::from_str(parameters_json.as_deref().unwrap_or("[]")).map_err(error)?;
-        let parameters = parameters
-            .into_iter()
-            .map(parameter)
-            .collect::<Result<Vec<_>>>()?;
-        let _budget = self.limits.enter(&self.db)?;
-        let mut statement = self.db.prepare(&sql).map_err(error)?;
-        if !statement.readonly() || statement.column_count() == 0 {
-            return Err(error(
-                "query requires a read-only SQL statement with result columns",
-            ));
-        }
-        let columns: Vec<String> = statement
-            .column_names()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        let mut cursor = statement
-            .query(rusqlite::params_from_iter(parameters))
-            .map_err(error)?;
-        let limit = max_rows.unwrap_or(10_000) as usize;
-        let mut rows = Vec::new();
-        let mut truncated = false;
-        while let Some(row) = cursor.next().map_err(error)? {
-            if rows.len() == limit {
-                truncated = true;
-                break;
+        self.profiled_read("query", |this| {
+            let parameters: Vec<Value> =
+                serde_json::from_str(parameters_json.as_deref().unwrap_or("[]")).map_err(error)?;
+            let parameters = parameters
+                .into_iter()
+                .map(parameter)
+                .collect::<Result<Vec<_>>>()?;
+            let _budget = this.limits.enter(&this.db)?;
+            let mut statement = this.db.prepare(&sql).map_err(error)?;
+            if !statement.readonly() || statement.column_count() == 0 {
+                return Err(error(
+                    "query requires a read-only SQL statement with result columns",
+                ));
             }
-            let mut values = Vec::new();
-            for c in 0..columns.len() {
-                values.push(match row.get_ref(c).map_err(error)? {
-                    ValueRef::Null => Value::Null,
-                    ValueRef::Integer(n) => wire::integer(n),
-                    ValueRef::Real(n) => json!(n),
-                    ValueRef::Text(s) => {
-                        Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
-                    }
-                    ValueRef::Blob(b) => json!({"blob": b}),
-                });
+            let columns: Vec<String> = statement
+                .column_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            let mut cursor = statement
+                .query(rusqlite::params_from_iter(parameters))
+                .map_err(error)?;
+            let limit = max_rows.unwrap_or(10_000) as usize;
+            let mut rows = Vec::new();
+            let mut truncated = false;
+            while let Some(row) = cursor.next().map_err(error)? {
+                if rows.len() == limit {
+                    truncated = true;
+                    break;
+                }
+                let mut values = Vec::new();
+                for c in 0..columns.len() {
+                    values.push(match row.get_ref(c).map_err(error)? {
+                        ValueRef::Null => Value::Null,
+                        ValueRef::Integer(n) => wire::integer(n),
+                        ValueRef::Real(n) => json!(n),
+                        ValueRef::Text(s) => {
+                            Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
+                        }
+                        ValueRef::Blob(b) => json!({"blob": b}),
+                    });
+                }
+                rows.push(values);
             }
-            rows.push(values);
-        }
-        serde_json::to_string(&json!({"columns": columns, "rows": rows, "truncated": truncated}))
+            serde_json::to_string(
+                &json!({"columns": columns, "rows": rows, "truncated": truncated}),
+            )
             .map_err(error)
+        })
     }
 }
 
@@ -491,7 +540,8 @@ fn reserved(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "atoms"
         || name.starts_with("__rr_update_")
-        || ["sqlite_", "wave_", "delta_", "new_", "rdl_", catalog::PREFIX]
+        || catalog::owns(&name)
+        || ["sqlite_", "wave_", "delta_", "new_", "rdl_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
 }
@@ -546,6 +596,7 @@ impl CodeRuleSqlExecutor {
     /// returned beside the program, each with the session inputs its query reads.
     fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
         let producers = producers::take(&mut program)?;
+        let _scope = profiling::scope(&self.db, "compile");
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
                 && let Some(cols) = program.decls.get(name)
@@ -703,6 +754,7 @@ impl CodeRuleSqlExecutor {
         );
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
+        walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;
         let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
         // A table a query reads that is a session input is watched under the input's own name.
@@ -784,6 +836,12 @@ impl CodeRuleSqlExecutor {
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
+        if let Err(e) = self.versions.begin() {
+            let _ = self.db.execute_batch("RELEASE sql_extension_run");
+            return Err(e);
+        }
+        let trace_namespace = self.next_trace;
+        self.next_trace += 1;
         let previous = (self.generated.clone(), self.executions.clone());
         let mut affected: BTreeSet<usize> = self
             .executions
@@ -821,34 +879,17 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            let waves = schedule::execute_sql_with(&self.db, &emitted.program, max_waves, || {
-                for (table, columns) in &indexes {
-                    session::index(&self.db, table, columns)?;
-                }
-                Ok(())
-            })
-            .map_err(error)?;
-            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
-            let mut counts: BTreeMap<String, u64> = emitted
+            schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            for (table, columns) in &indexes {
+                session::index(&self.db, table, columns).map_err(error)?;
+            }
+            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY,rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
+            let counts = emitted
                 .program
                 .relations
                 .iter()
                 .map(|(r, _)| (r.clone(), 0))
                 .collect();
-            for row in self
-                .db
-                .prepare("SELECT tbl,rows FROM wave_stats")
-                .map_err(error)?
-                .query_map([], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
-                })
-                .map_err(error)?
-            {
-                let (name, n) = row.map_err(error)?;
-                if counts.contains_key(&name) {
-                    counts.insert(name, n);
-                }
-            }
             let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
             let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
             dependencies.extend(producers.values().flatten().cloned());
@@ -877,8 +918,13 @@ impl CodeRuleSqlExecutor {
                 max_waves,
                 reductions: None,
                 recursive: BTreeMap::new(),
+                temporal: BTreeMap::new(),
             };
             let mut work = maintenance::Work::new(&self.db, &self.scratch);
+            work.versions = Some(&self.versions);
+            work.profiler = self.db.profiler();
+            let projections_scope = profiling::scope(&self.db, "projection preparation");
+            let projection_mark = work.mark();
             let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
             let constant_tables = constants::prepare(&self.db, &mut execution)?;
             // These views used to inherit native estimates. Their retained SQL tables need
@@ -888,33 +934,102 @@ impl CodeRuleSqlExecutor {
                     .execute_batch(&format!("ANALYZE temp.{}", quote(name)))
                     .map_err(error)?;
             }
-            let mut initializations = walks::prepare(&mut work, &mut execution, None)?;
-            let mut potential = execution.inputs.clone();
-            initializations.extend(reductions::prepare(
+            drop(projections_scope);
+            work.rewind(projection_mark)?;
+            #[cfg(test)]
+            let native_initial = if self.cold_oracle {
+                None
+            } else {
+                temporal::initial::run(
+                    &mut work,
+                    &self.versions,
+                    &mut execution,
+                    trace_namespace,
+                    &emitted.program,
+                )?
+            };
+            #[cfg(not(test))]
+            let native_initial = temporal::initial::run(
                 &mut work,
+                &self.versions,
                 &mut execution,
-                &mut potential,
-                None,
-            )?);
-            initializations.sort();
-            initializations.dedup();
-            recursive::prepare(&self.db, &mut execution)?;
+                trace_namespace,
+                &emitted.program,
+            )?;
+            let mut initializations = Vec::new();
+            let waves = if let Some(waves) = native_initial {
+                waves
+            } else {
+                let _scope = profiling::scope(&self.db, "cold execution");
+                let waves = schedule::execute_declared(&self.db, &emitted.program, max_waves)
+                    .map_err(error)?;
+                let mut stats = self
+                    .db
+                    .prepare("SELECT tbl,rows FROM wave_stats")
+                    .map_err(error)?;
+                for row in stats
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                    .map_err(error)?
+                {
+                    let (r, n) = row.map_err(error)?;
+                    if execution.counts.contains_key(&r) {
+                        execution.counts.insert(r, n as u64);
+                    }
+                }
+                #[cfg(test)]
+                let retain = !self.cold_oracle;
+                #[cfg(not(test))]
+                let retain = true;
+                if retain {
+                    let _support = profiling::scope(&self.db, "support preparation");
+                    initializations = walks::prepare(&mut work, &mut execution, None)?;
+                    let mut potential = execution.inputs.clone();
+                    initializations.extend(reductions::prepare(
+                        &mut work,
+                        &mut execution,
+                        &mut potential,
+                        None,
+                    )?);
+                    initializations.sort();
+                    initializations.dedup();
+                    drop(_support);
+                    let _recursive = profiling::scope(&self.db, "recursive preparation");
+                    temporal::prepare(&mut work, &self.versions, &mut execution, trace_namespace)?;
+                    recursive::prepare(&self.db, &mut execution)?;
+                }
+                waves
+            };
+            plan::insert_many(
+                &self.db,
+                "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
+                execution
+                    .counts
+                    .iter()
+                    .map(|(r, n)| vec![SqlValue::Text(r.clone()), SqlValue::Integer(*n as i64)])
+                    .collect(),
+            )
+            .map_err(error)?;
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
             Ok((waves, execution, work.pool, preparation))
         })();
         let (waves, execution, pool, preparation) = match result {
-            Ok(value) => value,
+            Ok(value) => {
+                self.versions.commit();
+                value
+            }
             Err(e) => {
+                let native_rollback = self.versions.rollback(&self.db);
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
                 self.generated = previous.0;
                 self.executions = previous.1;
                 self.db.reset_execution();
+                native_rollback?;
                 return Err(e);
             }
         };
@@ -929,6 +1044,7 @@ impl CodeRuleSqlExecutor {
     }
 
     fn clear_results(&mut self) -> Result<()> {
+        self.db.profile_checkpoint();
         // Views first, then their backing tables. Input virtual tables are untouched.
         for table in [false, true] {
             for (name, is_table) in self
@@ -937,6 +1053,10 @@ impl CodeRuleSqlExecutor {
                 .rev()
                 .filter(|(_, is_table)| *is_table == table)
             {
+                if self.versions.owns(name) {
+                    self.versions.remove_all(&self.db, name)?;
+                    continue;
+                }
                 let kind = if *is_table { "TABLE" } else { "VIEW" };
                 self.db
                     .execute_batch(&format!("DROP {kind} IF EXISTS temp.{}", quote(name)))
@@ -946,7 +1066,7 @@ impl CodeRuleSqlExecutor {
         self.clear_control()?;
         self.generated.clear();
         self.executions.clear();
-        self.scratch.clear(&self.db)?;
+        self.scratch.clear(&self.db, &self.versions)?;
         self.db.reset_execution();
         self.refresh_catalog()
     }
@@ -971,8 +1091,11 @@ impl CodeRuleSqlExecutor {
 
 impl Drop for CodeRuleSqlExecutor {
     fn drop(&mut self) {
+        let _scope = profiling::scope(&self.db, "reset");
+        self.db.profile_checkpoint();
         let _ = self.db.remove_bindings();
         let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        self.db.profile_checkpoint();
     }
 }
 

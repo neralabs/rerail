@@ -2,6 +2,7 @@ use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FIRST, FLAGS, FOLLOWING, FORK,
     GOTO, KIND, LAST, NEXT, PARENT, Program, REPEAT_BEGIN, REPEAT_BUMP, REPEAT_END, RESTORE_CURSOR,
     SAVE_CURSOR, SIZE, STOP, SUPERTYPE, TEXT, split,
+    ACCEPT, CHECK, CLOSE, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
     value::{CaptureProgram, ValueProgram},
 };
 
@@ -80,6 +81,22 @@ pub(super) enum StructuralOperation {
     Fork { greedy: bool, target: u16 },
     Goto { target: u16 },
     Emit { label: u16, output: FunctionRef },
+    // Tier 2's words over the token stream (decision 0079, `stream`).
+    Token,
+    Switch { table: u16 },
+    Span { last: bool, len: u16 },
+    Word { string: u16 },
+    Check { check: u16 },
+    Open { kind: u16 },
+    /// At the end of this token (`this`), or of the one before.
+    Close { this: bool },
+    Leaf { kind: u16 },
+    NodeField { field: u16 },
+    NodeSuper { kind: u16 },
+    Push { target: u16 },
+    /// To switch on this token again (`again`), or to take the next.
+    Return { again: bool },
+    Accept,
 }
 
 impl StructuralOperation {
@@ -117,6 +134,19 @@ impl StructuralOperation {
             Self::Fork { greedy, target } => (FORK, u8::from(greedy), target),
             Self::Goto { target } => (GOTO, 0, target),
             Self::Emit { label, .. } => (EMIT, 0, label),
+            Self::Token => (TOKEN, 0, 0),
+            Self::Switch { table } => (SWITCH, 0, table),
+            Self::Span { last, len } => (SPAN, u8::from(last), len),
+            Self::Word { string } => (WORD_IS, 0, string),
+            Self::Check { check } => (CHECK, 0, check),
+            Self::Open { kind } => (OPEN, 0, kind),
+            Self::Close { this } => (CLOSE, u8::from(this), 0),
+            Self::Leaf { kind } => (LEAF, 0, kind),
+            Self::NodeField { field } => (NODE_FIELD, 0, field),
+            Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
+            Self::Push { target } => (PUSH, 0, target),
+            Self::Return { again } => (RETURN, u8::from(again), 0),
+            Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
                 unreachable!("native lowering created an invalid function reference")
             }
@@ -144,6 +174,8 @@ pub(super) struct NativeModule {
     pub reservation_sites: Vec<ReservationSite>,
     pub longs: Vec<u64>,
     pub strings: Vec<Vec<u8>>,
+    /// Tier 2's switch tables (`SWITCH`).
+    pub switches: Vec<super::stream::ByteSwitch>,
     pub value_programs: Vec<ValueProgram>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -327,6 +359,19 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
                 label: operand,
                 output: FunctionRef::Output,
             },
+            TOKEN => StructuralOperation::Token,
+            SWITCH => StructuralOperation::Switch { table: operand },
+            SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
+            WORD_IS => StructuralOperation::Word { string: operand },
+            CHECK => StructuralOperation::Check { check: operand },
+            OPEN => StructuralOperation::Open { kind: operand },
+            CLOSE => StructuralOperation::Close { this: mode != 0 },
+            LEAF => StructuralOperation::Leaf { kind: operand },
+            NODE_FIELD => StructuralOperation::NodeField { field: operand },
+            NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
+            PUSH => StructuralOperation::Push { target: operand },
+            RETURN => StructuralOperation::Return { again: mode != 0 },
+            ACCEPT => StructuralOperation::Accept,
             _ => {
                 return Err(LoweringError::InvalidOpcode { position, opcode });
             }
@@ -367,6 +412,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         reservation_sites,
         longs: program.longs.clone(),
         strings: program.strings.clone(),
+        switches: program.switches.clone(),
         value_programs: program.value_programs.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         capture_programs: program.capture_programs.clone(),
@@ -391,6 +437,8 @@ pub(super) struct BlockNative {
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
+    /// The token checks tier 2's `CHECK` runs (decision 0078), lowered.
+    pub checks: Vec<BlockNative>,
 }
 
 /// An instruction of a block body.
@@ -478,6 +526,7 @@ impl BlockNative {
             extracts: program.extract_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
+            checks: program.checks.iter().map(|c| BlockNative::lower(&c.program)).collect(),
         }
     }
 
@@ -542,6 +591,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
+            checks: self.checks.iter().map(BlockNative::planes_form).collect(),
         }
     }
 }

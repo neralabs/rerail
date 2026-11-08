@@ -3,7 +3,10 @@ use super::super::facts::vtab::Modules;
 use super::*;
 use parking_lot::RwLock;
 use std::cell::RefCell;
+mod bulk;
 pub(super) mod fork;
+mod probes;
+mod scan;
 mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
@@ -11,7 +14,7 @@ struct Row {
     id: i64,
     values: Key,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Schema {
     pub columns: Vec<String>,
     pub keys: usize,
@@ -96,6 +99,8 @@ pub(super) struct Version {
     primary: Link<Row>,
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
+    secondary: Arc<[bool]>,
+    lazy: bool,
     distinct: Vec<usize>,
     next: i64,
 }
@@ -103,8 +108,16 @@ fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
     tree::key(values.into_iter().collect())
 }
 impl Version {
+    pub fn empty_like(&self) -> Self {
+        let mut empty = Self::empty(self.schema.clone());
+        empty.secondary = self.secondary.clone();
+        empty.lazy = self.lazy;
+        empty
+    }
     pub fn empty(schema: Arc<Schema>) -> Self {
         Self {
+            lazy: false,
+            secondary: (0..schema.columns.len()).map(|c| c > 0).collect(),
             indexes: vec![None; schema.columns.len()],
             distinct: vec![0; schema.columns.len()],
             schema,
@@ -119,38 +132,53 @@ impl Version {
         self.primary = if self.schema.keys == self.schema.columns.len() {
             self.full.clone()
         } else {
-            Node::set(
+            Node::set_index(
                 &self.primary,
                 key(row.values.iter().take(self.schema.keys).copied()),
                 None,
             )
         };
-        self.ids = Node::set(&self.ids, key([Some(row.id)]), None);
+        self.ids = Node::set_index(&self.ids, key([Some(row.id)]), None);
         for (c, &v) in row.values.iter().enumerate() {
-            self.indexes[c] = Node::set(&self.indexes[c], key([v, Some(row.id)]), None);
+            if c == 0 {
+                if !Node::has_prefix(&self.full, &[v]) {
+                    self.distinct[0] -= 1;
+                }
+                continue;
+            }
+            if !self.secondary[c] {
+                continue;
+            }
+            self.indexes[c] = Node::set_index(&self.indexes[c], key([v, Some(row.id)]), None);
             if !Node::has_prefix(&self.indexes[c], &[v]) {
                 self.distinct[c] -= 1;
             }
         }
     }
     fn insert(&mut self, row: Row) {
+        if !Node::has_prefix(&self.full, &[row.values[0]]) {
+            self.distinct[0] += 1;
+        }
         self.full = Node::set(&self.full, row.values.clone(), Some(row.clone()));
         self.primary = if self.schema.keys == self.schema.columns.len() {
             self.full.clone()
         } else {
-            Node::set(
+            Node::set_index(
                 &self.primary,
                 key(row.values.iter().take(self.schema.keys).copied()),
                 Some(row.clone()),
             )
         };
-        self.ids = Node::set(&self.ids, key([Some(row.id)]), Some(row.clone()));
+        self.ids = Node::set_index(&self.ids, key([Some(row.id)]), Some(row.clone()));
         for (c, &v) in row.values.iter().enumerate() {
+            if c == 0 || !self.secondary[c] {
+                continue;
+            }
             if !Node::has_prefix(&self.indexes[c], &[v]) {
                 self.distinct[c] += 1;
             }
             self.indexes[c] =
-                Node::set(&self.indexes[c], key([v, Some(row.id)]), Some(row.clone()));
+                Node::set_index(&self.indexes[c], key([v, Some(row.id)]), Some(row.clone()));
         }
     }
     pub fn difference(&self, new: &Self) -> (Vec<Vec<Option<i64>>>, Vec<Vec<Option<i64>>>, usize) {
@@ -171,6 +199,66 @@ impl Version {
     }
 }
 impl Source for Version {
+    fn row_stream(
+        &self,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+    ) -> Option<Box<dyn super::super::facts::vtab::RowStream>> {
+        Some(self.stream(range, reverse))
+    }
+    fn direct_all(
+        &self,
+        equal: &[(usize, i64)],
+    ) -> Option<Vec<super::super::facts::vtab::ReadRow>> {
+        if !(0..self.schema.keys).all(|c| equal.iter().any(|&(k, _)| k == c)) {
+            return None;
+        }
+        let pk = (0..self.schema.keys)
+            .map(|c| Some(equal.iter().find(|(k, _)| *k == c).unwrap().1))
+            .collect::<Vec<_>>();
+        Some(
+            Node::get(&self.primary, &pk)
+                .filter(|r| equal.iter().all(|&(c, v)| r.values[c] == Some(v)))
+                .map(|r| super::super::facts::vtab::ReadRow {
+                    id: r.id,
+                    cells: r.values.clone(),
+                })
+                .into_iter()
+                .collect(),
+        )
+    }
+    fn direct_one(
+        &self,
+        column: usize,
+        values: &[i64],
+    ) -> Option<Vec<super::super::facts::vtab::ReadRow>> {
+        if self.schema.keys != 1 || column != 0 {
+            return None;
+        }
+        Some(
+            values
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter_map(|v| {
+                    Node::get(&self.primary, &[Some(v)]).map(|r| {
+                        super::super::facts::vtab::ReadRow {
+                            id: r.id,
+                            cells: r.values.clone(),
+                        }
+                    })
+                })
+                .collect(),
+        )
+    }
+    fn caches_rows(&self) -> bool {
+        true
+    }
+    fn row_cells(&self, row: usize) -> Option<(i64, Arc<dyn super::super::facts::vtab::RowCells>)> {
+        let row = Node::nth(&self.full, row);
+        Some((row.id, row.values.clone()))
+    }
     fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
         let mut wanted = 0;
         for &(column, reverse) in order {
@@ -205,12 +293,40 @@ impl Source for Version {
         tree::size(&self.full)
     }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        if self.lazy && c > 0 && !self.secondary[c] {
+            return self
+                .len()
+                .div_ceil(100)
+                .max(1)
+                .saturating_mul(if batch { 8 } else { 1 });
+        }
+        if !self.indexed(c) {
+            return self.len().max(1);
+        }
         (self.len() / self.distinct[c].max(1))
             .max(1)
             .saturating_mul(if batch { 8 } else { 1 })
     }
-    fn indexed(&self, _: usize) -> bool {
-        true
+    fn indexed(&self, c: usize) -> bool {
+        c == 0 || self.secondary[c] || self.lazy
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        Some(self.schema.keys)
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        Some(self.primary_batch(values))
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        if (0..self.schema.keys).all(|c| columns.contains(&c)) {
+            1
+        } else {
+            columns
+                .iter()
+                .map(|&c| self.estimated_matches(c, false))
+                .min()
+                .unwrap_or(self.len())
+                .max(1)
+        }
     }
     fn composite(&self) -> bool {
         true
@@ -228,9 +344,27 @@ impl Source for Version {
                     .collect(),
             );
         }
-        let &(c, v) = eq
+        let prefix = (0..self.schema.keys)
+            .map_while(|c| eq.iter().find(|(col, _)| *col == c).map(|(_, v)| Some(*v)))
+            .collect::<Vec<_>>();
+        let range = Node::prefix_ranks(&self.full, &prefix);
+        let secondary = eq
             .iter()
-            .min_by_key(|(c, _)| self.estimated_matches(*c, false))?;
+            .filter(|(c, _)| *c > 0 && self.indexed(*c))
+            .min_by_key(|(c, _)| self.estimated_matches(*c, false));
+        if !prefix.is_empty()
+            && secondary.is_none_or(|(c, _)| range.len() <= self.estimated_matches(*c, false))
+        {
+            return Some(
+                range
+                    .filter(|&row| {
+                        eq.iter()
+                            .all(|&(c, v)| Node::nth(&self.full, row).values[c] == Some(v))
+                    })
+                    .collect(),
+            );
+        }
+        let &(c, v) = secondary?;
         Some(
             self.lookup(c, &[v])?
                 .into_iter()
@@ -242,6 +376,18 @@ impl Source for Version {
         )
     }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if c == 0 {
+            let values = values.iter().copied().collect::<BTreeSet<_>>();
+            return Some(
+                values
+                    .into_iter()
+                    .flat_map(|v| Node::prefix_ranks(&self.full, &[Some(v)]))
+                    .collect(),
+            );
+        }
+        if !self.secondary[c] {
+            return None;
+        }
         let mut found = Vec::new();
         for &v in values {
             Node::prefix(&self.indexes[c], &[Some(v)], &mut found);
@@ -265,10 +411,15 @@ impl Source for Version {
         Node::nth(&self.full, row).id
     }
 }
+impl super::super::facts::vtab::RowCells for tree::Cells {
+    fn cell(&self, column: usize) -> SqlValue {
+        self[column].map_or(SqlValue::Null, SqlValue::Integer)
+    }
+}
 struct Mutable {
     id: usize,
-    state: RwLock<Version>,
-    undo: Arc<RwLock<Option<Undo>>>,
+    state: RwLock<Arc<Version>>,
+    undo: Arc<RwLock<Vec<Undo>>>,
 }
 fn constraint(code: i32, message: &str) -> rusqlite::Error {
     rusqlite::Error::SqliteFailure(
@@ -281,6 +432,12 @@ fn constraint(code: i32, message: &str) -> rusqlite::Error {
     )
 }
 impl Source for Mutable {
+    fn prepare_lookup(&self, columns: &[usize]) {
+        let lazy = self.state.read().lazy;
+        if lazy {
+            self.prepare_index(columns);
+        }
+    }
     fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
         self.state.read().ordered(equal, order)
     }
@@ -288,7 +445,7 @@ impl Source for Mutable {
         self.state.read().ordered_range(equal)
     }
     fn frozen(&self) -> Option<Arc<dyn Source>> {
-        Some(Arc::new(self.state.read().clone()))
+        Some(self.state.read().clone())
     }
     fn columns(&self) -> Vec<String> {
         self.state.read().columns()
@@ -299,8 +456,26 @@ impl Source for Mutable {
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
         self.state.read().estimated_matches(c, b)
     }
-    fn indexed(&self, _: usize) -> bool {
-        true
+    fn indexed(&self, c: usize) -> bool {
+        self.state.read().indexed(c)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        let mut state = self.state.write();
+        if columns.iter().any(|&c| c > 0 && !state.secondary[c]) {
+            for log in self.undo.write().iter_mut() {
+                log.versions.entry(self.id).or_insert_with(|| state.clone());
+            }
+            Arc::make_mut(&mut state).ensure_indexes(columns);
+        }
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.state.read().primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.state.read().lookup_primary_batch(values)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.state.read().estimated_matches_all(columns)
     }
     fn composite(&self) -> bool {
         true
@@ -336,10 +511,10 @@ impl Source for Mutable {
         let previous = old.and_then(|id| Node::get(&state.ids, &[Some(id)]).cloned());
         let Some(values) = values else {
             if let Some(row) = previous {
-                if let Some(log) = self.undo.write().as_mut() {
+                for log in self.undo.write().iter_mut() {
                     log.versions.entry(self.id).or_insert_with(|| state.clone());
                 }
-                state.remove(&row);
+                Arc::make_mut(&mut state).remove(&row);
             }
             return Ok(old.unwrap_or(0));
         };
@@ -393,9 +568,10 @@ impl Source for Mutable {
         {
             return Ok(id);
         }
-        if let Some(log) = self.undo.write().as_mut() {
+        for log in self.undo.write().iter_mut() {
             log.versions.entry(self.id).or_insert_with(|| state.clone());
         }
+        let state = Arc::make_mut(&mut state);
         if let Some(row) = previous {
             state.remove(&row);
         }
@@ -414,17 +590,45 @@ impl Source for Mutable {
     }
 }
 
+type TableKey = (usize, String);
 #[derive(Default)]
 struct Undo {
-    versions: BTreeMap<usize, Version>,
-    created: Vec<String>,
+    versions: BTreeMap<usize, Arc<Version>>,
+    created: Vec<(TableKey, usize)>,
+    removed: BTreeMap<TableKey, Arc<Mutable>>,
+    bindings: BTreeMap<String, super::super::facts::vtab::Binding>,
+}
+struct Slot {
+    schema: Arc<Schema>,
+    owners: BTreeSet<usize>,
 }
 #[derive(Default)]
 pub(super) struct Store {
+    reuse: RefCell<BTreeMap<TableKey, Version>>,
     modules: Modules,
-    tables: RefCell<BTreeMap<String, Arc<Mutable>>>,
+    tables: RefCell<BTreeMap<TableKey, Arc<Mutable>>>,
+    slots: RefCell<BTreeMap<String, Slot>>,
+    scope: std::cell::Cell<usize>,
+    next_scope: std::cell::Cell<usize>,
     next: std::cell::Cell<usize>,
-    undo: Arc<RwLock<Option<Undo>>>,
+    undo: Arc<RwLock<Vec<Undo>>>,
+}
+impl Drop for Store {
+    fn drop(&mut self) {
+        // Removed tables retain the shared undo log. Break that ownership cycle
+        // even if unwinding skips the session's explicit rollback.
+        self.undo.write().clear();
+    }
+}
+pub(super) struct Scope<'a> {
+    store: &'a Store,
+    previous: usize,
+}
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        self.store.scope.set(self.previous);
+        let _ = self.store.mount(self.previous);
+    }
 }
 pub(super) struct Transaction<'a> {
     store: &'a Store,
@@ -432,30 +636,200 @@ pub(super) struct Transaction<'a> {
     committed: bool,
 }
 impl Store {
+    pub fn scope_mark(&self) -> usize {
+        self.next_scope.get()
+    }
+    pub fn discard_scopes_after(&self, db: &rusqlite::Connection, mark: usize) -> Result<()> {
+        let keys = self
+            .tables
+            .borrow()
+            .keys()
+            .filter(|(s, _)| *s > mark)
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.remove_key(db, &key)?;
+        }
+        Ok(())
+    }
+    pub fn new_scope(&self) -> Result<usize> {
+        let next = self
+            .next_scope
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| error("native scope ids exhausted"))?;
+        self.next_scope.set(next);
+        Ok(next)
+    }
+    fn scope_tables(&self, scope: usize) -> Vec<(String, Arc<Mutable>)> {
+        self.tables
+            .borrow()
+            .range((scope, String::new())..)
+            .take_while(|((owner, _), _)| *owner == scope)
+            .map(|((_, n), t)| (n.clone(), t.clone()))
+            .collect()
+    }
+    fn mount(&self, scope: usize) -> Result<()> {
+        for (name, table) in self.scope_tables(scope) {
+            self.modules
+                .get(&name)
+                .ok_or_else(|| error("missing native SQL slot"))?
+                .set(table)
+                .map_err(error)?;
+        }
+        Ok(())
+    }
+    pub fn activate(&self, scope: usize) -> Result<Scope<'_>> {
+        self.mount(scope)?;
+        let previous = self.scope.replace(scope);
+        Ok(Scope {
+            store: self,
+            previous,
+        })
+    }
+    /// Fork roots without declaring SQL tables. All frames reuse the same SQL slots.
+    pub fn fork_scope(&self, old: usize) -> Result<usize> {
+        let new = self.new_scope()?;
+        for (name, table) in self.scope_tables(old) {
+            let version = table.state.read().as_ref().clone();
+            let fork = self.allocate((new, name.clone()), version);
+            self.tables.borrow_mut().insert((new, name.clone()), fork);
+            self.slots
+                .borrow_mut()
+                .get_mut(&name)
+                .unwrap()
+                .owners
+                .insert(new);
+        }
+        Ok(new)
+    }
+    fn allocate(&self, key: TableKey, version: Version) -> Arc<Mutable> {
+        let id = self.next.get();
+        self.next.set(id + 1);
+        for undo in self.undo.write().iter_mut() {
+            undo.created.push((key.clone(), id));
+        }
+        Arc::new(Mutable {
+            id,
+            state: RwLock::new(Arc::new(version)),
+            undo: self.undo.clone(),
+        })
+    }
+    #[cfg(test)]
+    pub fn columns_read(&self) -> u64 {
+        self.slots
+            .borrow()
+            .keys()
+            .filter_map(|n| self.modules.get(n))
+            .map(|b| {
+                b.counters()
+                    .columns
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            })
+            .sum()
+    }
     pub fn close(&self, db: &rusqlite::Connection) -> Result<()> {
-        let names = self.tables.borrow().keys().cloned().collect::<Vec<_>>();
+        let names = self.slots.borrow().keys().cloned().collect::<Vec<_>>();
         for name in names {
-            self.remove(db, &name)?;
+            self.remove_all(db, &name)?;
         }
         Ok(())
     }
     pub fn transaction<'a>(&'a self, db: &'a rusqlite::Connection) -> Result<Transaction<'a>> {
-        let mut undo = self.undo.write();
-        if undo.is_some() {
-            return Err(error("nested native version transaction"));
-        }
-        *undo = Some(Undo::default());
+        self.begin()?;
         Ok(Transaction {
             store: self,
             db,
             committed: false,
         })
     }
+    pub fn begin(&self) -> Result<()> {
+        let mut undo = self.undo.write();
+        if !undo.is_empty() {
+            return Err(error("nested native version transaction"));
+        }
+        undo.push(Undo::default());
+        Ok(())
+    }
+    pub fn savepoint(&self) {
+        self.undo.write().push(Undo::default());
+    }
+    pub fn commit(&self) {
+        self.undo.write().pop();
+    }
+    /// Restore roots and binding cells, including after SQLite's automatic rollback.
+    pub fn rollback(&self, db: &rusqlite::Connection) -> Result<()> {
+        let Some(undo) = self.undo.write().pop() else {
+            return Ok(());
+        };
+        for (key, id) in &undo.created {
+            if self.tables.borrow().get(key).is_some_and(|t| t.id == *id) {
+                self.remove_key(db, key)?;
+            }
+        }
+        for (key, table) in undo.removed {
+            let (scope, name) = &key;
+            self.slots
+                .borrow_mut()
+                .entry(name.clone())
+                .or_insert_with(|| Slot {
+                    schema: table.state.read().schema.clone(),
+                    owners: BTreeSet::new(),
+                })
+                .owners
+                .insert(*scope);
+            self.tables.borrow_mut().insert(key, table);
+        }
+        for (name, binding) in undo.bindings {
+            self.modules
+                .restore_binding(db, &name, binding)
+                .map_err(error)?;
+        }
+        for table in self.tables.borrow().values() {
+            if let Some(version) = undo.versions.get(&table.id) {
+                *table.state.write() = version.clone();
+            }
+        }
+        self.mount(self.scope.get())?;
+        Ok(())
+    }
     pub fn contains(&self, name: &str) -> bool {
-        self.tables.borrow().contains_key(name)
+        self.tables
+            .borrow()
+            .contains_key(&(self.scope.get(), name.into()))
+    }
+    pub fn owns(&self, name: &str) -> bool {
+        self.slots.borrow().contains_key(name)
     }
     pub fn version(&self, name: &str) -> Version {
-        self.tables.borrow()[name].state.read().clone()
+        self.version_at(self.scope.get(), name)
+    }
+    pub fn version_at(&self, scope: usize, name: &str) -> Version {
+        self.tables.borrow()[&(scope, name.into())]
+            .state
+            .read()
+            .as_ref()
+            .clone()
+    }
+    pub fn replace(&self, name: &str, version: Version) -> Result<()> {
+        self.replace_at(self.scope.get(), name, version)
+    }
+    fn replace_at(&self, scope: usize, name: &str, version: Version) -> Result<()> {
+        let tables = self.tables.borrow();
+        let table = tables
+            .get(&(scope, name.into()))
+            .ok_or_else(|| error("missing versioned relation"))?;
+        let mut state = table.state.write();
+        if *state.schema != *version.schema {
+            return Err(error("versioned replacement changed schema"));
+        }
+        for undo in self.undo.write().iter_mut() {
+            undo.versions
+                .entry(table.id)
+                .or_insert_with(|| state.clone());
+        }
+        *state = Arc::new(version);
+        Ok(())
     }
     pub fn create(&self, db: &rusqlite::Connection, name: &str, mut schema: Schema) -> Result<()> {
         if schema.columns.is_empty()
@@ -466,8 +840,8 @@ impl Store {
         {
             return Err(error("invalid versioned integer schema"));
         }
-        for nullable in schema.nullable.iter_mut().take(schema.keys) {
-            *nullable = false;
+        for flag in schema.nullable.iter_mut().take(schema.keys) {
+            *flag = false;
         }
         self.fork_version(db, name, Version::empty(Arc::new(schema)))
     }
@@ -480,26 +854,93 @@ impl Store {
         name: &str,
         version: Version,
     ) -> Result<()> {
-        if self.tables.borrow().contains_key(name) {
+        if self.contains(name) {
             return Err(error("versioned table already exists"));
         }
-        let id = self.next.get();
-        self.next.set(id + 1);
-        let table = Arc::new(Mutable {
-            id,
-            state: RwLock::new(version),
-            undo: self.undo.clone(),
-        });
-        self.modules.bind(db, name, table.clone()).map_err(error)?;
-        self.tables.borrow_mut().insert(name.into(), table);
-        if let Some(undo) = self.undo.write().as_mut() {
-            undo.created.push(name.into());
+        if self
+            .slots
+            .borrow()
+            .get(name)
+            .is_some_and(|s| *s.schema != *version.schema)
+        {
+            return Err(error("native SQL slot changed schema"));
         }
+        let schema = version.schema.clone();
+        let scope = self.scope.get();
+        let key = (scope, name.into());
+        let table = self.allocate(key.clone(), version);
+        self.modules
+            .bind(db, name, table.clone())
+            .map_err(|e| error(format!("{name}: native SQL slot: {e}")))?;
+        self.tables.borrow_mut().insert(key, table);
+        self.slots
+            .borrow_mut()
+            .entry(name.into())
+            .or_insert_with(|| Slot {
+                schema,
+                owners: BTreeSet::new(),
+            })
+            .owners
+            .insert(scope);
         Ok(())
     }
     pub fn remove(&self, db: &rusqlite::Connection, name: &str) -> Result<()> {
-        self.modules.unregister(db, name).map_err(error)?;
-        self.tables.borrow_mut().remove(name);
+        self.remove_key(db, &(self.scope.get(), name.into()))
+    }
+    pub fn remove_all(&self, db: &rusqlite::Connection, name: &str) -> Result<()> {
+        let scopes = self
+            .slots
+            .borrow()
+            .get(name)
+            .map(|s| s.owners.clone())
+            .unwrap_or_default();
+        for scope in scopes {
+            self.remove_key(db, &(scope, name.into()))?;
+        }
+        Ok(())
+    }
+    fn remove_key(&self, db: &rusqlite::Connection, key: &TableKey) -> Result<()> {
+        let Some(table) = self.tables.borrow().get(key).cloned() else {
+            return Ok(());
+        };
+        let (scope, name) = key;
+        let owners = self.slots.borrow()[name].owners.clone();
+        if owners.len() == 1 {
+            for undo in self.undo.write().iter_mut() {
+                let existing = !undo.created.iter().any(|(_, id)| *id == table.id)
+                    || undo.removed.keys().any(|(_, n)| n == name);
+                if existing {
+                    if let Some(binding) = self.modules.get(name) {
+                        undo.bindings
+                            .entry(name.clone())
+                            .or_insert_with(|| binding.clone());
+                    }
+                }
+            }
+            self.modules.unregister(db, name).map_err(error)?;
+            self.slots.borrow_mut().remove(name);
+        } else {
+            let remaining = *owners.iter().find(|s| *s != scope).unwrap();
+            self.modules
+                .get(name)
+                .unwrap()
+                .set(self.tables.borrow()[&(remaining, name.clone())].clone())
+                .map_err(error)?;
+            self.slots
+                .borrow_mut()
+                .get_mut(name)
+                .unwrap()
+                .owners
+                .remove(scope);
+        }
+        self.tables.borrow_mut().remove(key);
+        for undo in self.undo.write().iter_mut() {
+            if !undo.created.iter().any(|(_, id)| *id == table.id) {
+                undo.removed
+                    .entry(key.clone())
+                    .or_insert_with(|| table.clone());
+            }
+        }
         Ok(())
     }
 }
@@ -511,7 +952,7 @@ impl Transaction<'_> {
         self.store.fork(self.db, old, new)
     }
     pub fn commit(mut self) {
-        self.store.undo.write().take();
+        self.store.commit();
         self.committed = true;
     }
 }
@@ -520,20 +961,12 @@ impl Drop for Transaction<'_> {
         if self.committed {
             return;
         }
-        let undo = self.store.undo.write().take();
-        if let Some(undo) = undo {
-            for table in self.store.tables.borrow().values() {
-                if let Some(version) = undo.versions.get(&table.id) {
-                    *table.state.write() = version.clone();
-                }
-            }
-            for name in &undo.created {
-                let _ = self.store.remove(self.db, name);
-            }
-        }
+        let _ = self.store.rollback(self.db);
     }
 }
 
+#[cfg(test)]
+mod bulk_tests;
 #[cfg(test)]
 mod operators;
 #[cfg(test)]

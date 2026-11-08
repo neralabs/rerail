@@ -29,6 +29,10 @@ impl Reducer {
                     names("", rule.width)
                 ))?,
             )?;
+            storage.restrict_indexes(
+                &table,
+                &(rule.width..rule.width + self.keys()).collect::<Vec<_>>(),
+            )?;
         } else {
             db.execute_batch(&format!("CREATE TEMP TABLE {table}({},{keys},PRIMARY KEY({})) WITHOUT ROWID; CREATE INDEX {table}_keys ON {table}({})", schema(rule.width), names("",rule.width), (0..self.keys()).map(|i|format!("k{i}")).collect::<Vec<_>>().join(","))).map_err(error)?;
         }

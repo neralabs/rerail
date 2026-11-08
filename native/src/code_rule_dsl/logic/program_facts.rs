@@ -76,6 +76,11 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         ("policy", &["p:sym", "k:int", "json:sym"]),
         ("setting", &["p:sym", "k:int", "key:sym", "text:sym"]),
+        // `doc_scopes`: present when the program reads only some documents; each entry k's globs, side 0 the
+        // paths it reads and side 1 those it leaves out.
+        ("doc_scoped", &["p:sym"]),
+        ("doc_scope", &["p:sym", "k:int"]),
+        ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
     ];
     SCHEMA
         .iter()
@@ -288,13 +293,27 @@ impl Writer<'_> {
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
             }
         }
+        if let Some(scopes) = &prog.doc_scopes {
+            self.row("doc_scoped", vec![]);
+            for (k, (within, out)) in scopes.iter().enumerate() {
+                self.row("doc_scope", vec![n(k)]);
+                for (side, globs) in [within, out].into_iter().enumerate() {
+                    for (i, g) in globs.iter().enumerate() {
+                        self.row("doc_scope_glob", vec![n(k), n(side), n(i), s(g)]);
+                    }
+                }
+            }
+        }
         for (span, text) in &prog.rx_spans {
+            // Kinds and captures carry their names after a unit separator.
             let span = match span {
-                SpanIn::Source => "source",
-                SpanIn::Line => "line",
-                SpanIn::Comment => "comment",
+                SpanIn::Source => "source".to_owned(),
+                SpanIn::Line => "line".to_owned(),
+                SpanIn::Comment => "comment".to_owned(),
+                SpanIn::Kinds(kinds) => std::iter::once("kinds").chain(kinds.iter().map(String::as_str)).collect::<Vec<_>>().join("\u{1f}"),
+                SpanIn::Capture(pattern, group) => format!("capture\u{1f}{group}\u{1f}{pattern}"),
             };
-            self.row("rx_span", vec![s(span), s(text)]);
+            self.row("rx_span", vec![s(&span), s(text)]);
         }
     }
 }
@@ -549,13 +568,29 @@ impl<'a> Reader<'a> {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
-            let span = match text(&row[0])?.as_str() {
-                "source" => SpanIn::Source,
-                "line" => SpanIn::Line,
-                "comment" => SpanIn::Comment,
-                other => return Err(bad(format!("no span {other}"))),
+            let named = text(&row[0])?;
+            let span = match named.split('\u{1f}').collect::<Vec<_>>().as_slice() {
+                ["source"] => SpanIn::Source,
+                ["line"] => SpanIn::Line,
+                ["comment"] => SpanIn::Comment,
+                ["kinds", kinds @ ..] => SpanIn::Kinds(kinds.iter().map(|k| (*k).to_owned()).collect()),
+                ["capture", group, ..] => SpanIn::Capture(named.splitn(3, '\u{1f}').nth(2).unwrap_or_default().to_owned(), (*group).to_owned()),
+                _ => return Err(bad(format!("no span {named}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
+        }
+        if !self.get("doc_scoped").is_empty() {
+            let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
+            for row in self.get("doc_scope_glob") {
+                let entry = scopes.get_mut(&int(&row[0])?).ok_or_else(|| bad("a scope glob of no entry"))?;
+                let side = if int(&row[1])? == 0 { &mut entry.0 } else { &mut entry.1 };
+                side.push((int(&row[2])?, text(&row[3])?));
+            }
+            let ordered_globs = |mut g: Vec<(i64, String)>| -> Vec<String> {
+                g.sort();
+                g.into_iter().map(|(_, s)| s).collect()
+            };
+            prog.doc_scopes = Some(scopes.into_values().map(|(w, o)| (ordered_globs(w), ordered_globs(o))).collect());
         }
         Ok(prog)
     }
@@ -684,4 +719,20 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
         return Err(bad("bytes after the facts"));
     }
     Ok(facts)
+}
+
+#[cfg(test)]
+mod tests {
+    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
+    /// documents, not all of them.
+    #[test]
+    fn document_scopes_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
+            prog.doc_scopes = scopes.clone();
+            let mut facts = super::Facts::new();
+            super::write(&mut facts, "p", &prog);
+            assert_eq!(super::program(&facts, "p").unwrap().doc_scopes, scopes);
+        }
+    }
 }

@@ -24,6 +24,7 @@ impl Limits {
             db.progress_handler(
                 interval,
                 Some(move || {
+                    if super::super::sql_profile::explaining() { return false; }
                     work = work.saturating_add(interval as u64);
                     max.is_some_and(|n| work >= n) || timeout.is_some_and(|d| start.elapsed() >= d)
                 }),

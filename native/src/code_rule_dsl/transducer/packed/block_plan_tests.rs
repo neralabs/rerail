@@ -1,5 +1,5 @@
-//! Tier 2's analysis and plan, pinned (docs/parser-generators/17-tier-2-tdd-plan.md): the
-//! monoids' laws and references (phase 2), JSON's dataflow (phase 3), and its plans (phase 4).
+//! Tier 2's monoids and the Metal plan verifier, pinned (docs/parser-generators/17-tier-2-tdd-plan.md):
+//! the monoids' laws and references (phase 2), and the plan verifier (phase 4).
 
 use super::block_monoid::{Dyck, First, Last, StateFn};
 
@@ -206,141 +206,82 @@ fn last_and_first_equal_a_walk() {
     }
 }
 
-// --- Phase 3: the analysis ----------------------------------------------------------------
+// --- Phase 4: the plan's verifier ---------------------------------------------------------
+//
+// The plans are made again for Metal from the tree section's state machine (doc 18 §5); until
+// then the verifier is pinned on a plan built here, in the shape of the old one: pass A writes
+// summaries through a staging store, the scan exchanges them, pass B writes the tape.
 
-use super::block_plan::{Rule, Target, analyse, analyse_rule};
+use super::block_plan::{BUDGET, Mem, Plan, Step, Store, Target, device};
 
-/// JSON's block program, as compiled from `json.bitlex`.
-fn json_block() -> super::block::BlockProgram {
-    super::bitlex_compile_tests::json_block_program()
-}
-
-/// JSON's dataflow on Metal (doc 16 §4.1, doc 17 §3): every value's class, monoid and depth; the
-/// scans by depth; the candidates; the passes over the bytes. Derived from the program, never
-/// written by hand: this text pins the analysis.
-#[test]
-fn json_values_are_classed_as_designed() {
-    let flow = analyse(&json_block(), Target::Gpu).expect("analyses");
-    let want = "\
-dataflow gpu, rule when
-  tier 1: 41 ops: 11 local, 26 given S1, 2 carried, 2 halos
-  value                 class     monoid               depth  scan
-  %1 escaped            forward   fn                   1      S1
-  %4 toggle             forward   xor                  1      S1
-  %20 prev %12          halo      1 bit                1      S1
-  %27 prev %19          halo      1 bit                1      S1
-  tokens                local                          1      rows 5 6 7 8 9
-  kinds                 local                          1      byte '{' '}' '[' ']' ',' ':'; text 12
-  r1 before ':'         backward  last 1               2      S2
-  r1 key                backward  last 1               2      S2
-  after ':'             forward   last 1               2      S2
-  first token           forward   or                   2      S2
-  last token start      forward   last 11              2      S2
-  stack                 forward   dyck 2 max 13 pair   3      S3
-  nodes per byte        local                          2      4 at most: 3 planes
-  ord                   forward   add 14               3      S3
-  open ords             forward   last 32 x 27         4      pass B
-  scans
-  S1  depth 1  forward fn 2->4 (16 bits)
-  S2  depth 2  backward last 1, last 1; forward last 1, or, last 11  cand S1
-  S3  depth 3  forward dyck 41, add 14  cand S1, fix r1 key, first token, halos
-  candidates 4, from S1's 2 state bits
-  byte passes 2
-";
-    assert_eq!(flow.text(), want, "\n{}", flow.text());
-}
-
-/// The pair by the rule from the left reads the stack's top inside a block: wide, so no
-/// candidates cover it, and the node counts wait for a third pass over the bytes (doc 16 §4.2).
-#[test]
-fn json_rule_from_the_left_needs_a_third_pass() {
-    let flow = analyse_rule(&json_block(), Rule::Also).expect("analyses");
-    assert_eq!(flow.byte_passes, 3, "\n{}", flow.text());
-    if std::env::var_os("RERAIL_SHOW").is_some() {
-        eprintln!("{}", flow.text());
+fn work(what: &str, simd: bool, reads: &[&str], writes: &[&str]) -> Step {
+    Step::Work {
+        what: what.into(),
+        simd,
+        reads: reads.iter().map(|s| (*s).to_owned()).collect(),
+        writes: writes.iter().map(|s| (*s).to_owned()).collect(),
     }
-    assert!(flow.text().contains("r1 parent"), "\n{}", flow.text());
-    // Metal takes the cheaper rule; the CPU the one it can run forward.
-    assert_eq!(analyse(&json_block(), Target::Gpu).expect("gpu").rule, Rule::When);
-    assert_eq!(analyse(&json_block(), Target::Cpu).expect("cpu").rule, Rule::Also);
 }
 
-/// The CPU runs one pass: every scan a running carry, nothing backward.
-#[test]
-fn json_cpu_dataflow_is_forward() {
-    let flow = analyse(&json_block(), Target::Cpu).expect("analyses");
-    assert_eq!(flow.byte_passes, 1, "\n{}", flow.text());
-    assert!(flow.values.iter().all(|v| v.class != super::block_plan::Class::Backward), "\n{}", flow.text());
+fn threadgroup(name: &str, bytes: u32, double: bool) -> Store {
+    Store { name: name.into(), mem: Mem::Threadgroup, bytes, double, note: String::new() }
 }
 
-// --- Phase 4: the plan --------------------------------------------------------------------
-
-use super::block_plan::{Plan, Step, plan};
-
-fn json_match_scan_block() -> super::block::BlockProgram {
-    let src = super::bitlex_compile_tests::JSON_BITLEX.replace("nested max 13", "nested max 13 match scan");
-    super::bitlex_compile_tests::json_variant_block_program(&src)
-}
-
-/// JSON's plan on Metal (doc 17 §0, §4): the entry as arrays of words, the threadgroup memory
-/// within budget, and every step with the stores it reads and writes. Derived from the dataflow:
-/// this text pins the plan's shape.
-#[test]
-fn json_gpu_plan_prints_as_designed() {
-    let p = plan(&json_block(), Target::Gpu).expect("plans");
-    let want = "\
-plan gpu, match barrier
-  threads 1024, simd 32, lane 64 bytes, entry 2048 bytes, tile 65536 bytes
-  entry: 13 words, 52 bytes, in device memory as 13 arrays, candidate-major
-    word 0: s1: fn 2->4 (16 bits), identity 1
-    candidate words 1-3, 4-6, 7-9, 10-12:
-      r1 before ':' 0..2, r1 key 2..4, after ':' 4..6, first token 6..7, last token start 7..19, stack 32..73, ord 73..87, fix 87..92, error 92..93
-  threadgroup memory: 10112 of 10240 bytes
-    staging 3328: 2 x 32 entries x 13 words
-    exchange 3328: 2 x 32 SIMD totals x 13 words
-    opens 3456: 32 SIMD groups x 27 levels x 4 bytes
-  steps
-    pass A over the bytes, uniform, by tiles of 65536 bytes
-      lanes: tier 1 x4, summaries x4; reads bytes
-      simd: S1, halos, summaries x4; writes staging
-      barrier threadgroup
-      flush: 13 arrays x 32 words; reads staging; writes entries
-    barrier device
-    scan over the entries, uniform, by rounds of 1024
-      simd: S1, S2, S3 over 32 entries; reads entries; writes exchange
-      barrier threadgroup
-      simd: S1, S2, S3 over 32 totals; reads exchange; writes prefixes
-    barrier device
-    pass B over the bytes, uniform, by tiles of 65536 bytes
-      B1 lanes: tier 1, tier-2 masks, 3 planes; reads bytes, prefixes
-      B2 outputs: the nodes spread over each SIMD group; writes tape
-      B3 lanes: opens and closes in order; writes tape, opens
-      barrier threadgroup
-      B3: closes of earlier lanes' opens; reads opens; writes tape
-      barrier threadgroup
-    barrier device
-    pass C over the tape, uniform, by rounds of 1024
-      off, narrowing, codes; reads tape; writes tape
-  barriers: pass A 1 per tile, scan 1 per round, pass B 2 per tile, 3 between passes
-";
-    assert_eq!(p.text(), want, "\n{}", p.text());
-    p.verify().expect("JSON's plan verifies");
+/// Two passes and a scan, with every barrier they need.
+fn small_plan() -> Plan {
+    let tiles = |what: &str, body: Vec<Step>| Step::Loop { what: what.into(), uniform: true, by: "tiles".into(), body };
+    let a = vec![
+        work("summaries", true, &["bytes"], &["staging"]),
+        Step::Barrier(Mem::Threadgroup),
+        work("flush", false, &["staging"], &["entries"]),
+        Step::Barrier(Mem::Threadgroup),
+    ];
+    let scan = vec![
+        work("scan entries", true, &["entries"], &["exchange"]),
+        Step::Barrier(Mem::Threadgroup),
+        work("scan totals", true, &["exchange"], &["prefixes"]),
+    ];
+    let b = vec![work("tape", true, &["bytes", "prefixes"], &["tape"])];
+    Plan {
+        target: Target::Gpu,
+        candidates: 1,
+        s1_bits: 0,
+        fields: Vec::new(),
+        cand_words: 1,
+        stores: vec![
+            device("bytes"),
+            device("entries"),
+            device("prefixes"),
+            device("tape"),
+            threadgroup("staging", 2048, false),
+            // Double: a round's scan writes the other buffer, so it needs no barrier after the
+            // last round's reads.
+            threadgroup("exchange", 2 * 128, true),
+        ],
+        steps: vec![
+            tiles("pass A", a),
+            Step::Barrier(Mem::Device),
+            tiles("scan", scan),
+            Step::Barrier(Mem::Device),
+            tiles("pass B", b),
+        ],
+        budget: BUDGET,
+    }
 }
 
 #[test]
-fn json_cpu_plan_is_one_pass() {
-    let p = plan(&json_block(), Target::Cpu).expect("plans");
-    assert_eq!(p.text(), "plan cpu, rule also\n  steps\n    pass over the bytes, one thread: tier 1, then tier 2, every scan a running carry; reads bytes; writes tape\n", "\n{}", p.text());
-    p.verify().expect("verifies");
+fn plan_verifier_accepts_a_whole_plan() {
+    let p = small_plan();
+    p.verify().unwrap_or_else(|e| panic!("{e}\n{}", p.text()));
 }
 
-/// Every barrier of JSON's plan is needed: without any one, a store is read before another
-/// thread's write is visible, or rewritten while another thread may still read it.
+/// Every barrier of the plan is needed: without any one, a store is read before another step's
+/// write is visible, or rewritten while another step may still read it.
 #[test]
 fn plan_verifier_refuses_a_missing_barrier() {
-    let p = plan(&json_block(), Target::Gpu).expect("plans");
+    let p = small_plan();
     let n = p.barriers();
-    assert_eq!(n, 7);
+    assert_eq!(n, 5);
     for k in 0..n {
         let cut = p.without_barrier(k);
         let e = cut.verify().expect_err(&format!("barrier {k} removed: accepted\n{}", cut.text()));
@@ -348,35 +289,29 @@ fn plan_verifier_refuses_a_missing_barrier() {
     }
 }
 
+/// A double store needs no barrier between one iteration's reads and the next one's write; a
+/// single one does.
+#[test]
+fn plan_verifier_models_double_buffers() {
+    let mut p = small_plan();
+    let exchange = p.stores.iter_mut().find(|s| s.name == "exchange").expect("exchange");
+    exchange.double = false;
+    assert!(p.verify().expect_err("a single exchange, rewritten each round").contains("rewrites exchange"));
+}
+
 /// A SIMD operation or a barrier in a loop whose threads run different iterations is undefined
 /// on Metal: the verifier refuses it.
 #[test]
 fn plan_verifier_refuses_simd_in_a_ragged_loop() {
-    let mut p = plan(&json_block(), Target::Gpu).expect("plans");
+    let mut p = small_plan();
     let Step::Loop { uniform, .. } = &mut p.steps[0] else { panic!("pass A is a loop") };
     *uniform = false;
     assert!(p.verify().expect_err("a ragged pass A").contains("uniform"));
 }
 
 #[test]
-fn json_entry_is_13_arrays_of_words() {
-    let p: Plan = plan(&json_block(), Target::Gpu).expect("plans");
-    assert_eq!((p.entry_words(), p.entry_words() * 4), (13, 52));
-    assert!(p.threadgroup_bytes() <= p.budget, "{} of {}", p.threadgroup_bytes(), p.budget);
-}
-
-/// `match scan`: the opens go through the scans, so pass B has no barrier of its own, the entry
-/// grows by 27 words a candidate, and the scan exchanges S1 first, then the picked candidate.
-#[test]
-fn match_scan_has_no_mid_pass_barrier() {
-    let p = plan(&json_match_scan_block(), Target::Gpu).expect("plans");
-    p.verify().expect("verifies");
-    let text = p.text();
-    if std::env::var_os("RERAIL_SHOW").is_some() {
-        eprintln!("{text}");
-    }
-    assert!(text.starts_with("plan gpu, match scan\n"), "{text}");
-    assert!(text.contains("pass B 0 per tile") && text.contains("scan 2 per round"), "{text}");
-    assert_eq!(p.entry_words(), 1 + 4 * (3 + 27), "{text}");
-    assert!(p.threadgroup_bytes() <= p.budget, "{text}");
+fn plan_verifier_refuses_threadgroup_memory_over_the_budget() {
+    let mut p = small_plan();
+    p.stores.push(threadgroup("opens", BUDGET, false));
+    assert!(p.verify().expect_err("over the budget").contains("budget"));
 }

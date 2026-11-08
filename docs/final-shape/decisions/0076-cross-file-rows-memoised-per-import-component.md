@@ -232,7 +232,7 @@ load average was 40–125, so compare the cross part:
 - `calls_cx` derived costs about what `calls.rr` does on today's engine.
   - Its lookups through the closure cost more join work: subclasses of `object` fan out, and `fv` is per reader.
   - `calls.rr`'s own fixpoint grew across the final-rerail-shape merge, from 53 relations and 8.1 s to 74
-    relations and 20.9 s (O123).
+    relations and 20.9 s (O133).
 - What a replay still spends is reading and binding 4 M rows (5.9 s). The next step is reading them in place.
 - **An edit does not pay yet.** One comment added to a widely imported file (`l1100_exceptions/exceptions.py`)
   misses the 41 components that reach it. The guarded rules then run their joins over every replayed row and drop
@@ -277,7 +277,7 @@ rr_in_annotation_0_fret($f, $k, $v) :- rr_in_annotation_0_retval($f, $r), pv($r,
 - Rows of a guest (an annotation's tree) belong to its host file (O109 had held them back).
 - A memo hit's exports are written with one `INSERT … SELECT` per relation, not one statement per row. That was
   455 K statements for each large relation, and 12.4 s of a warm run.
-- A run read wholly from the memo now plans with tree counts (O124).
+- A run read wholly from the memo now plans with tree counts (O134).
 
 **Measured** on the 84-file Jedi corpus (267 files, 748 documents), `calls_cx` with both memos on, one debug
 build. CPU is user + sys of the main thread; the load average was 60–90:
@@ -340,7 +340,7 @@ declare them are:
 - the soundness check by verifying over an edited corpus.
 
 Also found here, and needed under any keying: a run read from a memo must plan with the replayed files' statistics
-(O124).
+(O134).
 
 ## What the prior work says
 

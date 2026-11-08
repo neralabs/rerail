@@ -14,7 +14,13 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
-const SCHEMA: u32 = 4;
+const SCHEMA: u32 = 5;
+
+/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
+/// file hands on its base rows as an evaluated one does.
+pub(super) fn base_key(rel: &str) -> String {
+    format!("base:{rel}")
+}
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,9 +33,6 @@ pub(in crate::code_rule_dsl) struct Entry {
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
     /// Per file-local output: its node columns and its lines.
     pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
-    /// Per base relation the cross-file part reads: the relation's columns, those it holds, and its rows of them,
-    /// flat (decision 0063).
-    pub base: BTreeMap<String, (Vec<String>, Vec<usize>, Vec<i64>)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
@@ -66,14 +69,12 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of the file-local program: its rules, declarations, inputs and outputs as lowered, and the facts of the
-/// relations its rules read (a file's rows depend on no others: the answers a round of `world` gives the cross-file
-/// part change none of them).
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
+/// engine reads (a guest policy) as well as those its rules read.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    let read: std::collections::BTreeSet<&str> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().filter(|(rel, _)| read.contains(rel.as_str())).collect();
+    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v2\0");
+    hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
     hash.finalize().into()
 }
@@ -238,22 +239,6 @@ fn encode(entry: &Entry) -> Vec<u8> {
             text(&mut out, line);
         }
     }
-    put(&mut out, entry.base.len() as u64);
-    for (rel, (have, held, values)) in &entry.base {
-        text(&mut out, rel);
-        put(&mut out, have.len() as u64);
-        for c in have {
-            text(&mut out, c);
-        }
-        put(&mut out, held.len() as u64);
-        for c in held {
-            put(&mut out, *c as u64);
-        }
-        put(&mut out, values.len() as u64);
-        for v in values {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-    }
     out
 }
 
@@ -294,17 +279,6 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         let columns = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
         let lines = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
         entry.lines.insert(rel, (columns, lines));
-    }
-    for _ in 0..r.u64()? {
-        let rel = r.text()?;
-        let have = (0..r.u64()?).map(|_| r.text()).collect::<StoreResult<Vec<_>>>()?;
-        let held = (0..r.u64()?).map(|_| r.u64().map(|c| c as usize)).collect::<StoreResult<Vec<_>>>()?;
-        let n = r.u64()? as usize;
-        let mut values = Vec::with_capacity(n);
-        for _ in 0..n {
-            values.push(i64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes")));
-        }
-        entry.base.insert(rel, (have, held, values));
     }
     if r.at != bytes.len() {
         return Err(StoreError::Invalid("a corpus memo entry has trailing bytes".into()));

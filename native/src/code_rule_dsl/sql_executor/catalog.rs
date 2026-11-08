@@ -4,8 +4,15 @@
 //! `.decl` names. The physical relations keep their positional `c0, c1, …` columns.
 use super::*;
 
-/// Every object this module owns is named with this prefix, which `reserved` keeps from programs.
+/// Every object this module owns is named with this prefix. A program's own `rr_` helpers (an aggregate's
+/// `rr_agg<k>`, a context's `rr_ctx<k>`) are not this module's: `owns` names what `reserved` keeps from programs.
 pub(super) const PREFIX: &str = "rr_";
+
+/// Whether `name` (lower case) is one of this module's tables or typed views.
+pub(super) fn owns(name: &str) -> bool {
+    name.starts_with(&format!("{PREFIX}rel_"))
+        || TABLES.iter().any(|t| t.strip_prefix("CREATE TEMP TABLE ").and_then(|t| t.split('(').next()) == Some(name))
+}
 
 const TABLES: &[&str] = &[
     "CREATE TEMP TABLE rr_relation(execution INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, arity INTEGER NOT NULL, stratum INTEGER, output INTEGER NOT NULL, file_local INTEGER NOT NULL, view TEXT, PRIMARY KEY (execution, name)) WITHOUT ROWID",
@@ -83,7 +90,8 @@ impl CodeRuleSqlExecutor {
             .collect::<rusqlite::Result<_>>()
             .map_err(error)?;
         for kind in ["view", "table"] {
-            for (name, _) in owned.iter().filter(|(_, t)| t == kind) {
+            // Only the catalog's own: a program's `rr_` helpers (`rr_agg<k>`) live in the same schema.
+            for (name, _) in owned.iter().filter(|(n, t)| t == kind && owns(&n.to_ascii_lowercase())) {
                 db.execute_batch(&format!("DROP {} IF EXISTS temp.{}", kind.to_ascii_uppercase(), quote(name)))
                     .map_err(error)?;
             }

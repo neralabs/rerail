@@ -66,14 +66,16 @@ fn usage() -> (f64, f64) {
 
 fn phase(
     trace: &Trace,
+    session: &mut CodeRuleSqlExecutor,
     name: &str,
     phases: &mut Vec<Value>,
-    run: impl FnOnce() -> napi::Result<Value>,
+    run: impl FnOnce(&mut CodeRuleSqlExecutor) -> napi::Result<Value>,
 ) -> napi::Result<Value> {
     trace.0.borrow_mut().clear();
     let (cpu, _) = usage();
     let start = Instant::now();
-    let result = run();
+    let before = session.sql_profile_totals();
+    let result = run(session);
     let wall = start.elapsed().as_secs_f64();
     let (after, rss) = usage();
     let mut statements = std::mem::take(&mut *trace.0.borrow_mut())
@@ -85,6 +87,9 @@ fn phase(
         for (a, b) in total.iter_mut().zip(counts) {
             *a += b;
         }
+    }
+    if let (Some(before), Some(after)) = (before, session.sql_profile_totals()) {
+        total = std::array::from_fn(|i| after[i].saturating_sub(before[i]));
     }
     phases.push(json!({"phase":name, "wall_s":wall, "cpu_s":after-cpu, "peak_rss_mb":rss,
         "statements":total[0], "sqlite_ms":total[1] as f64/1e6, "vm_steps":total[2],
@@ -107,16 +112,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = CodeRuleSqlExecutor::new(args[0].clone())?;
     phases.push(json!({"phase":"open","wall_s":start.elapsed().as_secs_f64(),"cpu_s":usage().0-cpu,"peak_rss_mb":usage().1}));
     let handle = unsafe { session.connection().handle() };
-    unsafe {
-        ffi::sqlite3_trace_v2(
-            handle,
-            ffi::SQLITE_TRACE_PROFILE as u32,
-            Some(trace),
-            std::ptr::from_ref(&*trace_state).cast_mut().cast(),
-        );
+    let shared_profile = session.sql_profile_totals().is_some();
+    if !shared_profile {
+        unsafe {
+            ffi::sqlite3_trace_v2(
+                handle,
+                ffi::SQLITE_TRACE_PROFILE as u32,
+                Some(trace),
+                std::ptr::from_ref(&*trace_state).cast_mut().cast(),
+            );
+        }
     }
     let result = (|| -> napi::Result<Value> {
-        phase(&trace_state, "bind", &mut phases, || {
+        phase(&trace_state, &mut session, "bind", &mut phases, |session| {
             if let Some(snapshot) = request.get("snapshot") {
                 session.bind_snapshot(snapshot.to_string())?;
             }
@@ -143,12 +151,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut execution = Value::Null;
         if let Some(program) = request["program"].as_str() {
             let dialect = request["dialect"].as_str().unwrap_or("python");
-            plan = phase(&trace_state, "lower", &mut phases, || {
-                session.lower(program.into(), dialect.into()).and_then(|s| {
-                    serde_json::from_str(&s).map_err(|e| napi::Error::from_reason(e.to_string()))
-                })
-            })?;
-            execution = phase(&trace_state, "run", &mut phases, || {
+            plan = phase(
+                &trace_state,
+                &mut session,
+                "lower",
+                &mut phases,
+                |session| {
+                    session.lower(program.into(), dialect.into()).and_then(|s| {
+                        serde_json::from_str(&s)
+                            .map_err(|e| napi::Error::from_reason(e.to_string()))
+                    })
+                },
+            )?;
+            execution = phase(&trace_state, &mut session, "run", &mut phases, |session| {
                 session
                     .run(
                         program.into(),
@@ -167,13 +182,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .flatten()
             .enumerate()
         {
-            phase(&trace_state, &format!("after-run-{i}"), &mut phases, || {
-                session
-                    .connection()
-                    .execute_batch(sql.as_str().unwrap())
-                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-                Ok(Value::Null)
-            })?;
+            phase(
+                &trace_state,
+                &mut session,
+                &format!("after-run-{i}"),
+                &mut phases,
+                |session| {
+                    session
+                        .connection()
+                        .execute_batch(sql.as_str().unwrap())
+                        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                    Ok(Value::Null)
+                },
+            )?;
         }
         let mut updates = Vec::new();
         for (i, batch) in request["changes"]
@@ -184,9 +205,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             updates.push(phase(
                 &trace_state,
+                &mut session,
                 &format!("update-{i}"),
                 &mut phases,
-                || {
+                |session| {
                     session
                         .apply_changes(
                             batch.to_string(),
@@ -207,9 +229,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             updates.push(phase(
                 &trace_state,
+                &mut session,
                 &format!("snapshot-{i}"),
                 &mut phases,
-                || {
+                |session| {
                     session
                         .apply_snapshot(
                             snapshot.to_string(),
@@ -230,9 +253,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             updates.push(phase(
                 &trace_state,
+                &mut session,
                 &format!("file-edit-{i}"),
                 &mut phases,
-                || {
+                |session| {
                     session
                         .apply_file_changes(
                             batch.to_string(),
@@ -256,9 +280,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let parameters = query.get("parameters").map(Value::to_string);
             results.push(phase(
                 &trace_state,
+                &mut session,
                 &format!("query-{i}"),
                 &mut phases,
-                || {
+                |session| {
                     session
                         .query(sql.into(), parameters, Some(10000))
                         .and_then(|s| {
@@ -277,8 +302,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json!({"execution":execution,"plan":plan,"queries":results,"repeated":repeated,"updates":updates}),
         )
     })();
-    unsafe {
-        ffi::sqlite3_trace_v2(handle, 0, None, std::ptr::null_mut());
+    if !shared_profile {
+        unsafe {
+            ffi::sqlite3_trace_v2(handle, 0, None, std::ptr::null_mut());
+        }
     }
     let output = json!({"request":args[1],"phases":phases,"result":result.as_ref().ok(),"error":result.as_ref().err().map(ToString::to_string)});
     println!("{}", serde_json::to_string(&output)?);

@@ -243,6 +243,12 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         if let Some(own) = &own {
             kept.insert(0, own);
         }
+        // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
+        // relation any engine makes, so the rule stays as it is.
+        if kept.is_empty() {
+            rules.push(rule.clone());
+            continue;
+        }
         let mut bound = BTreeSet::new();
         for l in &kept {
             bound.extend(l.vars());
