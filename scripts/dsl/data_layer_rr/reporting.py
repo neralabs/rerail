@@ -52,6 +52,8 @@ def run(args):
     paths = [Path(__file__), *[Path(__file__).with_name(n) for n in ['migration.py', 'replay.py']]]
     report['harnessFiles'] = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths}
     for index, case in selected:
+        report['activeCaseId'] = case['id']
+        write_json(args.out, report)
         if native:
             rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
             options=({'repositoryRoot':str(args.source.resolve())} if case['check']=='transaction_callback_wrappers' else {})
@@ -166,6 +168,7 @@ def run(args):
                 row.update(status='failed', expected=expected['value'])
                 write_json(args.out, report)
                 raise AssertionError(case['id'] + ': ' + str(error)) from error
+    report.pop('activeCaseId', None)
     if native:
         if sha(engine.read_bytes()) != report['engineSha256']:
             raise ValueError('Reporter executable changed')

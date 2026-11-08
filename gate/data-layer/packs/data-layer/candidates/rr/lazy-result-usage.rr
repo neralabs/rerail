@@ -3,8 +3,8 @@
 .description "Port of nera-data-layer lazy_result_usage at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "**/*.py"
-.scope exclude
+.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*_*/**/*.py"
+.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lazy_result_usage.py
 #include "python/ast.rr"
 #include "python/print.rr"
@@ -125,7 +125,8 @@ lru_test(path) :- lru_path(_, path), match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",
 .decl lru_hidden(path: symbol)
 lru_hidden(path) :- lru_path(_, path), match("(?s)(?:.*/)?(?:\\.git|\\.venv|venv|__pycache__|tmp)(?:/.*)?", path).
 .decl lru_selected(d: number)
-lru_selected(0) :- lru_graph(), option("disabled", "false").
+lru_selected(0) :- lru_graph(), option("disabled", "false"), !option("factory", "true").
+lru_selected(0) :- lru_graph(), option("disabled", "false"), option("factory", "true"), lru_path(0, path), !lru_skipped(path).
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), !lru_skipped(path), !lru_test(path), !syntax_error(d, _, _), option("entryPoint", entry), entry != "find_violations", entry != "collector".
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), lru_root(path), !lru_skipped(path), !lru_test(path), !syntax_error(d, _, _), option("entryPoint", "find_violations").
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), lru_root(path), !lru_skipped(path), !lru_test(path), !lru_hidden(path), !syntax_error(d, _, _), !option("entryPoint", _).

@@ -22,7 +22,7 @@ def scan(suite, module, entry, root, paths):
             source = actual.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError):
             continue
-        files.append(dict(path=f'input-{i}/'+path.name, source=source))
+        files.append(dict(path=f'l0000_transport/input-{i}/'+path.name, source=source))
         scopes.append(actual.relative_to(root).as_posix() if actual.is_relative_to(root) else actual.as_posix())
     options = dict(documentPaths=[f['path'] for f in files], scopePaths=scopes)
     rows = suite.native('lazy_result_usage', entry, files, options)
@@ -42,7 +42,7 @@ def graph(suite, path, tree, disabled, factory=False):
     annotations = [(i, ast.unparse(n)) for i, n in enumerate(nodes) if options['astFields'][i] == 'returns']
     transport = 'def _transport('+', '.join(f'e{i}: {s}' for i, s in annotations)+'):\n    pass\n' if annotations else 'pass\n'
     options.update(originalPath=str(path), disabled=str(disabled).lower(), factory=str(factory).lower())
-    rows = suite.native('lazy_result_usage', 'collector', [dict(path='_transport.py', source=transport)], options)
+    rows = suite.native('lazy_result_usage', 'collector', [dict(path='l0000_transport/_transport.py', source=transport)], options)
     return facts(rows)
 
 

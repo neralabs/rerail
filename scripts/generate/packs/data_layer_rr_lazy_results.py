@@ -7,8 +7,8 @@ from data_layer_rr_text import module, character_class
 def lazy_result_usage(source, target, header):
     original = module(source, 'lazy_result_usage')
     text = header('lazy_result_usage', target)
-    text = re.sub(r'^\.scope include .*$', '.scope include "**/*.py"', text, flags=re.M)
-    text = re.sub(r'^\.scope exclude .*$', '.scope exclude', text, flags=re.M)
+    text = re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*_*/**/*.py"', text, flags=re.M)
+    text = re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"', text, flags=re.M)
     text += '#include "python/print.rr"\n'
     for relation, values in [('lru_single', original.SINGLE_VALUE_METHODS),
             ('lru_sequence', original.SEQUENCE_METHODS), ('lru_class_pattern', original.TRANSACTION_CLASS_PATTERNS),
@@ -110,7 +110,8 @@ lru_test(path) :- lru_path(_, path), match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",
 .decl lru_hidden(path: symbol)
 lru_hidden(path) :- lru_path(_, path), match("(?s)(?:.*/)?(?:\\.git|\\.venv|venv|__pycache__|tmp)(?:/.*)?", path).
 .decl lru_selected(d: number)
-lru_selected(0) :- lru_graph(), option("disabled", "false").
+lru_selected(0) :- lru_graph(), option("disabled", "false"), !option("factory", "true").
+lru_selected(0) :- lru_graph(), option("disabled", "false"), option("factory", "true"), lru_path(0, path), !lru_skipped(path).
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), !lru_skipped(path), !lru_test(path), !syntax_error(d, _, _), option("entryPoint", entry), entry != "find_violations", entry != "collector".
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), lru_root(path), !lru_skipped(path), !lru_test(path), !syntax_error(d, _, _), option("entryPoint", "find_violations").
 lru_selected(d) :- !lru_graph(), lru_path(d, path), suffix(".py", path), lru_root(path), !lru_skipped(path), !lru_test(path), !lru_hidden(path), !syntax_error(d, _, _), !option("entryPoint", _).

@@ -1442,7 +1442,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-result-usage.rr",
-      "sha256": "378a96f2bbb567a1f3dbec3f087a5d114b09752adf7355f9e29886eaf50f6aac",
+      "sha256": "25d703a17fb818cf3d50315a118a811b10b8fed7631c1068bbc031bf348acad9",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lazy_result_usage.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1688,7 +1688,7 @@
       "legacySha256": "c221f7bbf5c4c5f9c8fcfa55a10ed4fd72f4ffbff4986eb72985aaba8dc623df",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-result-usage.rr",
-      "ruleSha256": "378a96f2bbb567a1f3dbec3f087a5d114b09752adf7355f9e29886eaf50f6aac"
+      "ruleSha256": "25d703a17fb818cf3d50315a118a811b10b8fed7631c1068bbc031bf348acad9"
     },
     {
       "check": "swallowed_exceptions",
