@@ -1737,24 +1737,28 @@ pub(crate) fn run_with_options(
             modules.bind(&db, &rel, source)?;
         }
         replayed.apply(&mut cross_stats);
-        // Held for storing, unless an output (written to its table, read from there).
-        wanted.extend(plan.memo.keys().filter(|r| !prog.outputs.contains(*r)).cloned());
+        // Held for storing, unless an output (written to its table, read from there): only when a component missed or
+        // the run verifies. Every component found is replayed, and nothing is stored.
+        if !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify {
+            wanted.extend(plan.memo.keys().filter(|r| !prog.outputs.contains(*r)).cloned());
+        }
         drop(components_span);
         crate::code_rule_dsl::logic::profile::decision("import components (decision 0074)", || {
             format!(
-                "{} documents in {} components over {} edges; {} found ({replayed_rows} rows {}), {} derived",
+                "{} documents in {} components over {} edges; {} found ({}), {} derived",
                 components.of.len(),
                 found.hits.len() + found.misses.len(),
                 edges.len(),
                 found.hits.len(),
-                if cross_mode == cross_memo::Mode::Verify { "derived again to verify" } else { "replayed" },
+                if cross_mode == cross_memo::Mode::Verify { "derived again, to compare with their stored rows".to_owned() } else { format!("{replayed_rows} rows replayed") },
                 found.misses.len()
             )
         });
         cross_state = Some((components, found));
     }
     // The memoised relations' derived rows, for storing (decision 0074).
-    let memo_rels: BTreeSet<String> = cross_plan.as_ref().map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
+    let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
+    let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
     let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
     let collect_rows = !memo_rels.is_empty();
     let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {

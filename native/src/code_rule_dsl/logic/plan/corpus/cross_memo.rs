@@ -444,6 +444,10 @@ pub(super) fn record(
         sorted.dedup();
         for row in sorted {
             let Some((c, _)) = components.of.get(&doc_of(row[*first])) else { continue };
+            // A found component's rows are its replayed copies: nothing to check or store unless verifying.
+            if mode == Mode::On && found.hits.contains_key(c) {
+                continue;
+            }
             let reach = components.closure(*c, &mut closures);
             for &n in &nodes {
                 if let Some((e, _)) = components.of.get(&doc_of(row[n]))
