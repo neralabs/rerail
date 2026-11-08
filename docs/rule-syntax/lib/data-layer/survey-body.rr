@@ -20,9 +20,9 @@ sgb_import(f, a, name, target) :- sgb_body(f, a), sgs_import_candidate(a, _, _, 
 .decl sgb_local_import(f: node, name: symbol, target: symbol)
 sgb_local_import(f, name, target) :- sgb_import(f, a, name, target), count : { sgb_import(f, later, name, _), earlier(a, later) } = 0.
 .decl sgb_bound_before(f: node, at: node, name: symbol)
-sgb_bound_before(f, at, @nfkc(name)) :- sgb_body(f, at), sig_param(f, _, nm, _, _, _, _), text(nm, name).
-sgb_bound_before(f, at, name) :- sgb_body(f, at), sgb_body(f, store), sgb_name(store, name), (expr_ctx(store, "store") ; expr_ctx(store, "del")), earlier(store, at).
-sgb_bound_before(f, at, name) :- sgb_body(f, at), sgb_import(f, imported, name, _), earlier(imported, at).
+sgb_bound_before(f, at, name) :- sgb_name_demand(f, at, name), sig_param(f, _, nm, _, _, _, _), text(nm, raw), name = @nfkc(raw).
+sgb_bound_before(f, at, name) :- sgb_name_demand(f, at, name), sgb_body(f, store), sgb_name(store, name), (expr_ctx(store, "store") ; expr_ctx(store, "del")), earlier(store, at).
+sgb_bound_before(f, at, name) :- sgb_name_demand(f, at, name), sgb_import(f, imported, name, _), earlier(imported, at).
 .decl sgb_simple_ref(n: node, k: symbol, base: symbol, has_base: number, attr: symbol)
 sgb_simple_ref(n, "name_call", "", 0, name) :- sgb_name(n, name).
 sgb_simple_ref(n, "self_attr", base, 1, attr) :- sgb_attribute(n, object, attr), sgb_name(object, base), (base = "self" ; base = "cls").
@@ -32,13 +32,16 @@ sgb_call_ref(n, k, base, has, attr) :- sgb_simple_ref(n, k, base, has, attr).
 sgb_call_ref(n, "super_attr", "super", 1, attr) :- sgb_attribute(n, object, attr), sgb_callee(object, fn), sgb_name(fn, "super").
 sgb_call_ref(n, "chained_self_attr", field, 1, attr) :- sgb_attribute(n, object, attr), sgb_attribute(object, receiver, field), sgb_name(receiver, name), (name = "self" ; name = "cls").
 .decl sgb_argument_site(call: node, item: node, value: node)
-sgb_argument_site(call, item, value) :- kind(call, "call"), field(call, "arguments", args), child(args, item, _), !kind(item, "keyword_argument"), !kind(item, "dictionary_splat"), !kind(item, "comment"), unparen(item, value).
+sgb_argument_site(call, item, value) :- kind(call, "call"), field(call, "arguments", args), kind(args, "argument_list"), child(args, item, _), !kind(item, "keyword_argument"), !kind(item, "dictionary_splat"), !kind(item, "comment"), unparen(item, value).
 sgb_argument_site(call, item, value) :- kind(call, "call"), field(call, "arguments", args), child(args, item, _), kind(item, "keyword_argument"), field(item, "value", raw), unparen(raw, value).
 sgb_argument_site(call, item, value) :- kind(call, "call"), field(call, "arguments", args), child(args, item, _), kind(item, "dictionary_splat"), child(item, raw, 0), unparen(raw, value).
 .decl sgb_argument(call: node, ordinal: number, value: node)
 sgb_argument(call, ordinal, value) :- sgb_argument_site(call, item, value), ordinal = count : { sgb_argument_site(call, other, _), earlier(other, item) }.
 .decl sgb_free_name(f: node, at: node, name: symbol)
-sgb_free_name(f, at, name) :- sgb_body(f, at), sgb_name(_, name), !sgb_builtin(name), !sgb_bound_before(f, at, name).
+.decl sgb_name_demand(f: node, at: node, name: symbol)
+sgb_name_demand(f, at, name) :- sgb_body(f, at), sgb_name(at, name).
+sgb_name_demand(f, call, name) :- sgb_body(f, call), sgb_argument(call, _, value), sgb_name(value, name).
+sgb_free_name(f, at, name) :- sgb_name_demand(f, at, name), !sgb_builtin(name), !sgb_bound_before(f, at, name).
 .decl sgb_event(f: node, at: node, phase: number, arg: number, k: symbol, base: symbol, has_base: number, attr: symbol)
 // Calls record their callee and direct argument references before walking children.
 sgb_event(f, call, 0, 0, k, base, has, attr) :- sgb_body(f, call), sgb_callee(call, fn), sgb_call_ref(fn, k, base, has, attr).
@@ -52,7 +55,9 @@ sgb_event(f, n, 0, 0, "name_call", "", 0, name) :- sgb_body(f, n), sgb_name(n, n
 sgb_raw_ref(f, ordinal, k, base, has, attr) :- sgb_event(f, n, phase, i, k, base, has, attr), ordinal = count : { sgb_event(f, other, p, j, _, _, _, _), (earlier(other, n) ; (other = n, p < phase) ; (other = n, p = phase, j < i)) }.
 .decl sgb_execution_name(name: symbol)
 sgb_execution_name(name) :- sgb_execution_literal(name).
-sgb_execution_name(name) :- sgb_call_ref(_, _, _, _, name), (prefix("execute_grammar", name) ; prefix("grammar_fetch", name)).
+.decl sgb_execution_spelling(call: node, name: symbol)
+sgb_execution_spelling(call, name) :- sgb_callee(call, fn), sgb_name(fn, name).
+sgb_execution_spelling(call, name) :- sgb_callee(call, fn), sgb_attribute(fn, _, name).
+sgb_execution_name(name) :- sgb_execution_spelling(_, name), (prefix("execute_grammar", name) ; prefix("grammar_fetch", name)).
 .decl sgb_execution(f: node, name: symbol)
-sgb_execution(f, name) :- sgb_body(f, call), sgb_callee(call, fn), sgb_name(fn, name), sgb_execution_name(name).
-sgb_execution(f, name) :- sgb_body(f, call), sgb_callee(call, fn), sgb_attribute(fn, _, name), sgb_execution_name(name).
+sgb_execution(f, name) :- sgb_body(f, call), sgb_execution_spelling(call, name), sgb_execution_name(name).
