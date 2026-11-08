@@ -54,15 +54,26 @@ CASES = [
     ('body-non-simple-execution', {'a.py': 'def f():\n factory().grammar_fetch_opaque()\n registry[key].execute_grammar_opaque()\n self.worker.grammar_fetch_private()\n factory().execute()\n'}),
     ('body-generator-arguments', {'a.py': 'def f():\n consume(transform(item) for item in source)\n consume(x for x in source if pred(x))\n consume(*(factory(x) for x in source), **keywords)\n'}),
     ('body-more-binding-forms', {'a.py': 'def f():\n for first, *rest in source:\n  consume(first, rest)\n with manager() as resource:\n  consume(resource)\n x += x\n x\n callback = lambda *, only=default: consume(only)\n'}),
+    ('graph-duplicates', {'a.py': 'class Base:\n def old(self): pass\n def replace(self): pass\nclass Base:\n def new(self): pass\n def replace(self): pass\nclass C(Base): pass\n'}),
+    ('graph-type-replacement', {'a.py': 'class Base: pass\ndef Base(): pass\nclass Local(Base): pass\n', 'other.py': 'class Remote(Base): pass\n'}),
+    ('graph-path-collision', {'a.py': 'from first import x\nclass Base: pass\ndef early(): pass\n', 'a/__init__.py': 'from last import x\nclass Base: pass\ndef late(): pass\n'}),
+    ('graph-reversed-path-collision', {'a/__init__.py': 'from last import x\nclass Base: pass\ndef late(): pass\n', 'a.py': 'from first import x\nclass Base: pass\ndef early(): pass\n'}),
+    ('graph-ambiguous-global', {'a.py': 'class Base: pass\n', 'b.py': 'class Base: pass\n', 'entry.py': 'class C(Base): pass\n'}),
+    ('graph-imported-bases', {'a.py': 'class Base: pass\ndef factory(): pass\n', 'entry.py': 'from a import Base as Alias, factory as Function\nclass C(Alias): pass\nclass D(Function): pass\n'}),
+    ('graph-unresolved-import-base', {'a.py': 'class Base: pass\n', 'entry.py': 'from missing import Base\nclass Local: pass\nclass C(Base, Local): pass\n'}),
+    ('graph-bases-no-reexports', {'a.py': 'class Base: pass\n', 'b.py': 'class Base: pass\n', 'bridge.py': 'from a import Base as Public\n', 'entry.py': 'from bridge import Public\nclass C(Public): pass\n'}),
+    ('graph-generic-spelling', {'a.py': 'class Base: pass\nclass C(Base[int], pkg.Base[Other], factory(Base)): pass\n'}),
+    ('graph-reexport-cycles', {'a.py': 'from b import Alias\nfrom c import concrete as Reexport\ndef direct(): pass\n', 'b.py': 'from a import Alias\n', 'c.py': 'from missing import concrete\ndef concrete(): pass\n'}),
 ]
 
 
 def source_rows(source, files):
     sys.path[:0] = [str(source), str(source / 'scripts')]
     model = importlib.import_module('lint_lib.symbol_graph')
-    rows = []
+    rows, scans = [], []
     for path, text in files.items():
         module, info, symbols = model._scan_symbol_tree(Path('/survey'), Path('/survey') / path, ast.parse(text))
+        scans.append((module,info,symbols))
         rows.append(dict(kind='module', path=path, module=module))
         for i, s in enumerate(symbols):
             rows.append(dict(kind='symbol', path=path, module=module, ordinal=i, sid=s.symbol_id,
@@ -89,6 +100,26 @@ def source_rows(source, files):
         for kind, values in [('imported', info.imported_symbols), ('import_module', info.imported_modules)]:
             rows.extend(dict(kind=kind, path=path, module=module, name=k, target=v) for k, v in values.items())
         rows.extend(dict(kind='module_ref', path=path, module=module, name=name) for name in info.module_level_names)
+    graph=model.SymbolGraph(Path('/survey'))
+    graph._add_scanned_modules(scans)
+    rows.extend(dict(kind='graph_symbol',ordinal=i,sid=sid,path=s.path,line=s.line,symbol_kind=s.kind)
+                for i,(sid,s) in enumerate(graph.symbols.items()))
+    rows.extend(dict(kind='graph_module',ordinal=i,module=name,path=info.path.relative_to('/survey').as_posix())
+                for i,(name,info) in enumerate(graph.modules.items()))
+    rows.extend(dict(kind='graph_fqname',name=name,sid=sid) for name,sid in graph.symbol_by_fqname.items())
+    rows.extend(dict(kind='graph_class_name',name=name,ordinal=i,sid=sid)
+                for name,ids in graph.class_ids_by_name.items() for i,sid in enumerate(ids))
+    rows.extend(dict(kind='graph_method',owner=owner,name=name,ordinal=i,sid=sid)
+                for owner,methods in graph.class_methods.items() for i,(name,sid) in enumerate(methods.items()))
+    rows.extend(dict(kind='graph_base',owner=owner,ordinal=i,sid=sid)
+                for owner,bases in graph.class_bases.items() for i,sid in enumerate(bases))
+    rows.extend(dict(kind='graph_subclass',owner=owner,sid=sid) for owner,subs in graph.class_subclasses.items() for sid in subs)
+    queries=set(graph.symbol_by_fqname)
+    for name,info in graph.modules.items():
+        queries.update(info.imported_symbols.values())
+        queries.update(name+'.'+local for local in info.imported_symbols)
+    rows.extend(dict(kind='graph_resolution',name=name,sid=sid) for name in sorted(queries)
+                if (sid:=graph._resolve_fqname_through_reexports(name)) is not None)
     return ordered(rows)
 
 
