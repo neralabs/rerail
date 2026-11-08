@@ -1903,3 +1903,29 @@ group(n) :- n = count : { order(_, _) }.
     assert_eq!(select, ["3"]);
     assert_eq!(group, ["3"]);
 }
+
+/// The native steps a string rule takes: a concatenation (`q = cat("m", ".", x)`), a split read back
+/// (`split_dot`'s `$s = @cat($m, $x)`), a set of constant patterns (`contains(…, {…})` once they are symbols) and
+/// a set membership (`x = "a" ; x = "b"` as `@equals`). Their rows are the SQL backend's.
+#[test]
+fn string_steps_give_the_rows_sql_gives() {
+    let rule = r#"
+.decl ident(n: node, x: symbol)
+ident(n, x) :- kind(n, "identifier"), text(n, x).
+.decl dotted(n: node, q: symbol)
+dotted(n, q) :- ident(n, x), q = cat("m", ".", x).
+.decl last(n: node, x: symbol)
+last(n, x) :- dotted(n, q), split_dot(q, m, x), m != "".
+.decl hit(x: symbol)
+hit(x) :- ident(_, x), (contains("ol", x) ; contains("et", x)).
+.decl one(x: symbol)
+one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
+.output last, hit, one
+"#;
+    let [last, hit, one] = <[Vec<String>; 3]>::try_from(guests_run("stringsteps", &[("a.py", "alpha = beta + gamma\nwolf = 1\n")], rule, &["last", "hit", "one"])).unwrap();
+    let mut words: Vec<String> = last.iter().map(|l| l.split('\t').nth(1).unwrap().to_owned()).collect();
+    words.sort();
+    assert_eq!(words, ["alpha", "beta", "gamma", "wolf"]);
+    assert_eq!(hit, ["beta", "wolf"]);
+    assert_eq!(one, ["alpha", "beta"]);
+}

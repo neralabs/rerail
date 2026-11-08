@@ -2531,6 +2531,8 @@ impl Run<'_> {
             let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
             match &s.lit {
                 Literal::Atom(l) if !l.neg => l.args.iter().for_each(&mut add),
+                // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
+                Literal::Cmp { l, op, r: Term::Call(f, args) } if *op == "=" && f == "cat" => { add(l); args.iter().for_each(&mut add) }
                 Literal::Cmp { l, op, r } if *op == "=" => { add(l); add(r) }
                 Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone())); add(&Term::Var(a.clone())) }
                 Literal::Agg { var, .. } => add(&Term::Var(var.clone())),
@@ -2651,6 +2653,30 @@ impl Run<'_> {
                 _ => None,
             }
         }
+        // `@concat(a, b)` (nested on either side) as `str_concat` functions of bound arguments, each into a slot of
+        // its own (`rr_concat<step>_<k>`); the term of the outermost one's slot.
+        fn concat(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
+            match t {
+                Term::Call(f, args) if f == "concat" && args.len() == 2 => {
+                    let a = concat(&args[0], idx, slots, lines)?;
+                    let b = concat(&args[1], idx, slots, lines)?;
+                    let bound = |t: &Term, slots: &HashMap<String, usize>| match t {
+                        Term::Var(v) => slots.contains_key(v),
+                        Term::Int(_) | Term::Str(_) => true,
+                        _ => false,
+                    };
+                    if !bound(&a, slots) || !bound(&b, slots) {
+                        return None;
+                    }
+                    let out = Term::Var(format!("rr_concat{idx}_{}", lines.len()));
+                    let (ta, tb) = (tok(&a, slots)?, tok(&b, slots)?);
+                    lines.push(format!("func str_concat {} {ta} {tb}", tok(&out, slots)?));
+                    Some(out)
+                }
+                Term::Call(..) => None,
+                t => Some(t.clone()),
+            }
+        }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
         let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>)> {
@@ -2714,12 +2740,37 @@ impl Run<'_> {
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if (f == "in" || f == "equals")
+                        && let [x, Term::Call(set, members)] = args.as_slice()
+                        && set == crate::code_rule_dsl::logic::strings::SET
+                        && members.iter().all(|m| matches!(m, Term::Int(_)))
+                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                {
+                    // `@equals($q, {"a", "b"}) = 1` once lowered (the strings are symbols): membership, natively.
+                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(format!("in {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if crate::code_rule_dsl::logic::strings::is_test(f)
+                        && let [x, Term::Call(set, members)] = args.as_slice()
+                        && set == crate::code_rule_dsl::logic::strings::SET
+                        && members.iter().all(|m| matches!(m, Term::Int(_)))
+                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                {
+                    // `@contains($w, {"dolt_", "dolt log"}) = 1` once lowered (the patterns are symbols): one matcher
+                    // of the symbols' names, made with the spec.
+                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(format!("testset {f} {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
                 {
                     // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
                     // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
                     let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
                         Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
+                        // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
+                        None if matches!(&args[1], Term::Call(f, _) if f == "concat") => concat(&args[1], idx, &mut slots, &mut lines)?,
                         None => args[1].clone(),
                     };
                     // A constant string is a symbol (`Int`) once lowered.
@@ -2733,6 +2784,12 @@ impl Run<'_> {
                     }
                     let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
                     lines.push(format!("test {f} {ts} {tp} {want}"));
+                }
+                Literal::Cmp { l: l @ Term::Var(_), op: "=", r: r @ Term::Call(f, _) } if f == "concat" => {
+                    // `$s = @concat(@concat($m, "."), $r)`: each concatenation a native function, inner ones first.
+                    let made = concat(r, idx, &mut slots, &mut lines)?;
+                    let (ta, tb) = (tok(l, &mut slots)?, tok(&made, &mut slots)?);
+                    lines.push(format!("eq {ta} {tb}"));
                 }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
                     if let Term::Call(f, args) = r
@@ -2825,6 +2882,11 @@ impl Run<'_> {
                 Term::Call(f, args) if f == "cat" && args.iter().all(|x| matches!(x, Term::Var(_))) => {
                     let t0 = tok(&args[0], &mut slots)?;
                     head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
+                }
+                // `q(…, cat(m, ".", a))`: the concatenation made into a slot before the head reads it.
+                Term::Call(f, _) if f == "concat" => {
+                    let made = concat(t, order.len(), &mut slots, &mut lines)?;
+                    head.push(tok(&made, &mut slots)?);
                 }
                 _ => head.push(tok(t, &mut slots)?),
             }
