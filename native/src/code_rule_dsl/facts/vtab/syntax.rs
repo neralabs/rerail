@@ -864,7 +864,7 @@ struct Found {
 }
 
 /// A span made for a document: its id, its bytes, and its line where it is one line (else the source).
-type Made = (i64, std::ops::Range<usize>, Option<usize>);
+type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
 
 impl Extra {
     fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape) -> Self {
@@ -1068,7 +1068,7 @@ impl Extra {
         if self.line_count {
             self.line_counts.push([key, physical.len() as i64]);
         }
-        let mut made: Vec<Made> = Vec::new();
+        let mut made: Vec<MadeSpan> = Vec::new();
         if self.source {
             let sp = span(0);
             self.sources.push([key, sp]);
