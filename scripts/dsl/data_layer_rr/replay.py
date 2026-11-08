@@ -56,6 +56,12 @@ def result(record, diagnostics):
 
 
 def execute_native(engine, rule, files, options, sources=None, workspace_name='corpus'):
+    import migration
+    manifest=migration.read_json(ROOT/migration.MANIFEST)
+    migration.verify_engine_alignment(ROOT,manifest['engineSource'])
+    for retired in ('.rerail/rr-migration-20261106/engine','.rerail/data-layer-batch-seven/engine-source'):
+        if engine.resolve().is_relative_to((ROOT/retired).resolve()):
+            raise ValueError('Acceptance cannot use a binary from a retired engine checkout')
     sources = sources or {}
     with tempfile.TemporaryDirectory(prefix='rerail-rr-replay-') as temporary:
         root = Path(temporary)
