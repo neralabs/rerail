@@ -677,18 +677,24 @@ fn recorded_events() -> Vec<Event> {
                 continue;
             }
             let files = if event.get("files").is_none_or(Json::is_null) { &recording["files"] } else { &event["files"] };
-            let files = files.as_array().into_iter().flatten().map(|f| (f["path"].as_str().unwrap().to_owned(), f["source"].as_str().unwrap().to_owned())).collect();
+            let files: Vec<(String, String)> =
+                files.as_array().into_iter().flatten().map(|f| (f["path"].as_str().unwrap().to_owned(), f["source"].as_str().unwrap().to_owned())).collect();
             let check = event["check"].as_str().unwrap().to_owned();
             let entry = event["entry"].as_str().unwrap_or_default();
             let truthy = |k: &str| event.get(k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty()));
             // `replay.ts` compares messages, metadata fields and categories where asked, and the backend checks' columns.
             let keys_only = truthy("compare_message") || truthy("compare_fields") || truthy("compare_clause") || check == "backend_type_strings";
-            let want = Ok(event["findings"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|f| (f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap_or_default(), f["code"].as_str().map(str::to_owned)))
-                .collect());
+            let want = absolute(&files).map_or_else(
+                || {
+                    Ok(event["findings"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|f| (f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap_or_default(), f["code"].as_str().map(str::to_owned)))
+                        .collect())
+                },
+                Err,
+            );
             let production = event["production_scope"] == true;
             let adjust = recorded_adjust(event, &check, entry, production);
             let config = event.get("oracle_config").filter(|c| !c.is_null());
@@ -799,7 +805,7 @@ fn api_events() -> Vec<Event> {
                 })
                 .collect();
             let (want, files) = match files {
-                Some(files) => (api_want(&check, &entry, &record["expected"], &files), files),
+                Some(files) => (absolute(&files).map_or_else(|| api_want(&check, &entry, &record["expected"], &files), Err), files),
                 None => (Err("a file whose source is not recorded".into()), Vec::new()),
             };
             let production = record["production"] == true;
@@ -808,6 +814,12 @@ fn api_events() -> Vec<Event> {
         }
     }
     out
+}
+
+/// Why an event whose files the oracle wrote at an absolute path (its pytest temporary directory) is not replayed:
+/// the linter ran from a root the recording does not keep, and the replay's corpus is one directory.
+fn absolute(files: &[(String, String)]) -> Option<String> {
+    files.iter().any(|(path, _)| Path::new(path).is_absolute()).then(|| "a file at an absolute path: the oracle's root is not recorded".to_owned())
 }
 
 /// An API record's rule as `batch-nine.ts` and `batch-ten.ts` run it: outside production, every clause's options
