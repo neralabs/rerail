@@ -371,6 +371,15 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     for (i, mut prog) in parsed.into_iter().enumerate() {
+        // The documents read: those some policy's scope selects; every one when a policy has none.
+        all.doc_scopes = match (i, all.doc_scopes.take(), prog.doc_scopes.take()) {
+            (0, _, mine) => mine,
+            (_, Some(mut a), Some(b)) => {
+                a.extend(b);
+                Some(a)
+            }
+            _ => None,
+        };
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
@@ -710,7 +719,7 @@ pub(crate) fn run_with_options(
                 };
                 (files, label)
             } else {
-                let found = corpus_files(root)?;
+                let found = scoped(corpus_files(root)?, &prog);
                 let label = corpus_language(language.as_deref(), typing, &found);
                 (found.of(label), label)
             };
@@ -1935,7 +1944,7 @@ pub(crate) fn run_with_options(
 /// corpus and what it has loaded, until a round asks for nothing new, then the run proper over both.
 #[allow(clippy::too_many_arguments)]
 fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
-    let found = corpus_files(root)?;
+    let found = scoped(corpus_files(root)?, prog);
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
     let label = corpus_language(language, typing, &found);
     let corpus = found.of(label);
@@ -2363,6 +2372,22 @@ fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles)
         _ if typing.rust.unwrap_or(found.rust.len() > found.python.len()) => "rust",
         _ => "python",
     }
+}
+
+/// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
+/// every policy's scope is not parsed, and gives no facts.
+fn scoped(mut found: CorpusFiles, prog: &front::Program) -> CorpusFiles {
+    if prog.doc_scopes.is_none() {
+        return found;
+    }
+    let before = found.python.len() + found.rust.len() + found.rr.len();
+    for files in [&mut found.python, &mut found.rust, &mut found.rr] {
+        files.retain(|p| front::in_doc_scopes(&prog.doc_scopes, p));
+    }
+    crate::code_rule_dsl::logic::profile::decision("documents", || {
+        format!("{} of {before} files, by the policies' `.scope`", found.python.len() + found.rust.len() + found.rr.len())
+    });
+    found
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files

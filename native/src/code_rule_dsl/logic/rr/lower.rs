@@ -150,6 +150,51 @@ struct Lowerer {
     printed_demands: BTreeSet<String>,
 }
 
+/// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
+/// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
+/// by walking a repository). `report dirs`, `text` and `embedded` say where findings land and how files are read, not
+/// which; an `option("…")` entry's value is a policy option's, not known here.
+pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>, Vec<String>)> {
+    if settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given") {
+        return None;
+    }
+    let (mut within, mut out) = (Vec::new(), Vec::new());
+    for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
+        // The setting's tokens: comments are not in them.
+        let Ok(tokens) = super::syntax::tokens(text) else { continue };
+        let tokens: Vec<&super::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
+        let words: Vec<&str> = tokens.iter().filter_map(|t| if let super::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+        // `report dirs` and `text` say where findings land and how files are read, not which.
+        if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
+            continue;
+        }
+        let mut word = "";
+        for (k, t) in tokens.iter().enumerate() {
+            match t {
+                // `option("…")`: an entry from a policy option, not known here.
+                super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
+                super::syntax::Tok::Id(w) => {
+                    if w == "false" && word == "tests" {
+                        out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
+                    }
+                    word = w.as_str();
+                }
+                super::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(super::syntax::Tok::P("("))) => match word {
+                    "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
+                    "include" => within.push(g.clone()),
+                    "exclude" => out.push(g.clone()),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+    if within.is_empty() && out.is_empty() {
+        return None;
+    }
+    Some((within, out))
+}
+
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
@@ -225,6 +270,11 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     }
     l.kind_sets()?;
     lower_boolean_relations(&mut l.prog);
+    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
+    // selects are the same.
+    if l.prog.doc_scopes.is_none() {
+        l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
+    }
     crate::code_rule_dsl::logic::front::finish(l.prog)
 }
 
@@ -570,44 +620,10 @@ impl Lowerer {
     /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
     /// `.scope given` program reads the files it is given, all in scope.
     fn scope_filter(&mut self) -> Vec<Literal> {
-        // `.scope given`: the files are a caller's (a test's), not found by walking a repository.
-        if self.prog.settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given") {
-            return Vec::new();
-        }
-        let (mut within, mut out) = (Vec::new(), Vec::new());
-        for (_, text) in self.prog.settings.iter().filter(|(k, _)| k == "scope") {
-            // The setting's tokens: comments are not in them.
-            let Ok(tokens) = super::syntax::tokens(text) else { continue };
-            let tokens: Vec<&super::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
-            let words: Vec<&str> = tokens.iter().filter_map(|t| if let super::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
-            // `report dirs` and `text` say where findings land and how files are read, not which.
-            if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
-                continue;
-            }
-            let mut word = "";
-            for (k, t) in tokens.iter().enumerate() {
-                match t {
-                    // `option("…")`: an entry from a policy option, not known here.
-                    super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
-                    super::syntax::Tok::Id(w) => {
-                        if w == "false" && word == "tests" {
-                            out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
-                        }
-                        word = w.as_str();
-                    }
-                    super::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(super::syntax::Tok::P("("))) => match word {
-                        "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
-                        "include" => within.push(g.clone()),
-                        "exclude" => out.push(g.clone()),
-                        _ => {}
-                    },
-                    _ => {}
-                }
-            }
-        }
-        if within.is_empty() && out.is_empty() {
-            return Vec::new();
-        }
+        let Some((within, out)) = scope_globs(&self.prog.settings) else { return Vec::new() };
+        // The corpus reads only these documents (`front::Program::doc_scopes`): their facts are the policy's, as the
+        // scripts' discovery has them; the drop below still holds for a combined run that reads more.
+        self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
         let v = |s: &str| Term::Var(s.to_owned());
         let doc = Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
         let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };

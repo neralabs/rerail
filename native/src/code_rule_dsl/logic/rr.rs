@@ -126,6 +126,7 @@ pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
         program.decls.remove(*f);
     });
     program.settings.push(("scope".to_owned(), "given".to_owned()));
+    program.doc_scopes = None;
 }
 
 /// A program's `.rr` file, with what it includes.

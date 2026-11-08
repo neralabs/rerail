@@ -362,6 +362,17 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The AST patterns (``n ~ `$O[:-$K]` ``) the rules read: the batch matches each over every document of the
     /// program's language and makes `ast_match(p, n, g, c)` for them (`rr::lower`).
     pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
+    /// The documents the policies' `.scope` selects (`rr::lower`'s scope filter): a document is read when an entry
+    /// holds it, its path matching one of the entry's first globs (any path, when there are none) and none of its
+    /// second. `None`: every document (no scope, `.scope given`, or a combined program with a policy of no scope).
+    #[serde(default)]
+    pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
+}
+
+/// Whether `doc_scopes` reads the document at `path`.
+pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
+    let glob = |g: &String| crate::code_rule_dsl::logic::strings::test("glob", path, g);
+    scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
 }
 
 /// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
