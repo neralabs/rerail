@@ -87,6 +87,7 @@ session.bindRelation(JSON.stringify({
 
 const plan = JSON.parse(session.lower(programText, "python"));
 const execution = JSON.parse(session.run(programText, "python", 1024));
+const explanation = JSON.parse(session.explain());
 const result = JSON.parse(session.query(
   "SELECT c1 FROM reach WHERE c0 = ?1 ORDER BY c1",
   "[1]",
@@ -102,6 +103,7 @@ const result = JSON.parse(session.query(
 | `bindStored(scope, paths?)` | Binds current core documents from the content store without reading source files. |
 | `bindRelation(relationJson)` | Adds or replaces facts with integer values or string symbols. Duplicate rows collapse. |
 | `lower(program, dialect)` | Returns the setup SQL and wave program without executing its rules. |
+| `explain()` | Returns logical proofs and retained execution choices without evaluating facts or executing SQL. |
 | `run(program, dialect, maxWaves?)` | Runs an inline `.rr` program through the SQL wave scheduler. |
 | `runFile(path, dialect, maxWaves?)` | Reads a `.rr` file, its includes, and `core.rr`, then runs it. |
 | `applyChanges(changesJson, maxWaves?)` | Applies an atomic fact batch and maintains retained results and dependent programs. |
@@ -190,6 +192,66 @@ Min/max folds use indexed extrema. Registered joins use a persistent AVL summary
 A candidate support crossing zero changes only a logarithmic number of tree nodes.
 The registered merge must obey the lattice laws: associativity, commutativity, idempotence, and an absorbing top.
 The declared aggregate and merge must compute the same join.
+
+The shared `logic::analysis` module computes uniqueness and scalar-summary compatibility without an executor, database connection, or row statistics.
+It propagates input keys through equalities, constant filters, joins, and projections.
+Its reports distinguish unique logical tuples from unique rule witnesses, and include the evidence for inferred keys.
+A full cache build omits head support grouping only when one rule has a proven unique witness for each head.
+Multiple producers, hidden input columns, and opaque operations retain grouping. Incremental signed contributions still require reconciliation.
+
+Compatible scalar `count`, `sum`, `min`, and `max` sites across rules share summary maintenance within one checked execution.
+They must read the same input version, non-null bag, filters, grouping keys, and value expression.
+Different outer lookup mappings keep their own contexts and probes while sharing the stored summary.
+Count prefers a compatible local value projection and cannot connect families with different value expressions.
+Separate wave gates retain independent input versions and maintenance histories.
+Shared sums retain exact 128-bit state and check the public 64-bit range only when a rule reads the result.
+Min and max share value multiplicities and retain indexed extrema probes after deletions.
+Empty count and sum remain zero. Empty min and max remain absent.
+Ordered joins, existence tests, nullable contracts, dependent keys, and opaque expressions keep separate summaries with explicit reasons.
+
+A compatible family uses one indexed left join per retained context, including its head checks and projected values.
+Missing groups preserve the original defaults. Exact sum range checks stay at their original expression uses.
+The shared analysis reports the complete grouping key as the proof for a single summary row.
+
+Pure, independent scalar summaries can also produce the first answer during cold execution.
+The scheduler waits for upstream strata, initializes retained support once, and publishes its result through the ordinary wave fold.
+Checked outer expressions, dependent aggregates, opaque producers, and lattice folding retain the ordinary cold path.
+Walk lowering can expose additional checked rules. Those descriptors are planned after lowering without rebuilding already initialized summaries.
+The independent cold verification mode continues to execute the original scalar queries.
+
+Compatible consumer transitions share one SQL support phase for contexts, contributions, signed support counts, and output deltas.
+Materialization fences retain each checked evaluation at its original use. SQL still computes every rule and aggregate result.
+Immutable dirty-key snapshots survive scratch reuse within a maintenance pass. Later passes and batches start with an empty cache.
+Failed transactions restore summaries, contexts, contributions, outputs, and native roots before retry.
+
+Ordinary summaries stay in compact SQLite tables. SQL computes a shared update phase and stages its result in native scratch storage.
+Bulk SQL statements publish those rows in the fact batch's transaction. Host code does not evaluate reducers.
+Recursive wave caches use native versions when they need retained history.
+Logical proofs use shared immutable storage, so copying an execution does not copy each proof.
+Empty native destinations publish validated bulk roots directly. They do not insert every row a second time.
+Identical ordered replacements reuse their complete roots. Other replacements preserve row IDs and share unchanged subtrees.
+Native positive phases can reconstruct pure contribution projections from retained contexts instead of storing duplicate rows.
+Computed heads and checked predicates keep materialized results. Explain reports the proof and the applied storage choice.
+The reconstruction query uses shared immutable text across frames. Tree priorities use each key's existing digest without a duplicate node field.
+Validated unique primary prefixes already order complete rows, so bulk construction omits a second sort.
+
+`lower()` and `run()` include an `analysis` object with relation keys, key inferences, rule uniqueness, and scalar compatibility checks.
+`explain()` adds retained cache choices, cold reuse decisions, shared lookup counts, native publication strategies, and recursive operator analyses.
+Its `scalar_storage` reports include global families, representative witnesses, candidate partitions, and named storage groups.
+Rule reports identify context stores, reconstructed contributions, retained contribution stores, and support-phase admission decisions.
+It also reports opaque SQL producers. Rejected optimizations include their reasons.
+The native planner records the same logical analysis in its existing explain report. SQL applies the optimizations described here.
+SQL profiling receipts include these proofs as `logicalAnalysis` and `logicalAnalyses` context fields.
+The generated Markdown and HTML profiles show them beside each query's SQLite plan and bytecode.
+
+The SQL catalog exposes the same information through `rr_analysis(execution, analysis)`, where `analysis` contains JSON:
+
+```sql
+SELECT execution, json_extract(analysis, '$.logical.key_inferences') FROM rr_analysis;
+```
+
+Catalog queries refresh invalidated metadata on demand. Runs, removals, resets, and successful fact edits invalidate it.
+Ordinary fact queries do not require a catalog rebuild. Metadata SQL still counts against the complete-job execution allowance.
 
 Native builtin joins and SQL planning share a reduction descriptor and grouping compatibility rules.
 The descriptor identifies flat, min, max, or opaque operations. Flat descriptors include their top value.

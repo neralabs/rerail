@@ -24,6 +24,7 @@ pub(super) struct Counts {
 }
 #[derive(Default)]
 pub(super) struct Phase {
+    pub analyses: Vec<Value>,
     definitions: Vec<String>,
     outputs: Vec<Output>,
 }
@@ -145,7 +146,7 @@ impl Phase {
             self.definitions.join(","),
             arms.join(" UNION ALL ")
         );
-        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>()}));
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated persistent patch; dense preparation can bulk rebuild"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses}));
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.
@@ -216,8 +217,10 @@ impl Phase {
                     Keys::Native(keys) => o.old.patched(&keys, rows, w.preparing)?,
                     Keys::Query(_) => o.old.patched_rows(keys, rows, w.preparing)?,
                     Keys::Incoming => {
-                        let keys = rows.iter().map(|r| r[..o.key_width].to_vec()).collect();
-                        o.old.patched_rows(keys, rows, w.preparing)?
+                        if o.old.len() != 0 {
+                            return Err(error("SQL phase load requires an empty native table"));
+                        }
+                        o.old.loaded(rows, false, false)?
                     }
                     Keys::Replace => o.old.loaded(rows, false, true)?,
                 };

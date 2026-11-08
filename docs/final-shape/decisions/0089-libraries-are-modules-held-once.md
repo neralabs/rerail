@@ -1,6 +1,14 @@
 # 0089: A library is a module, held once per run; its facts are one relation for every rule that reads it
 
-Status: proposed (2026-11-08). Design only; nothing is built yet. It answers O135.
+Status: accepted (2026-11-08). It answers O135.
+
+- **Stage 1 is built.** The full pack gives the same findings as with libraries pasted in, at a third to a half of
+  the CPU. O135 has the measurements.
+- **Stages 2 and 3 are open.**
+
+Stage 1 was measured over the Ruff fixtures, not `fixtures/python/calls/project`, because the pack finds nothing
+in the calls project. The comparison is between shared libraries and pasted ones (`RERAIL_LIBRARIES=copied`), not
+against the union of each rule run alone.
 
 ## Intro
 

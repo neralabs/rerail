@@ -66,6 +66,9 @@ pub(super) fn append(
     computed: bool,
 ) -> Result<()> {
     let key = names("", spec.keys);
+    if w.profiler.is_some() {
+        phase.analyses.push(json!({"operation":"lattice fold","keys":spec.keys,"single_grouped_producer":grouping.is_some(),"aggregate_reused":grouping.is_some_and(|input|spec.grouping().accepts(input)),"reason":if grouping.is_some_and(|input|spec.grouping().accepts(input)){"Matching builtin reduction and prefix keys before merge/widen"}else{"Multiple producers or an opaque reduction require a fold"}}));
+    }
     let candidate = if w.preparing {
         phase.view(spec.width, candidates)
     } else {

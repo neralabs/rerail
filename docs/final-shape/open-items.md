@@ -2212,6 +2212,16 @@ Without those six, the pack (538 programs) combines in 29 s and then stops in th
 
 **Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O135's.
 
+**More failures (2026-11-08, over the Ruff fixtures).** The calls project does not exercise these four, so they
+were not seen before. Each fails alone, and also with libraries pasted in (`RERAIL_LIBRARIES=copied`), so 0089
+did not cause them:
+
+- `ruff-pyi034`: unplaced literals, `$q = @cat(…)`.
+- `ruff-pyi036`: `$form` unbound.
+- `ruff-sim222` and `ruff-sim223`: unplaced literals, `$rr_t135 = @add($k, 1)` in `rr_ctx134`.
+- `slot001`, combined with the programs it shares relations with, fails the same way as sim222 in both modes. It
+  is probably the same cause.
+
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
@@ -2432,7 +2442,7 @@ have to keep policies with different scopes apart. A doc-level guard (each polic
 rules' runs alone.
 
 **Each policy's own facts, by structure (2026-11-08, decision 0091, `096d34181`, `cd59cb78b` and the commit after
-them).** Library relations are canonical (one copy for the run, made over their readers' scopes), and each
+them).** Library relations are canonical (one copy for the run, made over every document read; with the libraries held once (0089) the library is its own part), and each
 policy's rules read base and shared rows only of its scope's documents, through `!rr_scope_not(@doc(n))` guards.
 `.global` shares a policy's own relation when every copy is alike. The structure is tested
 (`library_relations_are_shared_and_each_policy_reads_its_own_scope`, which fails without the guards). On s200 the
@@ -2773,6 +2783,42 @@ before `simplify`'s merge grow with the copies, and the split grows faster than 
 
 **Design:** decision 0089 (proposed 2026-11-08): libraries as modules held once, requests per distinct key, a
 file's memo rows per unit; staged, each stage measured here.
+
+**Progress (2026-11-08, 0089 stage 1).** `#include` now names a module, and each library is lowered once per run
+under its own names. A program that adds rules to a library relation gets its own copy of that relation's cone.
+`RERAIL_LIBRARIES=copied` keeps the old pasted path for comparison.
+
+The run covered 534 programs over the Ruff fixtures (472 `.py` files), at load 14 to 24, CPU user+sys. Left out
+are O111's six and the four single-rule failures listed under O111. On the calls project the pack finds nothing,
+so it can't be compared there.
+
+- **Whole pack, shared:**
+  - finished, rc 0;
+  - 76.7 s CPU, peak RSS 1.14 GB;
+  - 6,184 findings.
+  - The library's 2,343 rules are held once. 187,983 relations come from the library instead of being copied.
+    Only 159 cone relations are copied.
+- **Spans:**
+  - parse each program: 5 s;
+  - prune, simplify, demand: 0.54 s (was 20.6 s);
+  - locate: 1.55 s;
+  - split: 1 s;
+  - `push_local_joins`: 11 s, now the largest.
+- **Shared against copied, pack in four quarters of 134 programs:** findings equal in every quarter. The quarters
+  add up to the whole run's 6,184.
+
+  | quarter | findings | shared CPU / RSS | copied CPU / RSS |
+  |---|---|---|---|
+  | 1 | 3,776 | 10.2 s / 573 MB | 32.6 s / 1.53 GB |
+  | 2 | 943 | 11.7 s / 431 MB | 23.3 s / 813 MB |
+  | 3 | 387 | 19.5 s / 547 MB | 64.2 s / 1.49 GB |
+  | 4 | 1,078 | 37.5 s / 676 MB | 65.5 s / 1.29 GB |
+
+What remains against the closure:
+
+- The peak, 1.14 GB, is over the 1 GB budget.
+- `push_local_joins` is not yet measured as linear in the rules.
+- Hiding still runs over the whole combined program once. Stage 2 makes it per module.
 
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured

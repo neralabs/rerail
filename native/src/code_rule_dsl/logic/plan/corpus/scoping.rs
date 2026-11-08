@@ -1,6 +1,8 @@
 //! A combined run's fact spaces (decision 0091): the library's relations are canonical, made once over every
 //! document the run reads, and each policy's own rules see only the documents of its scope.
 //!
+//! When the libraries are held once (decision 0089), the library is a part of its own, under its own names, and no
+//! policy's: canonical by construction. Otherwise (`RERAIL_LIBRARIES=copied`, or one program naming its libraries)
 //! `combine` names each policy's relations `p<i>_…`, an included library's among them. Here:
 //!
 //! - A relation the policies mark global (`.global`, or `.global library` for an included file's, as
@@ -57,6 +59,10 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
             .map(|(i, p)| (i, format!("{}{name}", p.prefix)))
             .filter(|(i, r)| policies[*i].own.contains(r))
             .collect();
+        // A library held once (decision 0089) left the policies no copy of it.
+        if copies.is_empty() {
+            continue;
+        }
         let alike = copies.windows(2).all(|w| matches!((class_of.get(w[0].1.as_str()), class_of.get(w[1].1.as_str())), (Some(a), Some(b)) if a == b));
         if alike {
             report.canonical.insert(name.clone(), copies.len());
@@ -97,17 +103,13 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
             break;
         }
     }
-    // Guard groups: rules guarded alike, by one scope relation, and the relations whose rows are of its documents
-    // already. A policy narrower than the run is one; so is each set of policies sharing library relations whose
-    // scopes together read fewer documents than the run (the library is made over its readers' documents, not the
-    // run's: ast-index-spike T2, union-scoped sharing loses to scope inflation).
+    // Guard groups: each policy narrower than the run, its rules guarded by its scope. Shared relations are made over
+    // every document the run reads (decision 0091 §3): a scope limits where a policy's own rules apply, not which
+    // facts exist.
     let n = policies.len();
     let scope_of = |i: usize| policies[i].scope.as_ref().map(|s| s.iter().cloned().collect::<BTreeSet<_>>());
     let outside_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_NOT);
-    let narrows = |set: &BTreeSet<usize>| {
-        set.iter().all(|&i| scope_of(i).is_some() && policies[i].own.contains(&outside_of(i)))
-            && (0..n).any(|j| !set.contains(&j) && !set.iter().any(|&i| scope_of(i) == scope_of(j)))
-    };
+    let narrows = |i: usize| scope_of(i).is_some() && policies[i].own.contains(&outside_of(i)) && (0..n).any(|j| scope_of(j) != scope_of(i));
     let owners: BTreeMap<&str, usize> = policies.iter().enumerate().flat_map(|(i, p)| p.own.iter().map(move |r| (r.as_str(), i))).collect();
     let owner = |rel: &str| owners.get(rel).copied();
     let machinery = |rel: &str| {
@@ -115,33 +117,9 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         r.starts_with("rr_scope") || r.starts_with("rr_report")
     };
     let mut groups: Vec<(BTreeSet<String>, String)> = Vec::new();
-    let mut unions: BTreeMap<BTreeSet<usize>, String> = BTreeMap::new();
-    for i in 0..n {
-        if narrows(&BTreeSet::from([i])) {
-            let heads = policies[i].own.iter().filter(|r| !shared.contains(*r) && !machinery(r)).cloned().collect();
-            groups.push((heads, outside_of(i)));
-        }
-    }
-    let mut by_users: BTreeMap<BTreeSet<usize>, BTreeSet<String>> = BTreeMap::new();
-    for x in shared.iter().filter(|x| !machinery(x)) {
-        let users: BTreeSet<usize> = match class_of.get(x.as_str()) {
-            Some(&k) => classes[k].iter().filter_map(|r| owner(r)).collect(),
-            None => owner(x).into_iter().collect(),
-        };
-        by_users.entry(users).or_default().insert(x.clone());
-    }
-    for (users, heads) in by_users {
-        if users.is_empty() || !narrows(&users) {
-            continue;
-        }
-        let scope = match users.iter().next() {
-            Some(&i) if users.len() == 1 => outside_of(i),
-            _ => {
-                let k = unions.len();
-                unions.entry(users).or_insert_with(|| format!("{}_all{k}", front::SCOPE_NOT)).clone()
-            }
-        };
-        groups.push((heads, scope));
+    for i in (0..n).filter(|&i| narrows(i)) {
+        let heads = policies[i].own.iter().filter(|r| !shared.contains(*r) && !machinery(r)).cloned().collect();
+        groups.push((heads, outside_of(i)));
     }
     // `RERAIL_SCOPE_GUARDS=off`: none, as before this record (to measure what the guards cost and what they change).
     if groups.is_empty() || std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|v| v == "off") {
@@ -246,14 +224,5 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     }
     drop(place);
     all.rules = rules;
-    // Out of a union of scopes: out of each of them.
-    for (users, name) in unions {
-        all.decls.insert(name.clone(), vec![("d".to_owned(), "int".to_owned())]);
-        let d = Term::Var("d".to_owned());
-        all.rules.push(front::Rule {
-            head: Atom { rel: name, args: vec![d.clone()], neg: false, gated: false },
-            body: users.into_iter().map(|i| Literal::Atom(Atom { rel: outside_of(i), args: vec![d.clone()], neg: false, gated: false })).collect(),
-        });
-    }
     Ok(report)
 }

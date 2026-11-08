@@ -83,15 +83,29 @@ scope's documents: the 200-file pack ran 14x its instructions.
 Once the guards are in, two policies' rules stay equal (and are merged) only when the policies have the same scope.
 That is the only case where sharing them is right.
 
-### 3. The library is made over its readers' documents
+### 3. The library is made over every document the run reads
 
-A canonical relation is not made over every document the run reads. It is made over the union of the scopes of the
-policies that include it. Its copies are guarded by `rr_scope_not_all<k>(d)`, a document out of every one of
-those policies' scopes, or by the one policy's `rr_scope_not`. When the readers' scopes cover every scope in the run, there is no
-guard. This follows ast-index-spike trap T2 (history index, "Union-scoped shared relation"; DH L2509-2527 and
-L3221-3270). There, sharing scoped to the union of candidate files lost (0.23x and 0.80x, S149) because every arm
-read 7.27x its own files. Per-group sharing with scope held fixed gained 1.15x on top of batching, and shipped at
-1.37x (S176). Here the groups are the sets of policies that read a library relation.
+A canonical relation is made over every document the run reads, unguarded. A policy's scope limits where its own
+rules apply and which findings it reports, not which facts exist. That is one source of facts and one filter, and it
+keeps rules that read facts outside any one policy's scope open (a rule over two languages, say: every public Rust
+API has a Python one). It is also what decision 0083's P1 asks for: structure over every document.
+
+A first version made each library relation over the union of its readers' scopes, guarded by a relation
+`rr_scope_not_all<k>` per set of readers. The two differ only where one library's readers cover less than the run,
+since the run reads the union of all the scopes. The narrower version cost planning (part of the 800 scope strata
+below) and coupled which facts exist to the policies of the run. ast-index-spike trap T2 (union-scoped sharing lost
+through scope inflation, 0.23x and 0.80x, S149) is about what each policy's rules read, which §2's guards keep to its
+scope; it does not argue for narrowing the library. Union scoping may come back as an optimisation if a measurement
+shows the extra documents cost much, never as the meaning.
+
+### 4. With the libraries held once (decision 0089)
+
+When the programs name their libraries as modules, the library is a part of the combined program of its own, under
+its own names (0089 §2), and no policy's. It is canonical by construction, and §1's congruence test applies only to
+what is left: a policy's `.global` relations, the engine's helpers, and the libraries copied
+(`RERAIL_LIBRARIES=copied`, or fewer than two programs naming theirs). A policy's cone of a library relation it adds
+to (0089 §3) is its own, and guarded as its own. The test `a_library_held_once_is_read_by_each_policy_in_its_own_scope`
+fails without the guards.
 
 ## Measured
 
@@ -108,7 +122,7 @@ on the same binary, CPU instructions (`time -l`); the machine's load was between
 The 61 are the union of each rule run alone, as before. The test `library_relations_are_shared_and_each_policy_
 reads_its_own_scope` fails without the guards: policy B joins a document only A's scope reads.
 
-The 6.6% left is planning, not joins. Native steps are within 4%. The scope relations (`rr_scope_in`,
+These were measured with §3's first version (the library over its readers' scopes). The 6.6% left is planning, not joins. Native steps are within 4%. The scope relations (`rr_scope_in`,
 `rr_scope_not`, the unions: about 800 strata) are planned in every chunk, 1.2 s more of "statistics and plan" over
 7 chunks. The scopes are known before evaluation: the corpus resolves them to choose the files it reads. The next
 step is to give `rr_scope_not` as base rows of the batch, as `doc` is, rather than derive it in every chunk. The
