@@ -2820,8 +2820,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
-    "status": "Root Final shape through 0f0049ec7 with reviewed generic syntax, graph, typed SQL ordering, filesystem metadata, and planner capabilities",
+    "upstreamCommit": "0ab7966c9705e741974fa5e355b2d26fad599c91",
+    "status": "Root Final shape through 0ab7966c9, including library modules lowered once per run, with reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2921,7 +2921,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "2bc85a78ea36d396cc29d6eec41c782859d691eb828e0ca37073e9ffee2c09b5"
+        "sha256": "4eb9eb943716ed12a6733bcca6f3b6ae59e8f88154107acc9667b9a7d308acdd"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -2977,7 +2977,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "7a846bfcae740fd20390e1b490467d386982d2a0",
+    "upstreamMerge": "f286e6a13b7c0b754caecf9fad09f4fcd8509f34",
     "cliArtifact": {
       "engineCommit": "b97b623c6f92d9215a6dd9389c736004a2372135",
       "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
