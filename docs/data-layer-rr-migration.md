@@ -1288,3 +1288,34 @@ The bounded rerun was rejected before execution because committed Final shape ad
 Those newer engine resolutions must be merged before acceptance resumes. The guard remains enabled.
 All 100 tooling tests pass at this checkpoint. No new native engine code was added.
 The source categories A/B, public pairs, legacy triples, escape hatches, supplemental positives, and reporter contracts remain open.
+
+## 2026-11-08 — Delegation source shapes on Final's memory resolutions
+
+Merge `5eb3269a0` adopts committed Final shape `8ce26cfb7`. No local native engine code was added.
+The CLI build took 57.878 seconds. The unit build took 150.091 seconds under the authorized build exception.
+Compilation remains separate from execution.
+
+The detector now implements categories A/B, structural no-await exemptions, mixed names, and context-manager pairs.
+The path/name exemptions are mechanically compiled from the pinned source's literal branches.
+Class method dictionaries retain the last definition and the first insertion position.
+Thin wrappers include legacy boundary lambdas, normalized helper families, and attribute tails after non-name receivers.
+
+All 124 original tests ran in two bounded shards: 118 passed and six failed.
+The shards took 58.89 and 51.58 seconds. These are assertion-suite wall times, not repository benchmarks.
+The three original positive no-await cases now match complete source DTOs.
+The six remaining failures identify missing public-pair and legacy-triple behavior.
+No original test was excluded and no source semantic fallback was permitted.
+The [original assertion rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-async-rung.json.gz) retains the failures and exact consumed programs.
+
+All 65 supplemental cases pass, including 25 positive finding lists.
+They cover nested function scopes, await forms, structural exemptions, path exemptions, context wrappers, and mixed names.
+A separate failing test exposed lost list identity in the docstring helper.
+Three of four ownership cases failed before the repair; all four pass after it.
+The native rule now tells the transport when to retain the supplied list.
+All 100 tooling tests, 99 readers, and six focused native tests pass on this engine.
+The [source-shape receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-source-shapes.json.gz) preserves these results and exact program bytes.
+
+Final advanced to `f549a6f99` before disabled-behavior controls could run. The alignment guard rejected their first request.
+Those controls are not claimed as tested. The completed receipts remain historical evidence for `8ce26cfb7`.
+Public-pair and legacy-triple detection, escape hatches, production reports, broader helper domains, and global acceptance remain open.
+The inventory remains 88 drafts and 12 absent translations.

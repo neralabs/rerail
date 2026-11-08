@@ -23,6 +23,8 @@ ASDTrue(@place("", 0)) :- option("entryPoint", _), 1 = 0.
 ASDValue(@place("", 0), "") :- option("entryPoint", _), 1 = 0.
 .violation ASDNode(at: span, n: node, ordinal: number) code "ASD_NODE" "node"
 ASDNode(@place("", 0), n, 0) :- asdh_kind(n, _), 1 = 0.
+.violation ASDBodyKept(at: span) code "ASD_BODY_KEPT" "keep supplied body"
+ASDBodyKept(@place("", 0)) :- option("entryPoint", "_strip_method_docstring"), !asdh_docstring(0).
 .violation ASDRequirement(at: span, base: symbol, lazy: symbol, counterpart: symbol, decorator: symbol) code "ASD_REQUIREMENT" "requirements"
 ASDRequirement(@place("", 0), "", "", "", "") :- option("entryPoint", _), 1 = 0.
 .decl asdh_body(f: node, n: node, ordinal: number)

@@ -32,6 +32,7 @@ def install(suite,module):
     suite.replace(module,'_extract_callable_name',lambda node:value('_extract_callable_name',node))
     def strip(body):
         rows,nodes=argument('_strip_method_docstring',ast.Module(body=body,type_ignores=[]))
+        if any(row['code']=='ASD_BODY_KEPT' for row in rows):return body
         return [nodes[r['parameters']['n']] for r in sorted(rows,key=lambda r:r['parameters'].get('ordinal',0)) if r['code']=='ASD_NODE']
     suite.replace(module,'_strip_method_docstring',strip)
     suite.replace(module,'_is_abstract_like',lambda node:boolean('_is_abstract_like',node))
