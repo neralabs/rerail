@@ -1079,3 +1079,23 @@ Legacy visitor and private AST-object helper APIs remain outside this snapshot's
 Nonempty allowlist configuration and signing acceptance remain open. No signing action ran.
 Full registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance also remain open.
 The inventory is 85 drafts and 15 absent translations. Full migration acceptance remains pending.
+
+
+## 2026-11-08 — Final shape alignment recheck before further ports
+
+The fetched Final shape tip and the sibling checkout both remain at `07a6b4171`.
+That commit is already an ancestor of this branch. There is no newer committed resolution to merge.
+This recheck changes no engine code. All further ports use the repository-root engine and its current `.rr` libraries.
+
+The native diff contains the same 21 reviewed extension files.
+The manifest records their exact hashes. All native files outside that list match Final shape.
+The existing alignment guard rejects either retired engine checkout and requires newer local or fetched Final commits before acceptance.
+Both frozen build receipts match the current root source trees and binary hashes.
+
+All 95 migration-tool tests pass. All 96 policy/table readers pass.
+Both shared native printer tests pass. These focused results do not certify the full engine suite or complete rule migration.
+The previously recorded prepared-program roundtrip failure remains unresolved.
+The unfinished `grammar_fragment_usage` source recorder also has one remaining recording failure; it is not accepted evidence.
+
+The [alignment recheck](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-alignment-recheck.json.gz) records the exact engine differences, build provenance, reader results, and native test output.
+The inventory remains 85 drafts and 15 absent translations. Full migration acceptance remains pending.
