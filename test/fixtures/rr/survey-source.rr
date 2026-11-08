@@ -3,7 +3,7 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "data-layer/survey-edges.rr"
+#include "data-layer/survey-exports.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"
@@ -66,3 +66,9 @@ graph_edge_row("graph_class_use", owner, sid) :- sge_class_use(owner, sid).
 graph_edge_row("graph_caller", owner, sid) :- sge_caller(owner, sid).
 .violation GraphEdge(at: span, kind: symbol, owner: symbol, sid: symbol) code "SURVEY_GRAPH_EDGE" "edge"
 GraphEdge(@place("", 0), k, owner, sid) :- graph_edge_row(k, owner, sid).
+.violation GraphExport(at: span, kind: symbol, ordinal: number, module: symbol, name: symbol, sid: symbol) code "SURVEY_GRAPH_EXPORT" "export"
+GraphExport(@place("", 0), "graph_export", i, module, name, sid) :- sgx_export(i, module, name, sid).
+.violation GraphExportedRoot(at: span, kind: symbol, sid: symbol) code "SURVEY_GRAPH_EXPORTED_ROOT" "exported root"
+GraphExportedRoot(@place("", 0), "graph_exported_root", sid) :- sgx_root(sid).
+.violation GraphExportedClass(at: span, kind: symbol, sid: symbol) code "SURVEY_GRAPH_EXPORTED_CLASS" "exported class"
+GraphExportedClass(@place("", 0), "graph_exported_class", sid) :- sgx_class(sid).

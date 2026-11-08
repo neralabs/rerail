@@ -1,0 +1,38 @@
+// Data-layer facade exports. The source reads only direct data_layer/*.py files,
+// and considers their direct from-imports and definitions, not hoisted imports.
+#include "data-layer/survey-edges.rr"
+
+.decl sgx_file(d: number, path: symbol, module: symbol)
+sgx_file(d, path, module) :- sgs_module(d, path, module), match_all("\\Adata_layer/[^/]+\\.py\\z", path).
+.decl sgx_top(d: number, statement: node)
+sgx_top(d, statement) :- sgx_file(d, _, _), kind(m, "module"), docof(m, d), body_stmt(m, wrapper, _), sgs_statement(wrapper, statement).
+.decl sgx_all_candidate(d: number, a: node)
+sgx_all_candidate(d, a) :- sgx_top(d, statement), kind(statement, "expression_statement"), child(statement, a, 0), asgstmt(a, _), !assign_ann(a, _), assign_target(a, raw), unparen(raw, target), ast_name(target, "__all__").
+.decl sgx_all(d: number, a: node)
+sgx_all(d, a) :- sgx_all_candidate(d, a), count : { sgx_all_candidate(d, other), earlier(other, a) } = 0.
+.decl sgx_all_item(d: number, ordinal: number, name: symbol)
+sgx_all_item(d, i, name) :- sgx_all(d, a), assign_value(a, raw), unparen(raw, v), (kind(v, "list") ; kind(v, "tuple")), child(v, element, i), unparen(element, e), str_const(e, name).
+.decl sgx_import_candidate(d: number, site: node, name: symbol, fq: symbol)
+sgx_import_candidate(d, a, name, fq) :- sgx_top(d, i), sgs_from(i, _), sgs_import_candidate(a, d, "imported", name, fq), child(i, a, _).
+.decl sgx_import(d: number, name: symbol, fq: symbol)
+sgx_import(d, name, fq) :- sgx_import_candidate(d, a, name, fq), count : { sgx_import_candidate(d, other, name, _), earlier(a, other) } = 0.
+.decl sgx_defined(d: number, name: symbol, fq: symbol)
+sgx_defined(d, name, cat(module, ".", name)) :- sgx_top(d, n), sgx_file(d, _, module), sgs_definition(n, d, name, _, _, _).
+.decl sgx_name(d: number, name: symbol)
+sgx_name(d, name) :- sgx_import(d, name, _), !prefix("_", name).
+sgx_name(d, name) :- sgx_defined(d, name, _), !prefix("_", name).
+.decl sgx_export_name(d: number, ordinal: number, name: symbol)
+sgx_export_name(d, i, name) :- sgx_all_item(d, i, name), !prefix("_", name).
+sgx_export_name(d, i, name) :- sgx_name(d, name), !sgx_all(d, _), i = count : { sgx_name(d, other), @str_cmp(other, name) < 0 }.
+.decl sgx_fq(d: number, name: symbol, fq: symbol)
+sgx_fq(d, name, fq) :- sgx_import(d, name, fq).
+sgx_fq(d, name, fq) :- sgx_defined(d, name, fq), !sgx_import(d, name, _).
+.decl sgx_valid(path: symbol, ordinal: number, module: symbol, name: symbol, sid: symbol)
+sgx_valid(path, i, module, name, sid) :- sgx_file(d, path, module), sgx_export_name(d, i, name), sgx_fq(d, name, fq), sgc_resolved(fq, sid).
+.decl sgx_export(ordinal: number, module: symbol, name: symbol, sid: symbol)
+sgx_export(ordinal, module, name, sid) :- sgx_valid(path, i, module, name, sid), ordinal = count : { sgx_valid(other_path, j, _, _, _), (@str_cmp(other_path, path) < 0 ; (other_path = path, j < i)) }.
+.decl sgx_root(sid: symbol)
+sgx_root(sid) :- sgx_export(_, _, _, sid).
+sgx_root(method) :- sgx_export(_, _, _, sid), sgc_kind(sid, "class"), cm_public(sid, _, method).
+.decl sgx_class(sid: symbol)
+sgx_class(sid) :- sgx_export(_, _, _, sid), sgc_kind(sid, "class").

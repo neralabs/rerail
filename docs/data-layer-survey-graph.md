@@ -35,7 +35,8 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
 1. Settle the demonstrated randomized mixin tie. Native facts currently refuse to treat that tie as an ordinary unresolved reference.
-2. Derive `__all__`, exported roots, and source-derived literal dynamic-import roots. Preserve the original discovery scope and ordering.
+2. Connect the tested facade export producer and literal dynamic-import helper to the discovered file scopes.
+   Include facade files outside a caller's graph scan without adding their definitions to that graph.
 3. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
 
 Reuse the modern engine's implementations where their meanings match.
@@ -108,6 +109,16 @@ The raw helper demands only its requested imported classes. Other helper entries
 The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the complete source, raw-graph, mutation, and native regression evidence.
 
 ## Acceptance still required
+
+The `survey-exports.rr` library now constructs facade export rows, exported root sets, and exported class sets.
+It follows direct `data_layer/*.py` paths, sorted filenames, direct imports and definitions, and import precedence over local definitions.
+The first ordinary `__all__` assignment controls explicit exports. An empty or unsupported value suppresses implicit exports.
+Annotated assignments do not control exports. Explicit lists and tuples retain repeated string entries and ignore non-string values.
+Private exports are excluded. Exported classes also root eligible public methods.
+All 106 complete source-field cases pass, including fourteen export cases. Twelve export cases fail before implementation.
+All twenty-eight member, edge, and export mutations cause complete-row mismatches through successful native execution.
+The [export receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz) retains those comparisons and complete programs.
+This corpus supplies valid files to the graph inventory. It does not prove independent export-file loading, discovery, or lifecycle behavior.
 
 The member and edge corpus now contains ninety-two complete source comparisons.
 It includes inherited instance annotations resolved in the caller module, duplicate parameters, stale method names, and failed parameter lookup followed by a local import.

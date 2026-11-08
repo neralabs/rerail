@@ -42,6 +42,16 @@ def specs():
         ('legacy-sync-precedence', 'edges-legacy-sync-wins', 'sge_legacy_name(sid, cat(@replace_all', ', !sge_legacy(sid, "sync")', ''),
         ('legacy-inherited', 'edges-legacy-inherited-first', 'sge_call(sid, target) :- sge_legacy_name', 'cm_lookup(c, name, target)', 'sgc_method(c, name, _, target)'),
         ('legacy-property', 'edges-legacy-property-missing-free', 'sge_call(sid, target) :- sge_legacy_name', 'cm_lookup(c, name, target)', 'cm_lookup(c, name, target), !cm_property(target)'),
+        ('exports-first-all', 'exports-first-all-only', 'sgx_all(d, a) :-', 'earlier(other, a)', 'earlier(a, other)'),
+        ('exports-annotated-all', 'exports-annotated-all-ignored', 'sgx_all_candidate(d, a) :-', ', !assign_ann(a, _)', ''),
+        ('exports-unsupported-all-blocks', 'exports-unsupported-all-blocks', 'sgx_export_name(d, i, name) :- sgx_name', '!sgx_all(d, _)', '!sgx_all_item(d, _, _)'),
+        ('exports-duplicate-occurrences', 'exports-explicit-duplicates', 'sgx_export_name(d, i, name) :- sgx_all_item', 'sgx_export_name(d, i, name)', 'sgx_export_name(d, 0, name)'),
+        ('exports-import-precedence', 'exports-import-over-definition', 'sgx_fq(d, name, fq) :- sgx_defined', ', !sgx_import(d, name, _)', ''),
+        ('exports-top-level-imports', 'exports-top-level-only', 'sgx_import_candidate(d, a, name, fq) :-', 'sgx_top(d, i)', 'sgx_file(d, _, _)'),
+        ('exports-direct-files', 'exports-direct-child-files-only', 'sgx_file(d, path, module) :-', '[^/]+', '.+'),
+        ('exports-file-order', 'exports-sorted-paths', 'sgx_export(ordinal, module, name, sid) :-', '@str_cmp(other_path, path) < 0', '@str_cmp(other_path, path) > 0'),
+        ('exports-public-roots', 'exports-public-eligibility', 'sgx_root(method) :-', 'cm_public(sid, _, method)', 'cm_dunder(sid, _, method)'),
+        ('exports-class-roots', 'exports-public-eligibility', 'sgx_class(sid) :-', ' :- ', ' :- 1 = 0, '),
     ]
 
 

@@ -1658,3 +1658,25 @@ These four original tests use supplied graph doubles; they do not prove producti
 The [edge receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-edges.json.gz) retains the complete evidence and consumed program bytes.
 The default source path still refuses execution with `IDC_SOURCE_GRAPH_REQUIRED`.
 Export roots, discovery, lifecycle behavior, and the ambiguous mixin ordering contract remain open.
+
+### 2026-11-08 — Facade export roots
+
+Commit `8efac7127` records fourteen facade export fixtures before native translation.
+Twelve fail without the producer. The two empty-export cases remain clean.
+The new `survey-exports.rr` library then passes all 106 complete source comparisons in three disjoint shards.
+The comparison includes ordered export rows, exported root sets, and exported class sets.
+No existing case or field is excluded.
+
+The producer retains duplicate explicit exports, first-assignment semantics, and sorted filename order.
+It ignores annotated `__all__` assignments and nested imports when choosing facade exports.
+An unsupported ordinary `__all__` value suppresses implicit exports.
+Imports win over local definitions with the same name. Exported classes also root eligible public methods.
+
+Ten additional export controls join the eighteen member and edge controls.
+All twenty-eight controls cause complete-row mismatches through successful native execution.
+All 109 tooling tests and 54 subtests pass. Final's committed tip remains `220a5d4f5`; no new engine build is required.
+The [export receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz) contains the source recording, both TDD results, controls, and complete program bytes.
+
+The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`.
+Independent export-file loading, graph scan scope, literal dynamic roots, source-to-consumer integration, and lifecycle acceptance remain open.
+The randomized mixin tie also remains explicit and unresolved. This step does not complete rule 89 or the migration.
