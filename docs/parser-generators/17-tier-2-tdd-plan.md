@@ -15,7 +15,7 @@ that the next one reads, and its tests pin the shape of that code, not only its 
 | 2 | the monoids: combines, summaries, references | laws and sequential references |
 | 3 | the analysis: classes, depths, candidates, fixes | JSON's table, as doc 16 §4.1 |
 | 4 | the plan: steps, entry layout, budget, verifier | the printed plan, and refusals |
-| 5 | the CPU: a generated Cranelift tier 2 | tapes equal tree-sitter's; shape guards |
+| 5 | the CPU: tier 2 lowered by `native_ir`, fused into tier 1's function | IR text; no call; tapes; cost |
 | 6 | Metal: the generated plan kernel | tapes equal the CPU's; shape guards |
 | 7 | timing | CPU time next to simdjson's stages |
 
@@ -129,21 +129,42 @@ barriers), `json_cpu_plan_is_one_pass`, `plan_verifier_refuses_a_missing_barrier
 (with the budget), `match_scan_has_no_mid_pass_barrier` (121 words, 2 scan barriers, none in
 pass B).
 
-## 5. The CPU
+## 5. The CPU: tier 2 through the compiler
 
-**Builds:** `native_cpu_tier2`: a Cranelift function generated from the plan and the rows,
-over the masks tier 1 writes, as simdjson's stage 2 reads stage 1's indexes. One case per
-token kind. Its columns are packed by the tape's one packer (`TapeImage::from_written`), the
-format's encoder, not a rule.
+Tier 2 is part of the transducer's block side program (doc 12 §3), so it goes where tier 1
+goes: lowered by `native_ir`, defined by `native_cpu_block`, and on Metal by the same packing
+and kernels. Nothing on the path is Rust: no call from generated code, no host step between
+the tiers, no hand-built emitter. (A first build did all three, and is deleted.)
 
-**Tests:**
+**5a. Tier 2's native IR.** `native_ir` lowers the rows, through the analysis (phase 3), to
+tier-2 instructions in `BlockNative`:
 
-- `json_tapes_equal_tree_sitter_byte_for_byte`, un-ignored.
-- `json_corpus_tapes_equal_tree_sitter`, un-ignored, run once at the phase's end.
-- `json_tier2_has_one_case_per_token_kind`: the CLIF's `br_table` has as many arms as kinds.
-- `json_tier2_reads_no_rows`: the function's arguments are masks, bytes and columns; nothing
-  of the program's tables is reachable from it.
-- `json_tier2_calls_nothing_per_token` except the built-in validator.
+- **states:** the rows' `after` and `parent` conditions take values from small sets. Each
+  reachable pair (previous token's kind class, innermost open kind) is a state, as simdjson's
+  `object_field` and `array_value` are labels;
+- **per state and token kind,** straight-line actions: open a node (kind, field, supertypes
+  as constants), push, close, check, go to a state;
+- **the token's kind** from the byte, for one-byte keyword rows; from masks otherwise;
+  multi-byte keywords as word compares in the IR;
+- **validators are tier-1 masks:** a number's syntax is bit operations, a fallback bit, like
+  every other refusal. No call.
+
+**5b. Passes over that IR:** fold what a state decides; merge equal states; fixed-shape tokens
+(a string's quote, content and quote) emitted from one event, their ends found in the masks.
+
+**5c. One function, fused:** `native_cpu_block` defines tier 1 and tier 2 in one loop per
+block. The masks stay in registers; the events are the token starts.
+
+**5d. The tape:** the extract pass writes the v9np columns. `TapeImage::from_written` stays
+only as the test's encoder of tree-sitter's side.
+
+**Tests, first:**
+
+- `json_tier2_ir_prints_as_designed`: JSON's tier-2 IR, as `rir` text, pinned whole.
+- `json_tier2_states_are_simdjsons`: the states equal stage 2's labels.
+- `json_block_function_has_no_call`: the compiled CLIF has no call, and one loop per block.
+- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the fused function.
+- `json_tier2_cost_ratchet`: ns per block next to simdjson's stage 2, in CPU time.
 
 ## 6. Metal
 
