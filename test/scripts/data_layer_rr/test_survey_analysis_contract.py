@@ -36,8 +36,8 @@ class SurveyAnalysisContractTests(unittest.TestCase):
             native_result([dict(code='IDC_SOURCE_GRAPH_REQUIRED',parameters={})])
 
     def recording(self):
-        path=contract.ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis-red.json.gz'
-        return json.loads(gzip.decompress(path.read_bytes()))['source']
+        path=contract.ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis-source.json.gz'
+        return json.loads(gzip.decompress(path.read_bytes()))
 
     def run_native(self,root,baseline,execute):
         source=root/'recording.json';source.write_text(json.dumps(baseline))
@@ -58,7 +58,9 @@ class SurveyAnalysisContractTests(unittest.TestCase):
             status,result=self.run_native(Path(temporary),baseline,lambda *args:dict(diagnostics=headers,programInputs=[]))
         self.assertEqual(status,1)
         self.assertEqual(len(result['cases']),len(contract.CASES))
-        self.assertEqual(sum(not c['passed'] for c in result['cases']),102)
+        wanted=sum(any(c['expected'].values()) for c in baseline['cases'])
+        self.assertGreaterEqual(wanted,102)
+        self.assertEqual(sum(not c['passed'] for c in result['cases']),wanted)
 
     def test_missing_or_modified_source_fixture_cannot_certify_analysis(self):
         for change in ['missing','source']:

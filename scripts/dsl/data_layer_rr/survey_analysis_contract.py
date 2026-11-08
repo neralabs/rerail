@@ -32,6 +32,20 @@ for name,files,roots in [
     CASES.append(dict(id=name,files=[dict(path=p,source=t) for p,t in files.items()],extraRoots=roots,excludedPaths=[]))
 CASES.append(dict(id='analysis-excluded-path', files=[dict(path='impl/a.py',source='def dead(): pass\n'),dict(path='impl/b.py',source='def kept(): pass\n')],extraRoots=[],excludedPaths=['impl/a.py']))
 
+MIXINS='class Base:\n def run(self): self._hook()\nclass FirstMixin:\n def _hook(self): pass\nclass SecondMixin:\n def _hook(self): pass\nclass One(Base, FirstMixin): pass\nclass Two(Base, SecondMixin): pass\n'
+for name,files,roots in [
+    ('analysis-mixin-alternatives',{'a.py':MIXINS},['a::Base.run']),
+    ('analysis-mixin-unrooted',{'a.py':MIXINS},[]),
+    ('analysis-mixin-unrelated',{'a.py':MIXINS+'class Unrelated:\n def _hook(self): pass\n'},['a::Base.run']),
+    ('analysis-mixin-callback-closures',{'a.py':MIXINS.replace('def _hook(self): pass','def _hook(self): first_helper()',1).replace('def _hook(self): pass','def _hook(self): second_helper()',1)+'def first_helper(): pass\ndef second_helper(): pass\ndef orphan_helper(): pass\n'},['a::Base.run']),
+    ('analysis-mixin-inherited-targets',{'a.py':'class FirstParent:\n def _hook(self): pass\nclass SecondParent:\n def _hook(self): pass\nclass FirstMixin(FirstParent): pass\nclass SecondMixin(SecondParent): pass\nclass Base:\n def run(self): self._hook()\nclass One(Base, FirstMixin): pass\nclass Two(Base, SecondMixin): pass\n'},['a::Base.run']),
+    ('analysis-mixin-two-attributes',{'a.py':MIXINS.replace('def run(self): self._hook()','def run(self):\n  self._hook()\n  self._hook()\n  self._other').replace('def _hook(self): pass','def _hook(self): pass\n def _other(self): pass')},['a::Base.run']),
+    ('analysis-mixin-imported-targets',{'base.py':'class Base:\n def run(self): self._hook()\n','first.py':'class FirstMixin:\n def _hook(self): pass\n','second.py':'class SecondMixin:\n def _hook(self): pass\n','entry.py':'from base import Base\nfrom first import FirstMixin\nfrom second import SecondMixin\nclass One(Base, FirstMixin): pass\nclass Two(Base, SecondMixin): pass\n'},['base::Base.run']),
+    ('analysis-mixin-cycle',{'a.py':'class Base:\n def run(self): self._hook()\nclass A(B):\n def _hook(self): pass\nclass B(A):\n def _hook(self): pass\nclass One(Base, A): pass\nclass Two(Base, B): pass\n'},['a::Base.run']),
+    ('analysis-rooted-constructor',{'a.py':'class C:\n def method(self): pass\ndef run(): C()\ndef dead(): pass\n'},['a::run']),
+]:
+    CASES.append(dict(id=name,files=[dict(path=p,source=t) for p,t in files.items()],extraRoots=roots,excludedPaths=[]))
+
 
 def source_result(source,case):
     sys.path[:0]=[str(source),str(source/'scripts')]
@@ -75,6 +89,10 @@ def check_positives(cases):
         'analysis-import-reference-confidence':('unused_functions','remote::helper'),
         'analysis-legacy-reachability':('unused_functions','entry::dead'),
         'analysis-excluded-path':('unused_functions','impl.b::kept'),
+        'analysis-mixin-unrelated':('unused_functions','a::Unrelated._hook'),
+        'analysis-mixin-unrooted':('unused_functions','a::FirstMixin._hook'),
+        'analysis-mixin-callback-closures':('unused_functions','a::orphan_helper'),
+        'analysis-rooted-constructor':('unused_functions','a::dead'),
     }
     clean={
         'analysis-rooted-calls':('unused_functions','entry::helper'),
@@ -84,6 +102,10 @@ def check_positives(cases):
         'analysis-module-import-seed':('unused_functions','remote::used'),
         'analysis-import-reference-confidence':('high_confidence_functions','remote::helper'),
         'analysis-excluded-path':('unused_functions','impl.a::dead'),
+        'analysis-mixin-alternatives':('unused_functions','a::FirstMixin._hook'),
+        'analysis-mixin-inherited-targets':('unused_functions','a::SecondParent._hook'),
+        'analysis-mixin-callback-closures':('unused_functions','a::second_helper'),
+        'analysis-rooted-constructor':('unused_functions','a::C.method'),
     }
     for label,(category,sid) in positive.items():
         if sid not in rows[label][category]:raise ValueError(f'Missing positive: {label}/{category}/{sid}')
