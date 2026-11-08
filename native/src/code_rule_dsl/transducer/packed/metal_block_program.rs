@@ -816,7 +816,7 @@ pub(in crate::code_rule_dsl) fn kernel_report(native: &BlockNative, width: LaneW
     let source = generate_forms(&[&form], width);
     let pipeline = pipeline_named(&source, "tempo_batch")?;
     Ok(format!(
-        "{} instructions; {} windowed prevs, {} halos, {} scans; exchanges [{}] + counts {}; record {} words a group; MSL {} lines;          pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
+        "{} instructions; {} windowed prevs, {} halos, {} scans; exchanges [{}] + counts {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),
         plan.windowed.len(),
         plan.halos.len(),

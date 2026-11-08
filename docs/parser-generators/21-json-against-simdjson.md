@@ -188,6 +188,34 @@ What is left, in the compiler and not in a language:
 - **The sinks and the flattening:** about 70 instructions a block, and about 45 for each
   eight positions written, as in simdjson.
 
+**Pass 1 in machine code, on an ASCII block.** Step 14's hot path, read from the
+disassembly:
+
+| part | instructions | what it does |
+|---|---|---|
+| ASCII test | 18 | one branch to the UTF-8 body |
+| body | 202 | 24 byte compares, 24 pairwise adds, 8 table lookups, 56 ands; 6 masks |
+| region tests | about 25 | 3 gates |
+| sinks | 89 | 6 output words stored, the counts |
+| flattening | 58 per 8 positions | 7 per position, done twice: starts and last bytes |
+| fallback totals | 29 | 4 popcounts |
+
+The UTF-8 body is 540 instructions, with 73 values spilled to the stack. Over the corpus, pass 1
+runs 12.4 instructions and 1.86 cycles a byte, at 6.6 instructions a cycle; simdjson's stage 1
+runs 2.7 and 0.66, at 4.1 a cycle. The core is busy for both: the gap is the instruction count.
+Where ours runs more than simdjson:
+
+- **6 masks, not 4.** The `u`, number-first-byte and control classes exist for the checks.
+- **Two flattenings, not one.** Token starts and last bytes are written separately. One list,
+  with the last byte found from the next start, would halve it.
+- **7 instructions a position, not about 5.** Cranelift does not fold the constant offset of
+  each store into its address, so every store has its own add.
+- **4 popcounts for the fallback totals.** The totals are only tested against zero. One word,
+  OR-ed across blocks, would do.
+- **16 carried words, not 3 or 4.** On the UTF-8 path they no longer fit in registers.
+- **The output words.** simdjson keeps its masks in registers until it flattens them.
+- **The number check**, about 490 instructions where a block holds a number (above).
+
 **Pass 2: no check left.** It runs at 2.9 GB/s over the corpus, 7.7 GB/s on gsoc-2018. Its
 time is the token loop: a switch, the arm's nodes, and the jump to the next state, per token.
 
