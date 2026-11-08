@@ -456,10 +456,10 @@ impl Emit<'_> {
 }
 
 /// Tier 2's words from the state machine and the token rows.
-/// Tier 1's extracts the words read: every token's first byte (`TOKEN`), and the last byte of
-/// each token whose arm reads it (`SPAN m=1`).
+/// Tier 1's streams the words read: the extract of every token's first byte (`TOKEN`), and the
+/// mask of the last byte of each token whose arm reads it (`SPAN m=1`).
 pub(super) const STARTS: u16 = 0;
-pub(super) const LASTS: u16 = 1;
+pub(super) const LASTS: u16 = 0;
 
 /// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
 /// each of which must be zero before the first token is taken.

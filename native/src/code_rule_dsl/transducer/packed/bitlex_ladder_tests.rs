@@ -414,7 +414,8 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
 
 /// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
 /// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
-/// tier 2 loops only over tokens (a `check` is tier 1's masks); nothing calls.
+/// tier 2 loops only over tokens and over a mask's words, 64 bytes a turn (a `check` is tier 1's
+/// masks); nothing calls.
 fn check_shape(name: &str, c: &Compiled) {
     let block = &c.native.block_programs[0];
     let body = super::block_tests::body_of(&c.parser.tier1.clif);
@@ -424,7 +425,7 @@ fn check_shape(name: &str, c: &Compiled) {
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {
-        assert!(*step == Step::Token, "{name}: tier 2 loops at {b} over {step:?}");
+        assert!(matches!(step, Step::Token | Step::Block), "{name}: tier 2 loops at {b} over {step:?}");
     }
     for (tier, asm) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
         assert!(!asm.contains(" bl ") && !asm.contains("blr") && !asm.contains(" br "), "{name}: {tier} calls or jumps out");

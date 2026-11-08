@@ -43,9 +43,9 @@ type Entry = unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Row {
     pub(super) bytes: u64,
-    blocks: u64,
+    pub(super) blocks: u64,
     pub(super) len: u64,
-    out: u64,
+    pub(super) out: u64,
     pub(super) positions: u64,
     pub(super) capacity: u64,
     pub(super) counts: u64,
@@ -55,7 +55,7 @@ pub(super) struct Row {
 pub(super) struct CompiledBlock {
     _module: JITModule,
     entry: Entry,
-    outputs: usize,
+    pub(super) outputs: usize,
     delay: u8,
     pub(super) extracts: Vec<usize>,
     totals: Vec<usize>,
@@ -102,7 +102,7 @@ impl CompiledBlock {
 pub(super) struct Batch {
     pub(super) bytes: Vec<u8>,
     pub(super) rows: Vec<Row>,
-    out: Vec<u64>,
+    pub(super) out: Vec<u64>,
     pub(super) positions: Vec<u32>,
     pub(super) counts: Vec<u64>,
 }

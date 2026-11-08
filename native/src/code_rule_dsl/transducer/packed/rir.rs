@@ -293,6 +293,9 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     for value in &block.totals {
         let _ = writeln!(out, "  block {at} total %{value}");
     }
+    for value in &block.masks {
+        let _ = writeln!(out, "  block {at} mask %{value}");
+    }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
@@ -746,7 +749,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let program = parts.block_programs.last_mut().expect("pushed");
             let first = line.word()?;
             if first == "output" {
-                if !program.extracts.is_empty() || !program.totals.is_empty() {
+                if !program.extracts.is_empty() || !program.totals.is_empty() || !program.masks.is_empty() {
                     return Err(format!("block {at} output after an extract or a total"));
                 }
                 program.outputs.push(line.number("%")?);
@@ -772,6 +775,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 program.extracts.push(line.number("%")?);
             } else if first == "total" {
                 program.totals.push(line.number("%")?);
+            } else if first == "mask" {
+                program.masks.push(line.number("%")?);
             } else if first == "table" {
                 let t: usize = line.number("")?;
                 if t != program.tables.len() || !program.ops.is_empty() {

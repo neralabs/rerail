@@ -37,6 +37,7 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
     let block = program.block_programs.first();
     let extracts = block.map_or(0, |b| b.extracts.len());
     let totals = block.map_or(0, |b| b.totals.len());
+    let masks = block.map_or(0, |b| b.masks.len());
     let ok = match opcode {
         TOKEN => mode == 0 && usize::from(operand) < extracts,
         ACCEPT => mode == 0 && operand == 0,
@@ -49,7 +50,7 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
-        SPAN => (mode == 0 && operand != 0) || (mode == 1 && usize::from(operand) < extracts),
+        SPAN => (mode == 0 && operand != 0) || (mode == 1 && usize::from(operand) < masks),
         _ => return Err(Error::InvalidOpcode(pc)),
     };
     if ok { Ok(()) } else { Err(Error::InvalidOperand(pc)) }
@@ -81,7 +82,7 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
         }
     }
     // One stream of starts and one of last bytes: every `TOKEN` names one extract, and every
-    // `SPAN m=1` one other.
+    // `SPAN m=1` one mask.
     let named = |op: u8, m: u8| -> Vec<u16> {
         let mut v: Vec<u16> = words.iter().map(|&w| split(w)).filter(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| x).collect();
         v.sort_unstable();
@@ -89,7 +90,7 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
         v
     };
     let (starts, lasts) = (named(TOKEN, 0), named(SPAN, 1));
-    if starts.len() > 1 || lasts.len() > 1 || (starts.len() == 1 && lasts.first() == starts.first()) {
+    if starts.len() > 1 || lasts.len() > 1 {
         return Err(Error::InvalidOperand(0));
     }
     // Every cycle passes a `TOKEN`: with `TOKEN`'s edges cut, the graph is acyclic.
@@ -158,16 +159,32 @@ pub(in crate::code_rule_dsl) struct Refused {
     pub(super) why: &'static str,
 }
 
+/// The first set bit of `words` at `from` or after, a word at a time.
+fn next_bit(words: &[u64], from: usize) -> Option<u32> {
+    let (mut w, shift) = (from / 64, from % 64);
+    let mut bits = words.get(w)? & (u64::MAX << shift);
+    while bits == 0 {
+        w += 1;
+        bits = *words.get(w)?;
+    }
+    Some((64 * w) as u32 + bits.trailing_zeros())
+}
+
 /// The interpreter of a tier-2 program over tier 1's run of `bytes`: the extract `TOKEN` names
-/// holds every token's first byte, the one `SPAN m=1` names the last byte of each token whose
-/// arm reads it, and `EMPTY` reads the totals. It executes the words only; the tables it reads
+/// holds every token's first byte, the mask `SPAN m=1` names the last byte of each token whose
+/// arm reads it (taken in order: the next set bit after the last one taken), and `EMPTY` reads
+/// the totals. It executes the words only; the tables it reads
 /// are the program's switches, strings and checks.
 pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &super::block::BlockRun) -> Result<Vec<Node>, Refused> {
     let words = &program.words;
     let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
     let none: Vec<u32> = Vec::new();
     let starts: &[u32] = stream(TOKEN, 0).map_or(&none, |e| &tier1.positions[e]);
-    let lasts: &[u32] = stream(SPAN, 1).map_or(&none, |e| &tier1.positions[e]);
+    let no_words: Vec<u64> = Vec::new();
+    let lasts: &[u64] = match (stream(SPAN, 1), program.block_programs.first()) {
+        (Some(m), Some(block)) => &tier1.outputs[block.mask_outputs()[m]],
+        _ => &no_words,
+    };
     let mut pc = 0usize;
     let (mut next, mut taken, mut start, mut end, mut limit, mut last_end, mut at_end) = (0usize, 0usize, 0u32, 0u32, 0u32, 0u32, false);
     let mut nodes: Vec<Node> = Vec::new();
@@ -201,8 +218,8 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 let e = if mode == 0 {
                     start + u32::from(operand)
                 } else {
-                    let Some(&l) = lasts.get(taken) else { return refuse(pc - 1, "a token with no last byte") };
-                    taken += 1;
+                    let Some(l) = next_bit(lasts, taken) else { return refuse(pc - 1, "a token with no last byte") };
+                    taken = l as usize + 1;
                     if l < start {
                         return refuse(pc - 1, "a last byte before its token");
                     }
@@ -253,7 +270,7 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {
-                if !at_end || open.len() != 1 || !returns.is_empty() || taken != lasts.len() {
+                if !at_end || open.len() != 1 || !returns.is_empty() || next_bit(lasts, taken).is_some() {
                     return refuse(pc - 1, "the file ends inside a node");
                 }
                 let at = open[0];
