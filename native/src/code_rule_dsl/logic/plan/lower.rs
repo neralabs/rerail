@@ -160,8 +160,9 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
 /// Every column's domain (see the module comment).
 pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
     let mut cols: BTreeMap<String, Vec<Option<Domain>>> = BTreeMap::new();
+    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     for (rel, decl) in &prog.decls {
-        let input = prog.inputs.contains(rel);
+        let input = inputs.contains(rel.as_str());
         let ds = decl
             .iter()
             .enumerate()
@@ -175,21 +176,40 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
             .collect::<Result<_>>()?;
         cols.insert(rel.clone(), ds);
     }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for i in 0..prog.rules.len() {
-            let vars = rule_vars(prog, &cols, i)?;
-            let r = &prog.rules[i];
-            for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
-                let Some(ds) = cols.get_mut(&a.rel) else { continue };
-                for (c, t) in a.args.iter().enumerate() {
-                    if let (Term::Var(v), Some(slot @ None)) = (t, ds.get_mut(c))
-                        && let Some(&d) = vars.get(v)
-                    {
-                        *slot = Some(d);
-                        changed = true;
-                    }
+    // To a fixpoint, by a worklist: a rule is read again only when a relation it names gained a column's domain. Every
+    // rule in every round was quadratic in a combined pack (O111: 539 rules, a round per step of a chain).
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
+            let list = readers.entry(a.rel.as_str()).or_default();
+            if list.last() != Some(&i) {
+                list.push(i);
+            }
+        }
+    }
+    let mut queued = vec![true; prog.rules.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..prog.rules.len()).collect();
+    while let Some(i) = work.pop_front() {
+        queued[i] = false;
+        let vars = rule_vars(prog, &cols, i)?;
+        let r = &prog.rules[i];
+        let mut gained: Vec<&str> = Vec::new();
+        for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
+            let Some(ds) = cols.get_mut(&a.rel) else { continue };
+            for (c, t) in a.args.iter().enumerate() {
+                if let (Term::Var(v), Some(slot @ None)) = (t, ds.get_mut(c))
+                    && let Some(&d) = vars.get(v)
+                {
+                    *slot = Some(d);
+                    gained.push(a.rel.as_str());
+                }
+            }
+        }
+        for rel in gained {
+            for &j in readers.get(rel).into_iter().flatten() {
+                if !queued[j] {
+                    queued[j] = true;
+                    work.push_back(j);
                 }
             }
         }
@@ -294,11 +314,10 @@ pub(in crate::code_rule_dsl) fn lower(
     let names: HashMap<String, i64> = all.into_iter().zip(atoms_of.into_iter().map(i64::from)).collect();
     let k = Constants { tag, kinds: dialect.kinds(), names: &names };
     let mut out = prog.clone();
+    // Every column's domain as `rule_vars` reads it, made once: made per rule, it was rules × relations (O111).
+    let cols: BTreeMap<String, Vec<Option<Domain>>> = domains.iter().map(|(r, ds)| (r.clone(), ds.iter().copied().map(Some).collect())).collect();
     for i in 0..out.rules.len() {
-        let vars = {
-            let cols = domains.iter().map(|(r, ds)| (r.clone(), ds.iter().copied().map(Some).collect())).collect();
-            rule_vars(prog, &cols, i)?
-        };
+        let vars = rule_vars(prog, &cols, i)?;
         let rule = &mut out.rules[i];
         let col = |rel: &str, c: usize| domains.get(rel).and_then(|ds| ds.get(c)).copied();
         for (c, t) in rule.head.args.iter_mut().enumerate() {

@@ -2147,6 +2147,38 @@ points to how a directory is combined, not to the bandit rules. Not investigated
 
 **Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
 
+**Progress (2026-11-08).** `check-rr` over the 546 files: 539 pass the reader (526 before).
+
+- **Messages:** `{{` and `}}` are braces of a message's text (`rr::lower::findings`), as the converter already
+  wrote them (`convert::policy`). The 14 messages with literal braces now double them. In `fast003`,
+  `{{{K}}}` is a brace around the parameter's name.
+- **Value cycles:** `era001` runs. A recursion only between constant keys that never come back
+  (`era_re("EXPR", …) :- era_re("OPD", …)`) is bounded (`cycles::constant_keyed`). So is a head term equal to a
+  term a lower stratum's variable is assigned (`era_run`'s `@add($l, 1)` checked against `era_cline`).
+- **Combining:** a directory's policies are read as `run-rr` reads one (`tools::program_text`), so their language's
+  base relations are declared. The "relation kind … not declared" failure is gone. 60, 120 and 240 rules
+  combine and run.
+
+What remains:
+
+- **Listed with their reason:**
+  - `ruff-b005`: its index rises until `@slice` gives `""`, which no static bound sees. Rewritten with
+    `$j < strlen($v)` it would be a capped count.
+  - `ruff-fast003`, `ruff-perf403` and `ruff-ruf001` to `ruf003` (with ruf001's `confusables.rr`): `match_all`
+    over a node, O80.
+- **The full pack (539 rules) does not prepare within 2 minutes.** Preparing was superlinear. Three hot spots are
+  fixed:
+  - `lower` rebuilt every column's domain map per rule (52.8 s to 0.13 s at 240 rules);
+  - `strings::vocabulary_columns` scanned every rule per declaration;
+  - guest hiding's `carry` re-analysed every rule each round, now a worklist.
+
+  At 240 rules the run takes 23.6 s user, against 91.4 s before. At 539, `hiding::hide` is still about 58 s of the
+  68 s that combining takes (sampled): its specialization loop runs `carry` from scratch each round and clones
+  every rule. Peak RSS is 2.0 GB at 240 rules, over the 1 GB budget.
+
+**Closure (narrowed):** the combined pack prepared within the run cap and the memory budget: hiding's
+specialization incremental, and the pack's peak memory measured and cut.
+
 ## O112. The shared tape cache holds memo rows whose length does not match
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with

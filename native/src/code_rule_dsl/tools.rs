@@ -293,7 +293,10 @@ pub fn assemble(text: &str) -> Result<String, String> {
 pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     let text =
         std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    if !text.lines().any(|l| l.trim_start().starts_with("#include")) {
+    // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
+    // reading the file (O111), which a policy's text does not do itself.
+    let policy = text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
+    if !policy && !text.lines().any(|l| l.trim_start().starts_with("#include")) {
         return Ok(text);
     }
     let program = super::logic::rr::parse_file(path)

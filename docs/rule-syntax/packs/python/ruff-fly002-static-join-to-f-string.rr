@@ -20,7 +20,7 @@
     "Replace this `join` of string literals with the single string literal it produces."
     suppress ruff "FLY002"
 .violation FLY002_fstring(at: node) code "FLY002"
-    "Replace this `join` over a fixed list with an f-string such as `f\"{a}-{b}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
+    "Replace this `join` over a fixed list with an f-string such as `f\"{{a}}-{{b}}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
     suppress ruff "FLY002"
 FLY002(c) :- static_join(c, _, a), joined_str(a, _), !raw_both_triples(a).
 FLY002_fstring(c) :- static_join(c, _, a), joinee(a, _, _), !joined_str(a, _), !bad_joinee(a),

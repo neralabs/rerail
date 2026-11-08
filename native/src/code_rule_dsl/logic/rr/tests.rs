@@ -270,6 +270,19 @@ Bad(n, "second", 8) :- kind(n, "identifier").
     }
 }
 
+/// O111: `{{` and `}}` are braces of a message's text, as the converter writes them; a lone `}` stays text.
+#[test]
+fn doubled_braces_in_a_message_are_text() {
+    let rows = finding_contract("x = y\n", r#"
+.policy "contract:braces" revision 1
+.language python
+.violation Lit(at: node, why: symbol) "use `{{k: v for ...}}` for {why} }"
+Lit(n, "dicts") :- kind(n, "identifier").
+"#);
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["message"] == "use `{k: v for ...}` for dicts }"), "{rows:?}");
+}
+
 /// This producer binds a source span, not a tree node. Per-file memoization must use its document key.
 #[test]
 fn source_span_producers_retain_rows_through_local_planning() {

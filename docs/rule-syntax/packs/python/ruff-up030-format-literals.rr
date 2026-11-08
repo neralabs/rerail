@@ -15,7 +15,7 @@
 //   format_call(c, v), brace_ok(v), brace_name, brace_arg, brace_nested; call_pos, call_kw, call_kwsplat
 
 .violation UP030(at: node) code "UP030"
-    "Replace the explicit indices (`{0}`, `{1}`) with automatic `{}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+    "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
     suppress ruff "UP030"
 UP030(c) :- format_call(c, v), indexed(v), in_order(v).
 UP030(c) :- format_call(c, v), indexed(v), !in_order(v), permutation(v, n), count : { call_pos(c, _, _) } >= n,

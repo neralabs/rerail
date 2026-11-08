@@ -61,8 +61,24 @@ impl Lowerer {
         } else { number(if i == 0 && place { at.clone() } else { cols[i].clone() }) };
         let mut pieces = Vec::new();
         let mut rest = finding.message.as_str();
-        while let Some(start) = rest.find('{') {
-            pieces.push(s(&rest[..start]));
+        // `{{` and `}}` are a brace of the text (O111), as the converter writes a literal one (`convert::policy`).
+        let mut text = String::new();
+        loop {
+            let Some(start) = rest.find(['{', '}']) else { break };
+            text.push_str(&rest[..start]);
+            let brace = &rest[start..start + 1];
+            if rest[start + 1..].starts_with(brace) {
+                text.push_str(brace);
+                rest = &rest[start + 2..];
+                continue;
+            }
+            if brace == "}" {
+                // A lone `}` was always text.
+                text.push('}');
+                rest = &rest[start + 1..];
+                continue;
+            }
+            pieces.push(s(&std::mem::take(&mut text)));
             let Some(end) = rest[start + 1..].find('}').map(|end| end + start + 1) else {
                 return Err(Error::Syntax(format!(".violation {} message: unclosed placeholder", finding.name)));
             };
@@ -101,7 +117,8 @@ impl Lowerer {
             pieces.push(term);
             rest = &rest[end + 1..];
         }
-        pieces.push(s(rest));
+        text.push_str(rest);
+        pieces.push(s(&text));
         let message = concat(pieces);
         let code = match &finding.code {
             FindingCode::Name => s(&finding.name),

@@ -13,6 +13,6 @@
 //   c4_call(c, x), c4_only(c, a), list_like(e, k)
 
 .violation C405(at: node, kind: symbol) code "C405"
-    "Replace `set([...])` or `set((...))` with the set literal `{...}`; an empty {kind} becomes `set()`."
+    "Replace `set([...])` or `set((...))` with the set literal `{{...}}`; an empty {kind} becomes `set()`."
     suppress ruff "C405"
 C405(c, k) :- c4_call(c, "set"), c4_only(c, a), list_like(a, k), (k = "list" ; k = "tuple").
