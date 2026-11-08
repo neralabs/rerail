@@ -244,7 +244,7 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
 - `merge-assist-resolve.ts` (`node --import tsx benchmark/merge-assist-resolve.ts build|checks|resolve|score|log-smoke
   ...`, flags in its header) tests Merge Assist's conflict resolver offline on OSS conflict pairs: it builds a
   conflict record per pair, runs each side's tests and type check on the build hosts, resolves every pair under
-  `merge-assist-resolve.policy.yaml` over several panel seeds and both side orders, scores the verdicts against the
+  `fixtures/host/benchmark/merge-assist/resolve-policy.yaml` over several panel seeds and both side orders, scores the verdicts against the
   adopted-design labels it is pointed at, and writes the decision log into scratch clones. See
   [Conflict resolver](#conflict-resolver).
 
@@ -641,6 +641,22 @@ preferring the later, smaller design); each judge reads both orders; a declared 
   adopted often enough that only escalating nearly everything keeps it safe.
 - Decision log smoke: an entry for each of the 15 seed-0 resolutions written to scratch clones of the 9 repositories
   and read back whole.
+
+### Held-out run: pre-registration
+
+Fixed before the resolver runs on the 26 completion pairs (`/tmp/ma-ctx/oss/dataset/completion/`, httpx excluded),
+which it has never seen, and not changed after.
+
+- **Resolver frozen** as committed with this section: prompts, panel, thresholds, reserved classes and the benchmark
+  policy file as tuned on the 15 dev pairs.
+- **Two policies.** `full`: precedent, hard checks, measurable criteria, panel, escalation. `checks-only`: the same
+  without the panel, so anything the deterministic steps don't decide escalates; it measures the safe floor.
+- **Truth.** The completion labels' scenario: D1 means the earlier pull request's design was adopted, D2 the later
+  one's. Only the scorer reads it.
+- **Runs.** 3 panel seeds, each with the designs shown in both orders; hard checks on nera-spike-3/-4.
+- **Bars** (as for dev): wrong at most 1 of 26 pairs; correct on at least 60% of decided pairs; escalated under 50%.
+  Reported per policy, per seed and order, with Wilson 95% intervals, per scenario (D1, D2) and per deciding step.
+- **Decision log.** Every verdict and escalation written to `refs/rerail/decisions` in scratch clones and read back.
 
 ## Steer strategies
 

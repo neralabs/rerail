@@ -27,7 +27,7 @@
  * is exported with `git archive`, the runner is the product's (`createLocalCheckRunner`); each check is pass, fail or
  * unknown, with the end of its log.
  *
- * `resolve` runs `resolveConflict` on every record under `--policy` (benchmark/merge-assist-resolve.policy.yaml by
+ * `resolve` runs `resolveConflict` on every record under `--policy` (fixtures/host/benchmark/merge-assist/resolve-policy.yaml by
  * default; the checks come from `checks.json`, keyed by commit), once per seed, and with `--swap` again with sides a
  * and b exchanged, which shows each judge the other order: a verdict must follow the content, not the slot. The panel's
  * judges are `codex exec` calls with no tools in an empty folder with an isolated CODEX_HOME, on `--provider`'s model
@@ -48,6 +48,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixturesPath } from "../test/support/oracles.js";
 import {
   appendDecision,
   type CheckResult,
@@ -77,7 +78,7 @@ import {
 import { clip, fixed, ratio, type Ratio, table, wilson } from "./merge-assist-context.js";
 
 const DEFAULT_REPOS = "/tmp/ma-ctx/oss/repos";
-const DEFAULT_POLICY = fileURLToPath(new URL("./merge-assist-resolve.policy.yaml", import.meta.url));
+const DEFAULT_POLICY = fixturesPath("host", "benchmark", "merge-assist", "resolve-policy.yaml");
 const DEFAULT_CACHE = join(tmpdir(), "rerail-resolve-cache");
 const DEFAULT_BODIES = join(DEFAULT_CACHE, "pr-bodies");
 const DEFAULT_MODEL = "openai.gpt-6-luna";
