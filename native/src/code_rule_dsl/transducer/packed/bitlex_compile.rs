@@ -15,9 +15,9 @@
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
 //! - **Tokens**, `keywords` and `skip`: each token kind's start and last-byte masks, and the
 //!   coverage and overlap checks.
-//! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): each token kind's row
-//!   (its start and end outputs), its keywords, the skipped bytes, and the grammar's state
-//!   machine (`grammar`), with grammar ids from `Symbols`.
+//! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): the grammar's state
+//!   machine (`grammar`), with grammar ids from `Symbols`, lowered to tier 2's words
+//!   (`bitlex_tier2`, decision 0053); tier 1 outputs the stream they read, two extracts.
 //! - **Errors and escapes.** Each mask joins the fallback output (`FALLBACK`); a file with a bit
 //!   of it goes to tree-sitter.
 //!
@@ -54,8 +54,8 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, CheckRow, ClassTable, KeywordRow, TokenRow};
-use super::grammar;
+use super::block::{BlockOp, BlockProgram, CheckRow, ClassTable};
+use super::{bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, Stmt};
 use std::collections::HashMap;
 
@@ -64,6 +64,11 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) rows: String,
+    /// Tier 2's words (decision 0053), with their strings and switches; `0000 STOP 0` without a
+    /// tree section.
+    pub(super) words: String,
+    /// The tree section's state machine as text (`grammar::text`), which the words are lowered from.
+    pub(super) machine: String,
     /// Each requested name, then each token row's masks (`token KIND start`, `token KIND end`)
     /// and `skip`, and its output: a value asked for twice is one output.
     pub(super) labels: Vec<(String, u16)>,
@@ -72,12 +77,24 @@ pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) fallbacks: Vec<u16>,
 }
 
+impl Compiled {
+    /// The whole program as `rir`: its block rows, then its words.
+    pub(super) fn text(&self) -> String {
+        format!("program -\n  mode set=0 query=0\n{}{}", self.rows, self.words)
+    }
+}
+
 /// The grammar's ids for the tree section's rows.
 pub(in crate::code_rule_dsl) struct Symbols<'a> {
     /// A node kind's id (named first, then anonymous), or a supertype's.
     pub(super) kind: &'a dyn Fn(&str) -> Option<u16>,
     pub(super) field: &'a dyn Fn(&str) -> Option<u16>,
 }
+
+/// The output names of the stream tier 2 reads (decision 0053): every token's first byte, and
+/// the last byte of each token whose arm reads it.
+pub(in crate::code_rule_dsl) const STREAM_START: &str = "stream start";
+pub(in crate::code_rule_dsl) const STREAM_LAST: &str = "stream last";
 
 /// The output name for the fallback bit: set somewhere when the file goes to tree-sitter.
 pub(in crate::code_rule_dsl) const FALLBACK: &str = "fallback";
@@ -179,6 +196,67 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     }
     low.stmts(stmts)?;
     let token_rows = low.tokens()?;
+    // The tree section: its state machine, its checks and tier 2's words (decision 0053), before
+    // the outputs, since the words' guards join the fallback.
+    let has_tree = !low.tree.is_empty();
+    let mut tier2: Option<(String, Vec<CheckRow>, String, Vec<bool>)> = None;
+    if has_tree {
+        let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
+        let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
+        let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
+        // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
+        let required: Vec<String> = low.keywords.iter().filter(|k| k.2).map(|k| k.0.clone()).collect();
+        // The grammar's state machine (doc 18 §2). A token kind is a token row's that is not all
+        // keywords, or a keyword's.
+        let (states, arms) = {
+            let is_token = |name: &str| token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0)) || is_keyword_kind(&low.keywords, name);
+            let kind = |name: &str| id(name);
+            let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
+            grammar::build(&low.tree, &ids)?
+        };
+        // Each check, a state machine over its tokens' bytes (doc 18 §4), and the bytes a token
+        // passing it begins with.
+        let mut checks = Vec::new();
+        let mut check_of: HashMap<usize, (u16, ByteSet)> = HashMap::new();
+        for (kind, g) in &low.checks {
+            let token = token_rows.iter().position(|t| &t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
+            let (accept, arms) = grammar::byte_check(g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
+            let first = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| [s[0] | a.1[0], s[1] | a.1[1], s[2] | a.1[2], s[3] | a.1[3]]);
+            let program = grammar::check_program(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?;
+            check_of.insert(token, (checks.len() as u16, first));
+            checks.push(CheckRow { program });
+        }
+        let mut rows = Vec::new();
+        for (r, (kind, start, last)) in token_rows.iter().enumerate() {
+            let mut keywords = Vec::new();
+            for (k, words, _) in low.keywords.iter().filter(|k| &k.0 == kind) {
+                let _ = k;
+                for (word, alias) in words {
+                    let name = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(word).into_owned());
+                    keywords.push((word.clone(), id(&name)?));
+                }
+            }
+            rows.push(bitlex_tier2::Row {
+                kind: if required.contains(kind) { 0 } else { id(kind)? },
+                one_byte: start.v == last.v && start.d == last.d,
+                first: bitlex_tier2::first_bytes(&low.program.ops, &low.program.tables, start.v, start.d),
+                keywords,
+                check: check_of.get(&r).copied(),
+            });
+        }
+        let lowered = bitlex_tier2::lower(&states, &arms, &rows)?;
+        // A guard: a row beginning with a byte the switch gives another row.
+        for &(r, set) in &lowered.guards {
+            let bytes = low.class_set(set);
+            let g = low.and(token_rows[r].1, bytes)?;
+            low.fallbacks.push(g);
+        }
+        if !low.extra.is_empty() {
+            return Err("extra kinds in tier 2's words: not compiled yet".into());
+        }
+        let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
+        tier2 = Some((grammar::text(&states, &arms), checks, lowered.text, takes_last));
+    }
     let mut vals: Vec<(String, Val)> = Vec::new();
     for name in outputs {
         if *name == FALLBACK {
@@ -190,21 +268,28 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             vals.push(((*name).to_owned(), x));
         }
     }
-    // The tree section: each token kind's start and end, then the skipped bytes; each mask an
-    // output.
-    let has_tree = !low.tree.is_empty();
-    let mut token_specs: Vec<(String, usize, usize)> = Vec::new();
-    let mut skip = None;
-    if has_tree {
-        for (kind, start, last) in &token_rows {
-            vals.push((format!("token {kind} start"), *start));
-            vals.push((format!("token {kind} end"), *last));
-            token_specs.push((kind.clone(), vals.len() - 2, vals.len() - 1));
+    // The stream tier 2 reads, two extracts, as simdjson's structural indexes: every token's
+    // first byte, and the last byte of each token whose end is not its row's to know (`SPAN`).
+    let mut stream = None;
+    if let Some((_, _, _, takes_last)) = &tier2 {
+        let mut starts = token_rows[0].1;
+        for (_, s, _) in &token_rows[1..] {
+            starts = low.or(starts, *s)?;
         }
-        if let Some(sk) = low.skip {
-            vals.push(("skip".to_owned(), sk));
-            skip = Some(vals.len() - 1);
+        let mut lasts: Option<Val> = None;
+        for ((_, _, l), _) in token_rows.iter().zip(takes_last).filter(|(_, t)| **t) {
+            lasts = Some(match lasts {
+                Some(x) => low.or(x, *l)?,
+                None => *l,
+            });
         }
+        let lasts = match lasts {
+            Some(x) => x,
+            None => low.leaf(BlockOp::Const(0), false),
+        };
+        vals.push((STREAM_START.to_owned(), starts));
+        vals.push((STREAM_LAST.to_owned(), lasts));
+        stream = Some((vals.len() - 2, vals.len() - 1));
     }
     let delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once.
@@ -212,8 +297,10 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     let mut labels = Vec::new();
     let mut at = Vec::new();
     for (label, x) in &vals {
-        // Outputs hold no bits past the end: a file falls back on a bit of its own.
-        let x = if x.dirty {
+        // Outputs hold no bits past the end: a file falls back on a bit of its own. The stream's
+        // need not: the extract pass reads only the file's bytes, on every executor.
+        let stream_out = label == STREAM_START || label == STREAM_LAST;
+        let x = if x.dirty && !stream_out {
             let inside = low.within_val(x.d)?;
             low.and(*x, inside)?
         } else {
@@ -229,44 +316,19 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         labels.push((label.clone(), k));
         at.push(low.program.outputs[usize::from(k)]);
     }
-    if has_tree {
-        let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
-        let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
-        let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
-        // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
-        let required: Vec<&String> = low.keywords.iter().filter(|k| k.2).map(|k| &k.0).collect();
-        for (kind, s, e) in &token_specs {
-            let k = if required.contains(&kind) { 0 } else { id(kind)? };
-            low.program.tokens.push(TokenRow { kind: k, start: at[*s], end: at[*e], extra: low.extra.contains(kind) });
-        }
-        for (kind, words, _) in low.keywords.clone() {
-            let node = token_specs.iter().position(|t| t.0 == kind).ok_or_else(|| format!("keywords {kind}: no token of that kind"))? as u16;
-            for (word, alias) in words {
-                let name = alias.unwrap_or_else(|| String::from_utf8_lossy(&word).into_owned());
-                low.program.keywords.push(KeywordRow { node, word, kind: id(&name)? });
-            }
-        }
-        low.program.skip = skip.map(|k| at[k]);
-        // The grammar's state machine (doc 18 §2). A token kind is a token row's that is not all
-        // keywords, or a keyword's.
-        let is_token = |name: &str| token_specs.iter().any(|t| t.0 == name && !required.contains(&&t.0)) || is_keyword_kind(&low.keywords, name);
-        let kind = |name: &str| id(name);
-        let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
-        let (states, arms) = grammar::build(&low.tree, &ids)?;
-        low.program.states = states;
-        low.program.arms = arms;
-        // Each check, a state machine over its tokens' bytes (doc 18 §4).
-        for (kind, g) in &low.checks {
-            let token = token_specs.iter().position(|t| &t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))? as u16;
-            let (accept, arms) = grammar::byte_check(g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
-            let program = grammar::check_program(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?;
-            low.program.checks.push(CheckRow { token, program });
-        }
+    let mut words = "  0000 STOP 0\n".to_owned();
+    let mut machine = String::new();
+    if let Some((text, checks, lowered, _)) = tier2 {
+        low.program.checks = checks;
+        let (s, l) = stream.expect("a tree section's stream");
+        low.program.extracts = vec![at[s], at[l]];
+        words = lowered;
+        machine = text;
     }
     low.program.delay = delay;
     let program = live(&low.program);
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), labels, fallbacks })
+    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks })
 }
 
 impl Lowering {
@@ -974,12 +1036,8 @@ fn live(program: &BlockProgram) -> BlockProgram {
     let n = |v: u16| number[usize::from(v)];
     out.outputs = program.outputs.iter().map(|&v| n(v)).collect();
     out.output_delays = program.output_delays.clone();
-    out.tokens = program.tokens.iter().map(|r| TokenRow { start: n(r.start), end: n(r.end), ..r.clone() }).collect();
-    out.states = program.states.clone();
-    out.arms = program.arms.clone();
     out.checks = program.checks.clone();
-    out.keywords = program.keywords.clone();
-    out.skip = program.skip.map(n);
+    out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out
 }
 

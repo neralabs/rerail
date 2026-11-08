@@ -13,9 +13,82 @@
 //! 4. **Checks.** Two arms of one state on one token: the grammar is not LL(1), refused.
 //! 5. **Merging.** States that act alike on every token are one (Moore's refinement).
 
-use super::block::{Act, ArmRow, StateRow};
 use bitlex::syntax::{Gram, Stmt};
 use std::collections::HashMap;
+
+/// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
+/// tree section's grammar, one level per nested node. State 0 is the root's start.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct StateRow {
+    /// The node kind of its level: the root's, or a nested node's.
+    pub(super) level: u16,
+    /// Its level may end here, after this many closes inside it: a nested level then closes its
+    /// node and pops (at once, when the state has no arms); the root accepts at the end of the
+    /// file. `None`: it may not end here.
+    pub(super) end: Option<u8>,
+}
+
+/// What a transition does, in order: close nodes (innermost first), open nodes (outermost
+/// first), then the token's own leaf.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum Act {
+    /// Close the innermost open node, at the end of the token before.
+    Close,
+    /// Open a node of `kind` at the token's start, with a field (0: none) and supertypes
+    /// (outermost first).
+    Open { kind: u16, field: u16, supers: Vec<u16> },
+    /// The token's leaf node, of the token's kind.
+    Leaf { field: u16, supers: Vec<u16> },
+}
+/// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
+/// enters a nested level and keeps the state to return to.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct ArmRow {
+    pub(super) from: u16,
+    pub(super) token: u16,
+    pub(super) acts: Vec<Act>,
+    pub(super) to: u16,
+    pub(super) push: Option<u16>,
+}
+
+/// The state machine as text, a line per state and per arm, for tests and dumps:
+/// `state S level K [end C]`; `arm S token K to T [push P] do ACT…`, an act `close`,
+/// `open K [f F] [s K]…` or `leaf [f F] [s K]…`.
+pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for (s, state) in states.iter().enumerate() {
+        let end = state.end.map_or(String::new(), |c| format!(" end {c}"));
+        let _ = writeln!(out, "state {s} level {}{end}", state.level);
+    }
+    let marks = |field: u16, supers: &[u16]| {
+        let mut m = String::new();
+        if field != 0 {
+            let _ = write!(m, " f {field}");
+        }
+        for s in supers {
+            let _ = write!(m, " s {s}");
+        }
+        m
+    };
+    for arm in arms {
+        let mut acts = String::new();
+        for act in &arm.acts {
+            match act {
+                Act::Close => acts.push_str(" close"),
+                Act::Open { kind, field, supers } => {
+                    let _ = write!(acts, " open {kind}{}", marks(*field, supers));
+                }
+                Act::Leaf { field, supers } => {
+                    let _ = write!(acts, " leaf{}", marks(*field, supers));
+                }
+            }
+        }
+        let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
+        let _ = writeln!(out, "arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
+    }
+    out
+}
 
 /// A wrapper on the way to a position: a node, a field of the node inside it, a supertype of
 /// the node inside it.
@@ -679,7 +752,7 @@ pub(super) fn check_program(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> R
     // the last byte's (the output's delay is 1).
     let mut fail_in: Option<u16> = None;
     let mut fail_end: Option<u16> = None;
-    let mut join = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, acc: &mut Option<u16>, v: u16| {
+    let join = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, acc: &mut Option<u16>, v: u16| {
         *acc = Some(match *acc {
             Some(a) => op(p, BlockOp::Or(a, v)),
             None => v,

@@ -12,7 +12,7 @@
 // (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay).
 struct BlockStep { uint op, a, b, imm; };
 // A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts
-// (output indices, at `outs[ext0..]`).
+// (output indices, at `outs[ext0..]`, each with its output's delay in the top byte).
 struct ProgramRow { uint step0, steps, out0, outs, ext0, exts, pad0, pad1; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
@@ -117,8 +117,10 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
   for (uint k = 0u; k < pr.outs; k++) out[f.out_base + k * lanes + gl] = slots[outs[pr.out0 + k] * 32u + l];
   const uint capacity = max(f.len, 1u);
   for (uint e = 0u; e < pr.exts; e++) {
-    const M v = slots[outs[pr.out0 + outs[pr.ext0 + e]] * 32u + l];
-    if (!extract_write(v, gl, g, l, f.len, ext_states + f.ext_base + e * f.groups, positions + f.pos_base + e * capacity,
+    // The extract's output, and its delay in the top byte.
+    const uint x = outs[pr.ext0 + e];
+    const M v = slots[outs[pr.out0 + (x & 0xffffffu)] * 32u + l];
+    if (!extract_write(v, gl, g, l, f.len, x >> 24u, ext_states + f.ext_base + e * f.groups, positions + f.pos_base + e * capacity,
                        capacity, counts + f.ext_base + e * f.groups, spins * 64u))
       return false;
   }

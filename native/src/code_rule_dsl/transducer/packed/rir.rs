@@ -72,6 +72,19 @@ const OPCODES: &[(u8, &str)] = &[
     (FORK, "FORK"),
     (GOTO, "GOTO"),
     (EMIT, "EMIT"),
+    (TOKEN, "TOKEN"),
+    (SWITCH, "SWITCH"),
+    (WORD_IS, "WORD"),
+    (CHECK, "CHECK"),
+    (OPEN, "OPEN"),
+    (CLOSE, "CLOSE"),
+    (LEAF, "LEAF"),
+    (NODE_FIELD, "NODE_FIELD"),
+    (NODE_SUPER, "NODE_SUPER"),
+    (PUSH, "PUSH"),
+    (RETURN, "RETURN"),
+    (ACCEPT, "ACCEPT"),
+    (SPAN, "SPAN"),
 ];
 
 /// How an opcode's operand prints.
@@ -84,11 +97,19 @@ enum Operand {
     Assert,
     Kind,
     Field,
+    /// A string: `sN`.
+    String,
+    /// A switch table: `TN`.
+    Switch,
 }
 
 fn operand(opcode: u8) -> Operand {
     match opcode {
-        FORK | GOTO => Operand::Target,
+        FORK | GOTO | PUSH => Operand::Target,
+        WORD_IS => Operand::String,
+        SWITCH => Operand::Switch,
+        OPEN | LEAF | NODE_SUPER => Operand::Kind,
+        NODE_FIELD => Operand::Field,
         CAPTURE | EMIT => Operand::Label,
         TEXT => Operand::Predicate,
         ASSERT => Operand::Assert,
@@ -275,67 +296,15 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     tree_rows(out, at, block);
 }
 
-/// Block program `at`'s tree section (docs/parser-generators/18-tree-as-grammar.md):
-///
-/// ```text
-/// block N token R kind K start %s end %e [extra]
-/// block N keyword R HEX K
-/// block N skip %v
-/// block N state S level K [end C]
-/// block N arm S token K to T [push P] do ACT…
-/// ```
-///
-/// An arm's acts, in order: `close`; `open K [f F] [s K]…`; `leaf [f F] [s K]…` (`f` a field,
-/// `s` a supertype, outermost first). A state's `end C`: its level may end there, after `C`
-/// closes.
+/// Block program `at`'s token checks (decision 0052): `block N check C`, then its program's
+/// tables, operations (`%i = op`), `fail %v` and `delay D`. Tier 2 itself is the program's
+/// words (decision 0053).
 pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
-    use super::block::Act;
-    for (r, row) in block.tokens.iter().enumerate() {
-        let extra = if row.extra { " extra" } else { "" };
-        let _ = writeln!(out, "  block {at} token {r} kind {} start %{} end %{}{extra}", row.kind, row.start, row.end);
-    }
-    for k in &block.keywords {
-        let hex: String = k.word.iter().map(|b| format!("{b:02x}")).collect();
-        let _ = writeln!(out, "  block {at} keyword {} {hex} {}", k.node, k.kind);
-    }
-    if let Some(v) = block.skip {
-        let _ = writeln!(out, "  block {at} skip %{v}");
-    }
-    for (s, state) in block.states.iter().enumerate() {
-        let end = state.end.map_or(String::new(), |c| format!(" end {c}"));
-        let _ = writeln!(out, "  block {at} state {s} level {}{end}", state.level);
-    }
-    let marks = |field: u16, supers: &[u16]| {
-        let mut m = String::new();
-        if field != 0 {
-            let _ = write!(m, " f {field}");
-        }
-        for s in supers {
-            let _ = write!(m, " s {s}");
-        }
-        m
-    };
-    for arm in &block.arms {
-        let mut acts = String::new();
-        for act in &arm.acts {
-            match act {
-                Act::Close => acts.push_str(" close"),
-                Act::Open { kind, field, supers } => {
-                    let _ = write!(acts, " open {kind}{}", marks(*field, supers));
-                }
-                Act::Leaf { field, supers } => {
-                    let _ = write!(acts, " leaf{}", marks(*field, supers));
-                }
-            }
-        }
-        let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
-        let _ = writeln!(out, "  block {at} arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
-    }
     // A check: its straight-line program over the token's window, as a block program's rows.
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (c, check) in block.checks.iter().enumerate() {
         let q = &check.program;
-        let _ = writeln!(out, "  block {at} check {c} token {}", check.token);
+        let _ = writeln!(out, "  block {at} check {c}");
         for (t, table) in q.tables.iter().enumerate() {
             let _ = writeln!(out, "  block {at} check {c} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
         }
@@ -364,6 +333,9 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
     }
     for (at, long) in program.longs.iter().enumerate() {
         let _ = writeln!(out, "  long {at} {long}");
+    }
+    for (at, s) in program.switches.iter().enumerate() {
+        switch_rows(&mut out, at, s);
     }
     for (at, predicate) in program.predicates.iter().enumerate() {
         let (kind, source) = match predicate {
@@ -438,6 +410,8 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
             Operand::Kind => write!(out, " {}", kind(names, arg)),
             Operand::Field => write!(out, " {}", field(names, arg)),
             Operand::Number => write!(out, " {arg}"),
+            Operand::String => write!(out, " s{arg}"),
+            Operand::Switch => write!(out, " T{arg}"),
         };
         if operand(opcode) == Operand::Label
             && let Some(name) = program.label_name(arg)
@@ -698,6 +672,7 @@ struct Parts {
     directives: Vec<(String, u16, u16, Option<u16>, [i32; 4])>,
     pattern: Option<PackedPattern>,
     block_programs: Vec<block::BlockProgram>,
+    switches: Vec<stream::ByteSwitch>,
     words: Vec<u32>,
 }
 
@@ -725,6 +700,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             index(line, parts.labels.len(), "label")?;
             parts.labels.push(line.number("s")?);
         }
+        "switch" => switch_row(parts, line)?,
         "long" => {
             index(line, parts.longs.len(), "long")?;
             parts.longs.push(line.number("")?);
@@ -810,103 +786,17 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
-            } else if first == "token" {
-                // `block N token R kind K start %s end %e [extra]` (`tree_rows`), in rank order.
-                let r: usize = line.number("")?;
-                if r != program.tokens.len() {
-                    return Err(format!("block {at} token {r} out of order (expected {})", program.tokens.len()));
-                }
-                line.want("kind")?;
-                let kind = line.number("")?;
-                line.want("start")?;
-                let start = line.number("%")?;
-                line.want("end")?;
-                let end = line.number("%")?;
-                let extra = match line.peek_word().as_deref() {
-                    Some("extra") => {
-                        line.word()?;
-                        true
-                    }
-                    _ => false,
-                };
-                program.tokens.push(block::TokenRow { kind, start, end, extra });
-            } else if first == "state" {
-                // `block N state S level K [end C]`, in order.
-                let s: usize = line.number("")?;
-                if s != program.states.len() {
-                    return Err(format!("block {at} state {s} out of order (expected {})", program.states.len()));
-                }
-                line.want("level")?;
-                let level = line.number("")?;
-                let end = match line.peek_word().as_deref() {
-                    Some("end") => {
-                        line.word()?;
-                        Some(line.number("")?)
-                    }
-                    _ => None,
-                };
-                program.states.push(block::StateRow { level, end });
-            } else if first == "arm" {
-                // `block N arm S token K to T [push P] do ACT…` (`tree_rows`).
-                use super::block::Act;
-                let from = line.number("")?;
-                line.want("token")?;
-                let token = line.number("")?;
-                line.want("to")?;
-                let to = line.number("")?;
-                let mut push = None;
-                if line.peek_word().as_deref() == Some("push") {
-                    line.word()?;
-                    push = Some(line.number("")?);
-                }
-                line.want("do")?;
-                // A field and supertypes, after an `open K` or a `leaf`.
-                let marks = |line: &mut Line<'_>| -> Result<(u16, Vec<u16>), String> {
-                    let (mut field, mut supers) = (0, Vec::new());
-                    while let Some(w) = line.peek_word() {
-                        match w.as_str() {
-                            "f" => {
-                                line.word()?;
-                                field = line.number("")?;
-                            }
-                            "s" => {
-                                line.word()?;
-                                supers.push(line.number("")?);
-                            }
-                            _ => break,
-                        }
-                    }
-                    Ok((field, supers))
-                };
-                let mut acts = Vec::new();
-                while let Ok(w) = line.word() {
-                    acts.push(match w.as_str() {
-                        "close" => Act::Close,
-                        "open" => {
-                            let kind = line.number("")?;
-                            let (field, supers) = marks(line)?;
-                            Act::Open { kind, field, supers }
-                        }
-                        "leaf" => {
-                            let (field, supers) = marks(line)?;
-                            Act::Leaf { field, supers }
-                        }
-                        other => return Err(format!("an arm's act is `close`, `open` or `leaf`, not `{other}`")),
-                    });
-                }
-                program.arms.push(block::ArmRow { from, token, acts, to, push });
             } else if first == "check" {
-                // `block N check C token R`, then its program's rows (`tree_rows`), in order.
+                // `block N check C`, then its program's rows (`tree_rows`), in order.
                 let c: usize = line.number("")?;
-                let word = line.word()?;
-                if word == "token" {
+                if line.tokens.peek().is_none() {
                     if c != program.checks.len() {
                         return Err(format!("block {at} check {c} out of order (expected {})", program.checks.len()));
                     }
-                    let token = line.number("")?;
-                    program.checks.push(block::CheckRow { token, program: block::BlockProgram::default() });
-                    return line.end();
+                    program.checks.push(block::CheckRow { program: block::BlockProgram::default() });
+                    return Ok(());
                 }
+                let word = line.word()?;
                 if c + 1 != program.checks.len() {
                     return Err(format!("block {at} check {c}: a row of a check not started last"));
                 }
@@ -940,17 +830,6 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     }
                     q.ops.push(block::BlockOp::parse(&words)?);
                 }
-            } else if first == "keyword" {
-                let node = line.number("")?;
-                let hex = line.word()?;
-                let word = (0..hex.len() / 2)
-                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("a bad keyword `{hex}`")))
-                    .collect::<Result<Vec<u8>, String>>()?;
-                let kind = line.number("")?;
-                program.keywords.push(block::KeywordRow { node, word, kind });
-            } else if first == "skip" {
-                program.skip = Some(line.number("%")?);
-
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;
@@ -1015,6 +894,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 Operand::Kind => line.kind()?,
                 Operand::Field => line.field()?,
                 Operand::Number => prefixed(line, "")?,
+                Operand::String => prefixed(line, "s")?,
+                Operand::Switch => prefixed(line, "T")?,
             };
             parts.words.push(word(opcode, mode, arg));
         }
@@ -1145,6 +1026,7 @@ fn build(parts: Parts) -> Result<Program, String> {
         set_mode: parts.set_mode,
         ast_pattern: parts.pattern,
         block_programs: parts.block_programs,
+        switches: parts.switches,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;
@@ -1223,4 +1105,65 @@ fn table_half(line: &mut Line<'_>, key: &str) -> Result<[u8; 16], String> {
         *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
     }
     Ok(out)
+}
+
+/// A target of a switch: `@PC`, or `refuse`.
+fn switch_target(t: u16) -> String {
+    if t == stream::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
+}
+
+/// Switch table `at` (decision 0053): `switch N at OFFSET end TARGET`, then a row per run of
+/// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
+pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
+    let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));
+    let mut b = 0usize;
+    while b < 256 {
+        let t = s.targets[b];
+        let mut e = b;
+        while e + 1 < 256 && s.targets[e + 1] == t {
+            e += 1;
+        }
+        if t != stream::REFUSE {
+            let _ = writeln!(out, "  switch {at} {b:#04x}-{e:#04x} {}", switch_target(t));
+        }
+        b = e + 1;
+    }
+}
+
+fn switch_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
+    let at: usize = line.number("")?;
+    let target = |line: &mut Line<'_>| -> Result<u16, String> {
+        match line.peek_word().as_deref() {
+            Some("refuse") => {
+                line.next()?;
+                Ok(stream::REFUSE)
+            }
+            _ => line.number("@"),
+        }
+    };
+    if line.peek_word().as_deref() == Some("at") {
+        if at != parts.switches.len() {
+            return Err(format!("switch {at} out of order (expected {})", parts.switches.len()));
+        }
+        line.next()?;
+        let offset: u8 = line.number("")?;
+        if line.word()? != "end" {
+            return Err("a switch is `switch N at OFFSET end TARGET`".into());
+        }
+        let end = target(line)?;
+        parts.switches.push(stream::ByteSwitch { end, ..stream::ByteSwitch::refusing(offset) });
+        return Ok(());
+    }
+    if at + 1 != parts.switches.len() {
+        return Err(format!("switch {at}'s bytes before its header"));
+    }
+    let range = line.word()?;
+    let (lo, hi) = range.split_once('-').ok_or_else(|| format!("a byte range is `0xLO-0xHI`, not `{range}`"))?;
+    let byte = |x: &str| x.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad byte `{x}`"));
+    let (lo, hi) = (byte(lo)?, byte(hi)?);
+    let t = target(line)?;
+    for b in lo..=hi {
+        parts.switches[at].targets[usize::from(b)] = t;
+    }
+    Ok(())
 }

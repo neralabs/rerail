@@ -215,98 +215,67 @@ const JSON_CASES: [&[u8]; 12] = [
     b"[1 // c\n]",
 ];
 
+/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0053): the starts
+/// extract is every token's first byte; the lasts extract is the last byte of each token whose
+/// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
 #[test]
-fn json_rows_equal_the_evaluator_on_every_executor() {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let kind = |name: &str| {
-        let id = match grammar.id_for_node_kind(name, true) {
-            0 => grammar.id_for_node_kind(name, false),
-            id => id,
-        };
-        (id != 0).then_some(id)
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+fn json_stream_equals_the_evaluator_on_every_executor() {
+    use ::bitlex::syntax::Stmt;
+    let (p, compiled) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
-    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
-    let ops = compiled.rows.lines().filter(|l| l.contains(" = ")).count();
-    let carried = compiled.rows.lines().filter(|l| [" = fill ", " = toggle ", " = escaped ", " = prev "].iter().any(|op| l.contains(op))).count();
-    eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
-    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let prepared = Executors::new(&p);
-    let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
-    // A token row's tokens: its kind's and its keywords' kinds (the evaluator retypes them).
-    let members = |row: &str| -> Vec<String> {
-        let mut out = vec![row.to_owned()];
-        for s in &stmts {
-            if let ::bitlex::syntax::Stmt::Keywords { kind, words, .. } = s
-                && kind == row
-            {
-                out.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
+    let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
+    // The kinds whose tokens' last bytes are in the stream: rows with a last byte of their own,
+    // and their keywords, unless every token of the row is a keyword.
+    let mut late: Vec<String> = Vec::new();
+    for s in &stmts {
+        if let Stmt::Token { kind, last, through, .. } = s
+            && (last.is_some() || through.is_some())
+        {
+            let keywords = stmts.iter().find_map(|k| match k {
+                Stmt::Keywords { kind: k, words, required, .. } if k == kind => Some((words, *required)),
+                _ => None,
+            });
+            match keywords {
+                Some((_, true)) => {}
+                Some((words, false)) => {
+                    late.push(kind.clone());
+                    late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
+                }
+                None => late.push(kind.clone()),
             }
         }
-        out
-    };
+    }
+    assert_eq!(late, ["string_content", "number", "true", "false", "null"]);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
     for bytes in cases {
         let n = bytes.len();
-        let tables = std::collections::HashMap::new();
-        let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).unwrap_or_else(|e| panic!("evaluates: {e}"));
-        let token_mask = |kind: &str, last: bool| {
-            let mut w = vec![0u64; n.div_ceil(64)];
-            let kinds = members(kind);
-            for t in out.tokens.iter().filter(|t| kinds.contains(&t.kind)) {
-                let i = if last { t.end - 1 } else { t.start };
-                w[i / 64] |= 1 << (i % 64);
+        let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &std::collections::HashMap::new()).unwrap_or_else(|e| panic!("evaluates: {e}"));
+        if !out.errors.is_empty() {
+            rejected += 1;
+            continue;
+        }
+        let mut want_starts = vec![0u64; n.div_ceil(64)];
+        let mut want_lasts = vec![0u64; n.div_ceil(64)];
+        for t in &out.tokens {
+            want_starts[t.start / 64] |= 1 << (t.start % 64);
+            if late.contains(&t.kind) {
+                want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
             }
-            w
-        };
-        let want = |label: &str| -> Option<Vec<u64>> {
-            let words: Vec<&str> = label.split(' ').collect();
-            match words.as_slice() {
-                // A token row's first and last bytes.
-                ["token", k, side] => tokens.contains(k).then(|| token_mask(k, *side == "end")),
-                _ => None,
-            }
-        };
+        }
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            // Tier 1 refuses by a fallback bit. The evaluator's other refusals (tokens that make
-            // no tree) are tier 2's, which this test does not run.
-            let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
-            if !out.errors.is_empty() {
-                rejected += 1;
-                continue;
-            }
-            if falls {
+            if compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0)) {
                 conservative += 1;
                 continue;
             }
-            // Every token's last byte, of any kind.
-            let mut ends = vec![0u64; n.div_ceil(64)];
-            for t in &out.tokens {
-                ends[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
-            }
-            for (label, k) in &compiled.labels {
-                if let Some(want) = want(label) {
-                    let got = cut(got[usize::from(*k)].clone(), n);
-                    let at = format!("{label}, {executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
-                    if label.ends_with(" end") {
-                        // A row's end is tier 1's last-byte mask, which the row's kinds may share
-                        // (`atom` and `number` both end at `lasts(word)`): it holds each of its
-                        // tokens' last bytes, and only tokens' last bytes.
-                        assert!(got.iter().zip(&want).all(|(g, w)| w & !g == 0), "{at}: a last byte missing");
-                        assert!(got.iter().zip(&ends).all(|(g, e)| g & !e == 0), "{at}: a bit at no token's last byte");
-                    } else {
-                        assert_eq!(got, cut(want, n), "{at}");
-                    }
-                }
-            }
+            let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
+            assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
+            assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
             compared += 1;
         }
     }
@@ -330,7 +299,7 @@ fn json_msl_is_one_kernel() {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles");
-    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let text = compiled.text();
     let p = rir::assemble(&text).expect("assembles");
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
@@ -392,8 +361,8 @@ fn batch_programs() -> Vec<Program> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
-        let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
-        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
+        let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+        rir::assemble(&text).expect("assembles")
     };
     let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
     vec![
@@ -518,24 +487,12 @@ pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let stmts = ::bitlex::syntax::parse(src).expect("parses");
-    let rows = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
-    rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles").block_programs()[0].clone()
+    let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+    rir::assemble(&text).expect("assembles").block_programs()[0].clone()
 }
 
 /// `json.bitlex`'s text.
 pub(super) const JSON_BITLEX: &str = JSON;
-
-/// The one-byte kinds are the punctuation token's keywords, which tier 2 reads from the token's
-/// byte: they are not tier 1's outputs, so tier 1 stays simdjson's stage 1 (its ratchets hold).
-#[test]
-fn json_punctuation_is_one_token_row() {
-    let p = json_program();
-    let b = &p.block_programs()[0];
-    let one_byte: Vec<&[u8]> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| &k.word[..]).collect();
-    assert_eq!(one_byte, [&b"{"[..], b"}", b"[", b"]", b",", b":"]);
-    let rows: std::collections::BTreeSet<u16> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| k.node).collect();
-    assert_eq!(rows.len(), 1, "one token row: the punctuation");
-}
 
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
@@ -620,18 +577,11 @@ fn json_state_is_bits() {
 /// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049).
 const JSON_STATE_BITS: usize = 4;
 
-/// A token without `through` is its start byte alone, so its last byte is its start: no carry
-/// finds it. JSON has two: the structural bytes (one row, kinds by text) and `"`.
-#[test]
-fn one_byte_tokens_end_at_their_start() {
-    let program = json_program();
-    let p = &program.block_programs()[0];
-    let same = p.tokens.iter().filter(|n| n.start == n.end).count();
-    assert_eq!(same, 2, "json's one-byte tokens' rows: {:?}", p.tokens.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
-}
-
-/// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 37;
+/// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
+/// tier 1 began to hand tier 2 its stream (decision 0053): the starts' four ORs, as simdjson's
+/// structural mask; one OR of the last bytes; and a guard of two (a number starting at a quote)
+/// that a sharper first-byte analysis would drop. The four token-row outputs went.
+const JSON_OPS: usize = 40;
 const JSON_CARRIED_WORDS: usize = 4;
 
 #[test]
@@ -663,9 +613,9 @@ fn json_loop_keeps_values_in_registers() {
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
 /// 0049) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a
 /// full-block body with folded logic to 178, and one word token with the number check in tier 2
-/// (decision 0052) to 174.
-/// The target is stage 1's 150.
-const JSON_LOOP: usize = 174;
+/// (decision 0052) to 174; the stream's two extracts (decision 0053) to 182, three outputs
+/// in place of ten, and two counts. The target is stage 1's 150.
+const JSON_LOOP: usize = 182;
 const JSON_LOOP_STACK: usize = 0;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
@@ -738,8 +688,7 @@ fn json_tier1_is_simdjsons_stage1() {
 /// string; 6 and 9 `scope_end`. A pair closes on the `,` or `}` after its value.
 #[test]
 fn json_tier2_states_print_as_designed() {
-    let text = rir::disassemble(&json_program(), None);
-    let got: String = text.lines().filter(|l| l.starts_with("  block 0 state ") || l.starts_with("  block 0 arm ")).map(|l| format!("{}\n", &l[10..])).collect();
+    let got = json_compiled().1.machine;
     assert_eq!(got, JSON_STATES, "\n{got}");
 }
 
@@ -818,17 +767,17 @@ arm 18 token 2 to 17 do close close leaf\n\
 arm 18 token 3 to 6 do close close leaf\n\
 ";
 
-/// Tier 2's states and arms are data (doc 18, decision 0051): the compiler pass makes them, `rir`
-/// prints and assembles them, `validate` and the digest check them, and the lowering to the IR
-/// (`native_ir`) reads them. Nothing walks them to parse a file: tier 2 runs as the IR, on the
-/// IR's interpreter, Cranelift and Metal. A file outside this list that reads them fails here.
+/// Tier 2's states and arms are the compiler's (doc 18, decisions 0051 and 0053): `grammar` makes
+/// them and `bitlex_tier2` lowers them to the transducer's words, which tier 2 runs as. Nothing
+/// else reads them, and nothing walks them to parse a file. A file outside this list that reads
+/// them fails here.
 #[test]
 fn only_the_compiler_reads_tier2s_states() {
-    const ALLOWED: [&str; 7] = ["block.rs", "rir.rs", "rir_tests.rs", "grammar.rs", "bitlex_compile.rs", "bitlex_compile_tests.rs", "native_ir.rs"];
+    const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_compile.rs", "bitlex_tier2.rs", "bitlex_compile_tests.rs"];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
-    let needles = [".arms", "ArmRow", "StateRow", "CheckRow", "block::Act", "Act::Open", "Act::Close", "Act::Leaf"];
+    let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
     let mut dirs = vec![root];
     while let Some(dir) = dirs.pop() {
@@ -926,4 +875,118 @@ fn a_check_that_needs_a_byte_loop_is_refused() {
         let p = compile(g).expect("runs only");
         assert!(p.ops.iter().all(|op| !matches!(op, block::BlockOp::Toggle(_) | block::BlockOp::Escaped(_))), "{:?}", p.ops);
     }
+}
+
+// --- Tier 2: the transducer's words (decision 0053) ----------------------------------------------
+
+/// JSON compiled whole: its program, and the compiler's output (labels, fallbacks, machine).
+fn json_compiled() -> (Program, bitlex_compile::Compiled) {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let text = compiled.text();
+    (rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}")), compiled)
+}
+
+/// A node as ids: kind, field, supertypes (sorted), start, end, size.
+type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+
+/// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
+fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => grammar.id_for_node_kind(name, false),
+        id => id,
+    };
+    let out = ::bitlex::eval::Ev::run(stmts, bytes, &std::collections::HashMap::new()).ok()?;
+    if !out.errors.is_empty() {
+        return None;
+    }
+    let nodes = ::bitlex::tree::nodes(out.tree.as_ref()?, &out.tokens, bytes.len()).ok()?;
+    Some(
+        nodes
+            .iter()
+            .map(|n| {
+                let field = n.field.as_deref().map_or(0, |f| grammar.field_id_for_name(f).expect("a field").get());
+                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
+                supers.sort_unstable();
+                (kind(&n.kind), field, supers, n.start, n.end, n.size)
+            })
+            .collect(),
+    )
+}
+
+/// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the file
+/// goes to tree-sitter (a fallback bit, or a word that refuses).
+fn tier2_nodes(p: &Program, fallbacks: &[u16], bytes: &[u8]) -> Option<Vec<IdNode>> {
+    let block = &p.block_programs()[0];
+    let run = block.run_files(&[bytes]).remove(0);
+    if fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
+        return None;
+    }
+    let nodes = stream::run(p, bytes, &run.positions[0], &run.positions[1]).ok()?;
+    Some(
+        nodes
+            .into_iter()
+            .map(|n| {
+                let mut supers = n.supers;
+                supers.sort_unstable();
+                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+            })
+            .collect(),
+    )
+}
+
+/// JSON's tier 2 is the transducer's words (decision 0053): it reads the stream, switches on
+/// bytes and writes nodes; it has no word of the tree walker's, and its loops all pass a `TOKEN`
+/// (the verifier's rule, which the program passed to assemble).
+#[test]
+fn json_tier2_is_transducer_words() {
+    let (p, _) = json_compiled();
+    let text = rir::disassemble(&p, None);
+    assert_eq!(rir::assemble(&text).expect("reassembles").plain_digest(), p.plain_digest(), "the words round trip");
+    let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
+    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "CHECK", "WORD"] {
+        assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
+    }
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
+        assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
+    }
+}
+
+/// JSON's tier 2, on the words' interpreter, writes the reference parser's nodes, and goes to
+/// tree-sitter where it does: the test cases, nesting, every token kind, long numbers.
+#[test]
+fn json_tier2_nodes_equal_the_reference() {
+    let (p, compiled) = json_compiled();
+    let fallbacks = compiled.fallbacks;
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let mut files: Vec<Vec<u8>> = JSON_CASES.iter().map(|c| c.to_vec()).collect();
+    let long = "9".repeat(150);
+    files.extend(
+        [
+            "[]", "{}", "[[]]", "[{}]", "{\"a\":[]}", " 1 ", "true", "null", "[true,false,null]", "\"\"", "\"\\n\"", "\"a\\\"b\"",
+            "\"\\x\"", "[1,]", "{\"a\"}", "{\"a\":}", "[1 2]", "-", "1.", "1.e5", "-0.0e-0", "01", "tru", "truex", "[nul]",
+            "{\"a\":1,\"b\":{\"c\":[1,{\"d\":null}]}}", "  [ 1 , 2 ]  \n", "[\"a\" , \"b\"]",
+        ]
+        .map(|s| s.as_bytes().to_vec()),
+    );
+    files.push(format!("[{long}, -{long}.{long}e-{long}]").into_bytes());
+    files.push(format!("{{\"{long}\": \"{long}\\t{long}\"}}").into_bytes());
+    let mut parsed = 0;
+    for f in &files {
+        let want = reference_nodes(&stmts, f);
+        let got = tier2_nodes(&p, &fallbacks, f);
+        assert_eq!(got, want, "{}", String::from_utf8_lossy(f));
+        parsed += usize::from(want.is_some());
+    }
+    assert!(parsed > files.len() / 2, "{parsed} of {} parsed", files.len());
 }

@@ -120,6 +120,13 @@ impl Batch {
                     .iter()
                     .enumerate()
                     .map(|(e, &k)| {
+                        // A delayed output's bits are its bytes' `delay` later: extract from the output
+                        // undelayed, and count it so.
+                        if program.output_delays[k] != 0 {
+                            let words = undelay(&words_of(k), program.output_delays[k], bytes.len());
+                            let count = words.iter().map(|w| w.count_ones() as usize).sum();
+                            return positions(&words, count);
+                        }
                         let mut words = words_of(k);
                         let count = out[program.outputs * n + e] as usize - past(&words);
                         mask_tail(&mut words, bytes.len());

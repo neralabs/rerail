@@ -275,73 +275,15 @@ impl ClassTable {
     }
 }
 
-/// A token kind's row (decision 0049): where its tokens start and end, as tier-1 outputs. Its
-/// place in `BlockProgram::tokens` is its rank.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct TokenRow {
-    /// Its grammar id. It may be 0: each of its tokens is a keyword, which gives its kind, and one
-    /// that is not goes to tree-sitter.
-    pub(super) kind: u16,
-    /// The outputs whose bits are its tokens' first and last bytes.
-    pub(super) start: u16,
-    pub(super) end: u16,
-    /// Its nodes carry the extra flag.
-    pub(super) extra: bool,
-}
-
-/// A keyword of a token row: a token of the row whose text is `word` has kind `kind`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct KeywordRow {
-    pub(super) node: u16,
-    pub(super) word: Vec<u8>,
-    pub(super) kind: u16,
-}
-
-/// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
-/// tree section's grammar, one level per nested node. State 0 is the root's start.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct StateRow {
-    /// The node kind of its level: the root's, or a nested node's.
-    pub(super) level: u16,
-    /// Its level may end here, after this many closes inside it: a nested level then closes its
-    /// node and pops (at once, when the state has no arms); the root accepts at the end of the
-    /// file. `None`: it may not end here.
-    pub(super) end: Option<u8>,
-}
-
-/// What a transition does, in order: close nodes (innermost first), open nodes (outermost
-/// first), then the token's own leaf.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Act {
-    /// Close the innermost open node, at the end of the token before.
-    Close,
-    /// Open a node of `kind` at the token's start, with a field (0: none) and supertypes
-    /// (outermost first).
-    Open { kind: u16, field: u16, supers: Vec<u16> },
-    /// The token's leaf node, of the token's kind.
-    Leaf { field: u16, supers: Vec<u16> },
-}
-
-/// A token row's `check` (doc 18 §4, decision 0052): straight-line operations over the token's
-/// bytes, 64 at a time with carries, which the token's arm runs, as simdjson's stage 2 parses a number. Bit `i` is
-/// the token's byte `i`, `within 0` its bytes; its one output fails the token where it has a bit.
+/// A token's `check` (doc 18 §4, decision 0052): straight-line operations over the token's bytes,
+/// 64 at a time with carries, which tier 2's `CHECK` runs, as simdjson's stage 2 parses a
+/// number. Bit `i` is the token's byte `i`, `within 0` its bytes; its one output fails the
+/// token where it has a bit.
 /// No loop over the bytes: the compiler refuses a check that would need one. A token of any
 /// length is checked; none goes to tree-sitter.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct CheckRow {
-    pub(super) token: u16,
     pub(super) program: BlockProgram,
-}
-
-/// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
-/// enters a nested level and keeps the state to return to.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct ArmRow {
-    pub(super) from: u16,
-    pub(super) token: u16,
-    pub(super) acts: Vec<Act>,
-    pub(super) to: u16,
-    pub(super) push: Option<u16>,
 }
 
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
@@ -363,15 +305,8 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0047).
     pub(super) output_delays: Vec<u8>,
-    /// The tree section (docs/parser-generators/18-tree-as-grammar.md): its token rows and
-    /// keywords, every mask an output; `skip`, the bytes between tokens that belong to none; and
-    /// tier 2's state machine. The states and arms are data: tier 2 runs as the IR the compiler
-    /// lowers them to, never as a walk over them.
-    pub(super) tokens: Vec<TokenRow>,
-    pub(super) keywords: Vec<KeywordRow>,
-    pub(super) skip: Option<u16>,
-    pub(super) states: Vec<StateRow>,
-    pub(super) arms: Vec<ArmRow>,
+    /// The token checks tier 2's `CHECK` runs (decision 0052). Tier 2 itself is the program's
+    /// words (decision 0053).
     pub(super) checks: Vec<CheckRow>,
 }
 
@@ -411,38 +346,17 @@ impl BlockProgram {
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
             _ => true,
         });
-        // The extract pass writes undelayed positions only (a delay comes with the tape writer).
-        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v)) && (self.extracts.is_empty() || self.delay == 0);
+        // The extract pass writes positions from the undelayed outputs.
+        let extracts = self.extracts.iter().all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
-        let output = |v: u16| self.outputs.contains(&v);
-        let row = |r: u16| usize::from(r) < self.tokens.len();
-        let keyworded = |r: usize| self.keywords.iter().any(|k| usize::from(k.node) == r);
-        // A token row's start and end are outputs; a kind-0 row's tokens are all keywords.
-        let tokens = self.tokens.iter().enumerate().all(|(i, r)| output(r.start) && output(r.end) && (r.kind != 0 || keyworded(i)))
-            && self.keywords.iter().all(|k| row(k.node) && !k.word.is_empty() && k.word.len() <= 8)
-            && self.skip.is_none_or(output);
-        // The state machine: arms between states, one arm per state and token kind, and an open
-        // of a real kind. No tree section: no states.
-        let state = |s: u16| usize::from(s) < self.states.len();
-        let machine = self.states.len() <= usize::from(u16::MAX)
-            && (self.states.is_empty() || !self.tokens.is_empty())
-            && self.arms.iter().enumerate().all(|(i, a)| {
-                state(a.from)
-                    && state(a.to)
-                    && a.push.is_none_or(state)
-                    && a.token != 0
-                    && !self.arms[..i].iter().any(|b| b.from == a.from && b.token == a.token)
-                    && a.acts.iter().all(|act| !matches!(act, Act::Open { kind: 0, .. }))
-            });
-        // A check: a verified straight-line program with one output, and no checks or tree of its own.
+        // A check: a verified straight-line program with one output, and no checks of its own.
         let checks = self.checks.iter().all(|c| {
             let q = &c.program;
-            row(c.token) && q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.delay <= 1 && q.tokens.is_empty() && q.states.is_empty() && q.checks.is_empty()
+            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.delay <= 1 && q.checks.is_empty()
         });
-        let nodes = tokens && machine && checks;
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -471,7 +385,7 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        // Likewise the delay, tagged (a program with a delay has no extracts).
+        // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
@@ -481,10 +395,9 @@ impl BlockProgram {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
-        // And the tree section: its rows and its state machine.
-        if !self.tokens.is_empty() || !self.states.is_empty() || !self.checks.is_empty() {
-            // Their text (`rir`), which names every field of every row.
-            out.extend_from_slice(b"tree3");
+        // And the token checks, as their text (`rir`).
+        if !self.checks.is_empty() {
+            out.extend_from_slice(b"checks4");
             let mut text = String::new();
             super::rir::tree_rows(&mut text, 0, self);
             out.extend_from_slice(&(text.len() as u32).to_le_bytes());

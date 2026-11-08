@@ -19,10 +19,11 @@ template <typename M> static inline M extract_word(M w, uint gl, uint len) {
 // Data-dependent (at most W writes per lane), so not lane code: plain `inline`, outside the mask
 // pass's straight-line code. False when a predecessor has not published its count yet.
 template <typename M>
-inline bool extract_write(M v, uint gl, uint g, uint l, uint len, device atomic_uint* state, device uint* positions,
+inline bool extract_write(M v, uint gl, uint g, uint l, uint len, uint delay, device atomic_uint* state, device uint* positions,
                           uint capacity, device uint* counts, uint spins) {
   const uint W = uint(sizeof(M)) * 8u;
-  M w = extract_word(v, gl, len);
+  // The output is `delay` bytes late: its bits run to `len + delay`, each byte `delay` before.
+  M w = extract_word(v, gl, len + delay);
   const uint n = uint(popcount(w));
   const uint agg = simd_sum(n);
   if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);
@@ -40,7 +41,7 @@ inline bool extract_write(M v, uint gl, uint g, uint l, uint len, device atomic_
   if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | (prefix + agg), memory_order_relaxed);
   const uint at = prefix + simd_prefix_exclusive_sum(n);
   for (uint j = 0u; j < W && w != M(0); j++) {
-    if (at + j < capacity) positions[at + j] = gl * W + uint(ctz(w));
+    if (at + j < capacity) positions[at + j] = gl * W + uint(ctz(w)) - delay;
     w = M(w & M(w - M(1)));
   }
   return true;

@@ -1159,7 +1159,6 @@ fn within_and_delay_round_trip_and_refusals() {
     for (rows, why) in [
         ("  block 0 %0 = within 64\n  block 0 output %0\n", "a within delay of 64"),
         ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 delay 64\n", "a delay of 64"),
-        ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 delay 1\n", "an extract with a delay"),
     ] {
         let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
         assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");

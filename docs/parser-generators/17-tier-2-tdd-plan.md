@@ -26,9 +26,9 @@ reference parser, the monoids' walks). None of them is an executor.
 
 ## The rule
 
-The states and arms are data. Four things read them: the compiler pass that makes them
-(`grammar`), `rir` (print and assemble), `validate` and the digest, and the lowering to the IR.
-No Rust function walks them to parse a file, and generated code calls no Rust. The guard
+The states and arms are the compiler's data. Two things read them: the pass that makes them
+(`grammar`) and the pass that lowers them to the transducer's words (`bitlex_tier2`, decision
+0053). No Rust function walks them to parse a file, and generated code calls no Rust. The guard
 `only_the_compiler_reads_tier2s_states` fails if any other file reads them.
 
 ## 1. The tree section as a grammar (done)
@@ -55,10 +55,10 @@ nodes. One file has no tokens and falls back; the two that tree-sitter errs on a
 - refusals: not LL(1), an empty node, a self-reference without `nested`;
 - Moore's refinement merges states that act alike.
 
-The block program holds token rows (`start`, `end` outputs, `extra`), keywords, `skip`, states
-(`level`, `end` closes) and arms; `rir` prints and assembles them, `validate` checks them,
-the digest covers them. The old rows (`after`, `before`, `also`, `parent`, code facts, the
-`json_number` validator) are deleted, with the Rust tape writer's leftovers.
+The block program held token rows, keywords, `skip`, states and arms; since decision 0053
+they are the compiler's only, and the words carry them. The old rows (`after`, `before`,
+`also`, `parent`, code facts, the `json_number` validator) are deleted, with the Rust tape
+writer's leftovers.
 
 **Tests:** `json_tier2_states_print_as_designed` (19 states, pinned whole),
 `json_number_check_is_straight_line`, `json_number_check_equals_the_reference`,
@@ -95,29 +95,32 @@ token's kind, branches on it in its state, does straight-line work, and jumps to
 state. Branches are fine where they are on something concrete and go straight through. There
 is no search for a character, no loop over bytes, no counting.
 
-**5a. The stream.** One extracted mask: every token start, and the last byte of each token the
-next start does not end (a number before a space). The compiler picks the set from the token
-rows. A token's span is then two neighbouring entries.
+**5a. The stream.** Two extracts, as simdjson's structural indexes: every token's first byte,
+and the last byte of each token whose end its row does not give. A one-byte token ends after
+its byte; a keyword-only row's word gives its length. JSON's second extract holds string
+contents' and words' last bytes.
 
-**5b. The IR.** The block IR (`native_ir::BlockNative`) is straight-line. Tier 2 adds a second
-body to it, lowered from the states and arms:
+**5b. The words (decision 0053).** Tier 2 is the transducer's own instruction words, with new
+ones for the stream, lowered by its own pipeline: the words' interpreter, `native_ir`, and
+Cranelift's lowering of `native_ir`. There is no second IR and no new code generator. Per
+state:
 
-- a loop over the stream's entries;
-- a block per state; its arms a branch on the token's kind;
-- each arm's acts as straight-line stores to the tape's columns;
-- a call pushes the return state on a stack in memory; a state with `end` and no arms pops.
+- `TOKEN` takes the next token, and `SWITCH` jumps by its first byte;
+- the arm: `SPAN` (its end), `WORD` or `CHECK` where needed, its node writes (`CLOSE`, `OPEN`,
+  `LEAF`, `NODE_FIELD`, `NODE_SUPER`), a `PUSH` for a call, and `GOTO` the next state;
+- a nested level that may end closes its node and `RETURN`s; the root `ACCEPT`s.
 
-Its verifier refuses any other loop but one over a checked token's 64-byte words (decision
-0052): no loop over bytes, ever. A check is a block program, run over the token as tier 1 runs
-over a file, its carries passed from word to word; tree-sitter is never the way out of a case
-simdjson handles.
-The IR's interpreter, Cranelift (`native_cpu_block`) and later MSL all run that body.
+The verifier refuses any cycle without a `TOKEN`: no loop over bytes, ever (decision 0052). A
+`CHECK` runs its block program over the token as tier 1 runs over a file, 64 bytes at a time,
+its carries passed from word to word; tree-sitter is never the way out of a case simdjson
+handles.
 
-**5c. The kinds and checks.** A token row with a kind gives it; a keyword retypes it, read
-from the token's bytes: a punctuation byte, an escape's second byte, or one compare of a word
-(`true` is one 32-bit compare). A token with a `check` runs its straight-line program in its
-arm, as simdjson's `parse_number` (decision 0052): JSON's number is 100 operations, a `fill`
-per digit run.
+**5c. The kinds and checks.** A token's kind is its first byte, as simdjson's
+`switch (*value)`: the compiler finds each row's possible first bytes from its start mask's
+operations, and where two rows share a byte, tier 1 guards the wider. A keyword is a switch
+per byte, and a `WORD` only where the switches have not read all of it or its length is not
+its row's. A token with a check runs it in its arm, as simdjson's `parse_number`: JSON's number
+is 100 operations, a `fill` per digit run.
 
 **5d. The stack.** simdjson's: one frame per nested open, in memory: the open's ord and the
 return state. A close writes the size into the open's slot. Its depth is the file's.
@@ -129,10 +132,12 @@ again at the known widths: at most one second pass.
 
 **Tests, first:**
 
-- `json_stream_is_one_extraction`: tier 1 extracts one mask, its entries per block next to
-  simdjson's structurals per block.
-- `json_tier2_ir_is_one_loop`: the tier-2 body's only loop is over the stream, with no call. The
-  IR's verifier refuses a second loop, and a test shows it does.
+- `json_stream_equals_the_evaluator_on_every_executor` (done): the two extracts are the
+  evaluator's tokens, on the interpreter, Cranelift and Metal.
+- `a_loop_not_over_the_stream_is_refused` (done): the verifier refuses a cycle without a
+  `TOKEN`; `json_tier2_is_transducer_words` (done): no word of the tree walker's.
+- `json_tier2_nodes_equal_the_reference` (done, the words' interpreter): the reference
+  parser's nodes on cases, nesting, every kind, long numbers and strings.
 - `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and Cranelift.
 - `json_widths_speculated_once`: a second pass only where the guess was wrong.
 - `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in
@@ -140,7 +145,7 @@ again at the known widths: at most one second pass.
 
 **Tier 1's cost (decision 0052).** The number masks took tier 1 to 95 operations and 450 loop
 instructions; with the check in tier 2 and one word token it is 37 and 174, below the old
-ratchets, which are lowered.
+ratchets, which are lowered. Handing tier 2 its stream (decision 0053) took it to 40 and 182.
 
 ## 6. Metal
 
