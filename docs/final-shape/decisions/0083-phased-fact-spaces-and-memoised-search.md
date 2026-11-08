@@ -324,16 +324,16 @@ of `65d78128c`, load 26–41.
 Each variant edits `calls.rr` only. Each cut adds `docof(c, d9), docof(f, d9)`, or the equivalent, so that the
 flow reaches only readers in its own document:
 
-| Variant | Flow cut | Agree | Unknown, Jedi decided | No edge | CPU (main thread) |
-|---|---|---|---|---|---|
-| base | none | 6,096 | 927 | 412 | 27.3 s |
-| a1 | returns inferred from bodies (`fret`), decorator returns (`decval`), across documents | 6,096 | 927 | 412 | 26.4 s |
-| a2 | a module's computed values (not alias assignments) for its importers | 6,095 | 928 | 412 | 29.2 s |
-| a3 | subclasses across documents (`sub`) | 6,096 | 927 | 412 | 19.3 s |
-| a123 | a1, a2 and a3 | 6,095 | 928 | 412 | 29.2 s |
-| a1234 | a123, and an unannotated callee in another document is open (`vopen`) | 6,095 | 928 | 412 | 18.6 s |
-| k1 | control: no inferred returns at all | 6,096 | 927 | 412 | 19.9 s |
-| k3 | control: no subclasses at all | 6,099 | 924 | 412 | 26.8 s |
+| Variant | Flow cut | Agree | Unknown, Jedi decided | No edge | CPU (main thread) | Native join work |
+|---|---|---|---|---|---|---|
+| base | none | 6,096 | 927 | 412 | 27.3 s | 10.17 M |
+| a1 | returns inferred from bodies (`fret`), decorator returns (`decval`), across documents | 6,096 | 927 | 412 | 26.4 s | – |
+| a2 | a module's computed values (not alias assignments) for its importers | 6,095 | 928 | 412 | 29.2 s | – |
+| a3 | subclasses across documents (`sub`) | 6,096 | 927 | 412 | 19.3 s | – |
+| a123 | a1, a2 and a3 | 6,095 | 928 | 412 | 29.2 s | – |
+| a1234 | a123, and an unannotated callee in another document is open (`vopen`) | 6,095 | 928 | 412 | 18.6 s | 10.25 M |
+| k1 | control: no inferred returns at all | 6,096 | 927 | 412 | 19.9 s | 10.10 M |
+| k3 | control: no subclasses at all | 6,099 | 924 | 412 | 26.8 s | 8.97 M |
 
 These runs had no typeshed, so that each took 20–35 s. With typeshed, the base run is 6,299 agree, 722 unknown and 414
 no edge, at 138.7 s user CPU and 625 MB. Typeshed's flows are declared (stubs), so the cuts do not touch them.
@@ -352,12 +352,14 @@ The dumps per call show what changed:
 - That is a property of one program on one metric, call targets. It is not evidence that the flows will not be
   needed. Data flow, effects, parameters inferred from callers and "never called" read exactly these flows, so
   they stay first-class in P3 (§0, §1).
-- The cost is the actionable result. The eager forms of these flows cost a third of the CPU for nothing:
-  - the closed-world subclass closure: 27.3 to 19.3 s;
-  - inferred returns: 27.3 to 19.9 s.
-
-  They become demand-driven: subclasses and the method resolution order as searches (§4), and inferred returns
-  maintained by delta only where a reader reaches them.
+- **CPU does not separate these variants.** At load 22–38, near-identical runs vary from 19 to 32 s. An earlier
+  reading here, that the subclass closure costs a third of the CPU, was that noise and is withdrawn.
+- **Native join work** (rows into every step, from `RERAIL_PROFILE`) does not move with load. Against base:
+  - removing the subclass closure (k3) cuts it by 12%;
+  - removing inferred returns (k1) cuts it by 0.7%;
+  - cutting every cross-file body flow (a1234) changes it by under 1%.
+- So on this corpus, without typeshed, the eager forms of these flows are cheap. What searches save is measured
+  with typeshed, where generics and library classes appear (O128).
 - Removing the subclass closure decides three more calls, which closed-world expansion had left open.
 
 Library code needs a fixed point too, over declared facts only: chains of re-exports and aliases, star imports, the
