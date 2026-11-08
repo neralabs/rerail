@@ -70,6 +70,16 @@ def execute_workspace(engine, rule, files, options, sources=None, workspace_name
     return _execute(engine,rule,files,dict(options),sources,workspace_name)
 
 
+def execute_workspace_context(engine, rule, files, options_for_root, sources=None, workspace_name='corpus'):
+    """Bind caller path arguments after the physical test workspace exists."""
+    def options(root):
+        value=dict(options_for_root(root))
+        if 'inputFiles' in value:
+            raise ValueError('Workspace acceptance cannot override inputFiles')
+        return value
+    return _execute(engine,rule,files,options,sources,workspace_name)
+
+
 def write_fixture(corpus, files, sources=None):
     """Write the physical workspace, including empty directories and relative links."""
     sources=sources or {}
@@ -112,7 +122,7 @@ def _execute(engine, rule, files, options, sources, workspace_name):
         corpus.mkdir()
         write_fixture(corpus,files,sources)
         option_file = root / 'options.json'
-        write_json(option_file, options)
+        write_json(option_file, options(corpus) if callable(options) else options)
         command = [str(engine), 'run-rr', str(rule), str(corpus), str(root / 'out'), str(option_file)]
         run = subprocess.run(command, text=True, capture_output=True, timeout=100)
         if run.returncode:

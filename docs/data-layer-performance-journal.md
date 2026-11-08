@@ -9165,3 +9165,16 @@ The updated CLI build took 39.249 seconds. The unit build took 66.225 seconds.
 These compile times remain separate from execution measurements.
 The [stage-two receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-stage2-acceptance.json.gz) retains the fixture profiles and exact source hashes.
 This check proves request sharing and isolation for the fixture. It does not establish a full repository performance improvement.
+
+### 2026-11-08 — Survey CLI oracle and failing native observation
+
+The pinned Python CLI produces 28 complete survey observations.
+They record output bytes, exit status, directories, graph files, dynamic roots, and all analysis categories.
+The cases include positive findings, empty output limits, Unicode exclusions, installation defaults, empty directory arguments, and absolute scan paths.
+Absolute scan paths expose a source distinction: parsed graph modules can suppress the fallback scan of invalid files.
+Empty CLI directories also differ from the graph constructor's public-directory fallback.
+
+The native dynamic-import case runs successfully but fails parity: CLI discovery, output, roots, and exit status are absent.
+The source and red receipts retain this starting point. No CLI completion is claimed.
+Five transport and acceptance tests pass, with eight subtests.
+The root engine still adopts Final `2b494d4ef`. No engine code or build changes occur in this step.
