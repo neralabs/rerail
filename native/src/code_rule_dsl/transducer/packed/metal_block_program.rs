@@ -140,10 +140,11 @@ pub(in crate::code_rule_dsl) struct BatchRun {
     pub(in crate::code_rule_dsl) seconds: f64,
 }
 
-/// Workers of the persistent dispatch: SIMD groups that take the batch's groups in order. On an
-/// M5 Max (40 GPU cores) 512 ran JSON's tier 1 fastest: at 1,024 and more, groups waiting on
-/// their predecessors take issue slots from the groups they wait on (doc 22).
-const WORKERS: usize = 512;
+/// Workers of the persistent dispatch: SIMD groups that take the batch's tickets in order. Every
+/// worker must be resident: a worker waiting on a ticket held by one that is not polls until its
+/// budget runs out and the launch is repeated. On an M5 Max (40 GPU cores) JSON's tier 1 ran
+/// fastest at 768 (step 15) and 1,024 (step 14), and fell off a cliff past 1,024 (doc 22).
+const WORKERS: usize = 768;
 
 /// `run_batch`, split while the device refuses it for capacity (lessons ledger #26: a batch over
 /// a budget is split, never refused). Halves run one after another, in the files' order; a file
@@ -631,8 +632,10 @@ static inline uint file_byte_before(device const uint4* bytes, FileRow f, uint c
 }
 ";
 
-/// Polls of a predecessor's state after the first.
-const SPINS: u32 = 64;
+/// Polls of a predecessor's state after the first: bounded, so a launch whose predecessors never
+/// publish ends and is repeated. 64 polls ran out on full batches: the launch was repeated while
+/// the predecessor was only slow.
+pub(in crate::code_rule_dsl) const SPINS: u32 = 65536;
 /// The extract look-back's polls per predecessor, as a multiple of the carries'.
 const EXTRACT_POLLS: u32 = 64;
 

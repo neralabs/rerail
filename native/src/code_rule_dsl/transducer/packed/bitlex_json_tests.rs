@@ -529,7 +529,7 @@ fn json_gated_regions_equal_the_interpreter() {
 #[cfg(target_os = "macos")]
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_metal_bench() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_split};
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let mut paths = files_in("RERAIL_JSON_CORPUS");
     let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
@@ -574,7 +574,7 @@ fn json_metal_bench() {
             let mut best = f64::MAX;
             let mut launches = 0;
             for _ in 0..iters {
-                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)).unwrap_or_else(|e| panic!("metal: {e:?}"));
+                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(SPINS)).unwrap_or_else(|e| panic!("metal: {e:?}"));
                 for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
                     assert!(got.outputs == want.outputs && got.positions == want.positions, "{name}, {}-byte lanes: {} differs", width.bytes(), base(&paths[k]));
                 }
