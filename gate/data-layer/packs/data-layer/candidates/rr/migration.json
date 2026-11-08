@@ -1520,7 +1520,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-callable-constructors.rr",
-      "sha256": "64577d7f643225a6248d0ce0ad3fc00d258279e911336c2b820d2c8d4f6f5c49",
+      "sha256": "6081d72b5b2458daa28c1216b094d1fbce192839fa11d6760346a0ce2d629e63",
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_callable_constructors.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1858,7 +1858,7 @@
       "legacySha256": "90faab3f9f14820402ab2ec031344e3587287c1e4facdc83a757f15a1574ba85",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-callable-constructors.rr",
-      "ruleSha256": "64577d7f643225a6248d0ce0ad3fc00d258279e911336c2b820d2c8d4f6f5c49"
+      "ruleSha256": "6081d72b5b2458daa28c1216b094d1fbce192839fa11d6760346a0ce2d629e63"
     },
     {
       "check": "grammar_fragment_usage",

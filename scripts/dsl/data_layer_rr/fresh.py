@@ -142,7 +142,7 @@ def run(args):
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
                 check, name, passive = original_codes[frame.f_code]
-                if check=='grammar_str_params' and name=='cli_main':
+                if check in {'grammar_str_params','grammar_callable_constructors'} and name=='cli_main':
                     report.setdefault('hostProtocolCalls',[]).append(dict(test=backend.item.nodeid,entry=name,code=frame.f_code.co_name))
                     return
                 if not passive:
@@ -170,7 +170,13 @@ def run(args):
                 module = modules[case['check']]
                 if case['check']=='grammar_callable_constructors':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
-                    call=lambda:getattr(module,case['entry'])(**values)
+                    if case['entry']=='cli':
+                        from grammar_callable_constructors_port import cli_probe
+                        call=lambda:cli_probe(module,values)
+                    elif case['entry']=='format':
+                        from grammar_callable_constructors_port import format_probe
+                        call=lambda:format_probe(module,values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
                 elif case['check']=='grammar_str_params':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='cli':

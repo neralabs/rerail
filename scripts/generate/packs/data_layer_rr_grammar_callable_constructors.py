@@ -3,7 +3,7 @@ import json,re
 
 
 def grammar_callable_constructors(source,target,header):
-    text=header('grammar_callable_constructors',target)+'#include "project.rr"\n#include "python/print.rr"\n'
+    text=header('grammar_callable_constructors',target)+'#include "project.rr"\n'
     text=re.sub(r'^\.scope include .*$', '.scope include "impl/common/l2100_sql_grammar/**/*.py", "scripts/lint_grammar_callable_constructors.py"',text,flags=re.M)
     return text+configuration()+detector()+outputs()
 
@@ -44,7 +44,7 @@ gcc_name(n, @nfkc(name)) :- kind(n, "identifier"), text(n, name).
 gcc_name(n, @nfkc(name)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, name).
 gcc_name(n, name) :- kind(n, "subscript"), field(n, "value", raw), unparen(raw, v), gcc_name(v, name).
 gcc_name(n, name) :- kind(n, "call"), field(n, "function", raw), unparen(raw, f), gcc_name(f, name).
-gcc_name(n, name) :- kind(n, k), (k = "type" ; k = "generic_type"), child(n, first, 0), gcc_name(first, name).
+gcc_name(n, name) :- kind(n, k), (k = "type" ; k = "generic_type"), child(n, raw, 0), unparen(raw, first), gcc_name(first, name).
 .decl gcc_sync(f: node, name: symbol)
 gcc_sync(f, @nfkc(name)) :- kind(f, "function_definition"), !is_async(f), def_name(f, name).
 .decl gcc_module(d: number, m: node)
@@ -80,11 +80,13 @@ gcc_visible(call, name, i, 0) :- kind(call, "call"), gcc_ancestor(call, f), gcc_
 gcc_visible(call, name, -1, 1) :- kind(call, "call"), docof(call, d), gcc_module_function(d, name).
 .decl gcc_function_symbol(call: node, name: symbol)
 gcc_function_symbol(call, name) :- gcc_visible(call, name, i, 1), i = max k : { gcc_visible(call, name, k, _) }.
+.decl gcc_annotation_root(a: node)
+gcc_annotation_root(a) :- gcc_parameter(_, _, _, a, _), !unset(a).
 .decl gcc_annotation_callable(a: node)
-gcc_annotation_callable(a) :- annotation_text(a, _), ast_name(a, name), @nfkc(name) = "Callable".
-gcc_annotation_callable(a) :- annotation_text(a, _), kind(a, "attribute"), field(a, "attribute", attr), text(attr, name), @nfkc(name) = "Callable".
-gcc_annotation_callable(a) :- annotation_text(a, _), gcc_ancestor(n, a), ast_name(n, name), @nfkc(name) = "Callable".
-gcc_annotation_callable(a) :- annotation_text(a, _), gcc_ancestor(n, a), kind(n, "attribute"), field(n, "attribute", attr), text(attr, name), @nfkc(name) = "Callable".
+gcc_annotation_callable(a) :- gcc_annotation_root(a), ast_name(a, name), @nfkc(name) = "Callable".
+gcc_annotation_callable(a) :- gcc_annotation_root(a), kind(a, "attribute"), field(a, "attribute", attr), text(attr, name), @nfkc(name) = "Callable".
+gcc_annotation_callable(a) :- gcc_annotation_root(a), within(n, a), ast_name(n, name), @nfkc(name) = "Callable".
+gcc_annotation_callable(a) :- gcc_annotation_root(a), within(n, a), kind(n, "attribute"), field(n, "attribute", attr), text(attr, name), @nfkc(name) = "Callable".
 .decl gcc_parameter(c: node, nm: node, name: symbol, annotation: loc, index: number)
 gcc_parameter(c, nm, @nfkc(name), a, i) :- gcc_renderable(c), gcc_first_method(c, "__init__", f), sig_param(f, _, nm, i, k, a, _), (k = "pos" ; k = "kwonly"), text(nm, name), @nfkc(name) != "self".
 .decl gcc_callable_param(c: node, name: symbol)

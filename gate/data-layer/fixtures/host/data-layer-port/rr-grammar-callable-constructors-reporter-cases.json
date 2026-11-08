@@ -239,6 +239,34 @@
       ]
     },
     {
+      "id": "annotation-17",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: ((Any))):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-18",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class G:\n    def __init__(self, callback: ((Callable))):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
       "id": "untyped",
       "check": "grammar_callable_constructors",
       "files": [
@@ -1613,6 +1641,35 @@
         {
           "path": "impl/common/l2100_sql_grammar/case.py",
           "source": "class G:\n    def __init__(self, \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b: Callable):\n        self._fn = \uff43\uff41\uff4c\uff4c\uff42\uff41\uff43\uff4b\n    def render(self):\n        return self._fn()\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid-marker",
+      "check": "grammar_callable_constructors",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": "invalid("
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ]
+    },
+    {
+      "id": "tests-workspace",
+      "check": "grammar_callable_constructors",
+      "workspaceName": "tests",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_callable_constructors.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(render=None)\n"
         }
       ]
     },

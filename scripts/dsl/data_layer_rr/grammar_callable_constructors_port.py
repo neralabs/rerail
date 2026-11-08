@@ -26,3 +26,18 @@ def install(suite,module):
             object.__setattr__(violation,'_rr_key',p['key']);object.__setattr__(violation,'_rr_formatted',p['formatted']);values.append(violation)
         return sorted(values,key=lambda v:(str(v.path),v.line,v.code,v.detail))
     suite.replace(module,'collect_violations',collect)
+
+
+def cli_probe(module,values):
+    """Retain source CLI protocol; its findings and per-violation formatting are native."""
+    import sys
+    previous=sys.argv
+    try:
+        sys.argv=['lint_grammar_callable_constructors.py','--root',str(values['root']),*values['args']]
+        return module.cli_main()
+    finally:sys.argv=previous
+
+
+def format_probe(module,values):
+    violation=module.Violation(**values)
+    return dict(key=violation.key,formatted=violation.format())

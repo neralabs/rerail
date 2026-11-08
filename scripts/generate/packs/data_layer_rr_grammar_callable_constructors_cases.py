@@ -10,7 +10,7 @@ def grammar(annotation='Callable',init_body='self._fn = callback',render_body='r
 def main():
     scenarios=[]
     def add(name,text):scenarios.append((name,[dict(path='case.py',source=text)]))
-    for i,annotation in enumerate(['Callable','typing.Callable[[int], str]','list[Callable]','Callable | None','"Callable"','"left|Callable|right"','Any','typing.Any','Any[int]','Any()','Any | None','int','None','factory(Callable)','factory(Callable=int)','Literal["Callable"]','Annotated[int, Callable]']):add('annotation-'+str(i),grammar(annotation))
+    for i,annotation in enumerate(['Callable','typing.Callable[[int], str]','list[Callable]','Callable | None','"Callable"','"left|Callable|right"','Any','typing.Any','Any[int]','Any()','Any | None','int','None','factory(Callable)','factory(Callable=int)','Literal["Callable"]','Annotated[int, Callable]','((Any))','((Callable))']):add('annotation-'+str(i),grammar(annotation))
     add('untyped',grammar(signature='self, callback'))
     for name,signature in {'posonly':'self, callback: Callable, /','kwonly':'self, *, callback: Callable','vararg':'self, *callback: Callable','kwarg':'self, **callback: Callable','self-skipped':'self: Callable, callback: int'}.items():add('parameter-'+name,grammar(signature=signature))
     for name,init_body in {
@@ -79,7 +79,18 @@ def main():
     add('unicode',grammar(signature='self, ｃａｌｌｂａｃｋ: Callable').replace('callback','ｃａｌｌｂａｃｋ'))
     api=[dict(id=name,check=CHECK,entry='collect_violations',files=files,arguments=dict(root=dict(path='.'))) for name,files in scenarios]
     reporters=[dict(id=name,check=CHECK,files=[dict(path='scripts/lint_grammar_callable_constructors.py',source='')]+[dict(f,path=GRAMMAR+f['path']) for f in files]) for name,files in scenarios]
+    reporters.append(dict(id='invalid-marker',check=CHECK,files=[dict(path='scripts/lint_grammar_callable_constructors.py',source='invalid('),dict(path=GRAMMAR+'case.py',source='SimpleNamespace(render=None)\n')]))
+    reporters.append(dict(id='tests-workspace',check=CHECK,workspaceName='tests',files=[dict(path='scripts/lint_grammar_callable_constructors.py',source=''),dict(path=GRAMMAR+'case.py',source='SimpleNamespace(render=None)\n')]))
     reporters.append(dict(id='missing-marker',check=CHECK,files=[dict(path=GRAMMAR+'case.py',source='SimpleNamespace(render=None)\n')]))
+    for name,args,files in [
+        ('empty',['--check'],[]),('check-positive',['--check'],[dict(path=GRAMMAR+'case.py',source='SimpleNamespace(render=None)\n')]),
+        ('report-positive',[],[dict(path=GRAMMAR+'case.py',source='obj.render = value\n')]),
+        ('custom-root',['--check','--grammar-root','custom'],[dict(path='custom/case.py',source=grammar())]),
+        ('excluded-files',['--check'],[dict(path=GRAMMAR+'tests/case.py',source=grammar()),dict(path=GRAMMAR+'fragments.py',source=grammar())]),
+    ]:
+        api.append(dict(id='cli-'+name,check=CHECK,entry='cli',files=files,arguments=dict(root=dict(path='.'),args=args)))
+    for i,detail in enumerate(['ordinary detail',"quotes: ' and \"",'é λ \nsecond line']):
+        api.append(dict(id='format-'+str(i),check=CHECK,entry='format',files=[],arguments=dict(path=dict(path='case.py'),line=i+1,code='CODE',detail=detail)))
     for filename,cases in [('rr-fresh-grammar-callable-constructors-cases.json',api),('rr-grammar-callable-constructors-reporter-cases.json',reporters)]:
         (FIXTURES/filename).write_text(json.dumps(dict(cases=cases),indent=2,ensure_ascii=True)+'\n');print(filename,len(cases))
 

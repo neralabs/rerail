@@ -273,6 +273,38 @@
       }
     },
     {
+      "id": "annotation-17",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: ((Any))):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "annotation-18",
+      "check": "grammar_callable_constructors",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self, callback: ((Callable))):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
       "id": "untyped",
       "check": "grammar_callable_constructors",
       "entry": "collect_violations",
@@ -1842,6 +1874,142 @@
         "root": {
           "path": "."
         }
+      }
+    },
+    {
+      "id": "cli-empty",
+      "check": "grammar_callable_constructors",
+      "entry": "cli",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ]
+      }
+    },
+    {
+      "id": "cli-check-positive",
+      "check": "grammar_callable_constructors",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "SimpleNamespace(render=None)\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ]
+      }
+    },
+    {
+      "id": "cli-report-positive",
+      "check": "grammar_callable_constructors",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "obj.render = value\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": []
+      }
+    },
+    {
+      "id": "cli-custom-root",
+      "check": "grammar_callable_constructors",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "custom/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check",
+          "--grammar-root",
+          "custom"
+        ]
+      }
+    },
+    {
+      "id": "cli-excluded-files",
+      "check": "grammar_callable_constructors",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/case.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/fragments.py",
+          "source": "class G:\n    def __init__(self, callback: Callable):\n        self._fn = callback\n    def render(self):\n        return self._fn()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ]
+      }
+    },
+    {
+      "id": "format-0",
+      "check": "grammar_callable_constructors",
+      "entry": "format",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "case.py"
+        },
+        "line": 1,
+        "code": "CODE",
+        "detail": "ordinary detail"
+      }
+    },
+    {
+      "id": "format-1",
+      "check": "grammar_callable_constructors",
+      "entry": "format",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "case.py"
+        },
+        "line": 2,
+        "code": "CODE",
+        "detail": "quotes: ' and \""
+      }
+    },
+    {
+      "id": "format-2",
+      "check": "grammar_callable_constructors",
+      "entry": "format",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "case.py"
+        },
+        "line": 3,
+        "code": "CODE",
+        "detail": "\u00e9 \u03bb \nsecond line"
       }
     }
   ]
