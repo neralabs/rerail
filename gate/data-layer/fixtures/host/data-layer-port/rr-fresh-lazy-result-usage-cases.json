@@ -4514,6 +4514,91 @@
           "mode": "exec"
         }
       }
+    },
+    {
+      "id": "factory-0",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2050_transaction/module.py",
+          "relative": true
+        },
+        "factory": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "factory-1",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "test_m.py",
+          "relative": true
+        },
+        "factory": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "factory-2",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "tests/m.py",
+          "relative": true
+        },
+        "factory": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "factory-3",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "l2070_batching/m.py",
+          "relative": true
+        },
+        "factory": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "factory-4",
+      "check": "lazy_result_usage",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "/outside/m.py",
+          "relative": true
+        },
+        "factory": true,
+        "tree": {
+          "pythonAst": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n",
+          "mode": "exec"
+        }
+      }
     }
   ]
 }

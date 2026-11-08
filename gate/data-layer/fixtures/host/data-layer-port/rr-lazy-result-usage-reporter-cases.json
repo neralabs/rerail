@@ -1091,6 +1091,90 @@
       ]
     },
     {
+      "id": "ratchet-True-bool",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": true}"
+        }
+      ]
+    },
+    {
+      "id": "ratchet-False-bool",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": false}"
+        }
+      ]
+    },
+    {
+      "id": "ratchet-0.9-float",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": 0.9}"
+        }
+      ]
+    },
+    {
+      "id": "ratchet-1.5-float",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": 1.5}"
+        }
+      ]
+    },
+    {
+      "id": "ratchet--0.9-float",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": -0.9}"
+        }
+      ]
+    },
+    {
+      "id": "ratchet-18446744073709551617-int",
+      "check": "lazy_result_usage",
+      "files": [
+        {
+          "path": "l2050_transaction/module.py",
+          "source": "class MyTransaction:\n    def select_one(self) -> Row:\n        return Row()\n"
+        },
+        {
+          "path": "scripts/lazy_result_baseline.json",
+          "source": "{\"total\": 18446744073709551617}"
+        }
+      ]
+    },
+    {
       "id": "ratchet-count-across-files",
       "check": "lazy_result_usage",
       "files": [

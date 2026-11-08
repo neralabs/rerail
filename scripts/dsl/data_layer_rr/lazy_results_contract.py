@@ -20,6 +20,10 @@ class Contract:
         self.fallbacks, self.depth, self.item = [], 0, None
         self.baseline = read_json(args.baseline) if args.command == 'native' else None
         self.backend = None
+        names = ['lazy_results_port.py', 'ast_transport.py', 'callback_wrappers_port.py',
+                 'transaction_contract.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py']
+        self.harness = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes())
+                        for p in [Path(__file__), *[Path(__file__).with_name(n) for n in names]]}
         if self.baseline:
             from suite import Suite
             self.backend = Suite(args.source, args.engine, ['lazy_result_usage'], args.part,
@@ -84,11 +88,13 @@ class Contract:
             self.backend.cache.cleanup()
         selected = self.collected[self.args.part::self.args.parts]
         missing = [t for t in selected if sum(r['test'] == t for r in self.calls) != 1]
+        for name, digest in self.harness.items():
+            assert sha((ROOT/name).read_bytes()) == digest, 'Harness changed: ' + name
         result = dict(format='rerail.lazy-result-original-contracts/v1', sourcePin=PIN,
             commit=PIN, pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None,
             source_mismatches=[], fullMigrationAcceptance=False, part=self.args.part, parts=self.args.parts,
             collected=self.collected, cases=self.cases, calls=self.calls, events=[],
-            missingResults=missing, semanticFallbacks=self.fallbacks,
+            missingResults=missing, semanticFallbacks=self.fallbacks, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
                 ['scripts/lint_lazy_result_usage.py', 'scripts/tests/test_lint_lazy_result_usage.py']})
         if self.backend:

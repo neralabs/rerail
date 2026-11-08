@@ -93,7 +93,7 @@ lru_return(f, "None") :- lru_gkind(f, _), lru_function(f, _), !lru_edge(f, "retu
 lru_placeholder(f) :- !lru_graph(), lru_function(f, _), field(f, "body", b), body_len(b, 1), body_stmt(b, st, 0), kind(st, "pass_statement").
 lru_placeholder(f) :- !lru_graph(), lru_function(f, _), field(f, "body", b), body_len(b, 1), body_stmt(b, st, 0), kind(st, "expression_statement"), child(st, raw, 0), unparen(raw, e), kind(e, "ellipsis").
 lru_placeholder(f) :- lru_gkind(f, _), lru_function(f, _), 1 = count : { lru_edge(f, "body", _) }, lru_edge(f, "body", st), lru_gkind(st, "Pass").
-lru_placeholder(f) :- lru_gkind(f, _), lru_function(f, _), 1 = count : { lru_edge(f, "body", _) }, lru_edge(f, "body", st), lru_gkind(st, "Expr"), lru_edge(st, "value", e), option_item("astConstantTypes", e, "ellipsis").
+lru_placeholder(f) :- lru_gkind(f, _), lru_function(f, _), 1 = count : { lru_edge(f, "body", _) }, lru_edge(f, "body", st), lru_gkind(st, "Expr"), lru_edge(st, "value", e), option_item("astValueTypes", e, "ellipsis").
 '''
 
 
@@ -131,15 +131,20 @@ lru_eligible(f, cls, method, text) :- lru_function(f, method), (lru_single(metho
 .violation LRUFact(at: span, class_name: symbol, method_name: symbol, return_type: symbol, entry_order: number, exit_order: number) code "LRU_FACT" "{class_name}.{method_name} returns {return_type}"
 LRUFact(@place(path, l), cls, method, ret, i, e) :- option("entryPoint", _), lru_position(f, d, l, i, e), lru_path(d, path), lru_selected(d), lru_eligible(f, cls, method, ret).
 .decl lru_baseline(total: symbol)
-.input lru_baseline(IO=json, filename="scripts/lazy_result_baseline.json", path="/total")
-.decl lru_budget(value: number)
-lru_budget(to_number(total)) :- lru_baseline(total).
-lru_budget(0) :- !lru_baseline(_).
+.input lru_baseline(IO=json, filename="scripts/lazy_result_baseline.json", path="/total", projection="json")
 .decl lru_violation(f: node, d: number, line: number, cls: symbol, method: symbol, ret: symbol, i: number, e: number)
 lru_violation(f, d, l, cls, method, ret, i, e) :- lru_position(f, d, l, i, e), lru_selected(d), lru_eligible(f, cls, method, ret).
+.decl lru_count(value: number)
+lru_count(total) :- total = count : { lru_violation(_, _, _, _, _, _, _, _) }.
+.decl lru_over_budget()
+lru_over_budget() :- lru_count(total), !lru_baseline(_), total > 0.
+lru_over_budget() :- lru_count(total), lru_baseline(raw), !prefix("\"", raw), raw != "true", raw != "false", total > to_float(raw).
+lru_over_budget() :- lru_count(total), lru_baseline("true"), total > 1.
+lru_over_budget() :- lru_count(total), lru_baseline("false"), total > 0.
+lru_over_budget() :- lru_count(total), lru_baseline(raw), prefix("\"", raw), total > to_number(@slice(raw, 1, strlen(raw) - 1)).
 .violation LazyResultUsage(at: span, class_name: symbol, method_name: symbol, return_type: symbol, entry_order: number, exit_order: number) code "lazy_result_usage" "{class_name}.{method_name} returns {return_type}; expected LazyResult/LazySeq"
 LazyResultUsage(@place(path, l), cls, method, ret, i, e) :- !option("entryPoint", _), lru_violation(_, d, l, cls, method, ret, i, e), lru_path(d, path),
- total = count : { lru_violation(_, _, _, _, _, _, _, _) }, lru_budget(budget), total > budget.
+ lru_over_budget().
 .severity LazyResultUsage error
 .violation LRUSkip(at: span) code "LRU_SKIP" "skip"
 LRUSkip(@place("", 0)) :- option("entryPoint", "should_skip"), option("pathProbe", path), lru_skipped(path).

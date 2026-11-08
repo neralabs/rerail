@@ -70,7 +70,11 @@ def main():
     api.append(dict(id='disabled-collector', check='lazy_result_usage', entry='collector', files=[],
         arguments=dict(filepath=dict(path=path, relative=True), disabled=True,
             tree=dict(pythonAst=cls(), mode='exec'))))
-    for budget in [-1, 0, 1, 2, '1']:
+    for i, filename in enumerate([path, 'test_m.py', 'tests/m.py', 'l2070_batching/m.py', '/outside/m.py']):
+        api.append(dict(id='factory-'+str(i), check='lazy_result_usage', entry='collector', files=[],
+            arguments=dict(filepath=dict(path=filename, relative=True), factory=True,
+                tree=dict(pythonAst=cls(), mode='exec'))))
+    for budget in [-1, 0, 1, 2, '1', True, False, 0.9, 1.5, -0.9, 18446744073709551617]:
         reports.append(dict(id='ratchet-'+str(budget)+'-'+type(budget).__name__, check='lazy_result_usage', files=[
             dict(path=path, source=cls()), dict(path='scripts/lazy_result_baseline.json', source=json.dumps(dict(total=budget)))]))
     reports.append(dict(id='ratchet-count-across-files', check='lazy_result_usage', files=[

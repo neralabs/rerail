@@ -30,10 +30,9 @@ def scan(suite, module, entry, root, paths):
         class_name=r['class_name'], return_type=r['return_type']) for r in facts(rows)]
 
 
-def graph(suite, path, tree, disabled):
+def graph(suite, path, tree, disabled, factory=False):
     from callback_wrappers_port import ast_input
     options, _ = ast_input(tree)
-    nodes = list(ast.walk(tree))
     # The columns and keys use the preorder of visit_columns, not ast.walk's breadth-first order.
     pending, nodes = [tree], []
     while pending:
@@ -42,7 +41,7 @@ def graph(suite, path, tree, disabled):
         pending.extend(reversed(list(ast.iter_child_nodes(n))))
     annotations = [(i, ast.unparse(n)) for i, n in enumerate(nodes) if options['astFields'][i] == 'returns']
     transport = 'def _transport('+', '.join(f'e{i}: {s}' for i, s in annotations)+'):\n    pass\n' if annotations else 'pass\n'
-    options.update(originalPath=str(path), disabled=str(disabled).lower())
+    options.update(originalPath=str(path), disabled=str(disabled).lower(), factory=str(factory).lower())
     rows = suite.native('lazy_result_usage', 'collector', [dict(path='_transport.py', source=transport)], options)
     return facts(rows)
 
@@ -52,9 +51,13 @@ def collector_result(module, values, suite=None):
     from scripts.lint_lib.ast_collectors import AstTraversalContext
     tree, path, source = values['tree'], values['filepath'], values.get('source', '')
     disabled = values.get('disabled', False)
+    factory = values.get('factory', False)
     if suite:
-        return graph(suite, path, tree, disabled)
-    collector = module.LazyReturnCollector(path, disabled=disabled)
+        return graph(suite, path, tree, disabled, factory)
+    if factory:
+        collector = module.lazy_result_usage_fact_extractors(Path('.'))[module.LAZY_RESULT_USAGE_EXTRACTOR.extractor_id](path, source)
+    else:
+        collector = module.LazyReturnCollector(path, disabled=disabled)
     parents, children, pending = {tree: None}, {}, [tree]
     while pending:
         n = pending.pop()
@@ -93,6 +96,27 @@ def install(suite, module):
     def should_skip(filepath):
         rows = suite.native('lazy_result_usage', 'should_skip', [], dict(pathProbe=str(filepath)))
         return bool(rows)
+    def factory(root):
+        from scripts.lint_lib.ast_collectors import AstEventCollector
+        def construct(path, source):
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                relative = path
+            class Collector(AstEventCollector):
+                def __init__(self):
+                    self.tree = None
+                def on_node(self, node, context):
+                    if self.tree is None:
+                        while context.parent(node) is not None:
+                            node = context.parent(node)
+                        self.tree = node
+                def finish_file(self):
+                    tree = self.tree or ast.Module(body=[], type_ignores=[])
+                    return graph(suite, relative, tree, False, True)
+            return Collector()
+        return {module.LAZY_RESULT_USAGE_EXTRACTOR.extractor_id: construct}
     for name, value in [('find_violations', find_violations), ('_violations_for_files', for_files),
-            ('_scan_source', scan_source), ('should_skip', should_skip)]:
+            ('_scan_source', scan_source), ('should_skip', should_skip),
+            ('lazy_result_usage_fact_extractors', factory)]:
         suite.replace(module, name, value)
