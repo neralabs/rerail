@@ -421,6 +421,39 @@ D1 and D2 weighted equally.
 - Agent cost is pennies per task on this model; any case for in-flight conflict identification rests on reviewer
   rounds and on the person, not on agent spend.
 
+#### 6.3.7 Can a policy settle a conflict objectively?
+
+A resolver runs the repository's policy (`.rerail/policy.yaml`) on a conflict and either names the design that wins or
+escalates to a person; every outcome goes to the decision log on `refs/rerail/decisions`. Steps, in order: precedent,
+hard checks (tests, build, public contract breaks), measurable criteria (compatibility with existing callers), a panel
+of three judges that must agree in both orders, and escalation, including for reserved classes (public API, data
+model). It never sees which pull request came first or what happened to them. Tuned on 15 open-source conflicts,
+pre-registered, then run on the 26 held-out ones (11 where the earlier design was adopted, 15 the later), 3 panel
+seeds × both orders.
+
+| Policy | Correct / wrong / escalated per run | Wrong (bar ≤ 1 in 26) | Accuracy when it decides (bar ≥ 0.60) | Escalated (bar < 0.50) |
+| --- | --- | --- | --- | --- |
+| Full | 4–6 / 4–5 / 15–18 | 0.15–0.19 | 0.50–0.56 | 0.58–0.69 |
+| Hard checks only | 2 / 4 / 20 | 0.15 | 0.33 | 0.77 |
+
+| Step that decided (156 runs) | Right / wrong |
+| --- | --- |
+| Hard checks | 6 / 24 |
+| Compatibility with existing callers | 6 / 0 |
+| Judge panel, unanimous in both orders | 18 / 3 |
+| Escalated | 99 |
+
+- Both policies fail every bar: objective resolution, as built, is not safe to apply without a person.
+- The steps expected to be safe are the dangerous ones. In-flight work is unfinished: the design a project ended up
+  adopting often failed its build or changed signatures at the time the conflict arose (Task, mdBook, Vue), so
+  "the side that breaks tests loses" picks the wrong side four times in five. One loss was the check runner's own
+  fault (a side without a lockfile counted as failing).
+- The panel is the strong part: right 18 of 21 times when its three judges agree in both orders, but it agrees on
+  few conflicts.
+- Most conflicts need a person: about two thirds escalate even with the full policy. The useful shape is a decision
+  log where the person decides, with the panel's verdict shown as a recommendation when it is unanimous, not a
+  resolver that decides alone. Hard checks belong at merge time, when the work is finished, not in flight.
+
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
 
