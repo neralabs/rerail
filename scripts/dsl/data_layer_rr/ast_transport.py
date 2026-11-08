@@ -80,3 +80,20 @@ def visit_columns(tree):
     data['astExitOrder']=[str(exits[i]) for i in range(len(nodes))]
     data['astLiteralJson']=[json.dumps(str(n.value),ensure_ascii=True) if isinstance(n,ast.Constant) else '' for n in nodes]
     return data
+
+
+def list_lengths(tree):
+    """Per-occurrence list fields, including lengths of lists containing None or scalar values."""
+    result=dict(astListOwners=[],astListFields=[],astListLengths=[])
+    pending=[tree]
+    index=0
+    while pending:
+        node=pending.pop()
+        for field,value in ast.iter_fields(node):
+            if isinstance(value,list):
+                result['astListOwners'].append(str(index))
+                result['astListFields'].append(field)
+                result['astListLengths'].append(str(len(value)))
+        index+=1
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return result

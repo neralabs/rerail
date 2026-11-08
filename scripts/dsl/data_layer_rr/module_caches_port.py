@@ -1,7 +1,7 @@
 """Transport cache scan metadata, selected buffers and typed native results without detector decisions."""
 import ast
 from pathlib import Path
-from ast_transport import visit_columns
+from ast_transport import visit_columns, list_lengths
 
 ALLOWLIST = 'scripts/allowlists/lint_module_level_caches_allowlist.json'
 
@@ -71,10 +71,7 @@ def for_files(suite, module, root, file_pairs):
         if path in seen or path.suffix!='.py' or not path.is_file():
             continue
         seen.add(path)
-        try:
-            text = path.read_text(encoding='utf-8')
-        except (OSError,UnicodeDecodeError):
-            continue
+        text = path.read_text(encoding='utf-8')
         files.append(dict(path=f'l0000_transport/file-{len(files)}.py',source=text))
         scopes.append(labels[path.resolve()])
     rows = suite.native('module_level_caches','_facts_for_files',files,
@@ -89,7 +86,7 @@ def supplied(suite, rel_path, source):
 
 
 def graph(suite, rel_path, tree):
-    options = dict(visit_columns(tree),originalPath=rel_path)
+    options = dict(visit_columns(tree),**list_lengths(tree),originalPath=rel_path)
     return suite.native('module_level_caches','collector',[dict(path='l0000_transport/ast.py',source='pass\n')],options)
 
 

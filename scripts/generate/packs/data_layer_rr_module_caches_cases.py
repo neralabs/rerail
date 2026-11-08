@@ -28,7 +28,7 @@ def main():
         'ObjectCache(**{"register_with_manager":False})',
         'ObjectCache(register_with_manager=False, register_with_manager=True)',
         'ObjectCache(register_with_manager=True, register_with_manager=False)', '(ObjectCache)(register_with_manager=False)',
-        '{\n # comment\n}', '[\n # comment\n]']
+        '{\n # comment\n}', '[\n # comment\n]', '(dict(x=1))', '(dict())', '(ObjectCache(register_with_manager=False))']
     for i,value in enumerate(values):
         add('value-'+str(i),'# cache\n_holder = '+value+'\n')
     for i,name in enumerate(['values','CACHE','CACHE_VALUES','_CACHE','__all__','x_Y','漢字_文','Ä_B','ä_b',
@@ -37,7 +37,7 @@ def main():
     for i,source in enumerate(['x = {}\n', 'x = []\n','tokens=[None]\n','CACHE={}\n',
             'Cache={}\n','cache = {}\n','x={} # cache\n','x={} # CACHE\n']):
         add('trigger-'+str(i),source)
-    for i,target in enumerate(['a = b','(a, b)','obj.cache','(a)','a: dict[str, int]','_CACHE']):
+    for i,target in enumerate(['a = b','(a, b)','obj.cache','(a)','a: dict[str, int]','_CACHE','((a))','(a,)','(\n # comment\n a\n)']):
         add('target-'+str(i),'# cache\n'+target+' = {}\n')
     add('annotation-no-value','# cache\n_holder: dict[str,int]\n')
     add('augassign','# cache\n_holder += {}\n')
@@ -73,6 +73,8 @@ def main():
     for identity,source in invalid:
         f=dict(path=path,source=source) if source is not None else dict(path=path,bytesHex='fffe')
         api.append(dict(id='count-'+identity,check='module_level_caches',entry='scan_codebase',files=[f],arguments=dict(root=dict(path=''))))
+    api.append(dict(id='excluded-decode',check='module_level_caches',entry='scan_codebase',
+        files=[dict(path='l1000_schema/tests/a.py',bytesHex='fffe')],arguments=dict(root=dict(path=''))))
     entry=dict(path=path,pattern_type='dict_cache',name='_holder',classification='local_metadata_memo',reason='Reviewed cache.')
     allowlists=[('missing',None),('empty',{}),('valid',dict(entries=[entry])),
         ('ordered',dict(entries=[dict(entry,name='z'),dict(entry,name='a')])),

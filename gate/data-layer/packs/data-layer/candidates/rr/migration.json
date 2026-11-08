@@ -1449,7 +1449,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/module-level-caches.rr",
-      "sha256": "646b99540a2b8b43e814fcba35c827272e5526f35b11359fa2812f6c686619e9",
+      "sha256": "0149d4109f3409b2ff9d3e3446495beb7ede0ccd52f435ce433d6914b5998c0a",
       "origin": "authored",
       "upstreamPath": "scripts/lint_module_level_caches.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1722,7 +1722,7 @@
       "legacySha256": "2ba31a57f2ff59881cb6f7dd472ea0cdc10546264dcc80c812943032c0370019",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/module-level-caches.rr",
-      "ruleSha256": "646b99540a2b8b43e814fcba35c827272e5526f35b11359fa2812f6c686619e9"
+      "ruleSha256": "0149d4109f3409b2ff9d3e3446495beb7ede0ccd52f435ce433d6914b5998c0a"
     },
     {
       "check": "connection_caches",
@@ -2447,8 +2447,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "9993e7e5fbadc8fd8340c4c01e515f3328ffec60",
-    "status": "Root Final shape engine through 9993e7e5f; upstream prepared-program storage; reviewed generic Python and typed JSON input extensions",
+    "upstreamCommit": "6c22fca956e2c0eedb91cfe760e47ac52ed034cf",
+    "status": "Root Final shape engine through 6c22fca95; upstream prepared programs as facts and tapes; reviewed generic Python and typed JSON input extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [

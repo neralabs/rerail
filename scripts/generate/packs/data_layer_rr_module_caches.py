@@ -46,6 +46,8 @@ mc_edge(to_number(p), field, c) :- option_item("astParents", c, p), p != "-1", o
 .decl mc_parent(n: node, p: node)
 mc_parent(n, p) :- !mc_graph(), ast_parent(n, p).
 mc_parent(n, p) :- mc_edge(p, _, n).
+.decl mc_list_length(n: node, field: symbol, length: number)
+mc_list_length(to_number(owner), field, to_number(length)) :- option_item("astListOwners", i, owner), option_item("astListFields", i, field), option_item("astListLengths", i, length).
 .decl mc_ancestor(n: node, a: node)
 mc_ancestor(n, p) :- mc_parent(n, p).
 mc_ancestor(n, a) :- mc_parent(n, p), mc_ancestor(p, a).
@@ -78,7 +80,7 @@ mc_call_leaf(n, name) :- mc_name(n, name).
 mc_call_leaf(n, name) :- mc_attribute(n, _, name).
 .decl mc_has_argument(n: node)
 mc_has_argument(n) :- !mc_graph(), mc_call(n, _), field(n, "arguments", args), child(args, a, _), !kind(a, "comment").
-mc_has_argument(n) :- mc_gkind(n, "Call"), mc_edge(n, kind, _), (kind = "args" ; kind = "keywords").
+mc_has_argument(n) :- mc_gkind(n, "Call"), mc_list_length(n, kind, length), (kind = "args" ; kind = "keywords"), length > 0.
 .decl mc_false(n: node)
 mc_false(n) :- !mc_graph(), unparen(n, e), kind(e, "false").
 mc_false(n) :- mc_gkind(n, "Constant"), option_item("astValueTypes", n, "bool"), option_item("astLiteralJson", n, "\"False\"").
@@ -88,16 +90,22 @@ mc_registration_keyword(c, value, to_number(i)) :- mc_gkind(c, "Call"), mc_edge(
 .decl mc_registration_disabled(c: node)
 mc_registration_disabled(c) :- mc_registration_keyword(c, v, i), i = min j : { mc_registration_keyword(c, _, j) }, mc_false(v).
 .decl mc_empty(n: node, kind: symbol)
-mc_empty(n, "dict") :- !mc_graph(), unparen(n, d), kind(d, "dictionary"), !child(d, _, _).
-mc_empty(n, "dict") :- mc_gkind(n, "Dict"), !mc_edge(n, "keys", _).
-mc_empty(n, "list") :- !mc_graph(), unparen(n, d), kind(d, "list"), !child(d, _, _).
-mc_empty(n, "list") :- mc_gkind(n, "List"), !mc_edge(n, "elts", _).
+.decl mc_container_child(n: node)
+mc_container_child(n) :- !mc_graph(), child(n, c, _), !kind(c, "comment").
+mc_empty(n, "dict") :- !mc_graph(), unparen(n, d), kind(d, "dictionary"), !mc_container_child(d).
+mc_empty(n, "dict") :- mc_gkind(n, "Dict"), mc_list_length(n, "keys", 0).
+mc_empty(n, "list") :- !mc_graph(), unparen(n, d), kind(d, "list"), !mc_container_child(d).
+mc_empty(n, "list") :- mc_gkind(n, "List"), mc_list_length(n, "elts", 0).
 mc_empty(n, name) :- mc_call(n, fn), mc_name(fn, name), (name = "dict" ; name = "set" ; name = "list"), !mc_has_argument(n).
 .decl mc_list(n: node)
 mc_list(n) :- !mc_graph(), unparen(n, l), kind(l, "list").
 mc_list(n) :- mc_gkind(n, "List").
 .decl mc_assignment(a: node, target: node, name: symbol, value: node, suborder: number)
-mc_assignment(a, t, name, v, i) :- !mc_graph(), assign_target(a, t), mc_name(t, name), assign_value(a, v), visit_index(t, i).
+.decl mc_target_name(n: node, name: symbol)
+mc_target_name(n, name) :- mc_name(n, name).
+mc_target_name(n, name) :- !mc_graph(), kind(n, "tuple_pattern"), !op(n, ","), child(n, c, _), !kind(c, "comment"),
+ 1 = count : { child(n, value, _), !kind(value, "comment") }, mc_target_name(c, name).
+mc_assignment(a, t, name, v, i) :- !mc_graph(), assign_target(a, t), mc_target_name(t, name), assign_value(a, raw), unparen(raw, v), visit_index(t, i).
 mc_assignment(a, t, name, v, to_number(i)) :- mc_gkind(a, "Assign"), mc_edge(a, "targets", t), mc_name(t, name), mc_edge(a, "value", v), option_item("astOrdinals", t, i).
 mc_assignment(a, t, name, v, 0) :- mc_gkind(a, "AnnAssign"), mc_edge(a, "target", t), mc_name(t, name), mc_edge(a, "value", v).
 .decl mc_position(n: node, d: number, line: number, column: number, visit: number)
@@ -146,9 +154,11 @@ MCDirectory(@place("", 0), i, path) :- option("entryPoint", "_scan_dirs"), mc_de
 .decl mc_triggered(d: number)
 mc_triggered(d) :- doc(d, _, _), source(d, sp), text(sp, src), mc_trigger(trigger), contains(trigger, src).
 .decl mc_selected(d: number)
+.decl mc_production_hidden(d: number)
+mc_production_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp" ; part = "tests" ; part = "test").
 mc_selected(0) :- mc_graph().
 mc_selected(d) :- !mc_graph(), mc_path(d, _), option("entryPoint", entry), entry != "_collect_files", entry != "_scan_dirs", mc_triggered(d), !syntax_error(d, _, _).
-mc_selected(d) :- !mc_graph(), mc_path(d, path), !option("entryPoint", _), mc_triggered(d), !syntax_error(d, _, _),
+mc_selected(d) :- !mc_graph(), mc_path(d, path), !option("entryPoint", _), mc_triggered(d), !syntax_error(d, _, _), !mc_production_hidden(d),
  (prefix("impl/", path) ; prefix("data_layer/", path) ; prefix("_internal/", path) ; mc_production_layer(path)).
 '''
 

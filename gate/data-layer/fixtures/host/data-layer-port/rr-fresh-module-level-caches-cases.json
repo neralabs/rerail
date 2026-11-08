@@ -993,6 +993,99 @@
       }
     },
     {
+      "id": "value-32-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n_holder = (dict(x=1))\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "value-32-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n_holder = (dict(x=1))\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "value-33-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n_holder = (dict())\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "value-33-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n_holder = (dict())\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "value-34-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n_holder = (ObjectCache(register_with_manager=False))\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "value-34-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n_holder = (ObjectCache(register_with_manager=False))\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
       "id": "name-0-content",
       "check": "module_level_caches",
       "entry": "scan_file_content",
@@ -1980,6 +2073,99 @@
         "source": "pass\n",
         "tree": {
           "pythonAst": "# cache\n_CACHE = {}\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-6-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n((a)) = {}\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-6-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n((a)) = {}\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-7-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n(a,) = {}\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-7-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n(a,) = {}\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-8-content",
+      "check": "module_level_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\n(\n # comment\n a\n) = {}\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "target-8-collector",
+      "check": "module_level_caches",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "# cache\n(\n # comment\n a\n) = {}\n",
           "mode": "exec"
         }
       }
@@ -3897,6 +4083,22 @@
         {
           "path": "l1000_schema/sample.py",
           "source": "pass\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": ""
+        }
+      }
+    },
+    {
+      "id": "excluded-decode",
+      "check": "module_level_caches",
+      "entry": "scan_codebase",
+      "files": [
+        {
+          "path": "l1000_schema/tests/a.py",
+          "bytesHex": "fffe"
         }
       ],
       "arguments": {

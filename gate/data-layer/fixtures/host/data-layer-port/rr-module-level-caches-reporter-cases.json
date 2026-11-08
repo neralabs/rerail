@@ -321,6 +321,36 @@
       ]
     },
     {
+      "id": "value-32",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = (dict(x=1))\n"
+        }
+      ]
+    },
+    {
+      "id": "value-33",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = (dict())\n"
+        }
+      ]
+    },
+    {
+      "id": "value-34",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n_holder = (ObjectCache(register_with_manager=False))\n"
+        }
+      ]
+    },
+    {
       "id": "name-0",
       "check": "module_level_caches",
       "files": [
@@ -637,6 +667,36 @@
         {
           "path": "l1000_schema/sample.py",
           "source": "# cache\n_CACHE = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-6",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n((a)) = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-7",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n(a,) = {}\n"
+        }
+      ]
+    },
+    {
+      "id": "target-8",
+      "check": "module_level_caches",
+      "files": [
+        {
+          "path": "l1000_schema/sample.py",
+          "source": "# cache\n(\n # comment\n a\n) = {}\n"
         }
       ]
     },
