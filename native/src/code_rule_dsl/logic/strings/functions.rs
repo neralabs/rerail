@@ -1,9 +1,10 @@
 //! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
-//! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function. A rule's call
-//! `@f(a, b)` is lowered to `f(a, b)` in SQL (`sql_name`: `rr_f` where SQLite has its own `f`), its symbol
-//! arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`). Each function's
-//! meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not compile, or a value
-//! Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no row for it.
+//! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function of the same name
+//! (`lower`, `max`, `min` and `mod` in place of SQLite's own). A rule's call `@f(a, b)` is lowered to `f(a, b)` in
+//! SQL, its symbol arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`).
+//! Each function's meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
+//! compile, or a value Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no
+//! row for it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -57,20 +58,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rx_group", &[Text, Text, Text], Text),
 ];
 
-/// The SQL name of function `name`: its own, or `rr_<name>` where SQLite has a function of that name, which
-/// other SQL on the same connection may read with SQLite's meaning.
-pub(in crate::code_rule_dsl) fn sql_name(name: &'static str) -> &'static str {
-    match name {
-        "lower" => "rr_lower",
-        "max" => "rr_max",
-        "min" => "rr_min",
-        "mod" => "rr_mod",
-        other => other,
-    }
-}
-
-/// A function's name, its arguments and its result, if `name` is one of these: the name `eval` and the native
-/// engine's `func` step take; SQL calls it `sql_name`.
+/// A function's name (as SQL names it), arguments and result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     FUNCTIONS.iter().find(|(n, _, _)| *n == name).copied()
 }
@@ -79,7 +67,7 @@ pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     for &(name, args, _) in FUNCTIONS {
         let arity = i32::try_from(args.len()).expect("few arguments");
-        db.create_scalar_function(sql_name(name), arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
+        db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     Ok(())
 }

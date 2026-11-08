@@ -1582,7 +1582,7 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 (f, items) if let Some((f, kinds, ret)) = super::strings::functions::signature(f) && kinds.len() == items.len() => {
                     use super::strings::functions::Kind;
                     let items = items.iter().zip(kinds).map(|(e, k)| if *k == Kind::Text { text_of(atoms, e) } else { e.clone() }).collect();
-                    let value = call(super::strings::functions::sql_name(f), items);
+                    let value = call(f, items);
                     if ret == Kind::Text { symbol_of(atoms, value) } else { value }
                 }
                 _ => return Err(Error::Plan(format!("no SQL for {t}"))),
