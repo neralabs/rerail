@@ -14,6 +14,7 @@ import type { MergeAssistStatus } from "../engine/merge-assist/model.js";
 import { MergeAssistError, type MergeAssistErrorCode } from "../runtime/merge-assist/service.js";
 import {
   mergeAssistCandidateBodySchema,
+  mergeAssistConflictBodySchema,
   mergeAssistFindingBodySchema,
   mergeAssistSettingsBodySchema,
   mergeAssistStatusSchema,
@@ -120,6 +121,18 @@ export const mergeAssistOperations: readonly Operation[] = [
       }
       const checkout = checkoutOf(stores, input, caller, true);
       return await answer(() => stores.mergeAssist().resolveFinding(checkout, input.findingId, input.action, caller.kind));
+    },
+  }),
+  defineOperation({
+    id: "merge_assist_conflict_set",
+    method: "PUT",
+    path: "/api/merge-assist/conflicts",
+    summary: internalTesting("Resolve an in-flight conflict with another branch: keep this branch's side (mine), take theirs, write a new decision (new, with text), or dismiss it as not a conflict. A verdict appends to the decision log (refs/rerail/decisions) and writes a decision on this branch that steers every agent from then on. Only a person resolves a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
+    body: mergeAssistConflictBodySchema,
+    output: mergeAssistStatusSchema,
+    handler: async (stores, input, caller) => {
+      const checkout = checkoutOf(stores, input, caller, true);
+      return await answer(() => stores.mergeAssist().resolveConflict(checkout, input.conflictId, input.action, input.text, caller.kind));
     },
   }),
 ];

@@ -24,6 +24,8 @@ export const STATE_KEYS = {
   activation: (checkoutPath: string) => `activation:${checkoutPath}`,
   /** The repository's last `gh` readiness, and when it was read. */
   github: (repositoryKey: string) => `github:${repositoryKey}`,
+  /** The checkout's in-flight conflicts, open, resolved and dismissed (`conflict-store.ts`). */
+  conflicts: (checkoutPath: string) => `conflicts:${checkoutPath}`,
 } as const;
 
 export function readState<T>(db: StateQueries, key: string, schema: z.ZodType<T>): T | undefined {

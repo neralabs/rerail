@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ownBase } from "../../../benchmark/merge-assist-replay.js";
-import { identify, refFiles, refHunks, statedIntent } from "../../../benchmark/merge-assist-replay-git.js";
+import { identify, refFiles, refHunks } from "../../../src/engine/index.js";
+import { statedIntent } from "../../../benchmark/merge-assist-replay-git.js";
 
 const roots: string[] = [];
 afterEach(() => {

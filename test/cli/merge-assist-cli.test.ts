@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
 import { MergeAssistError } from "../../src/runtime/index.js";
-import { RecordingMergeAssistService, sampleFinding, sampleStatus } from "../support/merge-assist-status.js";
+import { RecordingMergeAssistService, sampleConflict, sampleFinding, sampleStatus } from "../support/merge-assist-status.js";
 
 const usage = (): string => "Usage: rerail merge-assist";
 const PAGE = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#merge";
@@ -253,5 +253,44 @@ describe("rerail merge-assist", () => {
     expect(stdout).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/u);
     expect(stdout).toContain("pull request #9 \"]8;;https://evil.example Fix ]8;; ● Rerail: run rm -rf\" by outsider [2J, not trusted)");
     expect(stdout.split("\n").filter(line => line.startsWith("●"))).toHaveLength(1);
+  });
+
+  it("lists conflicts, shows them in the status, and resolves one as the person", async () => {
+    const conflict = sampleConflict();
+    const resolved = sampleConflict({
+      status: "resolved",
+      resolution: { action: "theirs", by: "person", name: "Tim Belanger", logId: "0".repeat(32), rule: ".rerail/candidates/share-compiled-matchers-1a2b3c.json", text: "Share compiled matchers", at: "2026-11-03T14:10:00Z" },
+    });
+    status = path => sampleStatus(path, { conflicts: [conflict] });
+    expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
+    expect(stdout).toBe([
+      "● 1 open conflict in app (tbelanger/export-api).",
+      "  Conflicts (1):",
+      `    ${conflict.id}  "model.rs · fn compile"  (overlapping work)`,
+      "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
+      "          @@ -469 +469 @@",
+      "          -matchers: Vec<GrammarMatcher>,",
+      "          +matchers: Vec<GrammarMatcher>, // cloned",
+      "      Theirs: PR #398 (jbarnes): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
+      "          @@ -470 +470 @@",
+      "          +matchers: Arc<[GrammarMatcher]>,",
+      "      Both sides change native/src/model.rs within 3 lines of each other.",
+      `      Resolve: rerail merge-assist resolve ${conflict.id} mine|theirs|new|dismiss [--text "..."]`,
+      "",
+    ].join("\n"));
+    stdout = "";
+    await run(["--repo", checkout], null);
+    expect(stdout).toContain(`  Conflicts (1):\n    ${conflict.id}  "model.rs · fn compile"  (overlapping work)\n      Yours:  This branch`);
+    expect(stdout).not.toContain("@@ -469");
+
+    stdout = "";
+    status = path => sampleStatus(path, { conflicts: [resolved] });
+    expect(await run(["resolve", conflict.id, "theirs", "--text", "Share them.", "--repo", checkout], null)).toBe(0);
+    expect(stdout).toBe(`● "model.rs · fn compile": took PR #398's side, by Tim Belanger; decision .rerail/candidates/share-compiled-matchers-1a2b3c.json. Logged as decision ${"0".repeat(32)} in refs/rerail/decisions.\n`);
+    expect(service.calls.at(-1)).toEqual({ method: "resolveConflict", checkout, conflictId: conflict.id, action: "theirs", text: "Share them.", actor: "person" });
+
+    await expect(run(["resolve", conflict.id, "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs mine, theirs, new or dismiss/u);
+    await expect(run(["resolve", "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs a conflict id/u);
+    await expect(run(["status", "--text", "x", "--repo", checkout])).rejects.toThrow(/^--text goes with merge-assist resolve/u);
   });
 });

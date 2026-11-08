@@ -28,7 +28,6 @@ export {
   createLocalCheckRunner,
   decisionEntryFor,
   lastNumber,
-  personDecisionEntry,
   type Resolution,
   type ResolutionEvidence,
   type ResolveInput,

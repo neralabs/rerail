@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type AdapterDelivery, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, conflictNote, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/codex-hook-adapter.js";
 import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -112,6 +112,16 @@ describe("Codex one-shot hook", () => {
     expect(codexHookOutput("Stop", steers)).toEqual({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
     });
+  });
+
+  it("shows the person a plain line for a conflict a note surfaces, with its card's link printed", () => {
+    const note = conflictNote({ file: "src/model.ts", peer: "jbarnes/shape", author: null, summary: "SQLite stays the system of record", pullRequest: false });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes/shape: model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    expect(codexHookOutput("PostToolUse", [{ ...delivery("steer", note), conflict }])).toEqual({
+      systemMessage: "◆ Rerail · your edit overlaps jbarnes/shape: model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: note },
+    });
+    expect(note).toContain("End your final message with one line telling the user which branch overlaps and what you did.");
   });
 
   it("routes steer and block deliveries through additionalContext or the pending file, never a Stop block", async () => {

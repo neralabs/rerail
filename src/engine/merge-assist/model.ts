@@ -108,6 +108,72 @@ export const lastScanSchema = z.object({
 });
 export type LastScan = z.infer<typeof lastScanSchema>;
 
+/** overlap: overlapping hunks with a branch in flight; decisions: a peer's decision contradicts one of this branch's. */
+export const CONFLICT_KINDS = ["overlap", "decisions"] as const;
+export type ConflictKind = (typeof CONFLICT_KINDS)[number];
+
+export const CONFLICT_STATUSES = ["open", "resolved", "dismissed"] as const;
+export type ConflictStatus = (typeof CONFLICT_STATUSES)[number];
+
+/** mine: keep this branch's side; theirs: take the other side's; new: a new decision; dismiss: not a conflict. */
+export const CONFLICT_ACTIONS = ["mine", "theirs", "new", "dismiss"] as const;
+export type ConflictAction = (typeof CONFLICT_ACTIONS)[number];
+
+/** ambient: one line to the agent and the person; logged: on the Conflicts page only. */
+export const CONFLICT_LEVELS = ["ambient", "logged"] as const;
+export type ConflictLevel = (typeof CONFLICT_LEVELS)[number];
+
+export const conflictSideSchema = z.object({
+  label: z.string().describe("\"This branch\", \"This session\", \"PR #398\" or a branch name."),
+  ref: z.string(),
+  sha: z.string(),
+  author: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+  url: z.string().nullable(),
+  summary: z.string().describe("One sentence: the side's design or change."),
+  location: z.string().nullable().describe("Where: \"src/x.ts:469\" or \"docs/x.md §9\"."),
+  hunk: z.string().nullable().describe("That side's conflicting hunk, at most 40 lines of unified diff."),
+  decisionId: z.string().nullable().describe("For kind decisions: the candidate id on that side."),
+});
+export type ConflictSide = z.infer<typeof conflictSideSchema>;
+
+export const conflictResolutionSchema = z.object({
+  action: z.enum(CONFLICT_ACTIONS),
+  by: z.enum(["person", "precedent"]),
+  name: z.string(),
+  logId: z.string().nullable(),
+  rule: z.string().nullable(),
+  text: z.string().nullable(),
+  at: z.string(),
+});
+export type ConflictResolution = z.infer<typeof conflictResolutionSchema>;
+
+export const conflictSchema = z.object({
+  id: z.string().describe("Stable: \"conflict:\" + question + \":\" + a short hash of theirs.ref."),
+  kind: z.enum(CONFLICT_KINDS),
+  status: z.enum(CONFLICT_STATUSES),
+  level: z.enum(CONFLICT_LEVELS),
+  question: z.string().describe("The question key shared with the decision log."),
+  title: z.string(),
+  mine: conflictSideSchema,
+  theirs: conflictSideSchema,
+  evidence: z.array(z.string()).describe("Why Rerail thinks it is a conflict, one sentence each."),
+  detectedAt: z.string(),
+  resolution: conflictResolutionSchema.nullable(),
+});
+export type Conflict = z.infer<typeof conflictSchema>;
+
+export const decisionLogItemSchema = z.object({
+  id: z.string(),
+  recordedAt: z.string(),
+  title: z.string(),
+  outcome: z.string().describe("\"Theirs (PR #398)\", \"Mine\", \"New decision\" or \"Escalated\"."),
+  by: z.object({ kind: z.enum(["person", "policy"]), name: z.string() }),
+  rule: z.string().nullable(),
+  text: z.string().nullable(),
+});
+export type DecisionLogItem = z.infer<typeof decisionLogItemSchema>;
+
 export const mergeAssistStatusSchema = z.object({
   repositoryKey: z.string(),
   checkout: z.string(),
@@ -125,5 +191,7 @@ export const mergeAssistStatusSchema = z.object({
   lastScan: lastScanSchema.nullable(),
   own: z.array(ownDecisionSchema),
   findings: z.array(findingSchema),
+  conflicts: z.array(conflictSchema).describe("Open first, then resolved (latest 20), then dismissed (latest 20)."),
+  decisionLog: z.object({ entries: z.array(decisionLogItemSchema), problems: z.array(z.string()) }).describe("Newest first, at most 50."),
 });
 export type MergeAssistStatus = z.infer<typeof mergeAssistStatusSchema>;

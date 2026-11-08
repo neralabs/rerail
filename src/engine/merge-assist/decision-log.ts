@@ -10,7 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { readGitBlobs, runGit } from "../git.js";
-import { conflictRecordSchema, type ConflictRecord, otherSide, POLICY_STEPS, SIDES, type SideId, type StepResult } from "./policy.js";
+import { conflictRecordSchema, type ConflictRecord, otherSide, POLICY_STEPS, SIDES, type SideId, type StepResult } from "./conflict-record.js";
 
 export const DECISION_LOG_REF = "refs/rerail/decisions";
 export const DECISION_ENTRY_FORMAT = "rerail.decision/v1";
@@ -191,5 +191,25 @@ export function decidePrecedent(record: ConflictRecord, log: readonly LoggedDeci
     winner: null,
     reason: `Earlier verdicts on this question concern other refs (latest: decision ${latest.entry.id}, for ${latest.entry.conflict.sides[latest.entry.verdict as SideId].ref}).`,
     entry: { id: latest.entry.id, commit: latest.commit },
+  };
+}
+
+/** The entry for a person's answer to an escalated conflict: their verdict, the losing side's decision or amendment to follow. */
+export function personDecisionEntry(
+  record: ConflictRecord,
+  input: { verdict: SideId; name: string; reason: string; result: { kind: "amendment" | "decision"; rule: string | null; text: string } },
+  recordedAt: Date = new Date(),
+): DecisionEntry {
+  return {
+    format: DECISION_ENTRY_FORMAT,
+    id: newDecisionId(),
+    recordedAt: recordedAt.toISOString(),
+    conflict: record,
+    step: "escalate",
+    reason: input.reason.slice(0, 4_000),
+    evidence: {},
+    verdict: input.verdict,
+    decidedBy: { kind: "person", name: input.name },
+    result: { kind: input.result.kind, side: otherSide(input.verdict), rule: input.result.rule, text: input.result.text },
   };
 }

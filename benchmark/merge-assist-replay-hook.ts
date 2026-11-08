@@ -14,7 +14,7 @@
  *
  * Under `git-conflict` and `git-conflict-pull`, after every tool call (PostToolUse: a patch, a command or a code cell
  * may write files) the hook identifies, read-only, which of the agent's changes would conflict with the other refs
- * visible at the work's start (merge-assist-replay-git.ts: hunk overlap in base lines, no merge). `git-conflict`
+ * visible at the work's start (src/engine/merge-assist/overlap.ts: hunk overlap in base lines, no merge). `git-conflict`
  * pushes each new (ref, file) once: who, their hunk and stated intent fenced as data, and what to do, at most
  * {@link PUSH_CAP} per call. `git-conflict-pull` writes the current list to the workspace's `.git/rerail-conflicts.md`
  * (what `git conflicts` prints) and sends one line whenever the set changes, new or resolved. Every call appends one
@@ -25,7 +25,8 @@ import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { areaOf, cleanDecision, endLine, type ToolKind, touchedPaths } from "./merge-assist-context-hook.js";
-import { conflictKey, type GitConflict, identify, pullFile, pullLine, pushText, type RefSide, workspaceRanges } from "./merge-assist-replay-git.js";
+import { conflictKey, type GitConflict, identify, workspaceRanges } from "../src/engine/index.js";
+import { pullFile, pullLine, pushText, type RefSide } from "./merge-assist-replay-git.js";
 
 export const REPLAY_ARMS = ["none", "align", "git-conflict", "git-conflict-pull"] as const;
 export type ReplayArm = (typeof REPLAY_ARMS)[number];

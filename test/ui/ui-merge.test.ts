@@ -42,6 +42,8 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   lastScan: null,
   own: [],
   findings: [],
+  conflicts: [],
+  decisionLog: { entries: [], problems: [] },
   ...over,
 });
 
@@ -180,9 +182,9 @@ describe("the Merge Assist page", () => {
     });
 
     it("shows the sections in order with their counts, the decision marked as not a rule folded", () => {
-      const shown = root.querySelectorAll("section.msec").filter(s => !s.hidden).map(s => s.querySelector("h2")!.textContent);
+      const shown = root.querySelectorAll("section.msec").filter(s => s.closest("[hidden]") === null).map(s => s.querySelector("h2")!.textContent);
       expect(shown).toEqual(["Decided differently1", "Needs your review1", "Added from other branches1", "Decisions on this branch1"]);
-      const fold = root.querySelector("details.mfold")!;
+      const fold = section("own").querySelector("details.mfold")!;
       expect(fold.hidden).toBe(false);
       expect(fold.hasAttribute("open")).toBe(false);
       expect(fold.querySelector("summary")!.textContent).toBe("Not rules (1)");
@@ -276,7 +278,7 @@ describe("the Merge Assist page", () => {
     it("Not a rule moves the decision at once, and its toast's Undo restores it", async () => {
       const marking = click(button("mareject", "candidate:mine"));
       render(root);
-      expect(root.querySelector("details.mfold summary")!.textContent).toBe("Not rules (2)");
+      expect(section("own").querySelector("details.mfold summary")!.textContent).toBe("Not rules (2)");
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       expect(writes()[0]).toMatchObject({
         method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/candidates$/u),
@@ -371,7 +373,7 @@ describe("the Merge Assist page", () => {
       render(root);
       expect(root.querySelector('[role="alert"]')!.textContent).toContain("Couldn’t read Merge Assist for this checkout.");
       expect(root.querySelectorAll("button[data-act]").filter(b => b.closest("[hidden]") === null).map(b => b.dataset.act)).toEqual([]);
-      expect(root.querySelectorAll("section.msec").filter(s => !s.hidden)).toEqual([]);
+      expect(root.querySelectorAll("section.msec").filter(s => s.closest("[hidden]") === null)).toEqual([]);
       expect(root.querySelector(".mstrip")).toBeNull();
 
       data.mergeAssistError = null;
@@ -401,9 +403,9 @@ describe("the Merge Assist page", () => {
     });
 
     it("opens the decisions marked as not a rule from their summary, and keeps them open across renders", () => {
-      click(root.querySelector("details.mfold summary"));
+      click(section("own").querySelector("details.mfold summary"));
       render(root);
-      expect(root.querySelector("details.mfold")!.hasAttribute("open")).toBe(true);
+      expect(section("own").querySelector("details.mfold")!.hasAttribute("open")).toBe(true);
       expect(ui.mergeOpen.has("notRules")).toBe(true);
     });
 

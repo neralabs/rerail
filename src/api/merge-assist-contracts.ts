@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { CANDIDATE_ID_PATTERN, CANDIDATE_STATES } from "../engine/merge-assist/candidate.js";
-import { FINDING_ACTIONS, mergeAssistStatusSchema } from "../engine/merge-assist/model.js";
+import { CONFLICT_ACTIONS, FINDING_ACTIONS, mergeAssistStatusSchema } from "../engine/merge-assist/model.js";
 import { targetShape } from "./repository-contracts.js";
 
 export { mergeAssistStatusSchema };
@@ -33,3 +33,12 @@ export const mergeAssistFindingBodySchema = z.object({
   action: z.enum(FINDING_ACTIONS)
     .describe("adopt: apply a review finding; dismiss: hide a finding until its candidate changes; undo: remove an applied one. A coding agent may only dismiss."),
 }).strict();
+
+export const mergeAssistConflictBodySchema = z.object({
+  ...targetShape,
+  conflictId: z.string().min(1).describe("An in-flight conflict's id, as merge_assist_get lists it under conflicts."),
+  action: z.enum(CONFLICT_ACTIONS)
+    .describe("mine: keep this branch's side; theirs: take the other side's; new: a new decision (text required); dismiss: not a conflict. Only a person resolves a conflict."),
+  text: z.string().min(1).max(600).optional()
+    .describe("The decision's text: required for new; for mine and theirs it defaults to that side's summary."),
+}).strict().refine(body => body.action !== "new" || body.text !== undefined, { message: "a new decision needs its text", path: ["text"] });

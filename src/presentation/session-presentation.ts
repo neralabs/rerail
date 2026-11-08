@@ -13,7 +13,7 @@ import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
-import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { conflictUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -190,13 +190,18 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 
 /**
  * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
- * person's `why?` opens. The runtime records no link; each coding agent's adapter links the rules as it hands them over,
- * and without a dashboard leaves them unlinked.
+ * person's `why?` opens; and the conflict a note surfaces linked to its card on the Merge Assist page (`open`). The
+ * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
+ * leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
   const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
+  return deliveries.map(delivery => ({
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
+    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
+  }));
 }
 
 /**

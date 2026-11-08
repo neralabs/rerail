@@ -23,6 +23,8 @@ describe("a hash", () => {
     ["#sessions?filter=nonsense", { view: "sessions" }],
     ["#settings", { view: "settings" }],
     ["#merge", { view: "merge" }],
+    ["#merge?conflict=conflict:native%2Fsrc%2Fmodel.rs%23matchers:ab12", { view: "merge", conflict: "conflict:native/src/model.rs#matchers:ab12" }],
+    ["#merge?conflict=", { view: "merge" }],
     ["#pack/typescript", { view: "pack", pack: "typescript" }],
     ["#somewhere-else", { view: "overview" }],
   ])("%s names its view", (hash, route) => {
@@ -68,6 +70,7 @@ describe("a hash", () => {
     { view: "sessions", sessionFilter: "open" },
     { view: "settings" },
     { view: "merge" },
+    { view: "merge", conflict: "conflict:native/src/model.rs#matchers:ab12" },
   ])("written back for %o, reads as the same route", route => {
     expect(parseRoute(hashOf(route))).toEqual(route);
   });

@@ -402,7 +402,7 @@ are quick.
   area, contested ones first, one terse line each, with the `focus-pool` line to end the final message with
   ("Note: … decided differently on …") last.
 - **`git-conflict` arms.** The dumbest in-flight mechanism: no ranking, no judge, no extraction, no merge. After every
-  tool call (a patch, a command or a code cell may write files), the hook (`benchmark/merge-assist-replay-git.ts`)
+  tool call (a patch, a command or a code cell may write files), the hook (`benchmark/merge-assist-replay-git.ts`, with the overlap rule in `src/engine/merge-assist/overlap.ts`)
   identifies, reading only, which of the agent's changes would conflict with another ref visible at second's start:
   first as of `first_visible`, and each `concurrent` ref at its newest first-parent commit by then. The agent's side
   is `git diff --unified=0` of the working files against the base (untracked files as new files); a ref's side is its

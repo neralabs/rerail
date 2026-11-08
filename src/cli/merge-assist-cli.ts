@@ -11,13 +11,13 @@ import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { CANDIDATE_DIRECTORY, candidateFileName } from "../engine/merge-assist/candidate.js";
-import type { Finding, JudgeRunnerId, MergeAssistStatus, OwnDecision } from "../engine/merge-assist/model.js";
+import { CONFLICT_ACTIONS, type Conflict, type ConflictAction, type Finding, type JudgeRunnerId, type MergeAssistStatus, type OwnDecision } from "../engine/merge-assist/model.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { createMergeAssistService, MergeAssistError, type MergeAssistService } from "../runtime/merge-assist/service.js";
 
 const ID_ACTIONS = ["reject", "adopt", "dismiss", "undo"] as const;
-const ACTIONS = ["status", "on", "off", "scan", ...ID_ACTIONS] as const;
+const ACTIONS = ["status", "on", "off", "scan", "conflicts", "resolve", ...ID_ACTIONS] as const;
 type MergeAssistAction = (typeof ACTIONS)[number];
 type IdAction = (typeof ID_ACTIONS)[number];
 
@@ -138,6 +138,65 @@ function addedEntry(finding: Finding): string[] {
   ];
 }
 
+/** Who is on a conflict's side: its label, with its author when known. */
+function sideText(side: Conflict["mine"]): string {
+  return `${plain(side.label)}${side.author === null ? "" : ` (${plain(side.author)})`}`;
+}
+
+/** A side's one sentence and where it is. */
+function sideLine(side: Conflict["mine"]): string {
+  return `${sideText(side)}: ${quoted(side.summary)}${side.location === null ? "" : ` at ${plain(side.location)}`}`;
+}
+
+/** What settled a conflict: the verdict, who, and the decision it wrote. */
+function resolutionText(conflict: Conflict): string {
+  const resolution = conflict.resolution;
+  if (resolution === null) return conflict.status;
+  if (resolution.action === "dismiss") return `dismissed by ${plain(resolution.name)}: not a conflict`;
+  const verdict = resolution.action === "theirs" ? `took ${plain(conflict.theirs.label)}'s side` : resolution.action === "mine" ? "kept this branch's side" : "wrote a new decision";
+  const by = resolution.by === "precedent" ? "by precedent" : `by ${plain(resolution.name)}`;
+  return `${verdict}, ${by}${resolution.rule === null ? "" : `; decision ${plain(resolution.rule)}`}`;
+}
+
+/** One open conflict: what, both sides, why, and how to settle it. */
+function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
+  const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
+  return [
+    `${conflict.id}  ${quoted(conflict.title)}  (${conflict.kind === "overlap" ? "overlapping work" : "decided differently"}${conflict.level === "logged" ? ", logged only" : ""})`,
+    `  Yours:  ${sideLine(conflict.mine)}`,
+    ...hunk(conflict.mine),
+    `  Theirs: ${sideLine(conflict.theirs)}${conflict.theirs.url === null ? "" : ` ${plain(conflict.theirs.url)}`}`,
+    ...hunk(conflict.theirs),
+    ...conflict.evidence.map(line => `  ${plain(line)}`),
+    `  Resolve: rerail merge-assist resolve ${conflict.id} mine|theirs|new|dismiss [--text "..."]`,
+  ];
+}
+
+function settledConflictEntry(conflict: Conflict): string[] {
+  return [`${conflict.id}  ${quoted(conflict.title)}: ${resolutionText(conflict)}`];
+}
+
+/** The status's conflicts: open ones in full, then settled ones in a line each. */
+function conflictSections(status: MergeAssistStatus, hunks: boolean): string[] {
+  const open = status.conflicts.filter(conflict => conflict.status === "open");
+  const settled = status.conflicts.filter(conflict => conflict.status !== "open");
+  return [...section("Conflicts", open.map(conflict => openConflictEntry(conflict, hunks))), ...section("Settled conflicts", settled.map(settledConflictEntry))];
+}
+
+/** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks, and the latest decision log entries. */
+export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string | null): string {
+  const open = status.conflicts.filter(conflict => conflict.status === "open").length;
+  const log = status.decisionLog.entries.slice(0, 5).map(entry => [`${timeText(entry.recordedAt)}  ${quoted(entry.title)}: ${plain(entry.outcome)}, by ${plain(entry.by.name)}`]);
+  return [
+    `● ${count(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
+    ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
+    ...conflictSections(status, true),
+    ...section("Decision log (refs/rerail/decisions)", log),
+    ...status.decisionLog.problems.map(problem => `  ${plain(problem)}`),
+    ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
+  ].join("\n");
+}
+
 function ownEntry(decision: OwnDecision): string[] {
   const how = decision.level === "code" ? "Rerail checks it exactly" : "your agent judges it";
   const scope = decision.scope.length === 0 ? "the whole repository" : decision.scope.map(plain).join(", ");
@@ -218,6 +277,7 @@ export function formatMergeAssistStatus(status: MergeAssistStatus, dashboardUrl:
     `● Merge Assist is on in ${name} (${branch}${base}).`,
     ...readinessLines(status),
     ...scanLines(status, scanRequested),
+    ...conflictSections(status, false),
     ...section("Decided differently", open("talk").map(talkEntry)),
     ...section("Needs your review", open("review").map(reviewEntry)),
     ...section("Added from other branches", applied.map(addedEntry)),
@@ -231,6 +291,23 @@ export function formatMergeAssistStatus(status: MergeAssistStatus, dashboardUrl:
 function decisionOf(status: MergeAssistStatus, findingId: string): string {
   const finding = status.findings.find(entry => entry.id === findingId);
   return finding === undefined ? findingId : quoted(finding.candidate.decision);
+}
+
+/** One line saying what resolving a conflict did. */
+function resolveLine(id: string, status: MergeAssistStatus): string {
+  const conflict = status.conflicts.find(entry => entry.id === id);
+  if (conflict === undefined) return `● Resolved ${id}.`;
+  const logged = conflict.resolution?.logId === null || conflict.resolution === null ? "" : ` Logged as decision ${conflict.resolution.logId} in refs/rerail/decisions.`;
+  return `● ${quoted(conflict.title)}: ${resolutionText(conflict)}.${logged}`;
+}
+
+/** What the command prints for `step`: a line for an action, else the conflicts or the status. */
+function resultText(step: Step, status: MergeAssistStatus, dashboardUrl: string | null): string {
+  const page = dashboardUrl === null ? "" : `\n  Merge Assist page: ${dashboardUrl}`;
+  if (step.action === "resolve") return `${resolveLine(step.id, status)}${page}`;
+  if ("id" in step) return `${actionLine(step.action, step.id, status)}${page}`;
+  if (step.action === "conflicts") return formatConflicts(status, dashboardUrl);
+  return formatMergeAssistStatus(status, dashboardUrl, step.action === "scan");
 }
 
 /** One line saying what an action on one decision did. */
@@ -247,8 +324,9 @@ function actionLine(action: IdAction, id: string, status: MergeAssistStatus): st
 }
 
 type Step =
-  | { readonly action: Exclude<MergeAssistAction, IdAction> }
-  | { readonly action: IdAction; readonly id: string };
+  | { readonly action: Exclude<MergeAssistAction, IdAction | "resolve"> }
+  | { readonly action: IdAction; readonly id: string }
+  | { readonly action: "resolve"; readonly id: string; readonly verdict: ConflictAction; readonly text: string | undefined };
 
 interface Invocation {
   readonly step: Step;
@@ -256,22 +334,37 @@ interface Invocation {
   readonly json: boolean;
 }
 
+/** `resolve <conflict-id> mine|theirs|new|dismiss`: the conflict and the verdict, and the arguments after them. */
+function resolveStep(rest: readonly string[], usage: () => string): { id: string; verdict: ConflictAction; rest: readonly string[] } {
+  const [id, verdict] = rest;
+  if (id === undefined || id.startsWith("--")) throw new Error(`merge-assist resolve needs a conflict id\n\n${usage()}`);
+  const known = CONFLICT_ACTIONS.find(action => action === verdict);
+  if (known === undefined) throw new Error(`merge-assist resolve needs mine, theirs, new or dismiss after the conflict id\n\n${usage()}`);
+  return { id, verdict: known, rest: rest.slice(2) };
+}
+
+/** The step the arguments name before their options, and the arguments left. */
+function stepOf(action: MergeAssistAction, rest: readonly string[], usage: () => string): { step: Step; rest: readonly string[] } {
+  if (action === "resolve") {
+    const resolved = resolveStep(rest, usage);
+    return { step: { action, id: resolved.id, verdict: resolved.verdict, text: undefined }, rest: resolved.rest };
+  }
+  if (!takesId(action)) return { step: { action }, rest };
+  const id = rest[0];
+  if (id === undefined || id.startsWith("--")) throw new Error(`merge-assist ${action} needs ${action === "reject" ? "a candidate id" : "a finding id"}\n\n${usage()}`);
+  return { step: { action, id }, rest: rest.slice(1) };
+}
+
 function invocation(args: readonly string[], usage: () => string): Invocation {
   const first = args[0];
   const named = first !== undefined && !first.startsWith("--");
   const action = named ? ACTIONS.find(known => known === first) : "status";
   if (action === undefined) throw new Error(`Unknown merge-assist command: ${first}\n\n${usage()}`);
-  let rest = named ? args.slice(1) : args;
-  let step: Step;
-  if (takesId(action)) {
-    const id = rest[0];
-    if (id === undefined || id.startsWith("--")) throw new Error(`merge-assist ${action} needs ${action === "reject" ? "a candidate id" : "a finding id"}\n\n${usage()}`);
-    step = { action, id };
-    rest = rest.slice(1);
-  } else {
-    step = { action };
-  }
-  const { flags, options } = parseArguments(rest, { flags: ["--json"], options: ["--repo"] }, argument => `Unknown merge-assist option: ${argument}\n\n${usage()}`);
+  const parsed = stepOf(action, named ? args.slice(1) : args, usage);
+  const { flags, options } = parseArguments(parsed.rest, { flags: ["--json"], options: ["--repo", "--text"] }, argument => `Unknown merge-assist option: ${argument}\n\n${usage()}`);
+  const text = options.get("--text");
+  if (text !== undefined && parsed.step.action !== "resolve") throw new Error(`--text goes with merge-assist resolve\n\n${usage()}`);
+  const step = parsed.step.action === "resolve" ? { ...parsed.step, text } : parsed.step;
   const requested = resolve(options.get("--repo") ?? process.cwd());
   let physical: string;
   try {
@@ -283,16 +376,20 @@ function invocation(args: readonly string[], usage: () => string): Invocation {
 }
 
 async function run(service: MergeAssistService, step: Step, root: string): Promise<MergeAssistStatus> {
+  if (step.action === "resolve") return await service.resolveConflict(root, step.id, step.verdict, step.text, "person");
   if ("id" in step) {
     if (step.action === "reject") return await service.setCandidateState(root, step.id, "rejected");
     return await service.resolveFinding(root, step.id, step.action, "person");
   }
-  if (step.action === "status") return await service.status(root);
+  if (step.action === "status" || step.action === "conflicts") return await service.status(root);
   if (step.action === "scan") return await service.scan(root);
   return await service.setEnabled(root, step.action === "on");
 }
 
-/** `rerail merge-assist [status|on|off|scan|reject <id>|adopt <id>|dismiss <id>|undo <id>] [--repo <dir>] [--json]`. */
+/**
+ * `rerail merge-assist [status|on|off|scan|conflicts|reject <id>|adopt <id>|dismiss <id>|undo <id>|resolve <id> <verdict>
+ * [--text "..."]] [--repo <dir>] [--json]`.
+ */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
   const { step, root, json } = invocation(args, usage);
@@ -313,11 +410,6 @@ export async function runMergeAssistCommand(args: readonly string[], usage: () =
     return 0;
   }
   const dashboardUrl = await (io.dashboardUrl ?? defaultDashboardUrl)(root);
-  if ("id" in step) {
-    const page = dashboardUrl === null ? "" : `\n  Merge Assist page: ${dashboardUrl}`;
-    stdout.write(`${actionLine(step.action, step.id, status)}${page}\n`);
-    return 0;
-  }
-  stdout.write(`${formatMergeAssistStatus(status, dashboardUrl, step.action === "scan")}\n`);
+  stdout.write(`${resultText(step, status, dashboardUrl)}\n`);
   return 0;
 }

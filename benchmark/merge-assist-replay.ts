@@ -23,7 +23,7 @@
  * "Note: …" line to end the final message with. Under `none` the hook only logs. Under `git-conflict` and
  * `git-conflict-pull`, the hook identifies after every tool call, read-only, which of the agent's changes would conflict
  * with first (as of `first_visible`) or a `concurrent` ref (its head as of second's start): `git diff --unified=0`
- * hunks of both sides as base lines touching or at most 3 lines apart in the same file (merge-assist-replay-git.ts).
+ * hunks of both sides as base lines touching or at most 3 lines apart in the same file (src/engine/merge-assist/overlap.ts).
  * `git-conflict` pushes each (ref, file) once with their hunk and stated intent; `git-conflict-pull` keeps the list
  * in the workspace's `.git/rerail-conflicts.md` (`git conflicts`, a repo-local alias, prints it) and sends one line
  * when the set changes. `--detect-only` runs no agent: it replays every selected pair's second commit by commit
@@ -69,7 +69,8 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { clip, type CodexEvents, type CodexOutcome, type CodexRunOptions, createCodexHome, fixed, GIT_ENV, mean, median, pool, readEvents, runCodex, table, transcriptText, type Usage } from "./merge-assist-context.js";
 import { type AlignModule, CHECK_COMMAND, GIT_ARMS, type LedgerUnit, loadAlignModule, REPLAY_ARMS, type ReplayArm, type ReplayHookConfig, type ReplayHookLogEntry } from "./merge-assist-replay-hook.js";
-import { commitRanges, conflictKey, gitRead, identify, type LineRange, type RefHunk, refFiles, refHunks, type RefSide, statedIntent } from "./merge-assist-replay-git.js";
+import { commitRanges, conflictKey, identify, type LineRange, type RefHunk, refFiles, refHunks } from "../src/engine/index.js";
+import { gitRead, type RefSide, statedIntent } from "./merge-assist-replay-git.js";
 
 const HOOK = fileURLToPath(new URL("./merge-assist-replay-hook.ts", import.meta.url));
 const DEFAULT_ALIGN_MODULE = fileURLToPath(new URL("./merge-assist-align.ts", import.meta.url));

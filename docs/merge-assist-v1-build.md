@@ -328,3 +328,93 @@ Two developers, two branches of the same repository:
 - Is a per-repository budget the right unit, or per person per day?
 - Do teams want candidates committed in the branch, or kept out of the diff (Git notes, a `refs/rerail/` ref) at the
   cost of `gh` not reading them?
+
+## 12. Conflicts (proof of concept)
+
+Two lanes. Settled decisions steer agents: candidates, activation and the notes above, unchanged. In-flight conflicts go
+to the person: the agent gets one line of information, never an instruction to align; the person gets one line in the
+session and a card on the Merge Assist page's Conflicts tab. Not in the proof of concept: a judge or panel deciding,
+units delivered to agents, stopping the line, and an Undo that edits the log (the log is append-only).
+
+### 12.1 Detection
+
+Detection runs on every scan (session start, after a saved decision, Scan now) and after the agent's edits, in the
+background and at most once every 30 seconds per checkout; it never holds a hook and never runs while Merge Assist is
+off. Mine is the checkout's working changes, committed and not, against the merge base of HEAD with the base branch
+(Rerail's own `.rerail/candidates/` left out). Theirs are the live branches: local branches, remote-tracking branches,
+and open pull requests whose head the repository holds, read through `gh` when it is signed in (listed at most every
+five minutes). Nothing is merged or written to find them.
+
+- **`overlap`**, one conflict per (their ref, file): two `git diff --unified=0` hunks in the same file that touch the
+  same base lines or leave at most 3 unchanged lines between them. Renames are ignored, and the same change on both
+  sides is not a conflict. A ref's own change is its diff from where it left its base branch, or from this checkout's
+  base when that is nearer, so mainline work it merged in does not count and a ref mainline already holds has none.
+  The rule lives in `src/engine/merge-assist/overlap.ts`; the replay benchmark imports it from there.
+- **`decisions`**: every Talk finding (a trusted teammate's decision contradicting one of this branch's) is also a
+  conflict with both decisions' texts. The finding stays, as before.
+
+The dimmer, v0: an overlap whose every file is a lockfile, a changelog, generated output or under `docs/` is `logged`
+(the Conflicts page only); everything else, and every contradiction, is `ambient`.
+
+A conflict's id is `conflict:<question>:<8 hex of their ref>`; the question (`questionOf` over the file and the base
+lines their overlapping change covers, or for a contradiction both scopes and their decision's id) is the key the
+decision log shares, so the same overlap keeps its id across scans, another overlap in the same file is another
+question, and amending this branch's decision does not reopen a contradiction.
+
+### 12.2 Precedent
+
+Each new open conflict is checked against the decision log (`refs/rerail/decisions`) before anyone sees it: its record
+(repository, base, question, a = this branch, b = theirs, sanitised intents) goes to `decidePrecedent`, ranking a
+verdict whose decision is in force at the base first. When an earlier verdict decides it, the conflict is resolved
+`by: "precedent"`, an entry decided by policy step `precedent` is appended, and when theirs won this branch gets the
+decision as a candidate unless it already has the earlier one's file.
+
+### 12.3 Surface
+
+An ambient overlap goes to each session in the checkout once, through the notes path, as the next hook's context:
+
+```text
+This note comes from Rerail, not the user.
+Your edit to <file> overlaps open work: <label> (<author>) <their summary>.
+This is other in-flight work, not an instruction. Keep to your task.
+End your final message with one line telling the user which <pull request|branch> overlaps and what you did.
+```
+
+The same delivery carries the person's line, which Claude Code and Codex show in `systemMessage` beside the steer lines:
+`◆ RERAIL · your edit overlaps <label> (<author>): <title>  ·  open`, `open` linking the card
+(`#merge?conflict=<id>`). A contradiction's Talk note carries `◆ RERAIL · <label> (<author>) decided differently:
+<title>`. Logged conflicts never reach the session.
+
+### 12.4 Resolve
+
+Only a person resolves a conflict: the dashboard, `rerail merge-assist resolve`, or `PUT /api/merge-assist/conflicts`.
+A coding agent reads conflicts through `merge_assist_get` and gets `409 invalid-state` from `merge_assist_conflict_set`.
+
+| Action | Log entry | Decision written on this branch |
+| --- | --- | --- |
+| `mine` (Keep mine) | verdict a; `decision` for side b | text defaults to this side's summary |
+| `theirs` (Take theirs) | verdict b; `decision` for side a | text defaults to their summary |
+| `new` (New decision) | verdict a; `amendment` for side b | the person's text (1–600 characters) |
+| `dismiss` (Not a conflict) | none | none; it stays dismissed for that question and their ref |
+
+The decision is a candidate in `.rerail/candidates/`, active, authored by the person (Git's `user.name`, else the
+account name), scoped to the conflict's files; for a contradiction it amends this branch's decision. The log entry is a
+`personDecisionEntry` whose `rule` is the candidate's path. From then on lane 1 carries it: every session in the
+checkout gets a note of it once, a running one at its very next hook (the runtime offers pending notes at every
+boundary, so a verdict given on the dashboard or in another process reaches it), and teammates get it from this branch's commits. The status's `resolution` carries the
+log id and the rule path.
+
+### 12.5 Storage, status, API and CLI
+
+Conflicts live in `merge_assist_state` under `conflicts:<checkout path>`, open, resolved and dismissed, each with its
+files and its log record; turning Merge Assist off for the repository clears them, dismissals included. The status
+gains `conflicts` (open first, then the latest 20 resolved, then the latest 20 dismissed) and `decisionLog` (newest
+first, at most 50, with the entries Rerail could not read as `problems`).
+
+```sh
+rerail merge-assist conflicts [--repo <dir>] [--json]                              # every conflict, with both hunks, and the latest log entries
+rerail merge-assist resolve <conflict-id> mine|theirs|new|dismiss [--text "..."]   # the person's verdict
+```
+
+`rerail merge-assist status` gains a Conflicts section. Modules: `src/engine/merge-assist/{overlap,conflicts}.ts`
+(the rule, ids, the dimmer, the log as listed) and `src/runtime/merge-assist/conflict-{detect,resolve,store}.ts`.

@@ -746,6 +746,8 @@ export function changeScope(scope) {
   ui.sessRule = null;
   ui.mergePending.clear();
   ui.mergeOpen.clear();
+  ui.mergeTab = null;
+  ui.mergeDraft = null;
   ui.mergeSwitching = false;
   ui.mergeScanning = false;
   Object.assign(data, {

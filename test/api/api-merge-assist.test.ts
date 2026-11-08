@@ -12,7 +12,7 @@ import { DatabaseApiStores } from "../../src/api/stores.js";
 import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../../src/engine/index.js";
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
 import { RecordingMergeAssistService } from "../support/merge-assist-status.js";
-import { candidate, candidateFiles, commit, forbidRule, mergeAssistWorkspaces } from "../runtime/merge-assist/support/merge-assist-workspace.js";
+import { candidate, candidateFiles, commit, forbidRule, mergeAssistWorkspaces, writeFiles } from "../runtime/merge-assist/support/merge-assist-workspace.js";
 
 const CANDIDATE = "candidate:retries-in-transport-3f9a1c";
 
@@ -143,6 +143,8 @@ describe("the Merge Assist operations", () => {
       ["PUT", "/api/merge-assist/findings", { checkout: worktree, findingId: "finding-1", action: "adopt" }],
       ["PUT", "/api/merge-assist/findings", { checkout: worktree, findingId: "finding-1", action: "undo" }],
       ["PUT", "/api/merge-assist/findings", { checkout: worktree, findingId: "finding-2", action: "dismiss" }],
+      ["PUT", "/api/merge-assist/conflicts", { checkout, conflictId: "conflict-1", action: "theirs" }],
+      ["PUT", "/api/merge-assist/conflicts", { checkout, conflictId: "conflict-1", action: "new", text: "Share matchers." }],
     ] as const) {
       const answer = await request(method, path, body);
       expect(answer.status, `${method} ${path} ${JSON.stringify(body)}`).toBe(200);
@@ -157,6 +159,8 @@ describe("the Merge Assist operations", () => {
       { method: "resolveFinding", checkout: worktree, findingId: "finding-1", action: "adopt", actor: "person" },
       { method: "resolveFinding", checkout: worktree, findingId: "finding-1", action: "undo", actor: "person" },
       { method: "resolveFinding", checkout: worktree, findingId: "finding-2", action: "dismiss", actor: "person" },
+      { method: "resolveConflict", checkout, conflictId: "conflict-1", action: "theirs", text: undefined, actor: "person" },
+      { method: "resolveConflict", checkout, conflictId: "conflict-1", action: "new", text: "Share matchers.", actor: "person" },
     ]);
   });
 
@@ -169,6 +173,9 @@ describe("the Merge Assist operations", () => {
       ["/api/merge-assist/findings", { checkout, findingId: "", action: "dismiss" }],
       ["/api/merge-assist/findings", { checkout, findingId: "finding-1", action: "apply" }],
       ["/api/merge-assist/findings", { checkout, findingId: "finding-1", action: "dismiss", extra: true }],
+      ["/api/merge-assist/conflicts", { checkout, conflictId: "conflict-1", action: "new" }],
+      ["/api/merge-assist/conflicts", { checkout, conflictId: "conflict-1", action: "merge" }],
+      ["/api/merge-assist/conflicts", { checkout, conflictId: "conflict-1", action: "mine", text: "x".repeat(601) }],
       ["/api/merge-assist/settings", { checkout: "relative/app", enabled: true }],
     ] as const) {
       expect((await request("PUT", path, body)).status, JSON.stringify(body)).toBe(400);
@@ -195,6 +202,8 @@ describe("the Merge Assist operations", () => {
     expect(mergeAssistStatusSchema.safeParse((await call("merge_assist_scan", {}, checkout)).result).success).toBe(true);
     expect((await call("merge_assist_candidate_set", { candidateId: CANDIDATE, state: "rejected" }, checkout)).result).toMatchObject({ checkout });
     expect((await call("merge_assist_finding_set", { findingId: "finding-2", action: "dismiss" }, checkout)).result).toMatchObject({ checkout });
+    // A verdict on a conflict reaches the service as the agent's, and the service refuses it (below, for real).
+    expect((await call("merge_assist_conflict_set", { conflictId: "conflict-1", action: "theirs" }, checkout)).result).toMatchObject({ checkout });
 
     // Turning it on, restoring, adopting and undoing widen what steers the agent: the person's to do.
     expect((await call("merge_assist_settings_set", { enabled: true }, checkout)).result).toEqual(refused);
@@ -208,6 +217,7 @@ describe("the Merge Assist operations", () => {
       { method: "scan", checkout },
       { method: "setCandidateState", checkout, candidateId: CANDIDATE, state: "rejected" },
       { method: "resolveFinding", checkout, findingId: "finding-2", action: "dismiss", actor: "agent" },
+      { method: "resolveConflict", checkout, conflictId: "conflict-1", action: "theirs", text: undefined, actor: "agent" },
     ]);
   });
 
@@ -236,7 +246,7 @@ describe("the Merge Assist operations", () => {
     const tools = (await response.json() as { result: { tools: Array<{ name: string; description: string }> } }).result.tools
       .filter(tool => tool.name.startsWith("merge_assist_"));
     expect(tools.map(tool => tool.name).sort()).toEqual([
-      "merge_assist_candidate_set", "merge_assist_finding_set", "merge_assist_get", "merge_assist_scan", "merge_assist_settings_set",
+      "merge_assist_candidate_set", "merge_assist_conflict_set", "merge_assist_finding_set", "merge_assist_get", "merge_assist_scan", "merge_assist_settings_set",
     ]);
     for (const tool of tools) expect(tool.description).toMatch(/^\[Internal testing\] /u);
     expect(tools.find(tool => tool.name === "merge_assist_settings_set")?.description).toContain("People only");
@@ -279,6 +289,39 @@ describe("a coding agent's dismissal, through the real service", { timeout: 30_0
       expect(response.status).toBe(200);
       expect(mergeAssistStatusSchema.parse(await response.json()).findings[0]).toMatchObject({ id: absorbed!.id, status: "dismissed" });
       expect(ws.rulesOn(ws.repo)).toEqual([]);
+    } finally {
+      stores.close();
+    }
+  });
+
+  it("refuses a coding agent's verdict on an in-flight conflict, and takes the person's over HTTP", async () => {
+    const ws = await workspace({ files: { "src/api/model.ts": "a\nb\nc\nd\ne\n" } });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": "a\nB\nc\nd\ne\n" }, "Capitalise b");
+    writeFiles(ws.repo, { "src/api/model.ts": "a\nb\nC\nd\ne\n" });
+    const [conflict] = (await service.scan(ws.repo)).conflicts;
+    expect(conflict).toMatchObject({ status: "open" });
+
+    const stores = new DatabaseApiStores(ws.databasePath, {
+      health: () => ({ pid: process.pid, database: { path: ws.databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+      mergeAssist: service,
+    });
+    try {
+      const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
+      expect(mergeAssistStatusSchema.parse((await toolCall(mcp, "merge_assist_get", {}, ws.repo)).result).conflicts).toEqual([conflict]);
+      expect((await toolCall(mcp, "merge_assist_conflict_set", { conflictId: conflict!.id, action: "mine" }, ws.repo)).result)
+        .toEqual(expect.stringMatching(/^invalid-state: The person decides in-flight conflicts/u));
+      expect((await service.status(ws.repo)).conflicts[0]).toMatchObject({ status: "open" });
+
+      const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+      const response = await app.request("/api/merge-assist/conflicts", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ checkout: ws.repo, conflictId: conflict!.id, action: "theirs" }),
+      });
+      expect(response.status).toBe(200);
+      expect(mergeAssistStatusSchema.parse(await response.json()).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", text: "Capitalise b" } });
     } finally {
       stores.close();
     }
