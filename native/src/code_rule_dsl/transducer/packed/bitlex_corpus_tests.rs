@@ -177,6 +177,16 @@ fn generated() -> Vec<(String, String)> {
     add("carry", "toggle of toggle", "mask m = toggle(toggle(quote))\nmask n = toggle(toggle(quote) & bs)\n".to_owned());
     add("carry", "strings", "mask esc = escaped(bs)\nmask q = quote & ~esc\nmask inside = toggle(q)\nmask code = ~inside & ~q\n".to_owned());
     add("carry", "fill after prev", "mask m = fill(prev(quote) & alpha, ~alpha)\nmask n = fill(next(quote) & digit, ~digit)\n".to_owned());
+    // Each carry after a `prev` at every distance: a lane's carry summary reads the `prev`'s
+    // word, from the lanes before at 16-, 32- and 64-byte lanes (generated MSL once counted bits
+    // above a 16-bit lane's word here).
+    for (what, carry) in [("toggle", "toggle(P)"), ("fill", "fill(P, ws | op)"), ("escaped", "escaped(P)")] {
+        let mut body = String::from("mask base = after(toggle(nul | quote))\n");
+        for k in 1..=63 {
+            let _ = writeln!(body, "mask c{k} = {}", carry.replace('P', &format!("prev(base, {k})")));
+        }
+        add("carry", &format!("{what} after prev at every distance"), body);
+    }
     // Carried state of one word and of more than one: many `prev`s at long distances.
     for n in [1usize, 2, 3, 4, 6] {
         let mut body = String::new();
@@ -528,7 +538,10 @@ fn against_the_evaluator(case: &Case, bytes: &[u8], got: &[Vec<u64>]) -> Result<
 fn compiled_corpus() -> Vec<Case> {
     let (mut cases, mut refused) = (Vec::new(), Vec::new());
     // The tree files are checked whole, through tier 2 (`corpus_trees_equal_the_evaluator`).
-    for (n, s) in on_disk().into_iter().filter(|(n, _)| !n.contains("-tree-")) {
+    // `RERAIL_CORPUS_FILES`: only the files whose names hold one of its comma-separated parts.
+    let only = std::env::var("RERAIL_CORPUS_FILES").ok();
+    let wanted = |n: &str| only.as_deref().is_none_or(|o| o.split(',').any(|p| n.contains(p)));
+    for (n, s) in on_disk().into_iter().filter(|(n, _)| !n.contains("-tree-") && wanted(n)) {
         match compile_case(&n, &s) {
             Ok(c) => cases.push(c),
             Err(e) => refused.push(e),
@@ -614,6 +627,9 @@ fn executors_equal_the_interpreter(metal: bool) {
             for s in ClassStrategy::ALL {
                 executors.push((format!("generated msl, {}-byte lanes, {s:?}", width.bytes()), Executor::Generated(s)));
             }
+            // `RERAIL_CORPUS_EXECUTORS`: only the executors whose names hold it.
+            let only = std::env::var("RERAIL_CORPUS_EXECUTORS").ok();
+            executors.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
             for (name, executor) in executors {
                 // Generated MSL in chunks of programs: one source of every program takes Metal's
                 // compiler minutes; its time grows faster than the source.
@@ -640,7 +656,7 @@ fn executors_equal_the_interpreter(metal: bool) {
         for ((f, got), want) in files.iter().zip(got).zip(&want) {
             let case = &cases[f.program];
             if let Some(k) = (0..want.len()).find(|&k| got[k] != want[k]) {
-                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}, {} bytes", f.bytes.len()));
+                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes)));
             }
         }
     }
@@ -650,7 +666,7 @@ fn executors_equal_the_interpreter(metal: bool) {
 }
 
 /// The tree grammars the compiler refuses today, by reason (docs/parser-generators/20-the-ir.md §7).
-const GAPS: [&str; 2] = ["may be empty", "keywords sharing a byte with the row's own tokens"];
+const GAPS: [&str; 0] = [];
 
 /// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1.
 #[derive(Default)]
@@ -838,4 +854,42 @@ fn corpus_trees_equal_the_evaluator() {
     eprintln!("{} tree files refused for the known gaps", refused.len());
     let compiled = files.len() - refused.len();
     assert!(parsed > 10 * compiled && fell > 10 * compiled, "{parsed} parsed, {fell} to tree-sitter, {compiled} files");
+}
+
+/// For a difference found above: one Bitlex source (`RERAIL_BITLEX`, a path) on one input
+/// (`RERAIL_INPUT`, a path), each mask on the interpreter and generated MSL at every width.
+#[test]
+#[ignore = "a debugging aid; run by name with RERAIL_BITLEX and RERAIL_INPUT"]
+fn a_file_on_every_executor() {
+    let path = std::env::var("RERAIL_BITLEX").expect("RERAIL_BITLEX");
+    let bytes = std::fs::read(std::env::var("RERAIL_INPUT").expect("RERAIL_INPUT")).expect("reads");
+    let source = std::fs::read_to_string(&path).expect("reads");
+    // A `.rir` file is a program as it is, each output by its number.
+    let case = if path.ends_with(".rir") {
+        let program = rir::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
+        let checked = (0..program.block_programs()[0].outputs.len()).map(|k| (format!("out {k}"), k)).collect();
+        Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: Vec::new(), counts: false }
+    } else {
+        compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
+    };
+    let want = case.program.block_programs()[0].interpret(&bytes);
+    let native = native_ir::lower(&case.program).expect("lowers").block_programs.remove(0);
+    for (name, k) in &case.checked {
+        eprintln!("{name:>8} interpreter {:x?}", want[*k]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
+        if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
+            std::fs::write(&dump, generate_with(&native.planes_form(), LaneWidth::W16, ClassStrategy::Planes)).expect("writes");
+        }
+        for width in LaneWidth::ALL {
+            let (got, _) = run_generated_with(&native, &bytes, width, ClassStrategy::Planes).expect("runs");
+            for (name, k) in &case.checked {
+                if got[*k] != want[*k] {
+                    eprintln!("{name:>8} msl {:>2} bytes {:x?}", width.bytes(), got[*k]);
+                }
+            }
+        }
+    }
 }

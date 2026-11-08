@@ -375,7 +375,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         for (p, exits) in last(&e) {
             edges.push(Edge { from: Some(p), exits, enters: vec![], to: None });
         }
-        if nullable(&e) {
+        // The root may be empty: a file without tokens goes to tree-sitter (its start state has
+        // no end), as the reference's root is never zero-width. A nested node may not.
+        if l != 0 && nullable(&e) {
             return Err(format!("node {} may be empty", b.rules[r].kind));
         }
         levels.push(Level { kind: (ids.kind)(&b.rules[r].kind)?, edges });

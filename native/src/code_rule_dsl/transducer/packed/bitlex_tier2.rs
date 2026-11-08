@@ -118,6 +118,8 @@ enum Arg {
     Table(u16),
     /// A state's entry, known once every state is laid out.
     State(u16),
+    /// A word's place.
+    Pc(u16),
 }
 
 /// Where an arm's token ends: a length, or the stream's next last byte.
@@ -203,6 +205,13 @@ impl Emit<'_> {
             }
             Pre::Check(c) => self.push("CHECK", 0, Arg::Num(*c)),
         }
+        self.body(arm);
+        at
+    }
+
+    /// An arm's acts, push and jump, here.
+    fn body(&mut self, arm: usize) -> u16 {
+        let at = self.pc();
         let a = &self.arms[arm];
         let (token, to, ret) = (a.token, a.to, a.push);
         for act in a.acts.clone() {
@@ -239,17 +248,60 @@ impl Emit<'_> {
         let row = &self.rows[cands[0].row];
         let plain: Vec<&Cand> = cands.iter().filter(|c| c.word.is_none()).collect();
         let words: Vec<&Cand> = cands.iter().filter(|c| c.word.is_some()).collect();
-        if words.is_empty() {
+        // The row's keywords beginning with the byte that no arm here takes: a token that is one
+        // has the keyword's kind, not the row's, so the row's own arm must not take it.
+        let missing: Vec<Vec<u8>> = row
+            .keywords
+            .iter()
+            .map(|(w, _)| w.clone())
+            .filter(|w| depth == 0 && w[0] == b && !words.iter().any(|c| c.word.as_ref() == Some(w)))
+            .collect();
+        let check_refuses = row.check.is_some_and(|(_, first)| !has(&first, b));
+        if words.is_empty() && (missing.is_empty() || plain.is_empty() || check_refuses) {
             let pre = row.check.map_or(Pre::None, |(c, _)| Pre::Check(c));
             let span = if row.one_byte { Span::Len(1) } else { Span::Last };
             return Ok(self.arm(plain[0].arm, span, pre));
         }
-        if !plain.is_empty() {
-            // A keyword and the row's own kind on one byte: the keyword's `WORD` refuses the
-            // others, so the row's check must refuse every token beginning with the byte.
-            if words.len() > 1 || row.check.is_none_or(|(_, first)| has(&first, b)) {
-                return Err(format!("keywords sharing a byte with the row's own tokens, which the check does not refuse: not compiled yet (byte {b:#04x})"));
+        if !plain.is_empty() && (words.len() > 1 || !check_refuses) {
+            // Keywords and the row's own kind on one byte, which the row's check does not tell
+            // apart: the token's end, then a test per keyword (`WORD m=1`, a jump to the
+            // keyword's arm where the token is the word), then the row's own arm.
+            if row.one_byte {
+                return Err(format!("one-byte tokens sharing byte {b:#04x} with keywords: not compiled yet"));
             }
+            let at = self.pc();
+            self.push("SPAN", 1, Arg::None);
+            let mut jumps = Vec::new();
+            for c in &words {
+                let w = self.string(c.word.as_ref().expect("a keyword"));
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), Some(c.arm)));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            // A keyword no arm here takes refuses the file.
+            for w in &missing {
+                let w = self.string(w);
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), None));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            if let Some((c, _)) = row.check {
+                self.push("CHECK", 0, Arg::Num(c));
+            }
+            self.body(plain[0].arm);
+            let mut stop = None;
+            for (jump, arm) in jumps {
+                let to = match arm {
+                    Some(arm) => self.body(arm),
+                    None => *stop.get_or_insert_with(|| {
+                        let pc = self.pc();
+                        self.push("STOP", 0, Arg::None);
+                        pc
+                    }),
+                };
+                self.words[usize::from(jump)].2 = Arg::Pc(to);
+            }
+            return Ok(at);
         }
         if words.len() == 1 {
             let w = words[0].word.clone().expect("a keyword");
@@ -408,6 +460,7 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row]) -> Resul
             Arg::Str(s) => write!(text, " s{s}"),
             Arg::Table(t) => write!(text, " T{t}"),
             Arg::State(s) => write!(text, " @{:04}", e.entry[usize::from(s)]),
+            Arg::Pc(p) => write!(text, " @{p:04}"),
         };
         text.push('\n');
     }

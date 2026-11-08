@@ -85,7 +85,9 @@ pub(super) enum StructuralOperation {
     Token,
     Switch { table: u16 },
     Span { last: bool, len: u16 },
-    Word { string: u16 },
+    /// The token's bytes against a string: refuse where they differ, or with `test`, skip the
+    /// next word.
+    Word { string: u16, test: bool },
     Check { check: u16 },
     Open { kind: u16 },
     /// At the end of this token (`this`), or of the one before.
@@ -137,7 +139,7 @@ impl StructuralOperation {
             Self::Token => (TOKEN, 0, 0),
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
-            Self::Word { string } => (WORD_IS, 0, string),
+            Self::Word { string, test } => (WORD_IS, u8::from(test), string),
             Self::Check { check } => (CHECK, 0, check),
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
@@ -362,7 +364,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             TOKEN => StructuralOperation::Token,
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
-            WORD_IS => StructuralOperation::Word { string: operand },
+            WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             CHECK => StructuralOperation::Check { check: operand },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },

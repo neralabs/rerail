@@ -162,7 +162,8 @@ Each word is 32 bits: an opcode, a mode and a 16-bit operand.
 | `SPAN m=0 n` | `end = start + n` | `end > limit` |
 | `SPAN m=1` | `end = lasts[taken] + 1`; `taken += 1` | no last byte; it is before `start`; `end > limit` |
 | `SWITCH T` | goes to `T`'s target for byte `start + offset`, or to its end target | the target is `refuse` |
-| `WORD_IS S` | — | the token's bytes are not string `S` (8 bytes at most) |
+| `WORD_IS m=0 S` | — | the token's bytes are not string `S` (8 bytes at most) |
+| `WORD_IS m=1 S` | a test: if the token is not `S`, skips the next word | — |
 | `CHECK C` | runs check `C` over the token | its `fail` output has a bit |
 | `OPEN K` | pushes a node of kind `K` at `start` | — |
 | `CLOSE m` | pops a node; its end is `last_end` (m=0) or `end` (m=1) | no open node |
@@ -183,6 +184,20 @@ Its tables:
 
 The verifier refuses any other word, operands out of range, and any cycle without a
 `TOKEN`. So the machine's only loop is over the stream.
+
+`WORD_IS m=1` is for keywords that share a first byte with the row's other tokens.
+For `null` and a word `n…`, the `n` arm reads:
+
+```
+SPAN m=1                 ; the token's end, from tier 1
+WORD_IS m=1 "null"       ; not null: skip the GOTO
+GOTO @null_arm
+CHECK word               ; any other n-token is a word
+LEAF word ...
+```
+
+A keyword the state has no arm for jumps to a `STOP`. Its token has the keyword's
+kind, so the word's arm must not take it.
 
 ## 5. What reaches the transducer
 
@@ -263,17 +278,15 @@ The parameters it covers:
 
 Where it stands (2026-11-08):
 
-- 577 tier-1 files on 220 inputs each: the interpreter equals the evaluator on every
+- 580 tier-1 files on 220 inputs each: the interpreter equals the evaluator on every
   mask, and Cranelift equals the interpreter bit for bit. The Metal executors run by
-  name (`corpus_metal_equals_the_interpreter`): Metal takes minutes to compile
-  generated MSL for the whole corpus.
+  name (`corpus_metal_equals_the_interpreter`), since Metal takes about twelve
+  minutes to compile generated MSL for the whole corpus. All nine Metal executors
+  equal the interpreter on every file.
 - 54 tree grammars over brackets, separators, atoms, keywords, checks, fields and the
-  root's form. The 18 the compiler accepts write the reference's nodes on every
-  document, and go to tree-sitter exactly where it does. The other 36 hit two gaps
-  (`GAPS`):
-  - a node that may be empty, such as a root of `value*`;
-  - keywords whose first byte the row's other tokens also begin with (`null` and a
-    word `n…`).
+  root's form. All 54 compile. On 2,947 documents each writes the reference's nodes,
+  and sends a document to tree-sitter (1,589 of them) exactly where the reference
+  does.
 
 What the corpus found, all fixed:
 
@@ -283,6 +296,17 @@ What the corpus found, all fixed:
 - **`aligned(a, k)` for `k` not dividing 64.** It was refused, because the residues
   are not 64-byte patterns. They are now `phase k r`.
 - **`phase` on the interpreter** used a block's number for its position.
+- **Stray lane bits on Metal.** At 16-byte lanes, `toggle(prev(…, k))` for `k`
+  from 25 to 31 counted bits above the lane's 16, which Metal's compiler kept in
+  the register after the conversion to `ushort`. The carry helpers now mask a
+  lane to its width (`lane_bits`) before a shift or a parity.
+- **An empty root.** The grammar refused a root that may be empty, such as
+  `value*`. A file with no tokens goes to tree-sitter, as in the reference, so the
+  root may be empty.
+- **Keywords sharing a first byte with other tokens.** The compiler refused them.
+  They now compile to `WORD_IS m=1` tests (§4.2). The first version let a keyword
+  with no arm in the state fall through to the word's arm, so `true: 1` parsed as
+  a pair where `true` cannot be a key. It now refuses.
 
 The inputs:
 

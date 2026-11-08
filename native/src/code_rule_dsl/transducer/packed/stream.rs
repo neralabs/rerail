@@ -38,7 +38,8 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
     let ok = match opcode {
         TOKEN | ACCEPT => mode == 0 && operand == 0,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
-        WORD_IS => mode == 0 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 8),
+        // `m=1`: a test, which skips the next word where the token is not the string.
+        WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 8),
         CHECK => mode == 0 && usize::from(operand) < checks,
         OPEN | LEAF | NODE_SUPER => mode == 0,
         NODE_FIELD => mode == 0 && operand != 0,
@@ -90,6 +91,7 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
                 out
             }
             RETURN => returns.iter().map(|&p| p + usize::from(mode)).collect(),
+            WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         }
     };
@@ -205,8 +207,12 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], starts: &[u
                 pc = usize::from(t);
             }
             WORD_IS => {
-                if bytes[start as usize..end as usize] != program.strings[usize::from(operand)][..] {
-                    return refuse(pc - 1, "not the keyword");
+                let same = bytes[start as usize..end as usize] == program.strings[usize::from(operand)][..];
+                match (mode, same) {
+                    (_, true) => {}
+                    // A test: the next word is the keyword's way; a token that is not the word skips it.
+                    (1, false) => pc += 1,
+                    _ => return refuse(pc - 1, "not the keyword"),
                 }
             }
             CHECK => {
