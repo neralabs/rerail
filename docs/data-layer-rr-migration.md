@@ -107,7 +107,8 @@ It separates imported bytes from local repairs. It does not claim that a commit 
 The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory contains **89 target drafts and 11 absent translations**. None has full acceptance yet.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
-Production discovery, reporting, lifecycle behavior, and a randomized mixin case remain open.
+Production discovery, reporting, and lifecycle behavior remain open.
+Dead-code analysis handles the tested randomized mixin alternatives through a reachability proof. Raw target ordering remains separate.
 The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on the current engine.
 Its native detector includes all six source finding families. Production reporting and global migration acceptance remain open.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
@@ -1712,3 +1713,25 @@ A separate adversarial case demonstrates the unresolved mixin gap in final analy
 With `Base.run` rooted, the source reaches both mixin helpers. The native path currently reports both as dead.
 The receipt records this failure separately. The 121 passing cases do not cover this ambiguity.
 The production default still refuses source execution. Discovery, dynamic roots, reporting, and lifecycle acceptance remain open.
+
+### 2026-11-08 — Mixin findings without a guessed hash order
+
+Commit `84d692333` adds eight mixin cases and a rooted constructor case.
+Seven mixin cases fail before the repair. The unrooted mixin and ordinary constructor cases pass.
+Across eight hash seeds, all sixty-four source results agree despite changes in raw call targets.
+The cases include inherited targets, call closures, unrelated names, duplicate references, imported classes, and cycles.
+
+The dead-code consumer now proves that every alternative reaches every other through same-name subclass/mixin dispatch.
+Thus each alternative has the same transitive reachability closure. Adding all alternatives preserves that closure under every source choice.
+The proof groups work by owner and attribute. It does not select a hash order or change the raw reference contract.
+If the proof fails, the analysis emits `IDC_SOURCE_CHOICE_REQUIRED` and suppresses category outputs.
+Other graph consumers must establish their own semantics before they use alternatives.
+
+All 130 complete source analyses pass on the frozen `220a5d4f5` engine.
+Twelve mutations produce successful native executions that expose missing bridge behavior or the proof guard.
+All 113 tooling tests and sixty-two subtests pass; all one hundred policy readers pass.
+The [mixin receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-mixin-choices.json.gz) retains the exact programs and results.
+
+Final shape advances to `2e8195371` before the remaining original/helper regressions start.
+The ancestry guard rejects those runs before native execution.
+These results remain historical evidence for `220a5d4f5`. They do not certify the newer engine.

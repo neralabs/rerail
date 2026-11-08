@@ -32,8 +32,9 @@ class SurveyAnalysisContractTests(unittest.TestCase):
             with self.subTest(changed=changed):self.assertFalse(same_result(expected,changed))
 
     def test_explicit_incomplete_diagnostic_cannot_be_rendered_as_a_clean_result(self):
-        with self.assertRaisesRegex(ValueError,'IDC_SOURCE_GRAPH_REQUIRED'):
-            native_result([dict(code='IDC_SOURCE_GRAPH_REQUIRED',parameters={})])
+        for code in ['IDC_SOURCE_GRAPH_REQUIRED','IDC_SOURCE_CHOICE_REQUIRED']:
+            with self.subTest(code=code),self.assertRaisesRegex(ValueError,code):
+                native_result([dict(code=code,parameters={})])
 
     def recording(self):
         path=contract.ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis-source.json.gz'

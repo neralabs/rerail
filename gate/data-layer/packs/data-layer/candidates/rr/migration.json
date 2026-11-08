@@ -1578,7 +1578,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
+      "sha256": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1593,6 +1593,11 @@
           "before": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
           "after": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
           "reason": "Feed native source facts into the existing graph consumer; preserve first insertion keys and import-reference confidence; 121 complete source analysis comparisons pass (rr-survey-source-analysis.json.gz). Randomized mixin targets remain a separately recorded gap."
+        },
+        {
+          "before": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
+          "after": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
+          "reason": "Add mixin reachability alternatives only after proving their mutual dispatch reachability; 130 source analyses, 64 seeded source observations and 12 successful native mutation controls (historical engine 220a5d4f5, rr-survey-mixin-choices.json.gz)."
         }
       ]
     },
@@ -2144,7 +2149,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94"
+      "ruleSha256": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860"
     },
     {
       "check": "imperative_private_functions",

@@ -81,6 +81,22 @@ IDCTarget(@place("", 0), path, sid, rank) :- option("entryPoint", "_collect_exec
 
 def analysis_relations():
     return r'''
+// The source picks one mixin target in randomized subclass-set order. For this
+// consumer only, alternatives can be joined when each reaches every other via
+// the source's same-name subclass/mixin dispatch. Their transitive closures are
+// then equal. Raw call-target facts keep their ambiguity; no hash order is guessed.
+.decl idc_mixin_option(owner: symbol, attr: symbol, target: symbol)
+idc_mixin_option(c, attr, target) :- sgp_active(), sgr_ambiguous(sid, i), sgr_query(sid, i, "self_attr", _, attr), sgr_owner(sid, c), sgr_mixin_choice(c, attr, target).
+.decl idc_choice_dispatch(from: symbol, target: symbol)
+idc_choice_dispatch(from, target) :- idc_mixin_option(_, _, from), sg_function(from), sg_dispatch(from, c), sg_symbol(_, from, name, _, _, _, _, _, _, _), sg_method(c, name, target).
+.decl idc_mixin_unproven(owner: symbol, attr: symbol)
+idc_mixin_unproven(c, attr) :- idc_mixin_option(c, attr, target), !sg_function(target).
+idc_mixin_unproven(c, attr) :- idc_mixin_option(c, attr, from), idc_mixin_option(c, attr, target), from != target, !idc_choice_dispatch(from, target).
+sg_edge(sid, target) :- sgp_active(), sgr_ambiguous(sid, i), sgr_query(sid, i, "self_attr", _, attr), sgr_owner(sid, c), idc_mixin_option(c, attr, target), !idc_mixin_unproven(c, attr).
+.decl idc_source_unproven()
+idc_source_unproven() :- idc_mixin_unproven(_, _).
+.violation IDCSourceChoiceRequired(at: span, owner: symbol, attr: symbol) code "IDC_SOURCE_CHOICE_REQUIRED" "Cannot prove equivalent mixin targets for {owner}.{attr}"
+IDCSourceChoiceRequired(@place(path, row), c, attr) :- option("entryPoint", "analyze_dead_code"), idc_mixin_unproven(c, attr), sgc_symbol(n, _, _, c), sgs_symbol(n, d, _, _, _, _, _, _, _, row, _), sgs_module(d, path, _).
 .decl idc_protocol(sid: symbol)
 idc_protocol(sid) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), suffix("Protocol", name).
 idc_protocol(sid) :- sg_base_text(sid, base), contains("Protocol", base).
@@ -129,6 +145,6 @@ idc_result("high_confidence_grammar_classes", sid) :- idc_high_class(sid), idc_g
 idc_result("high_confidence_other_classes", sid) :- idc_high_class(sid), !idc_intent(sid), !idc_grammar(sid).
 .decl idc_sorted(category: symbol, sid: symbol, ordinal: number)
 idc_sorted(category, sid, ordinal) :- idc_result(category, sid), sg_symbol(_, sid, _, _, _, path, line, _, _, _), sg_order(sid, file, local), ordinal = count : { idc_result(category, other), sg_symbol(_, other, _, _, _, other_path, other_line, _, _, _), sg_order(other, f, i), (@str_cmp(other_path, path) < 0 ; (other_path = path, other_line < line) ; (other_path = path, other_line = line, (f < file ; (f = file, i < local)))) }.
-IDCGroup(@place("", 0), category, i) :- option("entryPoint", "analyze_dead_code"), idc_category(i, category).
-IDCItem(@place("", 0), category, sid, ordinal) :- option("entryPoint", "analyze_dead_code"), idc_sorted(category, sid, ordinal), !idc_excluded(sid).
+IDCGroup(@place("", 0), category, i) :- option("entryPoint", "analyze_dead_code"), idc_category(i, category), !idc_source_unproven().
+IDCItem(@place("", 0), category, sid, ordinal) :- option("entryPoint", "analyze_dead_code"), idc_sorted(category, sid, ordinal), !idc_excluded(sid), !idc_source_unproven().
 '''

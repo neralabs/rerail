@@ -34,7 +34,7 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Settle the demonstrated randomized mixin tie. Native facts currently refuse to treat that tie as an ordinary unresolved reference.
+1. Retain the explicit raw mixin ambiguity for consumers that observe individual calls. Dead-code analysis uses a separate equivalence proof.
 2. Connect the tested facade export producer and literal dynamic-import helper to the discovered file scopes.
    Include facade files outside a caller's graph scan without adding their definitions to that graph.
 3. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
@@ -109,6 +109,15 @@ The raw helper demands only its requested imported classes. Other helper entries
 The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the complete source, raw-graph, mutation, and native regression evidence.
 
 ## Acceptance still required
+
+The source-to-analysis bridge now passes 130 complete category comparisons on the historical `220a5d4f5` engine.
+It keeps source and supplied-graph inputs separate. Source annotations come from native expression subtrees.
+The dead-code consumer accepts mixin alternatives only after it proves their mutual reachability through the source's dispatch expansion.
+Their closures are then equal, so the final reachable set does not depend on Python's randomized target choice.
+Eight fixtures agree across eight Python hash seeds. Twelve native mutation controls cover bridge requirements and refusal when the proof fails.
+The raw reference facts retain their ambiguity. This proof does not authorize other consumers to join alternatives.
+See the [mixin receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-mixin-choices.json.gz).
+Final shape has since advanced; those results do not certify the new engine.
 
 The `survey-exports.rr` library now constructs facade export rows, exported root sets, and exported class sets.
 It follows direct `data_layer/*.py` paths, sorted filenames, direct imports and definitions, and import precedence over local definitions.
