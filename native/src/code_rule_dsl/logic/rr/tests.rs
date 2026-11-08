@@ -29,12 +29,14 @@ Visit(@place("", 0), r, hit, i) :- bfs_walk(r, hit, i, edge, roots).
     let restored = super::super::program_facts::program(&decoded, "walk").unwrap();
     assert_eq!(restored.natives, program.natives);
     assert!(matches!(restored.natives.values().next(), Some(front::Native::BfsWalk { .. })));
-    let printed = root.join("printed.rr");
-    std::fs::write(&printed, print(&restored).unwrap()).unwrap();
-    for path in [&rule, &printed] {
-        let report = crate::code_rule_dsl::tools::run_rr(path, &root, &root.join("out"),
-            &serde_json::json!({"inputFiles": []})).unwrap();
-        let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (
+    let printed = print(&restored).unwrap();
+    assert_eq!(parse(&printed).unwrap().natives, restored.natives);
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"inputFiles": []})).unwrap();
+    // Printed programs contain reserved helpers. Their execution boundary is
+    // the internal text runner, not the public file reader that rejects rr_*.
+    for rows in [report["diagnostics"].as_array().unwrap().clone(), lowered_findings(&printed)] {
+        let mut actual: Vec<_> = rows.iter().map(|r| (
             r["parameters"]["root"].as_str().unwrap().to_owned(),
             r["parameters"]["hit"].as_str().unwrap().to_owned(),
             r["parameters"]["ordinal"].as_i64().unwrap(),
