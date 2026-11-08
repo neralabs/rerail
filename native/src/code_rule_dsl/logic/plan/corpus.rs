@@ -3958,6 +3958,43 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
+
+    /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (`RERAIL_FILES=git`: from Git, else the walk) and
+    /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
+    /// observer's store is `<RERAIL_TAPE_CACHE>.files`.
+    #[test]
+    #[ignore = "a benchmark: RERAIL_P0_ROOT=<a worktree>"]
+    fn benchmark_phase_0() {
+        let root = std::path::PathBuf::from(std::env::var("RERAIL_P0_ROOT").expect("RERAIL_P0_ROOT"));
+        let before = super::observe(|o| {
+            o.begin();
+            o.counts
+        });
+        let start = super::thread_usage();
+        let files = super::corpus_files(&root).unwrap();
+        let listed = super::thread_usage();
+        let mut digests = 0;
+        for f in &files.python {
+            digests += super::observe(|o| o.digest(&root.join(f))).map_or(0, |_| 1);
+        }
+        let digested = super::thread_usage();
+        let did = super::observe(|o| {
+            o.flush();
+            o.counts.since(&before)
+        });
+        let flushed = super::thread_usage();
+        let cpu = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) + (b.1 - a.1);
+        println!(
+            "phase 0 over {}: {} python, {} other files; {digests} digests; files {:.2} s, digests {:.2} s, flush {:.2} s CPU; peak RSS {:.0} MB\n  {did}",
+            root.display(),
+            files.python.len(),
+            files.rust.len() + files.rr.len() + files.text.len(),
+            cpu(start, listed),
+            cpu(listed, digested),
+            cpu(digested, flushed),
+            super::usage().2
+        );
+    }
     /// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
     /// re-derives the edited file's component and its importers' only; `verify` derives everything again and
     /// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
