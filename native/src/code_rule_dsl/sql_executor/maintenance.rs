@@ -373,14 +373,23 @@ pub(super) fn maintain(
                     !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
                 })
         });
-        if !affected && !indirect {
+        // A SQL producer's query is opaque: what it reads is its step's resolved reads and the
+        // session inputs it names (`producers`), and its stratum is recomputed whole.
+        let produced = group.iter().any(|r| run.producers.contains_key(r));
+        let feeds = produced
+            && steps.iter().flat_map(|(s, _)| s.reads.iter()).chain(group.iter().filter_map(|r| run.producers.get(r)).flatten()).any(|r| {
+                !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
+            });
+        if !affected && !indirect && !feeds {
             continue;
         }
-        let nonmonotone = group
-            .iter()
-            .any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
+        let nonmonotone = produced
+            || group.iter().any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
             || steps.iter().filter_map(|(_, q)| q.as_ref()).any(barrier);
+        // A producer's stratum is recomputed whole: the retained reductions and recursive
+        // partitions maintain rules' own queries, which a producer's is not.
         if nonmonotone
+            && !produced
             && group.len() == 1
             && let Some(r) = group.first()
             && let Some(state) = run
@@ -405,7 +414,8 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
-            if let Some(state) = group
+            if !produced
+                && let Some(state) = group
                 .first()
                 .and_then(|r| {
                     run.emitted
