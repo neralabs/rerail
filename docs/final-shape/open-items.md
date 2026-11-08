@@ -2161,24 +2161,53 @@ fresh store (`RERAIL_TAPE_CACHE`).
 
 ## O113. lazy-architecture's speed and memory
 
-The rule runs and agrees with the Python linter (t12, Outcome), at about 52 ms a file on 1,000 files (52.5 s CPU),
-so the full tree takes over 8 minutes. The cost is spread over many strata. The largest are `fl633_la_native`, a
-seven-way join that runs in SQLite (3.4 s), and the exports of file-local relations to the cross part. In the pack
-on s200 the rule adds about 300 MB of peak RSS.
+**What was wrong with the shape.** The rule was 52 ms a file on 1,000 files (52.5 s CPU) and did not finish the
+full tree in 600 s. The cost was not one slow join. Six things together made the engine do work the Python script
+never does:
 
-**Closure:** the rule runs on the full tree within the time and memory budgets, with its findings equal to the
-script's.
+1. *Most of the program ran cross-file.* 438 of 700 rules ran once over all files, holding 621 MB of base
+   relations on 1,000 files. The causes were equal variables that carried no location, constant tables, joins
+   through symbols only, and string "ask" relations. Fixed: equalities carry locations, constant relations are
+   derived in both parts.
+2. *Every string annotation was parsed as a guest*, 36k on 1,000 files, though no rule the outputs need reads
+   one. Fixed: guests are made only when a needed rule reads them.
+3. *Single literals fell back to SQLite.* Concatenation, constant sets and split heads had no native step.
+   Fixed (`e6c4fcd04`).
+4. *Every file was read.* The script reads its scope, about a third of the tree. Fixed: the run reads the
+   documents the policies' `.scope` selects (O114).
+5. *Two plans scanned what they should look up.* LA_018 tested each source line against 55 surface names, one
+   at a time. Fixed: a test of a constant table's values first tests the whole table as one set
+   (`strings::implied_set_tests`). `la_scan` read 28M containment pairs to find each function's 467k nodes,
+   because `within`'s fanout by ancestor was weighted by subtree size (about 1,000). Fixed: priced by mean
+   subtree size, as `nearest`'s descent is.
+6. *The cross part held whole-corpus node attributes* (`line`, `docof`, `visit_index`, `node`: 673 MB on the
+   full tree) for about ten thousand lookups. A file-local relation with a row per node (`la_leaf_target`) was
+   exported whole because the one rule that read it also read a cross-file relation. Fixed: a join of
+   file-local relations alone is pushed into the chunks, and a chunk keeps base attribute rows only for the
+   nodes its exports hold (`file_local::semijoin_bases`).
 
-## O114. `.scope` forms the findings filter does not read
+One rule bug showed up on the full tree: `frozenset(x for x in y)` read as `frozenset()` gave 11 LA-017
+findings. Fixed in `la_arg`.
 
-`rr::lower`'s `scope_filter` reads `dirs`, `include`, `exclude` and `tests false`. It ignores `report dirs`,
-`text` and `embedded` (they say where findings land or how files are read), and `option("…")` entries, whose
-values come from policy options it does not see. A finding is dropped by its path, so facts still come from every
-file, whereas the scripts' discovery also leaves those files' facts out. A cross-file rule may therefore see
-callers or definitions the script does not.
+**Now.** Full data-layer tree (3,117 files in scope of 9,024): 0 findings, as the script. The run took 43 s CPU
+and 881G instructions, against 151 s CPU and over 2,770G instructions before. The engine's peak footprint is
+829 MB, against 3.6 GB before; `time -l` reports 1.36 GB maximum RSS. CPU figures were taken at load average 45.
+The script takes 5.4 s CPU on the same tree. The engine is still about 8x slower: 34 s of the 43 s is the
+file-local part, spread over strata of a few hundred ms each (`la_ask_*` callee resolution, `la_vis`,
+`la_base_name`, `ast_parent`).
 
-**Closure:** each `.scope` form is applied or refused by name, and whether facts outside the scope are read is
-decided.
+**Closure:** the full tree runs within the 1 GB budget by the OS's measure, at no more than a few times the
+script's CPU, with its findings equal to the script's.
+
+## O114. `.scope` forms the run does not read
+
+The run now reads only the documents the policies' `.scope` globs (`dirs`, `include`, `exclude`, `tests false`)
+select, as the scripts' discovery does. On 1,000 files that is 348. Still not read: `report dirs`, `text`,
+`embedded`, and `option("…")` entries, whose values come from policy options. In a pack that combines policies,
+documents are the union of their scopes. Each policy's facts are not yet limited to its own scope.
+
+**Closure:** each `.scope` form is applied or refused by name, and in a combined pack each policy reads only its
+scope's facts.
 
 ## O115. A grep reader for files that are not documents
 
@@ -2196,3 +2225,14 @@ the 9,010-file tree (−5.8%), and −5.9% on main. Missing in the engine: a `pr
 pytest's settings, and findings in one scope with names resolved across the whole workspace.
 
 **Closure:** the model is written in `.rr`, checked against the per-file counts, and test-budget reports it.
+
+## O117. A regex group over a span binds a span where rules compare text
+
+Since `5e026dcfa` (merged from the final-shape branch), `match("…(?<x>…)", sp)` over a span `sp` binds `x` to the
+group's span (`rx_span`'s `m`), not its text. `bounded-composed-graph-paths` compares such an `x` with strings
+(`bcgp_block(p, "PathPattern", h, _)`), so its program fails to lower: `the string "PathPattern" stands where an
+integer goes`. The rule is skipped in the s200 pack run.
+
+**Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
+the pack runs the rule again.
+
