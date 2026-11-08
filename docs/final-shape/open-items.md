@@ -2148,3 +2148,26 @@ and the run fails instead of missing. The file was not moved (DB files are not m
 fresh store (`RERAIL_TAPE_CACHE`).
 
 **Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.
+
+*Likely writer (2026-11-07, investigate-bend-vs-datalog):* an early version of decision 0074's corpus test
+(`cross_file_rows_are_memoised_per_import_component`) ran an `UPDATE` on `facts_results` for every row with
+`path = 'b.py'` in the shared store, whatever its plan (17 rows then), to plant a bad row. The test now changes only
+its own plan's newest row and restores it. A run that does not decode should still miss rather than fail.
+
+## O113. `calls.rr` with `.pragma "cross-memo"` fails in world's final round: no statistics for `docof`
+
+Found trying decision 0074 on the typing programs (2026-11-07). With the pragma appended (even naming no relation
+`calls.rr` derives), `python_calls_program_agrees_with_the_runtime` fails in the final round with "no statistics for
+docof.n" (`plan.rs`, an input a rule reads that is not a batch source and was not measured).
+
+- Fixed on the way: `cross_memo::add` merged everything `components.rr` brought with `core.rr`. `calls.rr` declares
+  its own base relations (`docof(n: node, d)`, not `core.rr`'s `loc`), and the merged rules and inputs failed with
+  "table docof may not be dropped". `add` now takes only the `rr_` rules and what they read that the program lacks.
+- Not investigated: which part reads `docof` unmeasured. The likely one is the component sub-program, if a
+  `components.rr` rule that reads `docof` lands in the cross-file part (`rr_cx_imports`' recursive package rule has
+  no node, so the split may not place it per file). The toy corpus test reads `core.rr`'s `docof` and passes.
+- Also seen: the 84-file Jedi benchmark (`dl-small` with typeshed) ran past 10 minutes of wall time at load 50–120
+  without finishing its final round, so the time it would take is unknown.
+
+**Closure:** the benchmark runs with the pragma, `RERAIL_CROSS_MEMO=verify` passes on a second run, and the profile
+names the relations the static contract allows.

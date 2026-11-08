@@ -63,23 +63,33 @@ pub(super) fn declared(prog: &front::Program) -> Option<BTreeSet<String>> {
 pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
     let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
-    for (rel, cols) in components.decls {
-        prog.decls.entry(rel).or_insert(cols);
+    // Only the engine's own rules (`rr_` heads: `rr_cx_*` and what lowering made for `components`), not what
+    // `core.rr` brings with it: a program that declares a base relation itself keeps its own declaration.
+    let rules: Vec<front::Rule> = components.rules.into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
+    let mut needed: BTreeSet<String> = BTreeSet::new();
+    for r in &rules {
+        needed.insert(r.head.rel.clone());
+        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
     }
-    for (rel, native) in components.natives {
+    let natives: Vec<_> = components.natives.into_iter().filter(|(rel, _)| needed.contains(rel)).collect();
+    for (rel, native) in natives {
+        needed.extend(native.reads().into_iter().map(str::to_owned));
         prog.natives.entry(rel).or_insert(native);
     }
-    for (rel, rows) in components.facts {
+    for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| needed.contains(rel)) {
+        prog.decls.entry(rel).or_insert(cols);
+    }
+    for (rel, rows) in components.facts.into_iter().filter(|(rel, _)| needed.contains(rel)) {
         prog.facts.entry(rel).or_insert(rows);
     }
-    for rule in components.rules {
-        if !prog.rules.contains(&rule) {
-            prog.rules.push(rule);
-        }
-    }
-    for input in components.inputs {
+    for input in components.inputs.into_iter().filter(|rel| needed.contains(rel)) {
         if !prog.inputs.contains(&input) {
             prog.inputs.push(input);
+        }
+    }
+    for rule in rules {
+        if !prog.rules.contains(&rule) {
+            prog.rules.push(rule);
         }
     }
     if !prog.outputs.iter().any(|o| o == COMPONENT) {
