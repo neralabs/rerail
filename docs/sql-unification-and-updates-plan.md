@@ -1552,10 +1552,12 @@ Task build and temporary directories are removed after evidence archival.
 
 ### Cross-rule summaries and recursive storage duplication (2026-11-08)
 
-The branch first matched Final Rerail Shape at `0f0049ec7`.
-That branch advanced during implementation. Merge `b3f3c3b92` incorporates stage 1 of decision 0089 at `0ab7966c9`.
-The final comparison uses a separate control tree with both `142e775a9` and that Final Rerail Shape update.
-It therefore retains the previous cold, lookup, and native publication improvements in both builds.
+Final Rerail Shape is merged through `2b494d4ef`, including stage 2 of decision 0089.
+Merge `67ffb813c` incorporates that update after the stage 1 merge at `b3f3c3b92`.
+The performance comparison uses a separate control tree with both `142e775a9` and stage 1 at `0ab7966c9`.
+It retains the previous cold, lookup, and native publication improvements in both measurement builds.
+After the stage 2 merge, all six sessions pass again with identical work counters and helper attribution.
+The numeric benchmark programs contain no library includes. The timing table does not measure stage 2 library performance.
 
 #### Root causes and fixes
 
@@ -1685,7 +1687,7 @@ SQL receipts attach those decisions to evaluation and helper publication scopes.
 The final reports expose logical analyses on 22 scalar entries, 30 cross-rule entries, and 15 recursive entries.
 All five scalar helper publications and all six cross-rule helper publications retain their owning logical analysis in both sizes.
 
-The expanded merged suite passes 238 tests, with three ignored tests and the separate syntax census excluded.
+The expanded merged suite passes 239 tests, with three ignored tests and the separate syntax census excluded.
 It includes RR and corpus tests with SQL guests, native Python syntax verdicts, and persistent tape caching enabled.
 Validation uses a fresh cache for that feature configuration. Reusing the earlier cache produced a stale syntax verdict in one test.
 The isolated verdict test and the complete expanded suite pass with fresh, feature-specific caches.
