@@ -51,9 +51,16 @@ rr_cx_module(d, q) :- doc(d, _, q), q != "".
 .decl rr_cx_own(d: number, h: symbol)
 rr_cx_own(d, h) :- doc(d, p, _), tape_of(d, t), h = @sha256(cat(p, "\t", t)).
 
+// Guest document g (a string's code, decision 0055) stands in host document h. Its tree is made from the host's bytes,
+// so the host's digest covers it, and rows about either name the other's nodes: they share a component.
+.decl rr_cx_guest(g: number, h: number)
+rr_cx_guest(g, h) :- guest(g, h, _, _).
+
 // d depends on e.
 .decl rr_cx_edge(d: number, e: number)
 rr_cx_edge(d, e) :- rr_cx_imports(d, q), rr_cx_module(e, q), d != e.
+rr_cx_edge(g, h) :- rr_cx_guest(g, h).
+rr_cx_edge(h, g) :- rr_cx_guest(g, h).
 
 .decl rr_cx_component(d: number, c: number, k: symbol)
 rr_cx_component(d, c, k) :- components(d, c, k, rr_cx_edge, rr_cx_own).
