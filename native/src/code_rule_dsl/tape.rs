@@ -41,7 +41,7 @@ const fn padded(length: usize) -> usize {
 }
 /// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
 /// its last descendant's (for a tree where a node ends before its last descendant starts).
-const TAIL_FROM_START: u8 = 0x80;
+pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
 /// A code's flags.
 const CODE_EXTRA: u8 = 1;
 const CODE_ERROR: u8 = 2;
@@ -662,18 +662,6 @@ impl Documents for TapeImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
         Cow::Owned(FileImage::single(self.clone()))
     }
-}
-
-/// A node as a tape writer writes it, in preorder: its kind and field ids, extra flag, byte span
-/// and subtree size (the node included).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct WrittenNode {
-    pub(in crate::code_rule_dsl) kind: u16,
-    pub(in crate::code_rule_dsl) field: u16,
-    pub(in crate::code_rule_dsl) extra: bool,
-    pub(in crate::code_rule_dsl) start: u32,
-    pub(in crate::code_rule_dsl) end: u32,
-    pub(in crate::code_rule_dsl) size: u32,
 }
 
 #[derive(Clone)]
@@ -1401,42 +1389,6 @@ impl TapeImage {
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
     }
 
-    /// The image of nodes written in preorder by a tape writer (tier 2 of a block program, decision 0071):
-    /// each node's kind and field, extra flag, span and subtree size, and the supertype
-    /// memberships (node, class). Packed as a parsed tree's are (`pack`), so the bytes are the
-    /// same for the same nodes.
-    pub(in crate::code_rule_dsl) fn from_written(
-        nodes: &[WrittenNode],
-        supertypes: Vec<(u32, u16)>,
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
-        let nodes: Vec<Pending> = nodes
-            .iter()
-            .map(|n| {
-                if usize::from(n.kind) >= KIND_LIMIT || usize::from(n.field) >= FIELD_LIMIT || n.kind == ERROR_CODE {
-                    return Err(format!("written node kind {} or field {} out of the tape's range", n.kind, n.field));
-                }
-                Ok(Pending {
-                    kf: n.kind | (n.field << 10),
-                    parent: None,
-                    start: n.start,
-                    length: n.end.checked_sub(n.start).ok_or("inverted written span")?,
-                    size: n.size,
-                    extra: n.extra,
-                    error: false,
-                    missing: false,
-                    kind_alias: None,
-                })
-            })
-            .collect::<Result<_, String>>()?;
-        if source.len() > u32::MAX as usize || nodes.iter().any(|n| n.start as usize + n.length as usize > source.len()) {
-            return Err("a written node past the source".into());
-        }
-        Self::pack(&nodes, supertypes, grammar, source, budget)
-    }
-
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
     /// first use, `base` per 16 nodes, and each column at its narrowest width.
     fn pack(
@@ -1545,6 +1497,48 @@ impl TapeImage {
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
+        })
+    }
+
+    /// The image of columns a tape writer wrote (tier 2's compiled words, decision 0080): the
+    /// node columns as they are stored, at their widths (`widths`: size, off, tail and its
+    /// `TAIL_FROM_START` flag), and the codes in first-use order, each a `kf` and its supertype
+    /// classes, ascending. Nothing per node is done here: the writer packed the columns.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn from_columns(
+        code: Vec<u8>,
+        size: Vec<u8>,
+        base: Vec<u8>,
+        off: Vec<u8>,
+        tail: Vec<u8>,
+        widths: [u8; 3],
+        codes: &[(u16, Vec<u16>)],
+        grammar: &Grammar,
+        source: &str,
+    ) -> Result<Self, String> {
+        let codes = codes
+            .iter()
+            .map(|(kf, classes)| {
+                if classes.len() > MAX_NODE_SUPERTYPES {
+                    return Err("too many supertype memberships".to_owned());
+                }
+                let mut c = [0_u16; MAX_NODE_SUPERTYPES];
+                c[..classes.len()].copy_from_slice(classes);
+                Ok(Code { kf: *kf, flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: c })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            code,
+            size,
+            base,
+            off,
+            tail,
+            widths,
+            codes,
+            kind_aliases: Vec::new(),
+            language: grammar.lang,
+            source_len: source.len(),
+            source_digest: source_digest(source, &|| false)?,
         })
     }
 

@@ -1,5 +1,10 @@
 # Parser generators: JSON worked through every level, before building
 
+**Superseded by doc 18 (decision 0077):** the tree section is now a grammar, and tier 2 is its
+state machine. The start and end rules here (`after`, `before`, `also`, `parent`, code facts)
+and the dataflow built on them are gone; Metal's tier 2 is redone from the state machine
+(doc 17 §6).
+
 Status: worked example, for review (2026-11-07). Nothing here is built. It follows
 `json.bitlex` from the Bitlex file to generated Cranelift and Metal. Doc 14 gave the design
 and doc 15 the representation. Working the example through changed six things in them (§9).
@@ -308,6 +313,10 @@ plan json gpu
 - **The bytes are read in two passes,** A and B.
 
 ## 6. Level 5: the CPU
+
+**Wrong, superseded by doc 18 and doc 17 §5.** Tier 2 on the CPU is the grammar's state machine,
+lowered to the IR: one loop over the token stream, a branch on each token's kind in its state,
+straight-line work. The sketch below steps the old rows.
 
 The CPU plan is one pass. Every scan is a running carry, the stack is in registers, and keys
 come from the rule from the left. Cranelift emits one function. In Rust, its shape is:
