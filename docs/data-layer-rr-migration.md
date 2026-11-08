@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`f549a6f99`. Merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
+`65d78128c`. It also adopts Final's 64-bit boundary for corpus row bindings.
+Earlier merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
 Earlier merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
 Earlier merge `43e884a18` adopts retained SQL waves and recursive SQL iterations across updates.
 Earlier merge `acec50e98` adopts import-component memoization and the current SQL executor.
@@ -100,7 +101,8 @@ It separates imported bytes from local repairs. It does not claim that a commit 
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory contains **88 target drafts and 12 absent translations**. None has full acceptance yet.
-The 88th draft, `async_sync_delegation`, remains unfinished. Its original helper slice passes; its source detector does not.
+The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on the current engine.
+Its native detector includes all six source finding families. Production reporting and global migration acceptance remain open.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
 On the `ae7c48111` engine, all 144 original tests pass with 137 complete observations, including 57 positive set results and four growing-allowlist CLI cases.
 All 200 supplemental API cases and 24 reporter cases pass. Twenty-three disabled-behavior controls produce observable parity failures.
@@ -1350,3 +1352,48 @@ It explicitly records these six failing original cases:
 The next implementation must add the complete public-pair and legacy-triple semantics, then rerun these positives and their negative counterparts.
 Escape-hatch detection also needs native implementation and supplemental positives; the original 124 tests do not prove it.
 Production reports, broader helper domains, and global migration acceptance remain open. The inventory remains 88 drafts and 12 absent translations.
+
+## 2026-11-08 — Delegation pairs, rebinding, and escape events
+
+The branch adopts committed Final shape `65d78128c`, including its 64-bit corpus binding boundary.
+The root CLI build took 32.029 seconds. This work adds no native engine code.
+The existing 21 reviewed generic extension files remain the complete native diff from Final.
+
+The native legacy clauses preserve module and top-level class dictionaries, final definitions, and first insertion positions.
+They preserve decorator precedence, first-decorator keyword selection, local lazy requirements, counterpart classes, assignment decorators, and builder exemptions.
+Final-name resolution follows the source's latest simple-name assignment, including its behavior when a chain enters a cycle.
+Unrelated later assignments do not clear an earlier name binding, as in the source.
+The first rung passes 33 of 35 original source-analysis tests. Only the two public-pair positives remain red.
+
+The public-pair clauses implement callback pairs, transaction pairs, lazy triples, and complete eager-wrapper signatures.
+Signatures include direct resolves, resolver lambdas, boundary attributes, assigned handles, post-resolution helpers, and exception translation.
+Starred positional arguments retain their AST positions. Keyword arguments do not count as positional arguments.
+The next rung passes all 35 original source-analysis tests, including all 13 positive analyses.
+
+The escape clauses preserve awaited and ordinary calls, function exemptions, AST event order, and whole-file line deduplication.
+An await and its call can produce separate findings when they start on different lines.
+Direct source analysis still reports escapes in test and browser paths, as the original collector does.
+The source's separate file-selection helpers do not change this collector behavior.
+
+The expanded corpus exposes an extra-keyword boundary defect: the aggregate accidentally reused the outer argument variable.
+It therefore counted the selected argument instead of every argument. One of 140 supplemental cases fails before the repair.
+Commit `6a2c98662` retains that red case and the earlier detector programs.
+The repair gives the aggregate its own item variable. The focused regression and all 140 cases then pass.
+Four further cases verify identifier normalization without normalizing quoted annotation strings. All four pass.
+
+The final detector cohort passes all 124 original tests with all 111 observations and no semantic fallback.
+Generated dataclass storage remains host protocol; detector and supplied helper decisions execute through native relations.
+The original assertions retain every positive, clean case, complete DTO, error, and ordering observation they record.
+The two case shards take 78.35 and 70.57 seconds while other acceptance commands run concurrently.
+These are assertion-suite wall times, not repository performance measurements.
+All 144 supplemental cases pass, including 72 positive finding lists.
+All 26 controls that remove or alter required behavior produce full DTO mismatches through successful native execution.
+The first control command reaches its 115-second cap after 15 completed checks.
+The resumed command retains those results only after checking engine, corpus, case, and mutated-program hashes, then runs the remaining checks.
+All 100 tooling tests and 99 readers pass.
+
+The [native detector receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-native-detector.json.gz) preserves the complete cohort, exact programs, control runners, case generator, and build identity.
+The [legacy rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-legacy-rung.json.gz) and
+[wrapper red rung](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-wrapper-red.json.gz) preserve the TDD progression.
+The receipt does not certify production plugin reporting, registry/scope, CLI enforcement, persistent workspaces, or broader legacy helper APIs.
+Those contracts remain required for global acceptance. The inventory remains 88 drafts and 12 absent translations.
