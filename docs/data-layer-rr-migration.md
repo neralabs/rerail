@@ -921,3 +921,26 @@ Associated global and persistent-workspace acceptance remain required. The inven
 - [Complete original assertions and positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-direct-contracts.json.gz).
 - [API/reporter cases, assertion provenance, and six selective controls](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-supplemental-contracts.json.gz).
 - [Final shape merge, Boolean regression, builds, and integration checks](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-ca76-merge.json.gz).
+
+## 2026-11-08 — Alignment audit before further ports
+
+The fetched Final rerail shape tip is `07a6b4171d8ca6aea400beefee04fabdbcc979f8`.
+This branch already contains that commit through merge `0b094980e`.
+The sibling worktree is clean, and its branch matches the fetched tip.
+There is no newer committed engine resolution to merge.
+
+The engine comparison contains 21 changed files. The manifest lists their exact hashes.
+These files supply the recorded generic syntax capabilities and the Boolean demand repair.
+This audit adds no engine code. All further ports use the repository-root engine.
+Both retired engines remain excluded from native acceptance.
+
+All 89 migration-tool tests pass in the source-test virtual environment.
+Six focused native unit tests pass. The original escape-hatch suite passes all 165 cases, including 21 positive file checks.
+Its 134 full observations match the source recording without semantic fallback.
+
+One native test fails: `a_prepared_program_reads_back_from_its_facts_and_its_tape`.
+Its source is identical to committed Final shape. The roundtrip omits the known-empty `input_error` fact table.
+The receipt retains the full failure. This audit makes no claim that the full engine suite passes.
+
+The [alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-07a6-alignment-audit.json.gz) records the branch comparison, build provenance, test commands, and results.
+The inventory remains 82 drafts and 18 absent translations. Full migration acceptance remains pending.
