@@ -1565,6 +1565,20 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_sync_delegation.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
+      "sha256": "5714047eb24a21c38acc49f48064ccf7a7c23d56a207a74aa72bd098ed8b34b4",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_internal_dead_code.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
+      "sha256": "7e66895b830571c722732caa42ed9fc1561ca1e32c3daffcef473146236b5af5",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -2005,8 +2019,9 @@
       "batch": 5,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-internal-dead-code.json",
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
+      "ruleSha256": "5714047eb24a21c38acc49f48064ccf7a7c23d56a207a74aa72bd098ed8b34b4"
     },
     {
       "check": "imperative_private_functions",

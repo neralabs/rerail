@@ -1,0 +1,117 @@
+// Symbol-graph survey contract. Supplied graph arguments are typed columns, not
+// Python graph execution. A source producer must supply the same relations.
+#include "python/ast.rr"
+
+.decl sg_symbol(i: number, sid: symbol, name: symbol, module: symbol, kind: symbol, path: symbol, line: number, owner: symbol, has_owner: number, abstract: number)
+sg_symbol(i, sid, name, module, k, path, to_number(line), owner, to_number(has_owner), to_number(abstract)) :- option_item("symbolIds", i, sid), option_item("symbolNames", i, name), option_item("symbolModules", i, module), option_item("symbolKinds", i, k), option_item("symbolPaths", i, path), option_item("symbolLines", i, line), option_item("symbolOwners", i, owner), option_item("symbolHasOwner", i, has_owner), option_item("symbolAbstract", i, abstract).
+.decl sg_flag(sid: symbol, flag: symbol)
+sg_flag(sid, flag) :- option_item("flagSymbols", i, sid), option_item("flagNames", i, flag).
+.decl sg_class(sid: symbol)
+sg_class(sid) :- sg_symbol(_, sid, _, _, "class", _, _, _, _, _), !sg_flag(sid, "explicit_is_class").
+sg_class(sid) :- sg_flag(sid, "is_class").
+.decl sg_function(sid: symbol)
+sg_function(sid) :- sg_symbol(_, sid, _, _, k, _, _, _, _, _), (k = "function" ; k = "method").
+.decl sg_owner(sid: symbol, owner: symbol)
+sg_owner(sid, cat(module, "::", owner)) :- sg_symbol(_, sid, _, module, _, _, _, owner, 1, _).
+.decl sg_decorator(sid: symbol, text: symbol)
+sg_decorator(sid, text) :- option_item("decoratorSymbols", i, sid), option_item("decoratorTexts", i, text).
+.decl sg_property(sid: symbol)
+sg_property(sid) :- sg_decorator(sid, d), (suffix("property", d) ; suffix(".setter", d) ; suffix(".deleter", d)).
+.decl sg_base_text(sid: symbol, text: symbol)
+sg_base_text(sid, text) :- option_item("baseNameSymbols", i, sid), option_item("baseNameTexts", i, text).
+.decl sg_base(c: symbol, b: symbol, ordinal: number)
+sg_base(c, b, to_number(rank)) :- option_item("baseClasses", i, c), option_item("baseTargets", i, b), option_item("baseOrdinals", i, rank).
+.decl sg_ancestor(c: symbol, b: symbol)
+sg_ancestor(c, b) :- sg_base(c, b, _).
+sg_ancestor(c, b) :- sg_ancestor(c, a), sg_base(a, b, _).
+.decl sg_subclass(c: symbol, sub: symbol)
+sg_subclass(c, sub) :- option_item("subclassBases", i, c), option_item("subclassTargets", i, sub).
+.decl sg_method(c: symbol, name: symbol, sid: symbol)
+sg_method(c, name, sid) :- option_item("methodClasses", i, c), option_item("methodNames", i, name), option_item("methodSymbols", i, sid).
+.decl sg_fqname(name: symbol, sid: symbol)
+sg_fqname(name, sid) :- option_item("fqNames", i, name), option_item("fqSymbols", i, sid).
+.decl sg_module(module: symbol)
+sg_module(module) :- option_item("modules", _, module).
+.decl sg_imported(module: symbol, local: symbol, fq: symbol)
+sg_imported(module, local, fq) :- option_item("importModules", i, module), option_item("importLocals", i, local), option_item("importTargets", i, fq).
+.decl sg_import_module(module: symbol, target: symbol)
+sg_import_module(module, target) :- option_item("moduleImportModules", i, module), option_item("moduleImportTargets", i, target).
+.decl sg_defined(module: symbol, name: symbol, sid: symbol, ordinal: number)
+sg_defined(module, name, sid, i) :- option_item("definedModules", i, module), option_item("definedNames", i, name), option_item("definedSymbols", i, sid).
+.decl sg_module_name_ref(module: symbol, name: symbol)
+sg_module_name_ref(module, name) :- option_item("refModules", i, module), option_item("refNames", i, name).
+.decl sg_resolved(fq: symbol, sid: symbol)
+sg_resolved(fq, sid) :- sg_fqname(fq, sid).
+sg_resolved(cat(module, ".", local), sid) :- sg_imported(module, local, next), !sg_fqname(cat(module, ".", local), _), sg_resolved(next, sid).
+// Caller-supplied graph protocols may expose opaque resolution facts.
+sg_resolved(fq, sid) :- option_item("resolvedNames", i, fq), option_item("resolvedSymbols", i, sid), !sg_fqname(fq, _).
+.decl sg_annotation(sid: symbol, name: symbol)
+sg_annotation(sid, name) :- option_item("annotationSymbols", i, sid), option_item("annotationNames", i, name).
+sg_annotation(sid, @nfkc(name)) :- option_item("annotationFiles", i, path), option_item("annotationFileSymbols", i, sid), doc(d, path, _), !syntax_error(d, _, _), ast_name(n, name), docof(n, d), name != "__rerail_annotation".
+sg_annotation(sid, @nfkc(name)) :- option_item("annotationFiles", i, path), option_item("annotationFileSymbols", i, sid), doc(d, path, _), !syntax_error(d, _, _), kind(n, "attribute"), docof(n, d), field(n, "attribute", a), text(a, name).
+.decl sg_type_import(module: symbol, name: symbol, sid: symbol)
+sg_type_import(module, name, sid) :- sg_imported(module, name, fq), sg_resolved(fq, sid), sg_class(sid).
+.decl sg_type(module: symbol, name: symbol, sid: symbol)
+sg_type(module, name, sid) :- sg_type_import(module, name, sid).
+sg_type(module, name, sid) :- sg_defined(module, name, sid, i), sg_class(sid), !sg_type_import(module, name, _), i = min j : { sg_defined(module, name, other, j), sg_class(other) }.
+.decl sg_exported(sid: symbol)
+sg_exported(sid) :- option_item("exportedRoots", _, sid).
+.decl sg_extra(sid: symbol)
+sg_extra(sid) :- option_item("extraRoots", _, sid).
+.decl sg_call(sid: symbol, target: symbol)
+sg_call(sid, target) :- option_item("callSources", i, sid), option_item("callTargets", i, target).
+sg_call(sid, target) :- option_item("useSources", i, sid), option_item("useTargets", i, target).
+.decl sg_implicit_dunder(name: symbol)
+sg_implicit_dunder("__new__"). sg_implicit_dunder("__init__"). sg_implicit_dunder("__init_subclass__").
+sg_implicit_dunder("__post_init__"). sg_implicit_dunder("__set_name__"). sg_implicit_dunder("__class_getitem__").
+.decl sg_skip_public(name: symbol)
+sg_skip_public("__aenter__").
+sg_skip_public("__aexit__").
+sg_skip_public("__enter__").
+sg_skip_public("__exit__").
+sg_skip_public("__init__").
+sg_skip_public("__repr__").
+sg_skip_public("__str__").
+sg_skip_public("authorize_internal_access").
+sg_skip_public("disable_thread_affinity_checks").
+sg_skip_public("get_thread_checks_disabled").
+sg_skip_public("set_disable_thread_checks").
+sg_skip_public("validate_legacy_delegates").
+sg_skip_public("versioned_read").
+sg_skip_public("versioned_write").
+.decl sg_own_public(c: symbol, name: symbol, sid: symbol)
+sg_own_public(c, name, sid) :- sg_method(c, name, sid), !prefix("_", name), !sg_skip_public(name), !sg_property(sid).
+.decl sg_imported_module(module: symbol)
+sg_imported_module(@pkg_up(fq, 1)) :- sg_imported(_, _, fq), contains(".", fq).
+sg_imported_module(target) :- sg_import_module(_, target).
+sg_imported_module(parent) :- sg_imported_module(child), parent = @pkg_up(child, 1), parent != "", parent != child.
+.decl sg_module_ref(module: symbol, sid: symbol)
+sg_module_ref(module, sid) :- sg_module_name_ref(module, name), sg_defined(module, name, sid, _).
+sg_module_ref(module, sid) :- sg_module_name_ref(module, name), !sg_defined(module, name, _, _), sg_imported(module, name, fq), sg_fqname(fq, sid).
+.decl sg_family(sid: symbol, base: symbol)
+sg_family(sid, @slice(name, 0, strlen(name)-6)) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), suffix("_async", name).
+sg_family(sid, @slice(name, 0, strlen(name)-5)) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), !suffix("_async", name), suffix("_lazy", name).
+sg_family(sid, name) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), !suffix("_async", name), !suffix("_lazy", name).
+.decl sg_variant(suffix: symbol)
+sg_variant(""). sg_variant("_async"). sg_variant("_lazy").
+.decl sg_dispatch(sid: symbol, c: symbol)
+sg_dispatch(sid, sub) :- sg_function(sid), sg_owner(sid, owner), sg_subclass(owner, sub).
+sg_dispatch(sid, sub) :- sg_dispatch(sid, c), sg_subclass(c, sub).
+sg_dispatch(sid, base) :- sg_dispatch(sid, c), sg_base(c, base, _), sg_owner(sid, owner), base != owner.
+.decl sg_edge(sid: symbol, target: symbol)
+sg_edge(sid, target) :- sg_call(sid, target).
+sg_edge(c, target) :- sg_class(c), sg_own_public(c, _, target).
+sg_edge(c, target) :- sg_class(c), sg_method(c, name, target), sg_implicit_dunder(name).
+sg_edge(c, target) :- sg_class(c), sg_base(c, target, _).
+sg_edge(c, target) :- sg_class(c), sg_subclass(c, target).
+sg_edge(sid, target) :- sg_dispatch(sid, c), sg_symbol(_, sid, name, _, _, _, _, _, _, _), sg_method(c, name, target).
+sg_edge(sid, target) :- sg_function(sid), sg_owner(sid, c), sg_base_text(c, base), contains("Protocol", base), sg_symbol(_, sid, name, _, _, _, _, _, _, _), sg_method(other, name, target), other != c.
+sg_edge(sid, target) :- sg_function(sid), sg_symbol(_, sid, _, module, _, _, _, _, _, _), sg_module(module), sg_family(sid, base), sg_variant(suffix), sg_owner(sid, c), sg_method(c, cat(base, suffix), target), target != sid.
+sg_edge(sid, target) :- sg_function(sid), sg_symbol(_, sid, _, module, _, _, _, _, 0, _), sg_module(module), sg_family(sid, base), sg_variant(suffix), sg_defined(module, cat(base, suffix), target, _), target != sid.
+sg_edge(sid, target) :- sg_function(sid), sg_symbol(_, sid, _, module, _, _, _, _, _, _), sg_module(module), sg_annotation(sid, name), sg_type(module, name, target).
+sg_edge(sid, target) :- sg_symbol(_, sid, _, module, _, _, _, _, _, _), sg_module_ref(module, target).
+.decl sg_reachable(sid: symbol)
+sg_reachable(sid) :- sg_exported(sid).
+sg_reachable(sid) :- sg_extra(sid).
+sg_reachable(sid) :- sg_imported_module(module), sg_module_ref(module, sid).
+sg_reachable(target) :- sg_reachable(sid), sg_edge(sid, target).
