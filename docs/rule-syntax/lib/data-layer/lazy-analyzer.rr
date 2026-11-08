@@ -20,7 +20,7 @@
 //   la_arg(c, i, a) / la_kw(c, k, v) / la_argc(c, k) / la_sarg(c, i, v)   call arguments as `ast` has them
 //   la_ename(e, s) / la_ext(e) / la_conn(e)   _expr_name, _expr_is_external_state, _expr_uses_conn_handle
 //   la_func(c, g) / la_kwv(c, v)   a call's function (parentheses dropped); its keyword and `**` values
-//   la_last(s, x)       the part of s after its last dot, for s asked for by la_lastq(s)
+//   la_local_last(F, e, x)   the part of la_local's symbol after its last dot
 //
 // How the script walks a function (_walk_body_for_analysis), and what this file mirrors:
 //   - It visits the statements of the body in order. Of each it scans some expressions (an assignment's value, an
@@ -70,9 +70,11 @@ la_field(s, k, x) :- kind(k, "class_definition"), field(k, "body", b), child(b, 
 // The symbol tables (facts_by_symbol, callable_targets) keep the last fact of each symbol: an @overload stack is
 // one symbol, answered by its implementation.
 .decl la_canon(f: node)
-la_canon(f) :- la_fact(f, _, s, _, _), count : { la_fact(g, _, s, _, _), g > f } = 0.
+// A symbol names its module, so the facts of one symbol are in one document: joined within it, the tables stay
+// per file (by the symbol alone, every fact of the repository would meet every other).
+la_canon(f) :- la_fact(f, d, s, _, _), count : { la_fact(g, d, s, _, _), g > f } = 0.
 .decl la_canon_of(f: node, g: node)
-la_canon_of(f, g) :- la_fact(f, _, s, _, _), la_fact(g, _, s, _, _), la_canon(g).
+la_canon_of(f, g) :- la_fact(f, d, s, _, _), la_fact(g, d, s, _, _), la_canon(g).
 .decl la_sym(f: node, s: symbol)
 la_sym(f, s) :- la_fact(f, _, s, _, _).
 
@@ -306,14 +308,14 @@ la_cstr(n, e, s) :- la_ask_cstr(n, e), kind(e, "parenthesized_expression"), unpa
 .decl la_callee(c: node, s: symbol)
 la_callee(c, s) :- la_call(_, c), field(c, "function", f), la_cstr(c, f, s).
 .decl la_cleaf(c: node, x: symbol)
-la_cleaf(c, x) :- la_callee(c, s), la_last(s, x).
-// la_last(s, x): x is the part of dotted name s after its last dot (s itself if it has none), for any s that
-// la_lastq asks for.
-.decl la_lastq(s: symbol)
-la_lastq(s) :- la_callee(_, s).
-.decl la_last(s: symbol, x: symbol)
-la_last(s, x) :- la_lastq(s), split_dot(s, m, x), m != "".   // (m named: rrlab cannot lower `_` here)
-la_last(s, s) :- la_lastq(s), !contains(".", s).
+la_cleaf(c, x) :- la_callee(c, s), split_dot(s, m, x), m != "".   // (m named: rrlab cannot lower `_` here)
+la_cleaf(c, s) :- la_callee(c, s), !contains(".", s).
+// la_local_last(F, e, x): the part of la_local's symbol after its last dot (all of it with no dot). These are per
+// node, not over a table of the strings asked for: a relation of strings alone names no file, so every rule reading
+// it would run over the whole corpus at once.
+.decl la_local_last(f: node, e: node, x: symbol)
+la_local_last(f, e, x) :- la_local(f, e, s), split_dot(s, m, x), m != "".
+la_local_last(f, e, s) :- la_local(f, e, s), !contains(".", s).
 // la_func(c, g): call c's function, parentheses dropped (`(f)()` calls f, as in `ast`).
 .decl la_func(c: node, g: node)
 la_func(c, g) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g).
@@ -426,15 +428,14 @@ la_ask_cstr(n, g) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g).
 .decl la_dyn(n: node, e: node)
 la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_dyn(n, v).
 la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s), la_getattr(s),
-    (!la_sarg(e, 1, _) ; la_sarg(e, 1, k), la_behavior_key(k)).
+    (!la_sarg(e, 1, _) ; la_sarg(e, 1, k), la_behavior_part(p), icontains(p, k)).
 la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), !la_getattr_call(n, e),
-    attr_of(g, t, "get"), la_arg(e, 0, _), !la_upper_name(t), (!la_sarg(e, 0, _) ; la_sarg(e, 0, k), la_behavior_key(k)).
+    attr_of(g, t, "get"), la_arg(e, 0, _), !la_upper_name(t),
+    (!la_sarg(e, 0, _) ; la_sarg(e, 0, k), la_behavior_part(p), icontains(p, k)).
 .decl la_getattr_call(n: node, e: node)
 la_getattr_call(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s), la_getattr(s).
 .decl la_upper_name(t: node)
 la_upper_name(t) :- kind(t, "identifier"), text(t, x), match("[^a-z]*[A-Z][^a-z]*", x).
-.decl la_behavior_key(k: symbol)
-la_behavior_key(k) :- la_sarg(_, _, k), la_behavior_part(p), icontains(p, k).
 .decl la_behavior_part(p: symbol)
 la_behavior_part(p) :- la_set("SERVERPLAN_BEHAVIOR_KEY_PARTS", p).
 .decl la_getattr(s: symbol)
