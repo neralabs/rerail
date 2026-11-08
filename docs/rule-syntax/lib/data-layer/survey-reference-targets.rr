@@ -1,0 +1,101 @@
+// Source SymbolGraph reference resolution over canonical source facts. Namespace
+// stages retain early returns even when a selected namespace has no method.
+#include "data-layer/survey-members.rr"
+
+.decl sgr_query(sid: symbol, ordinal: number, k: symbol, base: symbol, attr: symbol)
+sgr_query(sid, i, k, base, attr) :- sgn_context(n, sid, _, _), sgb_raw_ref(n, i, k, base, _, attr).
+.decl sgr_owner(sid: symbol, c: symbol)
+sgr_owner(sid, cat(module, "::", owner)) :- sgn_context(_, sid, module, owner), owner != "".
+.decl sgr_self_need(c: symbol, attr: symbol)
+sgr_self_need(c, attr) :- sgr_query(sid, _, "self_attr", _, attr), sgr_owner(sid, c).
+.decl sgr_mixin_candidate(c: symbol, sub: symbol, attr: symbol, target: symbol, ordinal: number)
+sgr_mixin_candidate(c, sub, attr, target, i) :- sgr_self_need(c, attr), !cm_lookup(c, attr, _), sgc_subclass(c, sub), sgc_base(sub, i, base), base != c, cm_lookup(base, attr, target), i = min j : { sgc_base(sub, j, other), other != c, cm_lookup(other, attr, _) }.
+.decl sgr_mixin_choice(c: symbol, attr: symbol, target: symbol)
+sgr_mixin_choice(c, attr, target) :- sgr_mixin_candidate(c, _, attr, target, _).
+.decl sgr_mixin_unique(c: symbol, attr: symbol, target: symbol)
+sgr_mixin_unique(c, attr, target) :- sgr_mixin_choice(c, attr, target), count : { sgr_mixin_choice(c, attr, other) } = 1.
+.decl sgr_ambiguous(sid: symbol, ordinal: number)
+sgr_ambiguous(sid, i) :- sgr_query(sid, i, "self_attr", _, attr), sgr_owner(sid, c), count : { sgr_mixin_choice(c, attr, target) } > 1.
+
+// Parameter lists preserve their original first-match behavior, including
+// duplicate names accepted by the AST parser and omitted positional-only args.
+.decl sgr_parameter(sid: symbol, ordinal: number, name: symbol, has_annotation: number, text: symbol)
+sgr_parameter(sid, i, name, has, text) :- sgn_context(n, sid, _, _), sgs_parameter(n, i, name, has, text).
+.decl sgr_first_parameter(sid: symbol, name: symbol, has_annotation: number, text: symbol)
+sgr_first_parameter(sid, name, has, text) :- sgr_parameter(sid, i, name, has, text), i = min j : { sgr_parameter(sid, j, name, _, _) }.
+.decl sgr_annotation(text: symbol)
+sgr_annotation(text) :- sgr_parameter(_, _, _, 1, text).
+sgr_annotation(text) :- sgs_class_attribute(_, _, _, text).
+.decl sgr_type_name(text: symbol, name: symbol)
+sgr_type_name(text, @replace_all(@replace_all(text, "(?s)[\\[|].*", ""), "\\A\\s+|\\s+\\z", "")) :- sgr_annotation(text).
+.decl sgr_import_type(module: symbol, name: symbol, target: symbol)
+sgr_import_type(module, name, target) :- sgc_import(module, "imported", name, fq), sgc_resolved(fq, target), sgc_kind(target, "class").
+.decl sgr_local_type(module: symbol, name: symbol, i: number, target: symbol)
+sgr_local_type(module, name, i, target) :- sgc_defined(module, name, i, target), sgc_kind(target, "class").
+.decl sgr_type(module: symbol, name: symbol, target: symbol)
+sgr_type(module, name, target) :- sgr_import_type(module, name, target).
+sgr_type(module, name, target) :- sgr_local_type(module, name, i, target), !sgr_import_type(module, name, _), i = min j : { sgr_local_type(module, name, j, _) }.
+.decl sgr_annotation_type(module: symbol, text: symbol, target: symbol)
+sgr_annotation_type(module, text, target) :- sgr_type_name(text, name), sgr_type(module, name, target).
+.decl sgr_parameter_target(sid: symbol, base: symbol, attr: symbol, target: symbol)
+sgr_parameter_target(sid, base, attr, target) :- sgr_query(sid, _, "module_attr", base, attr), sgr_first_parameter(sid, base, 1, text), sgn_context(_, sid, module, _), sgr_annotation_type(module, text, c), cm_lookup(c, attr, target).
+
+// Constructor hints are name-based in the source; no actual assignment is
+// required. An existing unannotated exact parameter blocks underscore fallback.
+.decl sgr_hint_need(c: symbol, attr: symbol)
+sgr_hint_need(c, base) :- sgr_query(sid, _, "chained_self_attr", base, _), sgr_owner(sid, c).
+.decl sgr_hint_visit(owner: symbol, c: symbol, ordinal: number, attr: symbol)
+sgr_hint_visit(owner, c, i, attr) :- sgr_hint_need(owner, attr), cm_visit(owner, c, i).
+.decl sgr_init_hint(c: symbol, attr: symbol, text: symbol)
+sgr_init_hint(c, attr, text) :- sgr_hint_visit(_, c, _, attr), sgc_method(c, "__init__", _, init), sgr_first_parameter(init, attr, 1, text).
+sgr_init_hint(c, attr, text) :- sgr_hint_visit(_, c, _, attr), sgc_method(c, "__init__", _, init), !sgr_first_parameter(init, attr, _, _), stripped = @replace_all(attr, "\\A_+", ""), sgr_first_parameter(init, stripped, 1, text).
+.decl sgr_class_hint(c: symbol, attr: symbol, text: symbol)
+sgr_class_hint(c, attr, text) :- sgr_hint_visit(_, c, _, attr), sgc_symbol(n, _, _, c), sgs_class_attribute(n, i, attr, text), i = max j : { sgs_class_attribute(n, j, attr, _) }.
+.decl sgr_hint_here(c: symbol, attr: symbol, text: symbol)
+sgr_hint_here(c, attr, text) :- sgr_init_hint(c, attr, text).
+sgr_hint_here(c, attr, text) :- sgr_class_hint(c, attr, text), !sgr_init_hint(c, attr, _).
+.decl sgr_instance_hint(owner: symbol, attr: symbol, text: symbol)
+sgr_instance_hint(owner, attr, text) :- sgr_hint_visit(owner, c, i, attr), sgr_hint_here(c, attr, text), i = min j : { sgr_hint_visit(owner, other, j, attr), sgr_hint_here(other, attr, _) }.
+
+.decl sgr_module_query(sid: symbol, base: symbol, attr: symbol, module: symbol)
+sgr_module_query(sid, base, attr, module) :- sgr_query(sid, _, "module_attr", base, attr), sgn_context(_, sid, module, _).
+.decl sgr_import_module(sid: symbol, base: symbol, attr: symbol, fq: symbol)
+sgr_import_module(sid, base, attr, cat(module, ".", attr)) :- sgr_module_query(sid, base, attr, current), sgc_import(current, "import_module", base, module).
+.decl sgr_after_module(sid: symbol, base: symbol, attr: symbol, module: symbol)
+sgr_after_module(sid, base, attr, module) :- sgr_module_query(sid, base, attr, module), !sgr_import_module(sid, base, attr, _).
+.decl sgr_import_class(sid: symbol, base: symbol, attr: symbol, c: symbol)
+sgr_import_class(sid, base, attr, c) :- sgr_after_module(sid, base, attr, module), sgc_import(module, "imported", base, fq), sgc_resolved(fq, c), sgc_kind(c, "class").
+.decl sgr_after_import_class(sid: symbol, base: symbol, attr: symbol, module: symbol)
+sgr_after_import_class(sid, base, attr, module) :- sgr_after_module(sid, base, attr, module), !sgr_import_class(sid, base, attr, _).
+.decl sgr_import_attribute(sid: symbol, base: symbol, attr: symbol, target: symbol)
+sgr_import_attribute(sid, base, attr, target) :- sgr_after_import_class(sid, base, attr, module), sgc_import(module, "imported", base, fq), sgc_resolved(cat(fq, ".", attr), target).
+.decl sgr_after_import_attr(sid: symbol, base: symbol, attr: symbol, module: symbol)
+sgr_after_import_attr(sid, base, attr, module) :- sgr_after_import_class(sid, base, attr, module), !sgr_import_attribute(sid, base, attr, _).
+.decl sgr_local_class(sid: symbol, base: symbol, attr: symbol, c: symbol)
+sgr_local_class(sid, base, attr, c) :- sgr_after_import_attr(sid, base, attr, module), sgr_local_type(module, base, i, c), i = min j : { sgr_local_type(module, base, j, _) }.
+.decl sgr_after_local_class(sid: symbol, base: symbol, attr: symbol)
+sgr_after_local_class(sid, base, attr) :- sgr_after_import_attr(sid, base, attr, _), !sgr_local_class(sid, base, attr, _).
+.decl sgr_local_import(sid: symbol, base: symbol, attr: symbol, imported: symbol)
+sgr_local_import(sid, base, attr, imported) :- sgr_after_local_class(sid, base, attr), !sgr_parameter_target(sid, base, attr, _), sgn_context(n, sid, _, _), sgb_local_import(n, base, fq), sgc_resolved(fq, imported).
+.decl sgr_module_target(sid: symbol, base: symbol, attr: symbol, target: symbol)
+sgr_module_target(sid, base, attr, target) :- sgr_import_module(sid, base, attr, fq), sgc_resolved(fq, target).
+sgr_module_target(sid, base, attr, target) :- sgr_import_class(sid, base, attr, c), cm_lookup(c, attr, target).
+sgr_module_target(sid, base, attr, target) :- sgr_import_attribute(sid, base, attr, target).
+sgr_module_target(sid, base, attr, target) :- sgr_local_class(sid, base, attr, c), cm_lookup(c, attr, target).
+sgr_module_target(sid, base, attr, target) :- sgr_after_local_class(sid, base, attr), sgr_parameter_target(sid, base, attr, target).
+sgr_module_target(sid, base, attr, target) :- sgr_local_import(sid, base, attr, c), sgc_kind(c, "class"), cm_lookup(c, attr, target).
+sgr_module_target(sid, base, attr, target) :- sgr_local_import(sid, base, attr, c), !sgc_kind(c, "class"), sgn_context(n, sid, _, _), sgb_local_import(n, base, fq), sgc_resolved(cat(fq, ".", attr), target).
+
+.decl sgr_target(sid: symbol, ordinal: number, target: symbol)
+sgr_target(sid, i, target) :- sgr_query(sid, i, "name_call", _, name), sgn_target(sid, name, target).
+sgr_target(sid, i, target) :- sgr_query(sid, i, "self_attr", _, attr), sgr_owner(sid, c), cm_lookup(c, attr, target).
+sgr_target(sid, i, target) :- sgr_query(sid, i, "self_attr", _, attr), sgr_owner(sid, c), sgr_mixin_unique(c, attr, target).
+sgr_target(sid, i, target) :- sgr_query(sid, i, "super_attr", _, attr), sgr_owner(sid, c), cm_base_lookup(c, attr, target).
+sgr_target(sid, i, target) :- sgr_query(sid, i, "module_attr", base, attr), sgr_module_target(sid, base, attr, target).
+sgr_target(sid, i, target) :- sgr_query(sid, i, "chained_self_attr", base, attr), sgr_owner(sid, c), sgr_instance_hint(c, base, text), sgn_context(_, sid, module, _), sgr_annotation_type(module, text, target_class), cm_lookup(target_class, attr, target).
+.decl sgr_ref(sid: symbol, ordinal: number, k: symbol, base: symbol, attr: symbol, has_target: number, target: symbol, target_kind: symbol)
+sgr_ref(sid, i, k, base, attr, 1, target, target_kind) :- sgr_query(sid, i, k, base, attr), sgr_target(sid, i, target), sgc_kind(target, target_kind).
+sgr_ref(sid, i, k, base, attr, 0, "", "") :- sgr_query(sid, i, k, base, attr), !sgr_target(sid, i, _), !sgr_ambiguous(sid, i).
+// A randomized source tie is explicit while its native ordering contract is
+// unresolved. It must never be represented as an ordinary unresolved reference.
+sgr_ref(sid, i, k, base, attr, -1, "", "unsupported_set_order") :- sgr_query(sid, i, k, base, attr), sgr_ambiguous(sid, i).

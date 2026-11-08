@@ -1612,3 +1612,23 @@ The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr
 The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`, verified again on the final CLI.
 Self, super, module, and chained-reference resolution still need source-level integration. Complete edges, exported roots, discovery, and lifecycle acceptance remain open.
 This work closes the ordered class-accessor gap. It does not complete rule 89 or the 100-rule migration.
+
+### 2026-11-08 — Source member targets
+
+Commit `aa1255ecb` adds a target observation for every raw reference and thirteen member-resolution fixtures.
+The source recording contains eighty-two cases. Before implementation, forty-three cases differ.
+The new `survey-reference-targets.rr` library passes all eighty-two complete comparisons on the current Final engine.
+The repeated acceptance run also passes. No Rust engine change or Python rule execution is necessary for this step.
+
+The relations preserve early namespace returns, first parameter matches, and constructor annotation precedence.
+An unresolved imported module blocks parameter lookup. An unannotated exact constructor parameter blocks underscore fallback.
+The constructor heuristic does not require an assignment. The source uses parameter names to infer instance types.
+
+The source has a separate ambiguity: its mixin fallback iterates a Python set of subclasses.
+An identical call selects different methods under different Python hash seeds. The receipt records eight subprocess observations.
+Native rows mark this branch as `unsupported_set_order`; they do not disguise it as an unresolved reference.
+The acceptance corpus covers unambiguous mixin targets. It does not settle this ordering contract.
+
+The [member-target receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-member-targets.json.gz) retains source, red, green, and consumed library bytes.
+Complete edges, roots, discovery, production integration, and lifecycle acceptance remain open.
+Rule 89 and the 100-rule migration remain incomplete.
