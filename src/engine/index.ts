@@ -163,3 +163,6 @@ export * from "./merge-assist/alignment/ledger.js";
 export * from "./merge-assist/alignment/symbols.js";
 export * from "./merge-assist/alignment/units.js";
 export { baseBranch, mergeBase, mergeTreeConflicts } from "./merge-assist/branch-git.js";
+export * from "./merge-assist/policy.js";
+export * from "./merge-assist/decision-log.js";
+export * from "./merge-assist/conflict-evidence.js";

@@ -22,7 +22,34 @@ export {
 export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime } from "./host-runtime.js";
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
-export { type AgentJudge, createAgentJudge } from "./merge-assist/agent-judge.js";
+export { type AgentJudge, createAgentJudge, type JudgeOutcome, type JudgeTask } from "./merge-assist/agent-judge.js";
+export {
+  type CheckRunner,
+  createLocalCheckRunner,
+  decisionEntryFor,
+  lastNumber,
+  personDecisionEntry,
+  type Resolution,
+  type ResolutionEvidence,
+  type ResolveInput,
+  resolveConflict,
+  type SideCheckOutcome,
+  type SideEvidence,
+} from "./merge-assist/resolver.js";
+export {
+  PANEL_PERSPECTIVES,
+  PANEL_PROMPT_VERSION,
+  panelAnswerSchema,
+  panelJsonSchema,
+  panelOrder,
+  panelPerspective,
+  panelPrompt,
+  type PanelDesign,
+  type PanelInput,
+  type PanelResult,
+  type PanelVote,
+  runPanel,
+} from "./merge-assist/panel.js";
 export { deriveSignals, draftDecision, type DraftOutcome, validateSignals } from "./merge-assist/capture.js";
 export {
   type CaptureInput,

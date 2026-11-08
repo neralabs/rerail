@@ -241,6 +241,12 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   when a unit from the earlier side reached it against when a person noticed the conflict, beside the textual and
   file-overlap baselines on the same replay. It also provides `ledgerAt` and `deliverForArea` to
   `merge-assist-replay.ts`. See [In-flight alignment replay](#in-flight-alignment-replay).
+- `merge-assist-resolve.ts` (`node --import tsx benchmark/merge-assist-resolve.ts build|checks|resolve|score|log-smoke
+  ...`, flags in its header) tests Merge Assist's conflict resolver offline on OSS conflict pairs: it builds a
+  conflict record per pair, runs each side's tests and type check on the build hosts, resolves every pair under
+  `merge-assist-resolve.policy.yaml` over several panel seeds and both side orders, scores the verdicts against the
+  adopted-design labels it is pointed at, and writes the decision log into scratch clones. See
+  [Conflict resolver](#conflict-resolver).
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
@@ -565,6 +571,76 @@ run to completion, as the session-focus comparison above did.
   implausibly tight interval (×0.998–×1.004), whatever the costs. It is now in micro-dollars, so the transform does
   what it does for tokens. Nothing else changed. Look 1 under the first unit read ×1.001; under the corrected one,
   ×1.07 [×0.96, ×1.19].
+
+## Conflict resolver
+
+When two pieces of in-flight work conflict, can a policy pick the design the project adopted, and escalate to a person
+when it can't? The product side is `.rerail/policy.yaml` (`src/engine/merge-assist/policy.ts`), the decision log
+`refs/rerail/decisions` (`decision-log.ts`), the evidence read from Git (`conflict-evidence.ts`), and the resolver
+with its judge panel (`src/runtime/merge-assist/resolver.ts`, `panel.ts`). Steps run in order and the first that
+decides wins: precedent from the log; hard checks (a side that fails a test or type check the other passes, or that
+alone breaks a public contract it did not declare, loses); measurable criteria (callers left to adapt, blast radius,
+configured benchmarks); a reserved class (public API, security, data model) goes to a person; then the panel: 3
+judges with distinct perspectives on the rubric (conventions and docs at the base, simplicity, compatibility, the
+stated goal), each reading the two designs as Design X and Design Y in both orders and voting only when both readings
+pick the same design, a verdict needing all 3. Nothing decided goes to a person.
+
+```sh
+B=benchmark/merge-assist-resolve.ts
+node --import tsx $B build --pairs pairs.json --ids ids.txt --replay replay/ --bodies pr-bodies/ --out records.json
+# on a build host (the toolchains), per host a share of the pairs:
+node --import tsx $B checks --records records.json --setups setups/ --repos repos/ --ids a,b --out checks.json
+# on a build host, the panel on Bedrock (the key fetched on the host):
+node --import tsx $B resolve --records records.json --checks checks.json --repos repos/ --seeds 0,1,2 --swap \
+  --provider amazon-bedrock --bedrock-token-cmd ./bedrock-token.sh --out results.json
+node --import tsx $B score --results results.json --labels labels/
+node --import tsx $B log-smoke --results results.json --records records.json --scratch /tmp/scratch
+```
+
+- **Inputs.** Per pair: the base at the second pull request's start; the first's head as of then
+  (`first_head_at_second_start`, else `first_visible`, else its last commit visible then, else its head then from
+  GitHub's force-push events); the second's head; both titles and bodies from `gh` with `#N` references, links and
+  supersede or outcome wording stripped; the docs at the base that name the files both change. The resolver never
+  reads merge state, comments or labels; only `score` reads `adopted_side`, from the directory it is given.
+- **Hard checks.** The pair's `setup` (only that field) is split at `&&` into installs and checks (type checks:
+  `cargo check`, `tsc`, `mypy`, `go build`/`go vet`, `run check`; the rest tests) and adapted per side: a test target
+  or path the side lacks is left out. Each side's tree is exported with `git archive` and checked by the product's
+  `createLocalCheckRunner`; one repository's sides run in turn (shared build folder, pinned toolchains). Results are
+  pass, fail or unknown with the end of the log.
+- **Scoring.** Correct, wrong or escalated per pair; escalation is correct when the project adopted neither, where any
+  verdict is wrong. Reported per seed and orientation: wrong over all pairs, accuracy over decided pairs, escalation,
+  Wilson 95% intervals, the deciding step per pair, the split by which side was adopted, and whether swapping sides
+  `a` and `b` picked the same design. Pass bars (pre-registered in the spec): wrong ≤ 5% of pairs, accuracy over
+  decided ≥ 60%, escalation < 50%.
+
+**Dev result** (2026-11-07, 15 OSS pairs outside the held-out set, labels from a separate labeller: 13 adopted the
+first design, 1 the second, 1 neither; `openai.gpt-6-luna` on Bedrock through Codex 0.158; checks on Linux build
+hosts). Tuned on these pairs only: blast radius is off in the benchmark policy (the smaller diff was the adopted
+design in 0 of the 7 pairs it would have decided); the panel votes only for a design whose rival has a concrete flaw
+a maintainer would not accept (a first prompt asking for the better design was wrong on 6–9 of 15 per seed, mostly by
+preferring the later, smaller design); each judge reads both orders; a declared breaking change counts as public API.
+
+| Seed | Correct / wrong / escalated | Wrong over all (95% CI) | Accuracy over decided | Escalated |
+| --- | --- | --- | --- | --- |
+| 0 | 3 / 1 / 11 | 0.07 (0.01, 0.30) | 2/3 = 0.67 (0.21, 0.94) | 0.80 (0.55, 0.93) |
+| 1 | 4 / 1 / 10 | 0.07 (0.01, 0.30) | 3/4 = 0.75 (0.30, 0.95) | 0.73 (0.48, 0.89) |
+| 2 | 4 / 2 / 9 | 0.13 (0.04, 0.38) | 3/5 = 0.60 (0.23, 0.88) | 0.67 (0.42, 0.85) |
+
+- Deciding step: hard checks on 2 pairs every time, both correct (clap: the second side fails 75 of its tests;
+  nushell #12779/#12822: the second side does not compile `nu-command`); the panel on 1–3; escalation on the rest,
+  of which 3 pairs are reserved classes (2 public API, 1 data model) and the others a panel that does not agree.
+- First-adopted pairs: 2–3 correct, 1–2 wrong, 8–10 escalated per seed. The one second-adopted pair (zod
+  #6318/#6343) and the neither pair (pytest #14543/#14749) were escalated on every seed, as they should be.
+- The steady wrong verdict is vue #15676/#15686: all 6 readings find a real gap in the first design as it stood at
+  the second's start (a throwing subscriber left `Pending`), and the project adopted the first design anyway. The
+  second wrong verdict on seed 2 (tokio #8165/#8377) is model variance: the same readings in the swapped run escalate.
+- Order invariance: swapping sides `a` and `b` picked the same design, or escalated both times, in 42 of 45 runs; the
+  3 differences are the run-to-run variance of separate calls, not the slot (each judge already reads both orders).
+- Against the bars: accuracy over decided passes; escalation (0.67–0.80) and wrong (1–2 of 15) do not. On these pairs
+  the deterministic steps decide little and the panel's judgement of design quality disagrees with what projects
+  adopted often enough that only escalating nearly everything keeps it safe.
+- Decision log smoke: an entry for each of the 15 seed-0 resolutions written to scratch clones of the 9 repositories
+  and read back whole.
 
 ## Steer strategies
 

@@ -1593,7 +1593,7 @@ export const ratio = (hits: number, total: number): Ratio => ({ hits, total });
 export const share = (value: Ratio): number => (value.total === 0 ? Number.NaN : value.hits / value.total);
 
 /** Wilson score interval at 95% for a share. */
-function wilson(value: Ratio): [number, number] {
+export function wilson(value: Ratio): [number, number] {
   if (value.total === 0) return [Number.NaN, Number.NaN];
   const z = 1.96;
   const p = value.hits / value.total;

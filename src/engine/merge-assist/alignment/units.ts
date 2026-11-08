@@ -88,6 +88,16 @@ export function isDesignDoc(path: string): boolean {
   return DOC_PATH.test(path) && !NOT_DESIGN_DOC.test(path);
 }
 
+/** Tests, fixtures, benchmarks and profiling scripts: code that declares nothing other code depends on. */
+export function isTestOrBenchPath(path: string): boolean {
+  return TEST_PATH.test(path) || BENCH_PATH.test(path);
+}
+
+/** A schema, migration or interchange-format file: what stored or exchanged data is shaped by. */
+export function isFormatPath(path: string): boolean {
+  return FORMAT_PATH.test(path);
+}
+
 /** Written the way code names things: snake case, camel case, or a constant with an underscore. */
 function codeShaped(name: string): boolean {
   return /[a-z0-9]_[a-z0-9]/iu.test(name) || /[a-z][A-Z]/u.test(name) || /^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/u.test(name);
@@ -436,7 +446,7 @@ export function movedCodeUnits(change: CommitChange, texts: CommitTexts): Extrac
 }
 
 /** A signature as contracts compare it: visibility and spacing ignored, since neither changes what a caller writes. */
-function signatureKey(signature: string): string {
+export function signatureKey(signature: string): string {
   return signature
     .replace(/^(?:export\s+(?:default\s+)?|pub(?:\([^)]*\))?\s+|declare\s+)+/u, "")
     .replace(/\s+/gu, " ")
