@@ -47,14 +47,17 @@ const UNITS: &str = "unit";
 pub(crate) struct Declared {
     pub(crate) name: String,
     pub(crate) exports: Vec<String>,
+    /// Exports that say where things are (`.positions at`): handed on, but no part of a granule's digest, since an
+    /// edit moves every later line.
+    pub(crate) positions: Vec<String>,
 }
 
 /// The phase `prog` declares (`.phase NAME`, `.export a, b`), if any.
 pub(crate) fn declared(prog: &Program) -> Option<Declared> {
     let setting = |key: &str| prog.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.trim().to_owned()).collect::<Vec<_>>();
     let name = setting("phase").into_iter().next()?;
-    let exports = setting("export").iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned())).filter(|e| !e.is_empty()).collect();
-    Some(Declared { name, exports })
+    let list = |key: &str| setting(key).iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
+    Some(Declared { name, exports: list("export"), positions: list("positions") })
 }
 
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
@@ -163,7 +166,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         }
         let _ = std::fs::remove_dir_all(&out);
         let producer: [u8; 32] = Sha256::digest(src.as_bytes()).into();
-        let (exports, units, granules) = keep(&name, &rows, producer)?;
+        let (exports, units, granules) = keep(&name, &rows, &declared.positions, producer)?;
         for (rel, export) in &reads {
             let types: Vec<&str> = program.decls[export].iter().map(|(_, t)| t.as_str()).collect();
             let held = facts.entry(rel.clone()).or_default();
@@ -185,7 +188,7 @@ type Kept = (Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, 
 
 /// Keeps a phase's exports in the phase store and its freshness in the derivation graph; the deltas against the last
 /// run.
-fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, producer: [u8; 32]) -> Result<Kept> {
+fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, positions: &[String], producer: [u8; 32]) -> Result<Kept> {
     use crate::content_store::{ABSENT, Binding as Bound, DerivationInput, DerivationRecord};
     let store_err = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
     let Some(path) = store_path() else {
@@ -202,9 +205,13 @@ fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, producer: [u8; 3
     let tx = db.unchecked_transaction()?;
     // The last run's granules, so a granule whose rows are all gone is a change too.
     let granules_before: BTreeSet<String> = tx
-        .prepare("SELECT DISTINCT granule FROM export_rows WHERE phase=?1 AND rel<>?2")?
-        .query_map(params![phase, UNITS], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
+        .prepare("SELECT DISTINCT rel, granule FROM export_rows WHERE phase=?1 AND rel<>?2")?
+        .query_map(params![phase, UNITS], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(rel, _)| !positions.contains(rel))
+        .map(|(_, g)| g)
+        .collect();
     let mut exports = Vec::new();
     for (rel, rs) in rows {
         tx.execute_batch("DROP TABLE IF EXISTS temp.now; CREATE TEMP TABLE now(granule TEXT, row TEXT, PRIMARY KEY(granule, row)) WITHOUT ROWID;")?;
@@ -242,7 +249,7 @@ fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, producer: [u8; 3
     changed_units.extend(store.bind_names(&gone).map_err(store_err)?);
     // The granules: each export row's first column; the digest of its rows, over every export but `unit`.
     let mut by_granule: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for (rel, rs) in rows.iter().filter(|(rel, _)| rel.as_str() != UNITS) {
+    for (rel, rs) in rows.iter().filter(|(rel, _)| rel.as_str() != UNITS && !positions.contains(rel)) {
         for r in rs {
             by_granule.entry(r[0].as_str()).or_default().push(format!("{rel}\t{}", r.join("\t")));
         }

@@ -1036,6 +1036,65 @@ fn benchmark_python_calls_program_corpus() {
     }
 }
 
+/// Spike for decision 0083 §1–3: P1, `struct.rr`, as a phase in its own fact space over the workspace and the library
+/// modules its imports reach, to its fixed point; a reader takes its exports. Cold, unchanged, then each edit of
+/// `RERAIL_SPIKE_EDITS` (E1 a function appended, E2 a comment at the top, E3 a line in a function's body): the
+/// phase's CPU, its export rows changed, and freshness (definitions changed, granules changed, the frontier, changes
+/// unattributed). `RERAIL_PYTHON_CALLS_ROOT` names the corpus, `RERAIL_PYTHON_TYPESHED` typeshed.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_phases_struct_over_the_corpus() {
+    let root = std::path::PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").expect("RERAIL_PYTHON_CALLS_ROOT"));
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let out = std::env::temp_dir().join(format!("rerail-phases-{}", std::process::id()));
+    let reader = r#"
+.decl struct__def(s: symbol, k: symbol)
+.decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
+.decl struct__module_file(m: symbol, p: symbol)
+.decl modules(m: symbol, p: symbol)
+modules(m, p) :- struct__module_file(m, p).
+.decl defs(s: symbol, k: symbol)
+defs(s, k) :- struct__def(s, k).
+.decl imports(m: symbol, x: symbol, t: symbol)
+imports(m, x, t) :- struct__binds(m, x, "import", t).
+.output modules, defs, imports
+"#;
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let count = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_or(0, |t| t.lines().count());
+    let show = |what: &str, r: &corpus::Report| {
+        let p = &r.phase_runs[0];
+        let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
+        let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
+        println!("PHASE {what}: struct {cpu:.1} s CPU (main thread), peak RSS {rss:.0} MB, {} workspace files; modules {}, definitions {}, imports {}", p.report.files, count("modules"), count("defs"), count("imports"));
+        println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
+            p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
+        let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
+        println!("PHASE {what}: exports changed: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") });
+    };
+    show("cold", &run());
+    show("unchanged", &run());
+    let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
+    for edit in edits.split(',') {
+        let (file, change): (&str, fn(&str) -> String) = match edit {
+            "E1" => ("l1100_exceptions/exceptions.py", |s| format!("{s}\n\ndef _o125_probe() -> None:\n    pass\n")),
+            "E2" => ("l1100_exceptions/exceptions.py", |s| format!("# o125\n{s}")),
+            "E3" => ("l2055_lazy_result/lazy_reads.py", |s| {
+                let mut lines: Vec<&str> = s.lines().collect();
+                let at = lines.iter().position(|l| l.starts_with("def _lazy_result_to_seq")).unwrap();
+                lines.insert(at + 1, "    _o125 = 1");
+                lines.join("\n") + "\n"
+            }),
+            other => panic!("unknown edit {other}"),
+        };
+        let path = root.join(file);
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, change(&before)).unwrap();
+        show(edit, &run());
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// O125 (decision 0083, spike 1): delete-and-rederive on calls.rr's cross-file fixpoint. A session (0077) keeps the
 /// cross-file part; each edit (`RERAIL_SPIKE_EDITS`: E1 append to exceptions.py, E2 a comment at its top, E3 a
 /// statement in an early body of lazy_reads.py) is run through the session, then without it, and the outputs are
