@@ -140,3 +140,22 @@ class EngineAlignmentTests(unittest.TestCase):
                                  replay.program_inputs([dict(path=str(active), sha256=digest)]))
                 with self.assertRaisesRegex(ValueError, 'active engine'):
                     replay.program_inputs([dict(path=str(retired), sha256=digest)])
+
+    def test_direct_native_execution_checks_alignment_before_starting_a_process(self):
+        manifest=dict(engineSource=dict(checkout='.'))
+        with patch.object(migration,'read_json',return_value=manifest), \
+                patch.object(migration,'verify_engine_alignment',side_effect=ValueError('outdated engine')) as audit, \
+                patch.object(replay.subprocess,'run') as process:
+            with self.assertRaisesRegex(ValueError,'outdated engine'):
+                replay.execute_native(Path('/engine'),Path('/policy.rr'),[],{})
+            audit.assert_called_once_with(migration.ROOT,manifest['engineSource'])
+            process.assert_not_called()
+
+    def test_direct_native_execution_rejects_both_retired_engine_locations(self):
+        for retired in ['.rerail/rr-migration-20261106/engine','.rerail/data-layer-batch-seven/engine-source']:
+            with self.subTest(retired=retired), \
+                    patch.object(migration,'verify_engine_alignment'), \
+                    patch.object(replay.subprocess,'run') as process:
+                with self.assertRaisesRegex(ValueError,'retired engine'):
+                    replay.execute_native(replay.ROOT/retired/'target/debug/rerail-engine',Path('/policy.rr'),[],{})
+                process.assert_not_called()
