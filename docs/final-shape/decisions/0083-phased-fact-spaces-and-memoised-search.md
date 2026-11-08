@@ -42,6 +42,37 @@ Two withdrawn decisions mark what not to repeat:
 
 ## Decision
 
+### 0. File boundaries are never semantics, and never the unit of incrementality
+
+The cost and the answers of a program do not depend on how its code is laid out in files.
+- Moving a definition to another file, with imports adjusted, changes only its spans and its qualified name.
+- Concatenating modules changes only what Python itself changes (one namespace).
+- A wider rule must not cost more because the repository has many files, or because it has one large one.
+
+So nothing in this decision assumes that a fact, a fixpoint or a rule is file-local.
+
+**The analyses this has to carry.** They read across files, and nothing below may preclude them:
+- interprocedural data flow (taint, nullability, resources);
+- parameter types inferred from callers;
+- effects (raises, async, purity), and whether a function is ever called;
+- reachability over the call graph, and closed-world dispatch;
+- the data layer's architecture rules;
+- guests across languages (SQL in Python strings).
+
+**The two roles a file still has.**
+- A file is where content comes from. An edit arrives as one file's new tape.
+- A file may be one way to *group* work into chunks, if the planner measures that grouping to be local. The
+  grouping is an optimisation, not a split of the program's meaning.
+
+**The unit of identity and change is the definition**: a module-level binding, a class, a function or method,
+named by its symbol, with a digest of its own subtree.
+- An edit is a delta of the definitions whose digests changed.
+- Everything downstream is maintained from that delta (§2), whichever files the readers are in.
+
+**Structural guard.** A layout-invariance test runs each typing program, and the converted packs, over a corpus
+and over the same corpus with definitions moved between modules and imports rewritten. The findings must be
+equal modulo spans and qualified names, and the work must be equal within noise.
+
 ### 1. Phases are programs over separate fact spaces, each run to its fixed point
 
 Every phase is a `.rr` program on the same engine (same chunks, waves, store and memo). Each has its own
@@ -69,20 +100,50 @@ the run and no request loop around it.
 resolution order and inherited members, overloads and protocols. It holds generic signatures as schemes,
 not instances.
 
-**What P3 reads.** P3 reads library documents only through `types.` facts. A library document therefore
-never enters P3, and nothing in P3 reads every document by name.
+**What P3 reads.** P3 reads library documents only through `types.` facts, so a library document never enters
+P3. Nothing in P3 reads every document by name.
 
-Once P3's lookups probe closed lower-phase relations, P3 is file-local apart from those probes. So P3 is
-memoised per file, and code in one file behaves as the same code split across files. A module-level name
-resolves through `types.binds` / `types.member` whether its definition is in the same file or another.
+**P3 is one global fixpoint over the checked code, not a set of per-file runs.**
+- A module-level name resolves through `types.binds` / `types.member`, whether its definition is in the same
+  file or another. The same rule and the same relation serve both cases.
+- Flows from one function's body to another are first-class P3 relations, keyed by the callee's or the
+  caller's symbol:
+  - `ret(f)`: an inferred return;
+  - `param_in(f, i)`: what callers pass;
+  - `mod_value(q)`: a module's computed value;
+  - effects.
+- They run in P3's fixpoint whether or not a rule needs them today (§8).
+- The fixpoint is cheap because the library's bulk is in P1 and P2, and eager closures become searches. It is
+  incremental because it is maintained by deltas (§2), not because it is cut into files.
 
-### 2. The bridge is a delta of a phase's exported relations
+### 2. Incrementality is maintenance of a stored fixpoint by deltas; the bridge is one such delta
 
-- In a session, a phase's exported relations are maintained: delete-and-rederive for recursive strata
-  (More-ergonomic-rule-syntax 0077), counting for aggregates (the SQL executor's algorithm, to be ported).
-- The difference between their old and new rows is the phase's delta. The delta enters the next phase as an
-  ordinary change wave, so a changed `sig(f)` reaches exactly the rows that joined on it.
-- An empty delta stops the propagation. This is the early cutoff of 03 §14, at the phase boundary.
+Every phase's relations, internal ones included, are stored facts (the lattice in SQLite, 03). A run does not
+replay a memo entry by its key. It brings the stored fixpoint up to date:
+
+1. **Base delta.** Each edited file's tape is diffed by definition: definitions added, removed, or with a changed
+   subtree digest. Their base rows are the delta, and an unchanged definition's rows are untouched.
+2. **Maintenance.** Each stratum takes its inputs' deltas:
+   - delete-and-rederive where it is recursive (More-ergonomic-rule-syntax's 0077, stage 2);
+   - counting where it aggregates or negates without recursion (the SQL executor's algorithm, to be ported).
+   An empty delta stops the propagation; this is the early cutoff of 03 §14.
+3. **The bridge.** A phase's exported delta is the next phase's input delta, as an ordinary change wave. A changed
+   `sig(f)` reaches exactly the rows that joined on it, in any file.
+
+**Cost.** This costs what the delta reaches. Neither the file count, nor the files the delta lands in, nor whether
+a join crosses files enters it. That is the property §0 asks for, and it is the push path of the target
+architecture (03, points 2–3).
+
+**Where name→hash keys remain.** They are kept for two things:
+- facts shared beyond one store's fixpoint: a library's P1 and P2 rows, reused across workspaces by content;
+- the search memo (§4).
+
+**A cold store** starts from the empty fixpoint, and its first run is one full evaluation.
+
+**Risks to measure first:**
+- Delete-and-rederive over-deletes in large recursive components (points-to). The candidates are support counts
+  per row (the SQL executor has them), or maintaining each strongly connected component of definitions apart.
+- The maintained relations must be read in place, by index, not loaded whole. That is the 1 GB budget.
 
 ### 3. Exported facts are keyed by symbols, and they carry two kinds of dependency
 
@@ -126,12 +187,18 @@ types.member("pkg.v1.MyInterfaceV1", "run", "pkg.v1.MyInterfaceV1.run")
 Both the alias's value and each version's definition are facts, so each dependency is a join that the
 change wave follows. No dependency is recorded beside the rules.
 
-**Across runs**, a P3 file's stored derivation records the name→hash bindings of the exported granules it read,
-for example `types.sig@m.do` or `types.member@pkg.v1.MyInterfaceV1.run`. A probed key with no rows is recorded
-`ABSENT` (`content_store::derivation`). Validity is one join.
+**Across runs**, these dependencies need no record of their own: they are joins in the stored fixpoint, and §2
+maintains them.
+- Name→hash bindings are recorded only where facts are shared beyond one store: a library's exported granules
+  (`types.sig@builtins.list.__iter__`) and search answers.
+- A probed key with no rows is recorded `ABSENT` (`content_store::derivation`). Validity is one join.
+- Reads are recorded only at that boundary. 0064 recorded every read inside the eager engine, and that is what
+  cost it 60%.
 
-Reads are recorded only where a phase reads a lower phase's exports, and that boundary is narrow. 0064 recorded
-every read inside the eager engine, and that is what cost it 60%.
+**Node ids inside a phase are per definition.** A node is `(definition, index within the definition)`, not
+`(document, preorder)`. An edit inside one function then renumbers no other definition's nodes, and the base
+delta of §2 stays the size of the edit. This applies to every phase: no position in a file carries meaning
+outside its own definition.
 
 Structural types (protocols, `TypedDict`, `Callable` aliases) are matched by search (§4). A match records the
 members it read on both sides.
@@ -244,9 +311,8 @@ Body typing reads other files' bodies in some places:
 - decorators' returns (`decval`);
 - closed-world subclasses (`sub`).
 
-If P3 needs them, it is not file-local, and a further phase must reach a fixed point over them. That phase
-would hold per-symbol summaries derived from bodies (an inferred return, a module variable's value), keyed by
-symbol, ahead of P3.
+These flows stay in P3's fixpoint, keyed by symbol (§1), and are maintained by deltas (§2). The measurement
+below says what today's `calls.rr` gets from them, not whether the design carries them.
 
 No rule passes argument values into parameters: an unannotated parameter is open (`bopen`). The flows that
 read a call site (`retparam`, `rpvar`, `fbind`) apply the callee's summary to the caller's arguments. That is
@@ -278,16 +344,21 @@ The dumps per call show what changed:
   `_resolve_legacy_result_async` through a module's computed value. It goes from agree to unknown.
 - k3 against base: three calls in `transaction.py` go from unknown to agree. Closed-world subclasses made them open.
 
-**What this shows.**
-- On this corpus, the analysis phase needs no flow from one file's bodies to another's. With every such flow cut,
-  6,095 of 6,096 calls still agree. Declared types, structure and resolution through lower phases carry the rest.
-- So P3 can be file-local over `types.`, and an inferred-interface phase is not needed for call resolution here.
-  If a later corpus needs one, it goes between P2 and P3, keyed by symbol (an inferred return per function), and
-  reaches its own fixed point.
-- The closed-world subclass closure costs about a third of the CPU (27.3 to 19.3 s), and on this corpus it decides
-  nothing. Removing it decides three more calls. It is a search (§4), asked only by the readers that need it.
-- What these runs do not show: rules other than call resolution may read inferred values (`pv` of an expression).
-  The cuts were scored only on call targets.
+**What this shows, and what it does not.**
+- Today's `calls.rr` gets almost nothing from flows from one file's bodies to another's: 1 call of 6,096. The
+  reason is in the rules, not in the code. A call is open whenever an unannotated callee's return is open (line
+  942), so an inferred return rarely closes a call, and calls that agree are decided by declarations and
+  resolution.
+- That is a property of one program on one metric, call targets. It is not evidence that the flows will not be
+  needed. Data flow, effects, parameters inferred from callers and "never called" read exactly these flows, so
+  they stay first-class in P3 (§0, §1).
+- The cost is the actionable result. The eager forms of these flows cost a third of the CPU for nothing:
+  - the closed-world subclass closure: 27.3 to 19.3 s;
+  - inferred returns: 27.3 to 19.9 s.
+
+  They become demand-driven: subclasses and the method resolution order as searches (§4), and inferred returns
+  maintained by delta only where a reader reaches them.
+- Removing the subclass closure decides three more calls, which closed-world expansion had left open.
 
 Library code needs a fixed point too, over declared facts only: chains of re-exports and aliases, star imports, the
 method resolution order across files, overloads. That fixed point is P2. The phase order means it settles before P3
@@ -298,6 +369,8 @@ only with `python.untyped=read`, and then only by P1.
 
 Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next.
 
+0. The layout-invariance test (§0) on today's engine. It measures how far the present split by file departs
+   from layout independence, in answers and in work, before anything changes.
 1. Check the plan-digest finding: add one import, and count the per-file memo's misses.
 2. `struct.rr` alone: imports, `binds`, class headers, `sig_written` as terms, keyed by symbol. Run it over the
    84 files with typeshed: cold, warm, and the comment edit to `exceptions.py`. The target is an empty delta on
@@ -307,6 +380,8 @@ Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next
 4. The search program kind, interpreted first: `inst`, `mro_find`, protocol matching, memoised with their
    granules.
 5. The P3 `calls.rr`, which reads `types.` and searches. Compare its Jedi agreement with 6,299.
+5a. Node ids per definition, and the base delta per definition (§2, §3). Then maintenance of the stored fixpoint
+   by deltas. Measure the `exceptions.py` comment edit and a one-function edit against a cold run.
 6. The inferred-interface phase, if §8 shows it is needed.
 7. Cranelift, then Metal, for searches.
 8. The data layer's 9,010 files.
@@ -327,7 +402,7 @@ Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next
 | 13 | extract demand-driven | agrees; searches are demand at the scale of keys |
 | 14 | each file owns its rows; whole-graph artifacts must not force whole-repository rebuilds | agrees; DLRE's one-file edit of 121.6 s is the failure this avoids |
 | 15 | partial sharing is slower than none | the phases are whole families; no relation is half exported |
-| 20 | partition by file and keep global machinery for the rest | agrees; P3 is per file, and P1 and P2 are the global part, kept small |
+| 20 | partition by file and keep global machinery for the rest | departs in part. 77 of 99 linter rules are single-file, so the partition is kept as a grouping of work; it is never a semantic split, because the other 22 are the ones that grow |
 | 26 | acceptance must be structural | agrees; an edit's work is bounded by the granules its delta touches |
 | 27 | indexes are independent of the query | agrees; the search memo is a fact table keyed by a search's key, not an index per query |
 
@@ -343,6 +418,7 @@ Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next
 
 - The symbol key's form for redefinitions, conditional definitions and `if TYPE_CHECKING` branches.
 - `.search`'s syntax, and how the engine checks that a search is bounded.
-- Whether P2 reads function bodies (the inferred-interface phase), which depends on §8.
+- How the planner chooses chunks (by file, by component of definitions, by measured locality), and whether
+  recursion inside a chunk on the device (0027) is kept for chunks that are not files.
 - Whether the memo for searches is one table per search or one shared table.
 - The default source for typeshed.
