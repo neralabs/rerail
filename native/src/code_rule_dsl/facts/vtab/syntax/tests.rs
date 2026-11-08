@@ -477,7 +477,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
-    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[]).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size) and kind atom of node row r.
