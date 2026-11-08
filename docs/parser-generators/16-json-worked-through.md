@@ -309,6 +309,10 @@ plan json gpu
 
 ## 6. Level 5: the CPU
 
+**Wrong, superseded by doc 17 §5.** The sketch below steps token by token, with a branch per
+token. Tier 2 on the CPU is the same dataflow as on Metal: bit operations and prefix scans per
+block, inside tier 1's loop, with no branch per token.
+
 The CPU plan is one pass. Every scan is a running carry, the stack is in registers, and keys
 come from the rule from the left. Cranelift emits one function. In Rust, its shape is:
 

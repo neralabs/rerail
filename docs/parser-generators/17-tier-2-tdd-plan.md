@@ -15,7 +15,7 @@ that the next one reads, and its tests pin the shape of that code, not only its 
 | 2 | the monoids: combines, summaries, references | laws and sequential references |
 | 3 | the analysis: classes, depths, candidates, fixes | JSON's table, as doc 16 §4.1 |
 | 4 | the plan: steps, entry layout, budget, verifier | the printed plan, and refusals |
-| 5 | the CPU: tier 2 lowered by `native_ir`, fused into tier 1's function | IR text; no call; tapes; cost |
+| 5 | the CPU: tier 2 as bit operations and prefix scans, in tier 1's loop | IR text; branch-free; tapes; cost |
 | 6 | Metal: the generated plan kernel | tapes equal the CPU's; shape guards |
 | 7 | timing | CPU time next to simdjson's stages |
 
@@ -129,43 +129,42 @@ barriers), `json_cpu_plan_is_one_pass`, `plan_verifier_refuses_a_missing_barrier
 (with the budget), `match_scan_has_no_mid_pass_barrier` (121 words, 2 scan barriers, none in
 pass B).
 
-## 5. The CPU: tier 2 through the compiler
+## 5. The CPU: tier 2 as bit operations and prefix scans
 
-Tier 2 is part of the transducer's block side program (doc 12 §3), so it goes where tier 1
-goes: its IR runs on the transducer's backends, the interpreter, `native_cpu_block` (lowered
-by `native_ir`) and Metal. Nothing does the parse's work outside that IR: no call from
-generated code, no host step between the tiers, no hand-built emitter. (A first build did all
-three, and is deleted.)
+Tier 2 on the CPU is the dataflow of phase 3, run per 64-byte block inside tier 1's loop, as
+stage 1 runs in simdjson: **no branch per token, no scan for characters.** Every value is a bit
+operation on the block's masks or a prefix scan over one of phase 2's monoids, its carry in a
+register from block to block. The IR is the transducer's: lowered by `native_ir`, run on the
+interpreter, Cranelift (`native_cpu_block`) and Metal.
 
-**5a. Tier 2's native IR.** `native_ir` lowers the rows, through the analysis (phase 3), to
-tier-2 instructions in `BlockNative`:
+How each value lowers, for one block:
 
-- **states:** the rows' `after` and `parent` conditions take values from small sets. Each
-  reachable pair (previous token's kind class, innermost open kind) is a state, as simdjson's
-  `object_field` and `array_value` are labels;
-- **per state and token kind,** straight-line actions: open a node (kind, field, supertypes
-  as constants), push, close, check, go to a state;
-- **the token's kind** from the byte, for one-byte keyword rows; from masks otherwise;
-  multi-byte keywords as word compares in the IR;
-- **validators are tier-1 masks:** a number's syntax is bit operations, a fallback bit, like
-  every other refusal. No call.
-
-**5b. Passes over that IR:** fold what a state decides; merge equal states; fixed-shape tokens
-(a string's quote, content and quote) emitted from one event, their ends found in the masks.
-
-**5c. One function, fused:** `native_cpu_block` defines tier 1 and tier 2 in one loop per
-block. The masks stay in registers; the events are the token starts.
-
-**5d. The tape:** the extract pass writes the v9np columns. `TapeImage::from_written` stays
-only as the test's encoder of tree-sitter's side.
+- **S1, strings:** tier 1's carries already (`fn 2->4`): nothing new.
+- **`after` (the previous token's kind):** the last token start before each byte, in a set of
+  kinds: a fill, one add with its carry (doc 16 §3).
+- **`before` (the next token's kind):** the same from the right. The CPU runs the dataflow's
+  backward values after the forward ones, block by block in reverse; their carries flow
+  right to left. (Or the CPU keeps the `also` rule and checks `before` as a mask: whichever
+  the analysis gives fewer passes.)
+- **The stack:** opens and closes are masks. Depth is a prefix sum of +1 and -1 (the Dyck
+  monoid within the block: popcounts of prefixes), its kinds a bit stack in the carry.
+  `parent` is a mask: the bytes whose innermost open is of a kind.
+- **Ords:** a node's slot is the popcount of the node starts before it (rank), plus the
+  carried count: the 3 planes of phase 3, added as bits.
+- **Sizes:** a close's partner is found by the `match scan` monoid: each level's open ord in
+  the carry, the close reads its level's. No walk.
+- **Validators:** tier-1 masks: a number's syntax is bit operations and a fallback bit.
+- **The tape:** each column written by rank, as simdjson's stage 1 writes its indexes from a
+  mask (a fixed-count extraction, no branch per token). The v9np columns come out of the same
+  extract pass.
 
 **Tests, first:**
 
-- `json_tier2_ir_prints_as_designed`: JSON's tier-2 IR, as `rir` text, pinned whole.
-- `json_tier2_states_are_simdjsons`: the states equal stage 2's labels.
-- `json_block_function_has_no_call`: the compiled CLIF has no call, and one loop per block.
-- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and the fused
-  function.
+- `json_tier2_ir_prints_as_designed`: JSON's tier-2 IR, as `rir` text, pinned whole: only bit
+  operations and scans.
+- `json_block_function_is_branch_free`: the compiled CLIF of the block body has no branch but
+  the loop's, and no call.
+- `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and Cranelift.
 - `json_tier2_cost_ratchet`: ns per block next to simdjson's stage 2, in CPU time.
 
 ## 6. Metal
