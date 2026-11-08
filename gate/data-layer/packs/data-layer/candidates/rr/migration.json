@@ -1531,6 +1531,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_fragment_usage.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-allowlist-burndown.rr",
+      "sha256": "c7edb50e054f282919e2bd222829944803e0d6e26780070d8a66ce6ec442f6bc",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_grammar_allowlist_burndown.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -1881,8 +1888,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-allowlist-burndown.json",
       "legacySha256": "0596978d51eeddec03b1db10fcf33f1792ac5c7b9cd16d881bb5c0ce374c813f",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-allowlist-burndown.rr",
+      "ruleSha256": "c7edb50e054f282919e2bd222829944803e0d6e26780070d8a66ce6ec442f6bc"
     },
     {
       "check": "rust_sql_grammar_boundary",
