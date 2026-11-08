@@ -380,6 +380,11 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
             _ => None,
         };
+        for g in std::mem::take(&mut prog.text_globs) {
+            if !all.text_globs.contains(&g) {
+                all.text_globs.push(g);
+            }
+        }
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
@@ -724,7 +729,7 @@ pub(crate) fn run_with_options(
                 };
                 (files, label)
             } else {
-                let found = scoped(corpus_files(root)?, &prog);
+                let found = scoped(corpus_files(root)?, &prog, options);
                 let label = corpus_language(language.as_deref(), typing, &found);
                 (found.of(label), label)
             };
@@ -1263,6 +1268,12 @@ pub(crate) fn run_with_options(
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             // Its own work: the file's input made from its source (the build's parts charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
+            // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree.
+            if crate::code_rule_dsl::language::label_of_path(path).is_none() {
+                let facts = Arc::new(core::text_only(Arc::new(source)));
+                let digest = core::digest(&facts);
+                return Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module: named.get(path).cloned() })));
+            }
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
                 // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
@@ -2147,7 +2158,7 @@ pub(crate) fn run_with_options(
 /// corpus and what it has loaded, until a round asks for nothing new, then the run proper over both.
 #[allow(clippy::too_many_arguments)]
 fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
-    let found = scoped(corpus_files(root)?, prog);
+    let found = scoped(corpus_files(root)?, prog, options);
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
     let label = corpus_language(language, typing, &found);
     let corpus = found.of(label);
@@ -2596,15 +2607,21 @@ struct CorpusFiles {
     python: Vec<String>,
     rust: Vec<String>,
     rr: Vec<String>,
+    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
+    text: Vec<String>,
 }
 
 impl CorpusFiles {
+    /// The run's documents: the language's files, then the text ones, in path order.
     fn of(self, label: &str) -> Vec<String> {
-        match label {
+        let mut files = match label {
             "rust" => self.rust,
             "rr" => self.rr,
             _ => self.python,
-        }
+        };
+        files.extend(self.text);
+        files.sort();
+        files
     }
 }
 
@@ -2622,16 +2639,21 @@ fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles)
 
 /// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
-fn scoped(mut found: CorpusFiles, prog: &front::Program) -> CorpusFiles {
+/// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
+/// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
+fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
+    let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
+    found.text.retain(text_glob);
     if prog.doc_scopes.is_none() {
         return found;
     }
+    let scopes = front::resolve_scopes(&prog.doc_scopes, options);
     let before = found.python.len() + found.rust.len() + found.rr.len();
-    for files in [&mut found.python, &mut found.rust, &mut found.rr] {
-        files.retain(|p| front::in_doc_scopes(&prog.doc_scopes, p));
+    for files in [&mut found.python, &mut found.rust, &mut found.rr, &mut found.text] {
+        files.retain(|p| front::in_doc_scopes(&scopes, p));
     }
     crate::code_rule_dsl::logic::profile::decision("documents", || {
-        format!("{} of {before} files, by the policies' `.scope`", found.python.len() + found.rust.len() + found.rr.len())
+        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.python.len() + found.rust.len() + found.rr.len(), found.text.len())
     });
     found
 }
@@ -2639,7 +2661,7 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program) -> CorpusFiles {
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut python, mut rust, mut rr) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
@@ -2657,20 +2679,21 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
                 Some("python") => python.push(relative),
                 Some("rust") => rust.push(relative),
                 Some("rr") => rr.push(relative),
-                _ => {}
+                _ => text.push(relative),
             }
         }
     }
     python.sort();
     rust.sort();
     rr.sort();
+    text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
         for files in [&mut python, &mut rust, &mut rr] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { python, rust, rr })
+    Ok(CorpusFiles { python, rust, rr, text })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
