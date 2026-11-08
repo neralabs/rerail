@@ -32,7 +32,7 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Extend the tested symbol and module inventory with decorators and annotations. Preserve definition replacement and class ownership.
+1. Assemble final symbol and module maps from the tested occurrences. Preserve replacement order, class ownership, and duplicate definition lists.
 2. Derive imports, reexports, definitions, `__all__`, module references, exported roots, and literal dynamic-import roots.
 3. Derive bases, method tables, calls, class uses, and legacy synthetic edges. Compare with the pinned graph builder before using the rows for findings.
 4. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
@@ -46,12 +46,16 @@ Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
 
 The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
-Nineteen source fixtures compare symbol occurrences, definition lists, module names, imports, signatures, and module references with the pinned `_ModuleVisitor`.
+Twenty-three source fixtures compare inventory fields with the pinned `_ModuleVisitor`.
+They cover symbol occurrences, definition lists, module names, imports, signatures, decorators, bases, abstract flags, class attributes, and module references.
 They include nested classes, omitted nested functions, duplicate definitions, Unicode names, package paths, and imports from nested scopes.
 The native command reads an offline source recording. It does not import the Python scanner.
-Signature annotations use the shared native canonical printer.
+Annotations, class bases, and decorators use the shared native canonical printer.
+The `class_base_text` and `decorator_text` columns share its demanded parse and expose typed rows keyed by expression nodes.
+They do not format unrelated body expressions or invoke Python.
 The checks retain the source's positional-only and variadic parameter exclusions, plus its different treatment of direct and conditional function bodies.
-These checks do not certify decorators, bases, body references, call edges, roots, findings, or production integration.
+These checks do not certify body references, final graph assembly, call edges, roots, findings, or production integration.
+Invalid-file handling and lifecycle updates also need source comparisons before the producer can replace the supplied-graph contract.
 
 ## Ordered class accessors
 

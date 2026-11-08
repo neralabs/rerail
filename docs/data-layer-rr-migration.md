@@ -63,6 +63,8 @@ They also reject binaries inside either retired engine checkout.
 New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
 The native `annotation_text` relation formats Python annotation expressions. Its 107 recorded comparisons use Python 3.13.
+The `decorator_text` and `class_base_text` columns share that demanded pass and format definition expressions only.
+Their typed columns have SQL names, statistics keys, string domains, and shard locations.
 It makes one additional native AST pass per prepared file batch when a program reads the relation.
 Repeated batch preparation can repeat that pass. Rule decisions remain in Datalog.
 Uncommitted sibling work is not part of this baseline.
@@ -1484,3 +1486,30 @@ Two new tooling tests reject incomplete recordings and prove that native mismatc
 The [source producer receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-inventory.json.gz) contains recordings, failing stages, passing stages, consumed program bytes, and build identity.
 These checks cover inventory, imports, signatures, and module references. Decorators, bases, body references, graph construction, and roots remain incomplete.
 The production consumer still refuses source-only execution. This checkpoint does not complete `internal_dead_code` or global migration acceptance.
+
+## 2026-11-08 — Native survey definition properties
+
+The next source recording adds decorators, class bases, abstract flags, and direct class-field annotations.
+Eighteen of twenty-two comparisons fail against the earlier producer (`7a36dab6b`).
+The native printer now supplies generic `decorator_text` and `class_base_text` columns in its existing demanded file pass.
+It excludes metaclass keywords and dictionary keyword expansions from class bases. It preserves complete decorator expressions before the rule applies source-specific truncation.
+Rule logic remains Datalog. No Python execution, second graph engine, or production configuration switch was added.
+
+The first execution exposed missing input-column registration and refused `decorator_text.c0` statistics.
+The repair registers SQL column names, statistics keys, string columns, and shard locations.
+That repair's first build caught an unchanged array length in the string registry; `f75a35db8` corrects it.
+A second-file fixture and a generic native regression cover typed values and source locations.
+All twenty-three source comparisons pass on frozen CLI `82021b37c8c7cb87`.
+All eight mutations that remove producer behavior cause row mismatches through successful native execution.
+
+The same CLI passes all four original dead-code tests, thirty-six supplied-graph cases, and 100 policy readers.
+All 104 tooling tests and 34 subtests pass.
+The standard native test executable passes the new two-file regression, both canonical-printer tests, and Final's regex-span regression.
+The headless unit-test build fails on fifteen existing workspace API method errors; it is not counted as a test pass.
+The standard test build succeeds in 183.087 seconds. The final CLI rebuild takes 17.269 seconds.
+Compilation times are separate from rule execution.
+
+The [definition-property receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-properties.json.gz) archives complete comparisons, controls, consumed programs, builds, and test logs.
+Final shape remains at `066ab66ad`, already merged. These changes extend the modern root engine only.
+Body references, final graph assembly, resolved edges, exported roots, ordered class accessors, and production integration remain incomplete.
+The migration still has 89 drafts and eleven absent translations. This is source-producer progress, not full acceptance of rule 89.
