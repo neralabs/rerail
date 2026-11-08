@@ -311,7 +311,28 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
                 let inside = |u: usize| z[u] || only[u];
                 only[x] = if lanes[x] { users[x].iter().filter(|&&u| !lanes[u]).all(|&u| inside(u)) } else { users[x].iter().all(|&u| inside(u)) };
             }
-            let w: usize = (0..n).filter(|&x| z[x] || only[x]).map(|x| weight(&native.insts[x], lanes[x], mask[x])).sum();
+            // Convex: a value outside that reads the region and is read by it would have to be
+            // made both before and after its branch. The region's values after one go.
+            let mut member: Vec<bool> = (0..n).map(|x| z[x] || only[x]).collect();
+            loop {
+                let mut reach = vec![false; n];
+                let mut cut = false;
+                for x in 0..n {
+                    let from = native.insts[x].operands().iter().any(|&o| member[o] || reach[o]);
+                    if !member[x] {
+                        reach[x] = from;
+                    } else if native.insts[x].operands().iter().any(|&o| reach[o]) {
+                        member[x] = false;
+                        reach[x] = true;
+                        cut = true;
+                    }
+                }
+                if !cut {
+                    break;
+                }
+            }
+            let (z, only): (Vec<bool>, Vec<bool>) = ((0..n).map(|x| z[x] && member[x]).collect(), (0..n).map(|x| only[x] && member[x]).collect());
+            let w: usize = (0..n).filter(|&x| member[x]).map(|x| weight(&native.insts[x], lanes[x], mask[x])).sum();
             if w >= WORTH {
                 worthy.push((g, w, z, only));
             }

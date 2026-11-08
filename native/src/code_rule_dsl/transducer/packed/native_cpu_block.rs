@@ -400,8 +400,9 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
             }
             None if done.iter().all(|&d| d) => break,
             None => {
-                // A region waiting on a value after it, or on another region: dissolved, its
-                // values computed in place without its branch.
+                // A region waiting on another's values after it: dissolved, its values computed
+                // in place without its branch. Regions are convex (`native_cpu_lanes::regions`),
+                // so this is a region whose gate is made in a later one.
                 let r = (0..regions).find(|&r| !emitted[r]).expect("a region left");
                 emitted[r] = true;
             }

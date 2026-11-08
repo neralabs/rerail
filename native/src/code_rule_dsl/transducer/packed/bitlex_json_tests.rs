@@ -499,7 +499,10 @@ fn json_gated_regions_equal_the_interpreter() {
     ];
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        assert!(c.parser.tier1.gate_branches > 0, "{name}: no gated region");
+        // Each region behind its branch in both full bodies, none computed in place.
+        let regions = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan.regions.len();
+        assert!(regions > 0, "{name}: no gated region");
+        assert_eq!(c.parser.tier1.gate_branches, regions * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
         let block = &c.program.block_programs()[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
