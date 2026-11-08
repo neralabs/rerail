@@ -17,6 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 mod catalog;
 mod constants;
+// A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
+#[cfg(target_pointer_width = "64")]
 mod corpus;
 mod documents;
 mod indexes;
@@ -317,6 +319,17 @@ impl CodeRuleSqlExecutor {
     /// reads them (`corpus`). `relations` limits which are bound; a name the run's memo does not hold is an error.
     #[napi]
     pub fn bind_corpus(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let _ = (root, relations);
+            return Err(error("bindCorpus needs a 64-bit target: its rows are document << 32 | row"));
+        }
+        #[cfg(target_pointer_width = "64")]
+        self.bind_corpus_64(root, relations)
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    fn bind_corpus_64(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
         let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
         let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
             .map_err(error)?
