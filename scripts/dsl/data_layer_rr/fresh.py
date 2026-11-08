@@ -194,6 +194,9 @@ def run(args):
                     elif case['entry']=='graph_dynamic_roots':
                         from internal_dead_code_probes import dynamic_roots_probe
                         call=lambda:dynamic_roots_probe(module,root,values)
+                    elif case['entry'] in {'graph_print_text','graph_print_json','graph_worst_files'}:
+                        from internal_dead_code_probes import reporting_probe
+                        call=lambda:reporting_probe(module,root,'_'+case['entry'][6:],values)
                     else:call=lambda:getattr(module,case['entry'])(**values)
                 elif case['check']=='async_sync_delegation':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])

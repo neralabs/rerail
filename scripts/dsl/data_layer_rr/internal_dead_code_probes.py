@@ -43,3 +43,9 @@ def probe(module,root,values):
 def dynamic_roots_probe(module,root,values):
     graph=graph_argument(module,root,values['graph'])
     return module._resolve_dynamic_import_roots(graph,set(values['imported_fqnames']))
+
+
+def reporting_probe(module,root,entry,values):
+    graph=graph_argument(module,root,values['graph'])
+    arguments={k:v for k,v in values.items() if k!='graph'}
+    return getattr(module,entry)(graph=graph,**arguments)

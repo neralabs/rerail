@@ -20,11 +20,12 @@ def graph_algorithm_codes(module):
 
 
 def graph_columns(graph):
-    data={name:[] for name in ['symbolIds','symbolFqNames','symbolNames','symbolModules','symbolKinds','symbolPaths','symbolLines','symbolOwners','symbolHasOwner','symbolAbstract','flagSymbols','flagNames','decoratorSymbols','decoratorTexts','baseNameSymbols','baseNameTexts','baseClasses','baseTargets','baseOrdinals','subclassBases','subclassTargets','methodClasses','methodNames','methodSymbols','fqNames','fqSymbols','modules','importModules','importLocals','importTargets','moduleImportModules','moduleImportTargets','definedModules','definedNames','definedSymbols','refModules','refNames','annotationSymbols','annotationNames','annotationFiles','annotationFileSymbols','callSources','callTargets','useSources','useTargets','providedPublicClasses','providedPublicSymbols','providedDunderClasses','providedDunderSymbols']}
+    data={name:[] for name in ['symbolIds','symbolFqNames','symbolQualnames','symbolNames','symbolModules','symbolKinds','symbolPaths','symbolLines','symbolOwners','symbolHasOwner','symbolAbstract','flagSymbols','flagNames','decoratorSymbols','decoratorTexts','baseNameSymbols','baseNameTexts','baseClasses','baseTargets','baseOrdinals','subclassBases','subclassTargets','methodClasses','methodNames','methodSymbols','fqNames','fqSymbols','modules','importModules','importLocals','importTargets','moduleImportModules','moduleImportTargets','definedModules','definedNames','definedSymbols','refModules','refNames','annotationSymbols','annotationNames','annotationFiles','annotationFileSymbols','callSources','callTargets','useSources','useTargets','providedPublicClasses','providedPublicSymbols','providedDunderClasses','providedDunderSymbols']}
     documents=[]
     for sid,symbol in graph.symbols.items():
         raw=vars(symbol)
         data['symbolFqNames'].append(raw.get('fqname',''))
+        data['symbolQualnames'].append(raw.get('qualname',''))
         for column,key,default in [('symbolIds',None,sid),('symbolNames','name',''),('symbolModules','module',''),('symbolKinds','kind',''),('symbolPaths','path',''),('symbolLines','line',0),('symbolOwners','class_name',''),('symbolAbstract','is_abstract',False)]:
             value=raw.get(key,default) if key else default
             if column=='symbolAbstract':value=int(value)
@@ -109,3 +110,20 @@ def install(suite,module):
     def analyze(graph,*,extra_root_ids=None,excluded_paths=()):
         return grouped(native('analyze_dead_code',graph,dict(extraRoots=list(extra_root_ids or []),excludedPaths=list(excluded_paths))))
     suite.replace(module,'analyze_dead_code',analyze)
+    def report(entry,graph,results=None,symbol_ids=None,limit=100):
+        options=result_columns(results) if results is not None else dict(worstSymbols=list(symbol_ids))
+        options.update(reportLimitNone=limit is None,reportLimit='' if limit is None else str(limit))
+        rows=native(entry,graph,options)
+        unexpected=[r for r in rows if r['code'] not in {'IDC_REPORT_OUTPUT','IDC_REPORT_ERROR','IDC_WORST_FILE'}]
+        if unexpected:raise ValueError('Unexpected native report diagnostics: '+repr(unexpected))
+        import sys
+        for row in sorted((r['parameters'] for r in rows if r['code']=='IDC_REPORT_OUTPUT'),key=lambda p:(p['stage'],p['ordinal'])):
+            sys.stdout.write(row['text'])
+        errors=[r['parameters'] for r in rows if r['code']=='IDC_REPORT_ERROR']
+        if len(errors)>1:raise ValueError('Native report returned multiple first errors')
+        if errors:raise KeyError(errors[0]['key'])
+        if entry=='_worst_files':
+            return {r['path']:r['count'] for r in sorted((r['parameters'] for r in rows if r['code']=='IDC_WORST_FILE'),key=lambda p:p['ordinal'])}
+    suite.replace(module,'_worst_files',lambda symbol_ids,graph,*,limit=20:report('_worst_files',graph,symbol_ids=symbol_ids,limit=limit))
+    suite.replace(module,'_print_text',lambda results,graph,*,limit:report('_print_text',graph,results=results,limit=limit))
+    suite.replace(module,'_print_json',lambda results,graph:report('_print_json',graph,results=results))
