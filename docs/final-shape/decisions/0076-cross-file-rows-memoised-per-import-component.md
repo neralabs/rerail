@@ -232,7 +232,7 @@ load average was 40–125, so compare the cross part:
 - `calls_cx` derived costs about what `calls.rr` does on today's engine.
   - Its lookups through the closure cost more join work: subclasses of `object` fan out, and `fv` is per reader.
   - `calls.rr`'s own fixpoint grew across the final-rerail-shape merge, from 53 relations and 8.1 s to 74
-    relations and 20.9 s (O116).
+    relations and 20.9 s (O123).
 - What a replay still spends is reading and binding 4 M rows (5.9 s). The next step is reading them in place.
 - **An edit does not pay yet.** One comment added to a widely imported file (`l1100_exceptions/exceptions.py`)
   misses the 41 components that reach it. The guarded rules then run their joins over every replayed row and drop
@@ -277,7 +277,7 @@ rr_in_annotation_0_fret($f, $k, $v) :- rr_in_annotation_0_retval($f, $r), pv($r,
 - Rows of a guest (an annotation's tree) belong to its host file (O109 had held them back).
 - A memo hit's exports are written with one `INSERT … SELECT` per relation, not one statement per row. That was
   455 K statements for each large relation, and 12.4 s of a warm run.
-- A run read wholly from the memo now plans with tree counts (O117).
+- A run read wholly from the memo now plans with tree counts (O124).
 
 **Measured** on the 84-file Jedi corpus (267 files, 748 documents), `calls_cx` with both memos on, one debug
 build. CPU is user + sys of the main thread; the load average was 60–90:
@@ -303,14 +303,44 @@ The warm run's answers equal the prime's. The edited run's answers equal the run
     is still derived.
   - Peak RSS is just over the 1 GB budget.
 
-**What an edit needs next: early cutoff.** A component's key is a digest of its files' bytes (`rr_cx_own`). A
-comment changes the bytes, so every importer misses, even when no row the cross part reads has changed. Keying a
-file by what the cross part reads of it would keep the 41 keys, so all 133 components would be found:
-- the file's export rows and base rows;
-- node ids, which do not move for an edit at the end of a file.
+**What an edit needs next: keys over what was read, which other branches are building.** A component's key is a
+digest of its files' bytes (`rr_cx_own`), so a comment misses every importer. A survey of the other worktrees
+(2026-11-08) found that keying is being worked on in three places:
 
-Whether those rows stay the same for typical edits has to be measured first. For example, the module node's end
-moves with every edit.
+- **0083, final-rerail-shape-phased-facts (proposed).** It supersedes this decision's per-component keys for typing.
+  - The unit of change is the definition: a symbol, with a digest of its subtree.
+  - Exported facts name symbols, not node ids, and positions move to `struct.span`. A comment or a body edit then
+    leaves the exported rows byte-identical.
+  - Node ids are numbered per definition, not per document.
+  - Typing runs as phases over separate fact spaces: P1 reads structure, P2 resolves types, P3 types bodies.
+  - The stored fixpoint is maintained by deltas. Name-to-hash keys remain only for facts shared beyond one store
+    and for the memo of searches.
+  - Its first steps:
+    - a layout-invariance test;
+    - checking whether one added import misses every file's per-file memo (§5);
+    - `struct.rr` with the target that the `exceptions.py` comment edit gives an empty delta. That is this
+      benchmark's edit.
+- **0077, More-ergonomic-rule-syntax (accepted, stages 1–2 built).**
+  - A session keeps the cross-file part: input digests and derived rows, within a 256 MB budget.
+  - An edit runs only the strata it reaches, and maintains them natively by delete-and-rederive. 0083 §2 builds on
+    this.
+  - Still open there: inputs are digested whole, and maintenance scans whole relations.
+- **Final-shape-quality (uncommitted).** The per-file memo's key folds in the run's options only for a file-local
+  part that reads them. This is the same question as 0083 §5: the plan digest should hash only the facts the cut
+  reads.
+
+Typing-support-final-shape settled 0065 §2 on component keys read in bulk, and made the same bulk replay of memo
+hits as §9 here (`c7b16e6b3`). 0064, a cutoff per document that recorded reads inside the engine, was withdrawn
+at +60% CPU.
+
+So this branch does not build its own early cutoff. The parts of this decision that 0083 keeps for programs that
+declare them are:
+- the store tables and their one-query reads (§9);
+- the guard;
+- the soundness check by verifying over an edited corpus.
+
+Also found here, and needed under any keying: a run read from a memo must plan with the replayed files' statistics
+(O124).
 
 ## What the prior work says
 

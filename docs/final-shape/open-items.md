@@ -2294,7 +2294,7 @@ further: the code is final-shape's (0073, 0074).
 **Closure:** a program read back from the store runs as the one prepared, with a test that runs twice on one store.
 
 
-## O116. `calls.rr`'s cross-file fixpoint grew threefold across the final-rerail-shape merge
+## O123. `calls.rr`'s cross-file fixpoint grew threefold across the final-rerail-shape merge
 
 Measured 2026-11-08 on the 84-file Jedi corpus with the memo off. Before the merge (`da0a634c0`), the fixpoint
 stratum was 53 relations and 8.1 s of native joins. After it (`61dc0cd80` onward), it is 74 relations and 20.9 s,
@@ -2320,7 +2320,7 @@ brought final-shape's guest hiding (O110) and lowering changes, which put more g
   could still be specialised. `RERAIL_DUMP_CROSS=<file>` writes the cross-file rules for that analysis.
 
 
-## O117. A run read wholly from the per-file memo planned its cross-file part with no tree counts
+## O124. A run read wholly from the per-file memo planned its cross-file part with no tree counts
 
 Found 2026-11-08, once the per-file memo stored on the Jedi corpus. `calls.rr` read all 267 files from the memo
 and never finished (killed after 20 minutes). The cause: the planner's tree counts (kinds, edges, documents and
