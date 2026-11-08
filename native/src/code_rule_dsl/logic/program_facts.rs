@@ -748,6 +748,29 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ast_pattern_requests_survive_stored_programs_and_legacy_rows() {
+        let source = r#"
+.decl ast_match(pattern: symbol, n: node, group: symbol, capture: node)
+.input ast_match
+.decl picked(n: node)
+picked(n) :- ast_match("$O[:-$K]", n, "", _).
+.output picked
+"#;
+        let program = crate::code_rule_dsl::logic::rr::parse(source).unwrap();
+        assert_eq!(program.ast_patterns.iter().map(String::as_str).collect::<Vec<_>>(), vec!["$O[:-$K]"]);
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &program);
+        let restored = super::decode(&super::encode(&facts)).unwrap();
+        let back = super::program(&restored, "p").unwrap();
+        assert_eq!(back.ast_patterns, program.ast_patterns);
+        assert_eq!(facts["ast_pattern"].len(), 1);
+        // Old stored programs have their ast_match rule but no request metadata.
+        facts.remove("ast_pattern");
+        let legacy = super::program(&facts, "p").unwrap();
+        assert_eq!(legacy.ast_patterns, program.ast_patterns);
+    }
+
     /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
     /// documents, not all of them.
     #[test]
