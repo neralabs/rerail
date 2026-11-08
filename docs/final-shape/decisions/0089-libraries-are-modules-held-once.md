@@ -4,7 +4,13 @@ Status: accepted (2026-11-08). It answers O135.
 
 - **Stage 1 is built.** The full pack gives the same findings as with libraries pasted in, at a third to a half of
   the CPU. O135 has the measurements.
-- **Stages 2 and 3 are open.**
+- **Stage 2 is built:**
+  - Requests are keyed. 26 distinct requests for 29 askers.
+  - A program that asks nothing is read with its libraries' declarations and kind sets only.
+  - Hiding runs once over the combined program.
+  - Holding a library once per bound (`.guests off`) is not built, because the pack has no such program. A run
+    with mixed bounds takes the copied path.
+- **Stage 3 is open.**
 
 Stage 1 was measured over the Ruff fixtures, not `fixtures/python/calls/project`, because the pack finds nothing
 in the calls project. The comparison is between shared libraries and pasted ones (`RERAIL_LIBRARIES=copied`), not

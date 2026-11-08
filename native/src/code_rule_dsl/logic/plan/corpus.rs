@@ -395,6 +395,169 @@ struct Prepared {
     interned: Vec<(Vec<String>, Vec<u32>)>,
 }
 
+/// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
+/// other files, one line each: `relation  own  inherited  output|-  rule`. A rule's own class is the first that holds:
+/// `recursive` (its stratum reads itself), `total` (an aggregate with no group variable), `grouped` (an aggregate by
+/// a key that is not one document), `negation` (a negated atom on another or any document), `lookup` (atoms on two
+/// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
+/// A relation inherits the worst class of the relations its rules read.
+fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
+    use front::{Literal, Term};
+    use std::io::Write;
+    const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
+    let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
+    let cross = &split.cross;
+    let Ok((sccs, _)) = front::strata(cross) else { return };
+    let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
+    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    // The columns of a relation that name a document or a node of one (a node id holds its document).
+    let carriers = |rel: &str| -> Vec<usize> {
+        let mut c: BTreeSet<usize> = split.same_doc.get(rel).or_else(|| split.locations.get(rel)).cloned().unwrap_or_default().into_iter().collect();
+        if let Some(cols) = cross.decls.get(rel) {
+            c.extend(cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i));
+        }
+        c.into_iter().collect()
+    };
+    // Whether a relation's carriers are always on one document: known for base and file-local relations (their
+    // same-document columns), and for derived ones the greatest fixpoint of their rules keeping them so.
+    let one_doc_known = |rel: &str| !derived.contains(rel) && split.same_doc.contains_key(rel);
+    // The classes of a rule's carrier variables, joined where an atom on one document holds both; `None` when some
+    // literal is on any document (a wildcard or constant in every carrier).
+    let classes = |rule: &front::Rule, unit: &BTreeSet<String>| -> Option<usize> {
+        let mut parent: HashMap<String, String> = HashMap::new();
+        fn find(p: &mut HashMap<String, String>, x: &str) -> String {
+            let up = p.get(x).cloned().unwrap_or_else(|| x.to_owned());
+            if up == x {
+                p.insert(x.to_owned(), up.clone());
+                return up;
+            }
+            let r = find(p, &up);
+            p.insert(x.to_owned(), r.clone());
+            r
+        }
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for l in &rule.body {
+            let Some(a) = l.atom() else { continue };
+            let vars: Vec<String> = carriers(&a.rel).into_iter().filter_map(|c| a.args.get(c)).filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect();
+            if vars.is_empty() {
+                if !carriers(&a.rel).is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            seen.extend(vars.iter().cloned());
+            if one_doc_known(&a.rel) || unit.contains(&a.rel) {
+                let r0 = find(&mut parent, &vars[0]);
+                for v in &vars[1..] {
+                    let r = find(&mut parent, v);
+                    parent.insert(r, r0.clone());
+                }
+            }
+        }
+        // `$a = $b` names one value twice.
+        for l in &rule.body {
+            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                parent.insert(ra, rb);
+            }
+        }
+        let roots: BTreeSet<String> = seen.iter().map(|v| find(&mut parent, v)).collect();
+        Some(roots.len())
+    };
+    let mut unit: BTreeSet<String> = derived.clone();
+    loop {
+        let before = unit.len();
+        let gone: Vec<String> = cross.rules.iter().filter(|r| unit.contains(&r.head.rel) && classes(r, &unit).is_none_or(|n| n > 1)).map(|r| r.head.rel.clone()).collect();
+        for g in gone {
+            unit.remove(&g);
+        }
+        if unit.len() == before {
+            break;
+        }
+    }
+    let own = |rule: &front::Rule| -> &'static str {
+        let scc = scc_of(&rule.head.rel);
+        let recursive = rule.body.iter().filter_map(|l| l.atom()).any(|a| scc.is_some_and(|s| s.contains(&a.rel)));
+        let n = classes(rule, &unit);
+        let one = n.is_some_and(|n| n <= 1);
+        let others = |k: usize| -> BTreeSet<String> {
+            let mut v = rule.head.vars();
+            for (j, l) in rule.body.iter().enumerate() {
+                if j != k {
+                    v.extend(l.vars());
+                }
+            }
+            v
+        };
+        // One positive atom with its documents projected away: a union of each document's rows.
+        let union = matches!(rule.body.as_slice(), [Literal::Atom(a)] if !a.neg && !carriers(&a.rel).is_empty() && carriers(&a.rel).iter().all(|&c| matches!(a.args.get(c), Some(Term::Wild))));
+        let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
+        let mut bump = |c: &'static str, worst: &mut &'static str| {
+            if rank(c) > rank(*worst) {
+                *worst = c;
+            }
+        };
+        for (k, l) in rule.body.iter().enumerate() {
+            match l {
+                Literal::Agg { var, over, atom, .. } if !one => {
+                    let mut g = atom.vars();
+                    g.remove(var);
+                    if let Some(o) = over {
+                        g.remove(o);
+                    }
+                    bump(if g.is_empty() { "total" } else { "grouped" }, &mut worst);
+                }
+                Literal::Atom(a) if !carriers(&a.rel).is_empty() && a.vars().is_disjoint(&others(k)) => bump("exists", &mut worst),
+                _ => {}
+            }
+        }
+        if recursive {
+            if rank(worst) <= rank("same-unit") { "recursive-local" } else { "recursive" }
+        } else {
+            worst
+        }
+    };
+    // Each relation's own class, then inherited through the relations it reads, in stratum order.
+    let mut class: HashMap<String, (&'static str, &'static str)> = HashMap::new();
+    for scc in &sccs {
+        let mut own_worst = "config";
+        let mut inherited = "config";
+        let mut looped = false;
+        for rule in cross.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+            let o = own(rule);
+            looped |= o.starts_with("recursive");
+            let o = if o == "recursive-local" { "same-unit" } else { o };
+            if rank(o) > rank(own_worst) {
+                own_worst = o;
+            }
+            for a in rule.body.iter().filter_map(|l| l.atom()) {
+                if let Some((_, i)) = class.get(&a.rel)
+                    && rank(i) > rank(inherited)
+                {
+                    inherited = i;
+                }
+            }
+        }
+        // A recursive stratum is local when every rule of it stays on one document.
+        if looped {
+            own_worst = if rank(own_worst) <= rank("same-unit") { "recursive-local" } else { "recursive" };
+        }
+        let inherited = if rank(own_worst) > rank(inherited) { own_worst } else { inherited };
+        for rel in scc {
+            class.insert(rel.clone(), (own_worst, inherited));
+        }
+    }
+    let mut out = String::new();
+    for rule in &cross.rules {
+        let (o, i) = class.get(&rule.head.rel).copied().unwrap_or(("config", "config"));
+        let output = cross.outputs.contains(&rule.head.rel);
+        out.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", rule.head.rel, o, i, if output { "output" } else { "-" }, rule.to_string().replace('\n', " ")));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(out.as_bytes());
+    }
+}
+
 fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
     static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
     PREPARED.get_or_init(Default::default)
@@ -412,7 +575,32 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         Ok(prog)
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
-    let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    // Each program's library modules (decision 0089), when it names them by `#include`.
+    let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
+    } else {
+        vec![None]
+    };
+    let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
+    let core = crate::code_rule_dsl::logic::rr::core_names();
+    // A program that adds to no library relation is read with its libraries' declarations only: the run holds their
+    // rules once (§5). One that asks (§3) is read whole, since its cone is copied from what it read.
+    let asks = |modules: &crate::code_rule_dsl::logic::rr::Modules| {
+        modules.heads.iter().any(|h| !core.contains(h) && modules.files.iter().any(|(_, _, names)| names.contains(h)))
+    };
+    let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
+    let mut parsed = programs
+        .iter()
+        .zip(&own_only)
+        .map(|(text, &own_only)| {
+            if !own_only {
+                return parse(text);
+            }
+            let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
+            front::declared(&prog)?;
+            Ok(prog)
+        })
+        .collect::<std::result::Result<Vec<_>, Error>>()?;
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs
@@ -425,20 +613,21 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             .collect();
         let _ = std::fs::write(path, lines);
     }
-    // Each program's library modules (decision 0089), when it names them by `#include`.
-    let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
-    } else {
-        vec![None]
-    };
     drop(parsing);
     let makes_guests = parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
     let bounds: Vec<u32> = parsed.iter().map(hiding::bound).collect();
     // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
     // bound of the documents they show, so the library's relations are the same for each.
     // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
-    let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
     let shared = !copied && modular.iter().flatten().count() > 1 && bounds.windows(2).all(|w| w[0] == w[1]);
+    // Not held once after all: a program read without its libraries' rules is read whole.
+    if !shared {
+        for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
+            if own_only {
+                *prog = parse(text)?;
+            }
+        }
+    }
     crate::code_rule_dsl::logic::profile::decision("libraries (decision 0089)", || {
         if shared {
             format!("held once: {} of {} programs name their libraries as modules", modular.iter().flatten().count(), programs.len())
@@ -451,9 +640,10 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         }
     });
     let mut library: Option<Program> = None;
+    // A program's request (§3): its key's number and the relations it holds, named `q<k>_` for every asker.
+    let mut requests: Vec<Option<(usize, BTreeSet<String>)>> = vec![None; parsed.len()];
     if shared {
         let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
-        let core = crate::code_rule_dsl::logic::rr::core_names();
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
         let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
         for modules in modular.iter().flatten() {
@@ -480,16 +670,49 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         library = Some(crate::code_rule_dsl::logic::rr::lower_library(&paths)?);
         let mut cones = 0;
         let mut kept = 0;
-        for (prog, modules) in parsed.iter_mut().zip(&modular) {
-            if let Some(modules) = modules {
-                let (dropped, cone) = own_part(prog, modules, core);
-                kept += dropped;
-                cones += cone;
+        // Each program's request (§3): the cone's library relations and the program's own relations they read, held
+        // once per distinct key. `RERAIL_REQUESTS=copied` keeps one copy per program, to compare.
+        let per_program = std::env::var("RERAIL_REQUESTS").is_ok_and(|v| v == "copied");
+        let mut keys: BTreeMap<[u8; 32], usize> = BTreeMap::new();
+        let mut copies: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        let mut asking = 0;
+        for (i, (prog, modules)) in parsed.iter_mut().zip(&modular).enumerate() {
+            let Some(modules) = modules else { continue };
+            let (dropped, cone) = own_part(prog, modules, core);
+            kept += dropped;
+            cones += cone.len();
+            if cone.is_empty() {
+                continue;
             }
+            asking += 1;
+            let (unit, key) = request_unit(prog, &cone, core, i, per_program);
+            let n = keys.len();
+            let k = *keys.entry(key).or_insert(n);
+            for rel in cone.iter() {
+                copies.entry(rel.clone()).or_default().insert(k);
+            }
+            if k != n {
+                // Another program asked the same: read its copy.
+                prog.rules.retain(|r| !unit.contains(&r.head.rel));
+                prog.decls.retain(|r, _| !unit.contains(r));
+                prog.facts.retain(|r, _| !unit.contains(r));
+                prog.natives.retain(|r, _| !unit.contains(r));
+                prog.lattice.retain(|r, _| !unit.contains(r));
+                prog.nullary.retain(|r| !unit.contains(r));
+            }
+            requests[i] = Some((k, unit));
         }
         let rules = library.as_ref().map_or(0, |l| l.rules.len());
         crate::code_rule_dsl::logic::profile::decision("library relations", || {
-            format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} relations each copied for the program whose clauses add to them (a request's cone, §3)")
+            format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} cone relations in {asking} programs' requests (§3)")
+        });
+        crate::code_rule_dsl::logic::profile::decision("requests (decision 0089 §3)", || {
+            let most: Vec<String> = {
+                let mut by: Vec<(&String, usize)> = copies.iter().map(|(r, ks)| (r, ks.len())).collect();
+                by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+                by.iter().take(8).map(|(r, n)| format!("{r} {n}")).collect()
+            };
+            format!("{} distinct requests of {asking} asking programs{}; copies per relation: {}", keys.len(), if per_program { " (RERAIL_REQUESTS=copied)" } else { "" }, most.join(", "))
         });
     }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
@@ -542,28 +765,20 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
         }
-        let shared_outputs = ["violation", "rr_diagnostic"];
-        // Named repository readers belong to their policy. Equal bytes may share a reader later;
-        // equal relation names alone do not mean equal input files or selectors.
-        let file_inputs: BTreeSet<_> = prog.settings.iter().filter(|(key, _)| key == "input")
-            .filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect();
-        let own: BTreeSet<String> = prog
-            .decls
-            .keys()
-            .chain(prog.facts.keys())
-            .chain(prog.rules.iter().map(|r| &r.head.rel))
-            // The library's relations keep their names (decision 0089 §2).
-            .filter(|_| unit.is_some())
-            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
-            // a repository file a policy reads (`.input r(IO=…)`) is its own.
-            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(&r.as_str()))
-            .cloned()
-            .collect();
+        // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
+        // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.
+        let own: BTreeSet<String> = if unit.is_some() { own_names(&prog, core) } else { BTreeSet::new() };
+        let request = unit.and_then(|u| requests[u].as_ref());
         // The library held once is no policy's: canonical by construction, made over every document read (0091 §3).
         if unit.is_some() {
             policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
         }
         let rename = |rel: &str| -> String {
+            if let Some((k, held)) = request
+                && held.contains(rel)
+            {
+                return format!("q{k}_{rel}");
+            }
             if own.contains(rel) {
                 return format!("p{i}_{rel}");
             }
@@ -659,7 +874,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
 /// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
 /// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
-fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, usize) {
+fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
     use front::Literal;
     let library: BTreeSet<&str> = modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r)).collect();
     let reads = |r: &front::Rule| -> Vec<String> {
@@ -722,8 +937,85 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
     prog.natives.retain(|r, _| !part.contains(r));
     prog.lattice.retain(|r, _| !part.contains(r));
     prog.nullary.retain(|r| !part.contains(r));
-    let cones = cone.iter().filter(|r| library.contains(r.as_str())).count();
+    let cones = cone.into_iter().filter(|r| library.contains(r.as_str())).collect();
     (taken, cones)
+}
+
+/// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
+/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0047), the bridged and the
+/// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
+fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String> {
+    let shared_outputs = ["violation", "rr_diagnostic"];
+    let file_inputs = file_inputs(prog);
+    prog.decls
+        .keys()
+        .chain(prog.facts.keys())
+        .chain(prog.rules.iter().map(|r| &r.head.rel))
+        .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(&r.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// The relations a policy reads from repository files (`.input r(IO=…)`): each is the policy's own.
+fn file_inputs(prog: &front::Program) -> BTreeSet<String> {
+    prog.settings.iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
+}
+
+/// A program's request (decision 0089 §3): the library relations of its cone (`cone`) and every relation of its own
+/// they read, through rules and natives; and the request's key, the digest of what those relations are. Two programs
+/// with one key ask the same, so they read one copy. A request that reads one of the program's own relations it does
+/// not hold, or a repository file, is the program's alone (its index is in the key), as is every request when
+/// `alone`.
+fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<String>, i: usize, alone: bool) -> (BTreeSet<String>, [u8; 32]) {
+    use front::Literal;
+    use sha2::Digest as _;
+    let own = own_names(prog, core);
+    let files = file_inputs(prog);
+    let mut unit: BTreeSet<String> = cone.iter().filter(|r| own.contains(*r)).cloned().collect();
+    let mut work: Vec<String> = unit.iter().cloned().collect();
+    let mut outside = false;
+    while let Some(rel) = work.pop() {
+        let mut reads: Vec<String> = Vec::new();
+        for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
+            for l in &r.body {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                    reads.push(a.rel.clone());
+                }
+            }
+        }
+        if let Some(native) = prog.natives.get(&rel) {
+            reads.extend(native.reads().into_iter().map(str::to_owned));
+        }
+        for r in reads {
+            if files.contains(&r) {
+                outside = true;
+            }
+            if own.contains(&r) && unit.insert(r.clone()) {
+                work.push(r);
+            }
+        }
+    }
+    let mut hash = sha2::Sha256::new();
+    if alone || outside {
+        hash.update(format!("program {i}\n"));
+    }
+    let mut rules: Vec<String> = prog.rules.iter().filter(|r| unit.contains(&r.head.rel)).map(|r| format!("{r:?}")).collect();
+    rules.sort();
+    for rule in rules {
+        hash.update(rule);
+        hash.update("\n");
+    }
+    for rel in &unit {
+        hash.update(format!(
+            "{rel} {:?} {:?} {:?} {:?} {}\n",
+            prog.decls.get(rel),
+            prog.facts.get(rel),
+            prog.natives.get(rel),
+            prog.lattice.get(rel),
+            prog.nullary.contains(rel)
+        ));
+    }
+    (unit, hash.finalize().into())
 }
 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
@@ -1191,6 +1483,9 @@ pub(crate) fn run_with_options(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             drop(_step);
+            if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
+                dump_split(std::path::Path::new(&path), &split);
+            }
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
             let mut kept = prepared_cache().lock().expect("the prepared programs");
             if kept.len() >= PREPARED_KEPT {
@@ -2622,7 +2917,11 @@ pub(crate) fn run_with_options(
             match session.as_ref().map(|s| &s.cross) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
+                    // Each linear cost of a session's run is its own span (decision 0090, step 1).
+                    let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
+                    let s = span("digest inputs");
                     let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
+                    drop(s);
                     let ckey = retain::key(&prepared_key, &cross.program);
                     let mut cell = cell.lock().expect("the session's cross-file part");
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
@@ -2641,10 +2940,13 @@ pub(crate) fn run_with_options(
                         eprintln!("O125_VERIFY inputs read but not digested: {undigested:?}");
                     }
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
+                    let s = span("rewrite and old sources");
                     let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
+                    drop(s);
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
                     let mut stats = cross_stats;
+                    let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
                     for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let measured = syntax::statistics(source.as_ref());
@@ -2654,6 +2956,7 @@ pub(crate) fn run_with_options(
                         stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
                         modules.bind(&db, &rel, source)?;
                     }
+                    drop(s);
                     let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
@@ -2669,7 +2972,9 @@ pub(crate) fn run_with_options(
                     // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
                     let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
+                    let s = span("plan and evaluate");
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
+                    drop(s);
                     step("ran");
                     collect(&db, &got, &part.program)?;
                     step("collected");
@@ -2705,6 +3010,7 @@ pub(crate) fn run_with_options(
                         }
                         eprintln!("O125 total: overdeleted {tdel}, gone {tgone}, put back {}, inserted {tins}, new {tnew}; strata {} of {} run, {} maintained ({} recursive), {} derived again", tdel.saturating_sub(tgone), cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
                     }
+                    let s = span("copy derived out");
                     if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
@@ -2820,7 +3126,10 @@ pub(crate) fn run_with_options(
                         }
                         eprintln!("O125_VERIFY done: {shown} relations differ (first 6)");
                     }
+                    drop(s);
+                    let s = span("retain");
                     let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs);
+                    drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
                             "{} of {} strata run ({} maintained from deltas, {} of them recursive; {} derived again); inputs changed: {}; {} relations kept for the next run, {:.1} MB",
@@ -3973,5 +4282,36 @@ uses(n, f) :- imp(n, q), def(f, q).
         assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
         // Many small files and a few large ones of one language are two mixes.
         assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
+    }
+
+    /// Decision 0089: a library is held once, and a request's cone once per distinct request. Two programs ask
+    /// `compare.rr` the same, a third asks something else, a fourth asks nothing and reads the library's own copy.
+    #[test]
+    fn libraries_are_held_once_and_equal_requests_share_one_cone() {
+        let ask = |kind: &str, own: &str| {
+            format!(
+                "#include \"python/compare.rr\"\ncmp_same_ask(a, b) :- kind(a, \"{kind}\"), kind(b, \"{kind}\"), a < b.\n.decl {own}(a: node)\n{own}(a) :- cmp_same(a, _).\n.output {own}\n"
+            )
+        };
+        let quiet = "#include \"python/compare.rr\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
+        let texts = [ask("call", "one"), ask("call", "two"), ask("name", "three"), quiet];
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let prog = super::combine_texts(&texts, "").unwrap();
+        let heads = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).count();
+        // The library's rule once, unprefixed, whatever the programs read.
+        assert_eq!(heads("cmp_same"), 1);
+        // Programs 0 and 1 ask the same: one copy of the cone; program 2 its own.
+        let copies: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| r.starts_with('q') && r.ends_with("_cmp_same")).collect();
+        assert_eq!(copies.len(), 2, "{copies:?}");
+        assert!(copies.iter().all(|r| heads(r) == 1));
+        assert!(!prog.rules.iter().any(|r| r.head.rel.starts_with('p') && r.head.rel.ends_with("_cmp_same")));
+        // Each asker reads its request's copy; the quiet one reads the library's.
+        let reads = |head: &str| -> Vec<String> {
+            prog.rules.iter().filter(|r| r.head.rel == head).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect()
+        };
+        let (one, two, three) = (reads("p0_one"), reads("p1_two"), reads("p2_three"));
+        assert_eq!(one, two);
+        assert_ne!(one, three);
+        assert_eq!(reads("p3_quiet"), ["cmp_same"]);
     }
 }

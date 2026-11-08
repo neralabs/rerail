@@ -2069,6 +2069,10 @@ impl Lowerer {
         } else {
             Self::bound_context(context(true)).0
         };
+        // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
+        // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
+        // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
+        let context = Self::connected(context, vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2078,6 +2082,27 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
         Ok(head)
+    }
+
+    /// The literals of `context` reachable from `vars` through shared variables, in their order.
+    fn connected(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        let mut keep = vec![false; context.len()];
+        loop {
+            let mut grew = false;
+            for (k, vs) in of.iter().enumerate() {
+                if !keep[k] && !vs.is_disjoint(&reach) {
+                    keep[k] = true;
+                    reach.extend(vs.iter().cloned());
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
