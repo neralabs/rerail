@@ -11,7 +11,9 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`ae7c48111`. Merge `ee5b50fa2` adopts stored cross-file typing and discovery derivations.
+`a9e927674`. Merge `acec50e98` adopts import-component memoization and the current SQL executor.
+The typed input reader retains `projection` alongside Final shape's new `query` parameter.
+Earlier merge `ee5b50fa2` adopts stored cross-file typing and discovery derivations.
 Loaded documents have the same evaluation rules as other documents; `load` and `loaded` have no role column.
 Earlier merge `0b094980e` takes the memo reuse and session resolutions.
 Merge `2ffa7a028` takes combined-rule planning and cycle analysis through `044449ca7`.
@@ -98,7 +100,8 @@ The current inventory contains **87 target drafts and 13 absent translations**. 
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
 On the `ae7c48111` engine, all 144 original tests pass with 137 complete observations, including 57 positive set results and four growing-allowlist CLI cases.
 All 200 supplemental API cases and 24 reporter cases pass. Twenty-three disabled-behavior controls produce observable parity failures.
-A newer Final tip arrived after that cohort. Its adoption and acceptance are recorded separately; these results do not certify a newer engine.
+The same contracts also pass on merged Final shape `a9e927674`; its separate receipt records the complete rerun.
+These snapshots retain the source's last-fact-wins reporter fold with an explicit producer order.
 The 86th draft, `grammar_fragment_usage`, preserves import resets, sticky alias eligibility, captured strings, unsafe constructor values, and reachable render returns.
 All 39 original tests pass, including 31 positive file checks and the FactEngine integration assertion.
 Its 165 supplemental API cases include 111 positive finding lists. All 172 reporter cases pass, including 112 positives.
@@ -1233,3 +1236,34 @@ Committed Final shape advanced again to `a9e927674` after these runs. This archi
 Legacy collector and factory interfaces and malformed supplied-fact domains are not fully certified by this snapshot.
 Full registry/scope, production registration, native CLI/enforcement, persistent-workspace acceptance, and global migration acceptance remain open.
 The inventory is 87 drafts and 13 absent translations. Full migration acceptance remains pending.
+
+
+## 2026-11-08 — Final shape import components and SQL executor adoption
+
+Merge `acec50e98` adopts committed Final shape `a9e927674`.
+It includes per-import-component cross-file caching, component ownership, and the current SQL executor interfaces.
+The only merge conflict concerned accepted input parameter names.
+The resolution retains Final's new `query` parameter and the existing generic `projection` parameter.
+The frontend, scheduler, typing, content store, and SQL executor retain the upstream resolutions.
+The same 21 reviewed generic extension files remain in the native diff.
+No code from either retired engine checkout was restored.
+
+The frozen root CLI build took 72.166 seconds. The unit build took 136.386 seconds under the existing build-time exception.
+These are separate compilation wall times. Every acceptance and control command remained bounded at 115 seconds.
+The new build passes all 144 original burndown tests with all 137 observations and no source semantic execution.
+It also passes all 200 supplemental API cases, all 24 reporter cases, and all 23 disabled-behavior controls.
+The preceding fragment-usage suite passes all 39 original tests.
+
+All 100 tooling tests and 98 policy/table readers pass.
+Eighteen focused native tests pass, including the new SQL catalog, producer, frame-binding, and component tests.
+The generic aggregate projection regression also passes. The prepared-program roundtrip still fails and remains recorded.
+Full engine-suite success and global migration acceptance are not claimed.
+
+The [current burndown contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-allowlist-burndown-a9-contracts.json.gz) contains the complete rerun and consumed program bytes.
+The preceding `ae7c48111` receipt remains immutable historical evidence.
+The inventory remains 87 drafts and 13 absent translations.
+
+The next source contract, `async_sync_delegation`, is now recorded.
+Its 124 original tests pass with 111 complete observations and 13 positive analyses.
+The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-delegation-original-source.json.gz) includes helper results and statistics DTOs.
+Its native translation has not started. No completion or native acceptance is claimed for that rule.
