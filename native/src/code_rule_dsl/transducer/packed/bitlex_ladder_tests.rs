@@ -412,13 +412,15 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     )
 }
 
-/// The step's shape: tier 1's body branches only for its loop and its extracts' flattening;
+/// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
+/// it has values known on ASCII bytes, one all-ASCII test;
 /// tier 2 loops only over tokens (a `check` is tier 1's masks); nothing calls.
 fn check_shape(name: &str, c: &Compiled) {
     let block = &c.native.block_programs[0];
     let body = super::block_tests::body_of(&c.parser.tier1.clif);
     let branches = body.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * block.extracts.len(), "{name}: tier 1 branches beyond its loop and its flattening");
+    let ascii = usize::from(c.parser.tier1.ascii_branch);
+    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii, "{name}: tier 1 branches beyond its loop, its flattening and its ASCII test");
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {

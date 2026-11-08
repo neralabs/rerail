@@ -409,6 +409,16 @@ fn json_shapes() {
         eprintln!("tier 1: {} operations {ops:?}", p.ops.len());
         eprintln!("  carried words {}, state bits {}, outputs {}, delay {}", super::block_tests::carried_words(p), super::block_tests::state_bits(p), p.outputs.len(), p.delay);
         eprintln!("  loop body: {} CLIF instructions {clif:?}", body.len());
+        // Each block of the hot loop: the full body's head (the ASCII test), its two bodies, the
+        // sinks after them, the flattening.
+        let blocks: Vec<String> = super::block_tests::hot_loop(&c.parser.tier1.clif)
+            .iter()
+            .map(|(b, l)| {
+                let masks = l.iter().filter(|x| super::block_tests::opcode(x) == "iadd_pairwise").count() / 4;
+                format!("{b} {} ({masks} masks)", l.len())
+            })
+            .collect();
+        eprintln!("  hot loop blocks: {}; carried words {}", blocks.join(", "), super::block_tests::carried_params(&c.parser.tier1.clif) - super::block_tests::sink_params(&c.native.block_programs[0]));
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
         eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
@@ -416,5 +426,47 @@ fn json_shapes() {
         if std::env::var("RERAIL_DUMP").is_ok() {
             eprintln!("{}", c.parser.tier1.disassembly);
         }
+    }
+}
+
+/// Tier 1 on the byte vectors (`native_cpu_lanes`) equals the block interpreter on files that
+/// mix ASCII and other bytes: UTF-8 that is valid, cut short or out of range, across block
+/// edges, in the 16 bytes before an ASCII block (the ASCII test reads them), and at a file's
+/// first byte, where the bytes before are no file's. One file at a time, and all in one batch.
+#[test]
+fn json_tier1_vectors_equal_the_interpreter() {
+    let pieces: [&[u8]; 16] = [
+        b"{\"a\": [1, 2.5e3, true]}", b" ", b"\"", b"\\", b"x", b"\\u00e9", b"\xc3\xa9", b"\xe2\x82\xac", b"\xf0\x9f\x98\x80",
+        b"\x80", b"\xc3", b"\xed\xa0\x80", b"\xf5\x80\x80\x80", b"\xef\xbb\xbf", b"\x00", b"\\ud83d\\ude00",
+    ];
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let mut rng = super::bitlex_corpus_tests::Rng(0x9e37_79b9_7f4a_7c15);
+        let mut files: Vec<Vec<u8>> = Vec::new();
+        for _ in 0..300 {
+            let mut f = Vec::new();
+            let len = 1 + rng.below(300) as usize;
+            while f.len() < len {
+                // Mostly ASCII, so that some blocks are all ASCII and others not.
+                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { &pieces[..2][rng.below(2) as usize] };
+                f.extend_from_slice(p);
+            }
+            files.push(f);
+        }
+        // One non-ASCII sequence at each offset around the first two block edges.
+        for at in 0..140 {
+            for seq in [&b"\xe2\x82\xac"[..], b"\x80", b"\xf0\x9f\x98\x80"] {
+                let mut f = vec![b' '; 200];
+                f[at..at + seq.len()].copy_from_slice(seq);
+                files.push(f);
+            }
+        }
+        let block = &c.program.block_programs()[0];
+        for f in &files {
+            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+        }
+        let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+        assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
+        assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
     }
 }

@@ -255,6 +255,9 @@ const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
     "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
+    // A `prev` of a byte-local value on the byte vectors: the chunk before and this one, shifted
+    // by bytes (`ext`).
+    "shuffle",
     // `within`: the bits below the stream's end, from its length (clamp, two shifts).
     "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
@@ -280,7 +283,7 @@ fn check_lowering(name: &str, p: &Program) {
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * native.extracts.len(), "{name}: the body's only branches are the loop's and the flattening's");
+    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch), "{name}: the body's only branches are the loop's, the flattening's and the ASCII test's");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
             assert!(lines.iter().any(|l| opcode(l) == "iadd_imm" && l.split(" ;").next().is_some_and(|l| l.ends_with(", 8"))), "{name}: {block} loops, not eight bits at a time");
@@ -1372,4 +1375,35 @@ pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
     use super::block::BlockOp::*;
     let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
     bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
+}
+
+/// Byte-local values on the byte vectors (`native_cpu_lanes`) equal the interpreter's masks:
+/// a `prev` of a value that holds on 0x00 (`not eq 'a'`) has no bit before a file, though the
+/// bytes it shifts in there are zeros; a byte test of a high byte folds on ASCII blocks (the
+/// body's one ASCII branch), and holds across block edges and in the bytes before a block.
+#[test]
+fn lanes_equal_the_interpreter() {
+    let p = program(concat!(
+        "  block 0 %0 = eq 0x61\n  block 0 %1 = not %0\n  block 0 %2 = prev %1, 1\n  block 0 %3 = eq 0x62\n",
+        "  block 0 %4 = and %2, %3\n  block 0 %5 = eq 0xc3\n  block 0 %6 = prev %5, 1\n  block 0 %7 = eq 0xa9\n",
+        "  block 0 %8 = and %6, %7\n  block 0 %9 = or %4, %8\n  block 0 output %9\n",
+    ));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    assert!(compiled.ascii_branch, "no ASCII test");
+    let block = &p.block_programs()[0];
+    let mut files: Vec<Vec<u8>> = vec![b"b".to_vec(), b"ab".to_vec(), b"bb".to_vec(), b"\xc3\xa9".to_vec()];
+    for at in 0..200 {
+        let mut f = vec![b'b'; 220];
+        f[at] = 0xc3;
+        f[at + 1] = 0xa9;
+        files.push(f.clone());
+        f[at] = b'a';
+        files.push(f);
+    }
+    for f in &files {
+        assert_eq!(compiled.extract(f), block.run_files(&[f]).remove(0), "{:?}", String::from_utf8_lossy(f));
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
 }
