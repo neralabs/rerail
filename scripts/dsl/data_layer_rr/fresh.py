@@ -114,6 +114,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'internal_dead_code' in modules:
+            from internal_dead_code_port import install
+            install(backend,modules['internal_dead_code'])
         if 'async_sync_delegation' in modules:
             from async_sync_delegation_port import install
             install(backend,modules['async_sync_delegation'])
@@ -182,7 +185,13 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='async_sync_delegation':
+                if case['check']=='internal_dead_code':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='graph_analysis':
+                        from internal_dead_code_probes import probe
+                        call=lambda:probe(module,root,values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='async_sync_delegation':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='body_identity':
                         from async_sync_delegation_port import body_identity_probe
@@ -321,7 +330,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check'] in {'async_sync_delegation','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
+                if case['check'] in {'internal_dead_code','async_sync_delegation','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

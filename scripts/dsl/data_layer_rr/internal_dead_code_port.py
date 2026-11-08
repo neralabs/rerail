@@ -4,10 +4,11 @@ from pathlib import Path
 
 
 def graph_columns(graph):
-    data={name:[] for name in ['symbolIds','symbolNames','symbolModules','symbolKinds','symbolPaths','symbolLines','symbolOwners','symbolHasOwner','symbolAbstract','flagSymbols','flagNames','decoratorSymbols','decoratorTexts','baseNameSymbols','baseNameTexts','baseClasses','baseTargets','baseOrdinals','subclassBases','subclassTargets','methodClasses','methodNames','methodSymbols','fqNames','fqSymbols','modules','importModules','importLocals','importTargets','moduleImportModules','moduleImportTargets','definedModules','definedNames','definedSymbols','refModules','refNames','annotationSymbols','annotationNames','annotationFiles','annotationFileSymbols','callSources','callTargets','useSources','useTargets','providedPublicClasses','providedPublicSymbols','providedDunderClasses','providedDunderSymbols']}
+    data={name:[] for name in ['symbolIds','symbolFqNames','symbolNames','symbolModules','symbolKinds','symbolPaths','symbolLines','symbolOwners','symbolHasOwner','symbolAbstract','flagSymbols','flagNames','decoratorSymbols','decoratorTexts','baseNameSymbols','baseNameTexts','baseClasses','baseTargets','baseOrdinals','subclassBases','subclassTargets','methodClasses','methodNames','methodSymbols','fqNames','fqSymbols','modules','importModules','importLocals','importTargets','moduleImportModules','moduleImportTargets','definedModules','definedNames','definedSymbols','refModules','refNames','annotationSymbols','annotationNames','annotationFiles','annotationFileSymbols','callSources','callTargets','useSources','useTargets','providedPublicClasses','providedPublicSymbols','providedDunderClasses','providedDunderSymbols']}
     documents=[]
     for sid,symbol in graph.symbols.items():
         raw=vars(symbol)
+        data['symbolFqNames'].append(raw.get('fqname',''))
         for column,key,default in [('symbolIds',None,sid),('symbolNames','name',''),('symbolModules','module',''),('symbolKinds','kind',''),('symbolPaths','path',''),('symbolLines','line',0),('symbolOwners','class_name',''),('symbolAbstract','is_abstract',False)]:
             value=raw.get(key,default) if key else default
             if column=='symbolAbstract':value=int(value)
@@ -71,6 +72,8 @@ def install(suite,module):
     def filtered(results,graph,excluded_paths):
         rows=native('_filter_results_by_excluded_paths',graph,dict(**result_columns(results),excludedPaths=list(excluded_paths)))
         if any(r['code']=='IDC_KEEP_RESULTS' for r in rows):return results
+        return grouped(rows)
+    def grouped(rows):
         headers=sorted([r['parameters'] for r in rows if r['code']=='IDC_GROUP'],key=lambda p:p['ordinal'])
         items=[r['parameters'] for r in rows if r['code']=='IDC_ITEM']
         return {p['category']:[v['sid'] for v in sorted(items,key=lambda v:v['ordinal']) if v['category']==p['category']] for p in headers}
@@ -82,3 +85,6 @@ def install(suite,module):
         for row in items:output.setdefault(row['path'],[]).append(row['sid'])
         return output
     suite.replace(module,'_collect_execute_targets',targets)
+    def analyze(graph,*,extra_root_ids=None,excluded_paths=()):
+        return grouped(native('analyze_dead_code',graph,dict(extraRoots=list(extra_root_ids or []),excludedPaths=list(excluded_paths))))
+    suite.replace(module,'analyze_dead_code',analyze)

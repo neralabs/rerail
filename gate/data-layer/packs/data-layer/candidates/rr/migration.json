@@ -1568,7 +1568,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "5714047eb24a21c38acc49f48064ccf7a7c23d56a207a74aa72bd098ed8b34b4",
+      "sha256": "a560aebde06a5e2dbe681ee6d06a78efe9d0774eab9682a8bc0719f97690f468",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2021,7 +2021,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "5714047eb24a21c38acc49f48064ccf7a7c23d56a207a74aa72bd098ed8b34b4"
+      "ruleSha256": "a560aebde06a5e2dbe681ee6d06a78efe9d0774eab9682a8bc0719f97690f468"
     },
     {
       "check": "imperative_private_functions",
