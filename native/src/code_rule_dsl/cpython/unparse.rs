@@ -590,7 +590,8 @@ fn formatted_value(n: &Node, o: &mut String) -> Option<()> {
 }
 
 /// `_write_fstring_inner`: a `JoinedStr`'s pieces, a str piece's braces doubled (in a format spec its backslashes,
-/// quotes and newlines escaped too).
+/// quotes and newlines escaped too). A format spec's str piece is written as it is: one with a lone surrogate gives
+/// CPython a text that is no UTF-8 (none here).
 fn fstring_inner(n: &Node, spec: bool, o: &mut String) -> Option<()> {
     match n.class {
         "JoinedStr" => {
@@ -612,55 +613,71 @@ fn fstring_inner(n: &Node, spec: bool, o: &mut String) -> Option<()> {
     Some(())
 }
 
+/// A str piece of a `JoinedStr` as `_write_fstring_inner` buffers it: its braces doubled.
+fn doubled(s: &PyStr) -> PyStr {
+    match s {
+        PyStr::Text(t) => PyStr::Text(t.replace('{', "{{").replace('}', "}}")),
+        PyStr::Points(p) => PyStr::Points(p.iter().flat_map(|&c| if c == 0x7b || c == 0x7d { vec![c, c] } else { vec![c] }).collect()),
+    }
+}
+
 /// `visit_JoinedStr`: `f`, then the pieces between the first quotes (of `_ALL_QUOTES`, in order) that every piece
 /// allows; where a str piece allows none of those the others left, every str piece as `repr` writes it, in `'''`.
 fn joined(n: &Node, o: &mut String) -> Option<()> {
     o.push('f');
-    let mut parts: Vec<(String, bool)> = Vec::new();
+    // Each piece: a str piece's text (its lone surrogates escaped once written), or another's written text.
+    let mut parts: Vec<Result<PyStr, String>> = Vec::new();
     for v in nodes(n, "values")? {
-        let mut buffer = String::new();
-        fstring_inner(v, false, &mut buffer)?;
-        parts.push((buffer, v.class == "Constant"));
+        if v.class == "Constant" {
+            let F::Const(Const::Str(s)) = v.get("value") else { return None };
+            parts.push(Ok(doubled(s)));
+        } else {
+            let mut buffer = String::new();
+            fstring_inner(v, false, &mut buffer)?;
+            parts.push(Err(buffer));
+        }
     }
     let mut quotes: Vec<&'static str> = ALL_QUOTES.to_vec();
     let mut written: Vec<String> = Vec::with_capacity(parts.len());
     let mut fallback = false;
-    for (value, constant) in &parts {
-        if *constant {
-            let (escaped, new) = str_literal(value, &quotes);
-            if new.iter().all(|q| !quotes.contains(q)) {
-                fallback = true;
-                break;
-            }
-            quotes = new;
-            written.push(escaped);
-        } else {
-            if value.contains('\n') {
-                quotes.retain(|q| q.len() == 3);
-                // `assert quote_types` fails.
-                if quotes.is_empty() {
-                    return None;
+    for part in &parts {
+        match part {
+            Ok(value) => {
+                let (escaped, new) = str_literal(value, &quotes);
+                if new.iter().all(|q| !quotes.contains(q)) {
+                    fallback = true;
+                    break;
                 }
-            }
-            let new: Vec<&'static str> = quotes.iter().copied().filter(|q| !value.contains(q)).collect();
-            if !new.is_empty() {
                 quotes = new;
+                written.push(escaped);
             }
-            written.push(value.clone());
+            Err(value) => {
+                if value.contains('\n') {
+                    quotes.retain(|q| q.len() == 3);
+                    // `assert quote_types` fails.
+                    if quotes.is_empty() {
+                        return None;
+                    }
+                }
+                let new: Vec<&'static str> = quotes.iter().copied().filter(|q| !value.contains(q)).collect();
+                if !new.is_empty() {
+                    quotes = new;
+                }
+                written.push(value.clone());
+            }
         }
     }
     if fallback {
         quotes = vec!["'''"];
         written = parts
             .iter()
-            .map(|(value, constant)| {
-                if *constant {
+            .map(|part| match part {
+                Ok(value) => {
                     // `repr('"' + value)`, which quotes with `'`, less its `'"` and its last `'`.
-                    let r = str_repr(&PyStr::Text(format!("\"{value}")));
+                    let r = str_repr(&PyStr::Points(std::iter::once(u32::from('"')).chain(value.points()).collect()));
                     r[2..r.len() - 1].to_owned()
-                } else {
-                    value.clone()
                 }
+                Err(value) => value.clone(),
             })
             .collect();
     }
@@ -675,13 +692,13 @@ fn joined(n: &Node, o: &mut String) -> Option<()> {
 /// characters `str.isprintable` rejects escaped (`unicode_escape`), and the quotes of `quotes` it allows (one
 /// ending the text sorted last; a triple one that must end it escapes its last character); where none does, `s`'s
 /// `repr` less its quotes, and the first of `quotes` holding its quote (else that quote).
-fn str_literal(s: &str, quotes: &[&'static str]) -> (String, Vec<&'static str>) {
-    let mut escaped = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c == '\\' || !printable(u32::from(c)) {
-            unicode_escape(u32::from(c), &mut escaped);
+fn str_literal(s: &PyStr, quotes: &[&'static str]) -> (String, Vec<&'static str>) {
+    let mut escaped = String::new();
+    for c in s.points() {
+        if c == u32::from('\\') || !printable(c) {
+            unicode_escape(c, &mut escaped);
         } else {
-            escaped.push(c);
+            escaped.push(char::from_u32(c).expect("a printable character is no surrogate"));
         }
     }
     let mut possible: Vec<&'static str> = quotes.to_vec();
@@ -690,7 +707,7 @@ fn str_literal(s: &str, quotes: &[&'static str]) -> (String, Vec<&'static str>) 
     }
     possible.retain(|q| !escaped.contains(q));
     if possible.is_empty() {
-        let r = str_repr(&PyStr::Text(s.to_owned()));
+        let r = str_repr(s);
         let first = if r.starts_with('"') { '"' } else { '\'' };
         let quote = quotes.iter().copied().find(|q| q.contains(first)).unwrap_or(if first == '"' { "\"" } else { "'" });
         return (r[1..r.len() - 1].to_owned(), vec![quote]);

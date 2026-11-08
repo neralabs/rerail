@@ -248,6 +248,9 @@ b{x}'''"#, r#"f'a\nb{x}'"#),
 }
 
 /// The sha256 of `ast.dump(node, include_attributes=False)` of an expression statement's value, as CPython 3.13.14
+        (r#"f"\ud800json{x}json\udfff""#, r#"f'\ud800json{x}json\udfff'"#),
+        (r#"f"a{{\ud800}}b{x}""#, r#"f'a{{\ud800}}b{x}'"#),
+        (r#"'a' f"\udfff{x}""#, r#"f'a\udfff{x}'"#),
 /// gives it (W's `dump_sha256`): fields left out where `None` or empty, constants' and identifiers' reprs.
 #[test]
 fn dump_is_cpythons() {
@@ -269,6 +272,10 @@ fn dump_is_cpythons() {
         (r#"lambda *, k=2: k"#, "595ba6c99f02775c61af0fe70760b219e58e67e22fc616cc901d4bdf7ab2b579"),
         (r#"(yield)"#, "2f5cbc5542dfba1332aa4db3b30475074906fb2520efc1b7d133e6e17716406c"),
         (r#"(yield x + 1)"#, "e13768f372814781ccefa54725ff9c166748bb5d25d3de0fb6b5319060c76efd"),
+    // A format spec's lone surrogate is written as it is: CPython's text is no UTF-8.
+    let root = module(r#"f"{x:json\ud800}""#).expect("parses");
+    let Some(F::Node(stmt)) = root.list("body").first() else { panic!("a statement") };
+    assert_eq!(super::unparse::unparse(stmt.node("value").expect("an expression")), None);
         (r#"(x := a + b)"#, "59e71585fecfc339a4d2f76588ca4c5cebb110e2a22e09d7e3efe412a1a47eb4"),
         (r#"await f(x)"#, "0dbe68bf486877dcd553d927dc13ac03303b38c9a02eb914ac32f220174453b7"),
         (r#"f(*a, **k, x=1)"#, "599cfd5818f9c6fdd4b2946bc90ef8a280ecfdfd7f6f41ac1cc6ab547a8e45de"),
@@ -352,6 +359,10 @@ b{x}'''"#, "b10b63fb5ab09d3c9794cfe157dab54afcb2debf26c6ae5f94baa4cd1f85aa44"),
 }
 
 /// W's `body_sha256` and `signature_sha256` of a def, and the text each hashes, as CPython 3.13.14 gives them.
+        (r#"f"\ud800json{x}json\udfff""#, "00bfe1571383a0a16f9a4a7a81733c49f66bee6ec08f3683aa84bda0389c79f6"),
+        (r#"f"{x:json\ud800}""#, "85c25d27241ec400fc4707ede0a732c823eb09e9e06fe39843c98c85ee2ffb98"),
+        (r#"f"a{{\ud800}}b{x}""#, "5bc55e1f9dc7b796ba357752f86e825d0802efdc6c69a6f64a9fd345c53b7470"),
+        (r#"'a' f"\udfff{x}""#, "dfd80fa8cd77e55ec25f12203ab4d7fba86d5732f9bc823c7a9c6c197297e169"),
 #[test]
 fn def_hashes_are_ws() {
     use super::ast::{F, module};

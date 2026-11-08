@@ -410,7 +410,8 @@ fn literal_json_parity() {
 /// `unparse`, `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::printed`) against CPython: at each located
 /// node of each file that parses but an f-string's own pieces (the oracle's `ast` mode), by span and class, the
 /// engine's against `ast.unparse` (an expression, a keyword, an arg, an alias; those with a text on either side
-/// counted apart), the sha256 of `ast.dump`, and a def's hashes as W's worker made them.
+/// counted apart, and apart again those whose CPython text holds a lone surrogate, which no UTF-8 text is: the engine
+/// gives none), the sha256 of `ast.dump`, and a def's hashes as W's worker made them.
 #[test]
 #[ignore]
 fn printed_parity() {
@@ -420,8 +421,8 @@ fn printed_parity() {
         println!("CPython {} ({python})", version(&python));
         for corpus in corpora() {
             let want = oracle(&python, "ast", &corpus.files);
-            // nodes, unparse, unparse with a text, dump_sha256, body_sha256, signature_sha256.
-            let tallies: Vec<[Tally; 6]> = corpus
+            // nodes, unparse, unparse with a text, unparse with a lone surrogate, dump_sha256, body_sha256, signature_sha256.
+            let tallies: Vec<[Tally; 7]> = corpus
                 .files
                 .par_iter()
                 .filter_map(|(path, shown)| {
@@ -432,7 +433,7 @@ fn printed_parity() {
                     for p in &got {
                         engine.entry((p.start, p.end, p.class)).or_insert(p);
                     }
-                    let mut t: [Tally; 6] = Default::default();
+                    let mut t: [Tally; 7] = Default::default();
                     let mut seen = BTreeSet::new();
                     for r in rows {
                         let class = r[2].as_str().unwrap();
@@ -446,7 +447,10 @@ fn printed_parity() {
                         t[0].add(e.is_some(), || format!("{}: no engine node", at()));
                         let Some(e) = e else { continue };
                         let unparsed = matches!(class, "keyword" | "arg" | "alias") || super::unparse::is_expr(class);
-                        if unparsed {
+                        if unparsed && let Some(surrogates) = r[3].get("surrogates") {
+                            let g = e.unparse.as_deref();
+                            t[3].add(g.is_none(), || format!("{}: CPython {surrogates}, engine {g:?}", at()));
+                        } else if unparsed {
                             let (c, g) = (r[3].as_str(), e.unparse.as_deref());
                             let diff = || format!("{}: CPython {c:?}, engine {g:?}", at());
                             t[1].add(c == g, diff);
@@ -455,21 +459,21 @@ fn printed_parity() {
                             }
                         }
                         let (c, g) = (r[4].as_str(), e.dump_sha256.as_deref());
-                        t[3].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        t[4].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
                         if matches!(class, "FunctionDef" | "AsyncFunctionDef") {
                             let (c, g) = (r[5].as_str(), e.body_sha256.as_deref());
-                            t[4].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
-                            let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
                             t[5].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
                         }
                     }
+                            let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
+                            t[6].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
                     for key in engine.keys().filter(|k| !seen.contains(*k)) {
                         t[0].add(false, || format!("{shown}@{} {}: engine node at no CPython node", key.0, key.2));
                     }
                     Some(t)
                 })
                 .collect();
-            let mut total: [Tally; 6] = Default::default();
+            let mut total: [Tally; 7] = Default::default();
             for t in tallies {
                 for (a, b) in total.iter_mut().zip(t) {
                     a.merge(b);
@@ -482,6 +486,7 @@ fn printed_parity() {
                 "those with a text on either side",
                 "dump_sha256",
                 "body_sha256 of defs",
+                "those whose CPython text holds a lone surrogate (no UTF-8): none",
                 "signature_sha256 of defs",
             ];
             for (t, w) in total.iter().zip(what) {
