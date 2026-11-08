@@ -8782,3 +8782,67 @@ It also retains the failed intermediate reporter records. Accepted results use o
 
 The inventory now contains 77 drafts and 23 absent translations. Full migration acceptance remains false.
 Full shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+
+
+## 2026-11-07: Align with Final shape and port module-level caches
+
+The root engine now includes committed Final shape through `f0571b1e7`.
+Merge `57ad2b1ee` takes `6c22fca95`: prepared programs persist as typed facts, printed rules, and fact tapes (decision 0074).
+Merge `0ca019c6d` takes persistent matcher automata (decision 0075), definite guest specialization, and content-store fixes.
+The upstream executor, scheduler, typing, residency, and content-store files have no local diff.
+The same nineteen reviewed generic extension files remain. This rule requires no new native detector.
+
+The migration audit rejects a retired checkout, unreviewed native files, or a missing committed Final branch update.
+Acceptance uses only a frozen CLI built from this repository root.
+The two nested historical engines remain retired. Their old receipts do not certify the current engine.
+The adoption manifest records Final shape `f0571b1e78d2cb6922084136743441c34bf7cf68` and the reviewed extension hashes.
+
+The new `module_level_caches` draft implements mutable assignments, cache constructors, decorators, and allowlist behavior in Datalog.
+It preserves source scope, severities, duplicate findings, ordering, formatting, match keys, and signatures.
+Managed cache constructors retain the source's first-keyword behavior and exact Boolean identity test.
+The production metadata selector limits parsing demand. Relational filters also enforce source exclusions for explicitly supplied buffers.
+CLI scans and the configured reporter have different source admission rules. The translation preserves those differences.
+
+The TDD ladders exposed these defects and corrected them:
+
+- The first original positive missed a cache decorator. Function and classmethod arms now supply the missing findings.
+- A parenthesized name used a tuple-pattern CST node. Single-name targets now unwrap without admitting comma-separated tuple targets.
+- AST child edges lost the `None` key in `{**{}}`. Separate list-cardinality transport preserves that source AST distinction.
+- Comment-only containers appeared nonempty. Container classification now ignores comments.
+- Repository scans swallowed a decoding exception. They now retain strict source reads; the single-file helper preserves its own catch behavior.
+- Explicit buffers bypassed metadata exclusions. Relational admission filters now preserve the source reporter's hidden-directory exclusions.
+- The loader's missing-field `KeyError` escaped oracle recording. The harness now records its exact type and arguments.
+- The configured reporter converted that uncaught exception into an ordinary finding. A typed native outcome now preserves the recorded exception contract.
+
+The initial synthetic reporter regression omitted its policy envelope and failed before the intended assertion.
+The corrected red test compares the expected exception DTO with the ordinary finding list.
+The receipt retains the meaningful red result and the passing real reporter case.
+Rules invoke no Python. The external harness transports input syntax, files, DTOs, and recorded exceptions.
+
+All eight unchanged original tests pass on the current engine, with seventeen complete API and property observations.
+All 278 supplemental API cases pass, including 157 detector-positive cases and eight expected exceptions.
+All 120 reporter cases pass, including 67 positive finding cases and one expected uncaught configuration exception.
+No original module-cache assertion is excluded. Twelve independent controls cover detector families, allowlist properties, formatting, counts, and exception transport.
+Enabled controls pass. Disabling each selected output makes its positive assertion fail through a successful native query.
+
+All 89 candidate reader checks pass, including the 78 target drafts. All 85 harness tests pass.
+The previous lazy-result rule also passes its five original cases and focused multi-file and fractional-baseline reporter shards.
+The focused native groups pass 124 test executions, including one repeated Boolean-demand regression; 123 passing test identities are distinct.
+Four upstream tests remain ignored: the two rule-generation helpers, the nearest-solver benchmark, and the matcher determinization benchmark.
+The Python typing oracle passes its 44 runtime comparisons after the upstream guest-specialization fix.
+
+One upstream prepared-program test failed with parallel test threads.
+Its cache lookup selects any matching program from a process-wide cache, rather than the program that the test just ran.
+The failure selected the other test's `negated` query. Roundtrip Debug output differed by an empty `input_error` fact entry.
+All three tests pass with `--test-threads=1`. The receipt retains both runs; no runtime change hides the failure.
+
+The root CLI build finished in 55.76 seconds. The standard-feature unit build took 126.92 seconds, separately from execution.
+Builds used the existing extended authorization. Each acceptance command stayed below 115 seconds.
+The final CLI SHA-256 is `53756501a7e401facb2ddf8d2d2295620aa1791c4c7390edfecfbee1ad610af0`.
+Its source commit is `0ca019c6d7dfb0c5d6b3dff4609582719ea683b0`.
+Earlier complete runs on `6c22fca95` remain historical evidence after the subsequent merge and full current-rule replay.
+No full-repository or whole-batch cold benchmark ran. These results establish parity for the recorded inputs, not a performance improvement.
+
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-module-level-caches-native-contracts.json.gz) contains complete observations, commands, hashes, controls, failures, and its validator.
+Rule regeneration leaves the generated bytes unchanged. The inventory now contains 78 drafts and 22 absent translations.
+Full migration acceptance remains false. Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.

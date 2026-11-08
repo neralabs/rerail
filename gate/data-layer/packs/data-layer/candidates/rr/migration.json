@@ -2447,8 +2447,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "6c22fca956e2c0eedb91cfe760e47ac52ed034cf",
-    "status": "Root Final shape engine through 6c22fca95; upstream prepared programs as facts and tapes; reviewed generic Python and typed JSON input extensions",
+    "upstreamCommit": "f0571b1e78d2cb6922084136743441c34bf7cf68",
+    "status": "Root Final shape engine through f0571b1e7; matcher automata cached in the store, definite guest handling, single collection holds; reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2540,7 +2540,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "8d270edd7ffbe55771957ea5e7410dbff45d5487abdf0f6367dbdb936aab78fe"
+        "sha256": "a3ee5521ae63cdb8b18f209542157ab88336103a661b56fffde91cd763e66cd3"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",

@@ -11,7 +11,10 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`9993e7e5f`. Merge `8f9f001a4` adopts its persistent prepared-program storage (decision 0073).
+`f0571b1e7`. Merge `0ca019c6d` takes the cached matcher automata, guest specialization, and store resolutions.
+Merge `57ad2b1ee` takes prepared-program facts and tapes through `6c22fca95` (decision 0074).
+Matcher automata compile once and persist in the content store (decision 0075).
+Merge `8f9f001a4` adopts persistent prepared-program storage (decision 0073).
 Merge `a15fa3c73` takes the typing and runtime resolutions through `b10c6c996`.
 Merge `98ceb503a` also takes the generated Bitlex parser pipeline, tape changes, and residency changes.
 The upstream library stage and replay are withdrawn. Decision 0065 describes typing as one fixpoint over stored derivations.
@@ -71,7 +74,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **77 target drafts and 23 absent translations**. None has full acceptance yet.
+The current inventory contains **78 target drafts and 22 absent translations**. None has full acceptance yet.
+The 78th draft, `module_level_caches`, uses the root engine through `f0571b1e7`.
+Its original suite has eight unchanged tests and seventeen complete API and property observations.
+The supplemental corpus has 278 API cases, including 157 detector positives and eight expected exceptions.
+The reporter corpus has 120 cases, including 67 finding positives and one expected configuration exception.
+Twelve independent controls cover each detector family, allowlist properties, formatting, counts, and uncaught configuration errors.
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-module-level-caches-native-contracts.json.gz) records source and native values, controls, and engine identities.
+Rule decisions remain in Datalog. This port adds no native detector or parallel runtime.
+Full shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 77th draft, `lazy_result_usage`, passes all five unchanged original tests, including both positive cases.
 Its 231 supplemental API cases pass, including 117 positive scan or collector results. All 114 reporter cases pass, including 52 positives.
 Single-value and sequence methods have independent disabled-arm controls in the original and configured reporter interfaces.
