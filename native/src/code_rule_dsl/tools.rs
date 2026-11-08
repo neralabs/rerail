@@ -325,9 +325,37 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     if !policy && !text.lines().any(|l| l.trim_start().starts_with("#include")) {
         return Ok(text);
     }
-    let program = super::logic::rr::parse_file(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
+    // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a run
+    // however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
+    let mut seen = Vec::new();
+    let own = module_text(path, &text, &mut seen)?;
+    if policy && !own.lines().any(|l| l.trim_start().starts_with("#include")) {
+        return Ok(format!("#include \"core.rr\"\n{own}"));
+    }
+    Ok(own)
+}
+
+/// `text` (the file `path`'s) with each `#include` of a file beside it, not in the library, written in, each once.
+fn module_text(path: &std::path::Path, text: &str, seen: &mut Vec<std::path::PathBuf>) -> Result<String, String> {
+    let library = super::logic::rr::library();
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
+        match name {
+            Some(name) if !library.join(name).exists() => {
+                let beside = path.parent().map(|d| d.join(name)).unwrap_or_default();
+                let canonical = beside.canonicalize().map_err(|e| format!("{}: #include {name:?}: {e}", path.display()))?;
+                if !seen.contains(&canonical) {
+                    seen.push(canonical);
+                    let inner = std::fs::read_to_string(&beside).map_err(|e| format!("{}: {e}", beside.display()))?;
+                    out.push_str(&module_text(&beside, &inner, seen)?);
+                }
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
@@ -354,6 +382,8 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
         let l = l.trim_start();
         l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
     });
+    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
+    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
     if !declares || settings.is_empty() {
         return program.to_owned();
     }
