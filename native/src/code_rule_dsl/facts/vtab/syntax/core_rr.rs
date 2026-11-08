@@ -494,8 +494,8 @@ pub(super) struct CoreRows {
     name: Vec<[i64; 2]>,
     str: Vec<[i64; 2]>,
     strprefix: Vec<[i64; 2]>,
-    value: Vec<[i64; 2]>,
-    value_type: HashSet<[i64; 2]>,
+    /// `value(n, v)` with v's `value_type` t: (n, v, t).
+    value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
     next_sibling: Vec<[i64; 2]>,
@@ -582,9 +582,7 @@ impl CoreRows {
                 self.str.push([n, string(v) as i64]);
             }
             if let Some((v, ty)) = &lit.value {
-                let v = string(v) as i64;
-                self.value.push([n, v]);
-                self.value_type.insert([v, string(ty) as i64]);
+                self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python
                 && (wants_parts || wants_part_starts || wants_words)
@@ -755,6 +753,12 @@ impl CoreRows {
         self.text.extend_from_slice(rows);
     }
 
+    /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
+    /// document W reads no values of (`Dialect::values`) has these.
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| docs.contains(&((r[0] >> 32) as u32))).copied()
+    }
+
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
@@ -770,7 +774,8 @@ impl CoreRows {
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
-        let mut value_type: Vec<[i64; 2]> = self.value_type.into_iter().collect();
+        let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
@@ -781,8 +786,8 @@ impl CoreRows {
             ("str", node_sym(&self.str)),
             ("strprefix", node_sym(&self.strprefix)),
             // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
-            ("value", make(&["n", "v"], &self.value, [false, true], atom)),
-            ("static_value", make(&["n", "v"], &self.value, [false, true], atom)),
+            ("value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value", make(&["n", "v"], &value, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),

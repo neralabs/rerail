@@ -448,10 +448,16 @@ struct Dialect {
     operators: Option<u16>,
     canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
+    /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
+    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
+    values: bool,
 }
 impl Dialect {
     fn new(tag: u8) -> StoreResult<Self> {
-        let catalog = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?.kinds();
+        use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+        let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
+        let catalog = dialect.kinds();
+        let values = with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Value as ValueRules>::SUPPORTED);
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
@@ -464,7 +470,7 @@ impl Dialect {
             codes.entry(c).or_default().push(k as u16);
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
-        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
+        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values })
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     fn code(&self, f: &Facts, id: u32) -> u16 {
@@ -1006,6 +1012,22 @@ impl Extra {
         }
     }
 
+    /// `core_rr`'s literal values (n, v, v's type), of documents W reads no values of (`Dialect::values`), in the
+    /// value relations made here: `value` and `static_value` (no names to follow), and `value_type`.
+    fn literal_values(&mut self, rows: impl Iterator<Item = [i64; 3]>) {
+        for [n, v, t] in rows {
+            if self.value {
+                self.values.push([n, v]);
+            }
+            if self.static_value {
+                self.static_values.push([n, v]);
+            }
+            if self.value_type {
+                self.value_types.insert([v, t]);
+            }
+        }
+    }
+
     /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
     /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, and the spans
     /// each runs over.
@@ -1013,8 +1035,9 @@ impl Extra {
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
-        // A text-only document has no node, so no value.
-        if (plain || self.static_value) && dialect.is_some() {
+        // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
+        // (`literal_values`).
+        if (plain || self.static_value) && dialect.is_some_and(|d| d.values) {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
@@ -1442,6 +1465,8 @@ impl Batch {
             k
         };
         let mut withheld_at = Vec::with_capacity(documents.len());
+        // The documents W reads no values of (`Dialect::values`).
+        let mut unvalued: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for d in &documents {
             // The document's own dialect (`Facts::tag`): a text-only document has none, and no node.
             let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
@@ -1469,6 +1494,9 @@ impl Batch {
                 lines_of.insert(d.key, Arc::clone(&x.lines));
             }
             withheld_at.push(withheld);
+            if dialect.is_some_and(|d| !d.values) {
+                unvalued.insert(d.key);
+            }
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
@@ -1571,6 +1599,9 @@ impl Batch {
             ("op_t", pairs(&["n", "s"], &rows.op, [false, true])),
         ];
         relations.extend(g.relations(&atom));
+        if core {
+            extra.literal_values(c.values_of(&unvalued));
+        }
         let (mut read, matched) = extra.relations(&atom);
         read.extend(tree.relations(&atom));
         read.extend(fstrings.relations(&atom));
