@@ -6,6 +6,17 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn ordered_rows_rejects_nonbinary_inputs() {
+    for declaration in [".decl rows(x: symbol)", ".decl rows(x: number, y: symbol, z: number)"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ordered-invalid.rr");
+        std::fs::write(&path, format!("{declaration}\n.decl out(x: number, y: symbol, i: number)\nout(x,y,i) :- ordered_rows(x,y,i,rows).\n.output out\n")).unwrap();
+        let error = read_file(&path).unwrap_err().to_string();
+        assert!(error.contains("ordered_rows: input must have two scalar columns"), "{error}");
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
 fn ordered_rows_sorts_typed_columns_once_and_survives_program_facts() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ordered-rows");
     std::fs::create_dir_all(&root).unwrap();

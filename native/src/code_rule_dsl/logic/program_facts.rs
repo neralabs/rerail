@@ -281,6 +281,7 @@ impl Writer<'_> {
         }
         for (rel, native) in &prog.natives {
             match native {
+                Native::OrderedRows { input } => self.row("native_ordered_rows", vec![s(rel), s(input)]),
                 Native::BfsWalk { edge, roots } => self.row("native_bfs", vec![s(rel), s(edge), s(roots)]),
                 Native::DfsFirst { edge, target, roots } => {
                     self.row("native_dfs", vec![s(rel), s(edge), s(target)]);
@@ -570,6 +571,9 @@ impl<'a> Reader<'a> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        for row in self.get("native_ordered_rows") {
+            prog.natives.insert(text(&row[0])?, Native::OrderedRows { input: text(&row[1])? });
         }
         for row in self.get("native_bfs") {
             prog.natives.insert(text(&row[0])?, Native::BfsWalk { edge: text(&row[1])?, roots: text(&row[2])? });

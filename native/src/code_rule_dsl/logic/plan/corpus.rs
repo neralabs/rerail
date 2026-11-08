@@ -1973,6 +1973,12 @@ pub(crate) fn run_with_options(
                         for ((_, is_dir), name) in entries.iter().zip(atoms(&names)?) {
                             out.push(vec![row[0], name, i64::from(*is_dir)]);
                         }
+                    } else if *produced == "dir_metadata" {
+                        let entries = world.metadata(&asked);
+                        let names: Vec<&str> = entries.iter().map(|(n, _, _, _)| n.as_str()).collect();
+                        for ((_, is_file, is_symlink, bytes), name) in entries.iter().zip(atoms(&names)?) {
+                            out.push(vec![row[0], name, i64::from(*is_file), i64::from(*is_symlink), *bytes]);
+                        }
                     } else {
                         let lines = world.file(&asked);
                         let texts: Vec<&str> = lines.iter().map(String::as_str).collect();

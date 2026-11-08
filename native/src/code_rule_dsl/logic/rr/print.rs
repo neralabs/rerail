@@ -129,6 +129,7 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
 /// `match_all(re, s)` over its input, the groups bound to the head's columns by name.
 fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
     Ok(match native {
+        Native::OrderedRows { input } => format!("{} :- ordered_rows({}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(input)),
         Native::BfsWalk { edge, roots } => format!("{} :- bfs_walk({}, {}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(edge), relation(roots)),
         Native::DfsFirst { edge, target, roots } => {
             let args = terms(&head.args)?;

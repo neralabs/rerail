@@ -34,6 +34,10 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/rr/lower.rs',
     'native/src/code_rule_dsl/logic/rr/print.rs',
     'native/src/code_rule_dsl/logic/plan/corpus/inputs.rs',
+    # Shared filesystem metadata for exact, batched data-layer discovery.
+    'native/src/code_rule_dsl/logic/plan/corpus.rs',
+    'native/src/code_rule_dsl/logic/plan/corpus/world.rs',
+    'native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs',
     'native/src/code_rule_dsl/logic/rr/tests.rs',
     'native/src/code_rule_dsl/logic/sql/select.rs',
     'native/src/code_rule_dsl/sql_executor/documents/shards.rs',

@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 9] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 10] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -79,6 +79,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 9] = [
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
     ("bfs_walk", &[3, 4]),
+    ("ordered_rows", &[3]),
     ("components", &[3, 4]),
 ];
 
@@ -1860,6 +1861,13 @@ impl Lowerer {
                 let rel = self.precedes_stop(set);
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
+            ("ordered_rows", [first, second, ordinal, input]) => {
+                let STerm::Var(input) = input else {
+                    return Err(Error::Syntax("ordered_rows: input is a relation, by name".to_owned()));
+                };
+                let rel = self.ordered_rows(input)?;
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(first)?, self.term(second)?, self.term(ordinal)?], neg, gated: false }));
+            }
             ("bfs_walk", [r, hit, ordinal, edge, roots]) => {
                 let name = |t: &STerm| match t {
                     STerm::Var(v) => Ok(v.clone()),
@@ -1893,6 +1901,25 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    fn ordered_rows(&mut self, input: &str) -> Result<String, Error> {
+        let rel = format!("rr_ordered_{input}");
+        if self.prog.natives.contains_key(&rel) { return Ok(rel); }
+        let cols = self.prog.decls.get(input).ok_or_else(|| Error::Syntax(format!("ordered_rows: undeclared input relation {input}")))?;
+        if cols.len() != 2 || cols.iter().any(|(_, t)| !matches!(t.as_str(), "sym" | "int" | "node")) {
+            return Err(Error::Syntax("ordered_rows: input must have two scalar columns".to_owned()));
+        }
+        let mut out = cols.clone();
+        out.push(("ordinal".to_owned(), "int".to_owned()));
+        self.prog.decls.insert(rel.clone(), out);
+        let v = |n: &str| Term::Var(n.to_owned());
+        self.prog.rules.push(Rule {
+            head: Atom { rel: rel.clone(), args: vec![v("first"), v("second"), Term::Int(0)], neg: false, gated: false },
+            body: vec![Literal::Atom(Atom { rel: input.to_owned(), args: vec![v("first"), v("second")], neg: false, gated: false })],
+        });
+        self.prog.natives.insert(rel.clone(), Native::OrderedRows { input: input.to_owned() });
+        Ok(rel)
     }
 
     fn bfs_walk(&mut self, edge: &str, roots: &str) -> Result<String, Error> {
@@ -2486,7 +2513,9 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, and a file's lines, `file_line(path, i, text)` (from 1).
-pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 2] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req")];
+pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 3] = [
+    ("dir_entry", "rr_dir_req"), ("dir_metadata", "rr_dir_metadata_req"), ("file_line", "rr_file_req")
+];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)

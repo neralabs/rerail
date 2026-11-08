@@ -56,11 +56,20 @@ pub(super) struct Loaded {
     pub(super) grammar: String,
 }
 
+#[derive(Clone, Debug)]
+struct DirectoryEntry {
+    name: String,
+    is_dir: bool,
+    is_file: bool,
+    is_symlink: bool,
+    bytes: i64,
+}
+
 #[derive(Default)]
 pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
-    dirs: BTreeMap<String, Vec<(String, bool)>>,
+    dirs: BTreeMap<String, Vec<DirectoryEntry>>,
     files: BTreeMap<String, Vec<String>>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
@@ -94,21 +103,40 @@ impl World {
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
-    /// A directory's entries, sorted (none when it is refused or missing).
-    pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
-        if let Some(entries) = self.dirs.get(asked) {
-            return entries.clone();
-        }
+    /// Read each requested directory once. Both public projections share these
+    /// rows; metadata is not a filesystem callback for each rule or node.
+    fn read_directory(&mut self, asked: &str) {
+        if self.dirs.contains_key(asked) || self.refused.contains(asked) { return; }
         let Some(path) = self.allowed(asked) else {
             self.refused.insert(asked.to_owned());
-            return Vec::new();
+            return;
         };
-        let mut entries: Vec<(String, bool)> = std::fs::read_dir(&path)
-            .map(|it| it.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect())
+        let mut entries: Vec<DirectoryEntry> = std::fs::read_dir(&path)
+            .map(|it| it.filter_map(|e| e.ok()).map(|e| {
+                let metadata = e.path().metadata().ok();
+                DirectoryEntry {
+                    name: e.file_name().to_string_lossy().into_owned(),
+                    is_dir: metadata.as_ref().is_some_and(|m| m.is_dir()),
+                    is_file: metadata.as_ref().is_some_and(|m| m.is_file()),
+                    is_symlink: e.file_type().is_ok_and(|t| t.is_symlink()),
+                    bytes: metadata.as_ref().map_or(0, |m| m.len() as i64),
+                }
+            }).collect())
             .unwrap_or_default();
-        entries.sort();
-        self.dirs.insert(asked.to_owned(), entries.clone());
-        entries
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        self.dirs.insert(asked.to_owned(), entries);
+    }
+
+    /// A directory's entries, sorted (none when it is refused or missing).
+    pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
+        self.read_directory(asked);
+        self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_dir)).collect()
+    }
+
+    /// File type, link flag, and followed-target size from that same listing.
+    pub(super) fn metadata(&mut self, asked: &str) -> Vec<(String, bool, bool, i64)> {
+        self.read_directory(asked);
+        self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_file, e.is_symlink, e.bytes)).collect()
     }
 
     /// A file's lines (none when it is refused or missing).
@@ -182,4 +210,26 @@ impl World {
 /// A document's path as the content store keys it: a loaded document's canonical path without its root.
 pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_projections_share_one_listing_but_new_runs_refresh_it() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-directory-cache");
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
+        let program = front::parse("").unwrap();
+        let mut world = World::new(&root, &program);
+        assert_eq!(world.dir("pkg"), vec![("a.py".to_owned(), false)]);
+        std::fs::write(root.join("pkg/a.py"), "changed").unwrap();
+        std::fs::write(root.join("pkg/b.py"), "new").unwrap();
+        assert_eq!(world.metadata("pkg"), vec![("a.py".to_owned(), true, false, 3)]);
+        let mut refreshed = World::new(&root, &program);
+        assert_eq!(refreshed.metadata("pkg"), vec![("a.py".to_owned(), true, false, 7), ("b.py".to_owned(), true, false, 3)]);
+        assert_eq!(refreshed.dir("pkg"), vec![("a.py".to_owned(), false), ("b.py".to_owned(), false)]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

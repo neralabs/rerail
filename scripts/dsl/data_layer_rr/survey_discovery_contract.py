@@ -4,7 +4,6 @@ Native mode creates the physical fixture but supplies no selected paths to the
 engine. Directories, links, exclusions, ordering, and graph inputs come from .rr.
 """
 import argparse
-import ast
 import importlib
 import json
 from pathlib import Path
@@ -58,12 +57,8 @@ def source_case(source,item):
         root=Path(temporary);write_fixture(root,item['files'])
         paths=discovery.discover_python_files(root,item['directories'] or ['public'],include_tests=False)
         graph=model.SymbolGraph(root,item['directories'])
-        scans=[]
-        for path in paths:
-            try:tree=ast.parse(path.read_text())
-            except (OSError,SyntaxError,UnicodeDecodeError):continue
-            scans.append(model._scan_symbol_tree(root,path,tree))
-        graph._add_scanned_modules(scans);graph._resolve_edges();graph._add_legacy_decorator_edges();graph._collect_data_layer_roots()
+        graph._scan(files=paths)
+        graph._resolve_edges();graph._add_legacy_decorator_edges();graph._collect_data_layer_roots()
         return dict(paths=[p.relative_to(root).as_posix() for p in paths],analysis=linter.analyze_dead_code(graph))
 
 

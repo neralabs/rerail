@@ -2248,6 +2248,7 @@ impl Run<'_, '_> {
         self.materialize(&reads)?;
         use crate::code_rule_dsl::logic::front::Native;
         let (edge, target, roots) = match native {
+            Native::OrderedRows { input } => return self.ordered_rows(rel, input),
             Native::BfsWalk { edge, roots } => return self.bfs_walk(rel, edge, roots),
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
@@ -2279,6 +2280,24 @@ impl Run<'_, '_> {
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
+    }
+
+    /// One SQL window over the whole typed batch, not a correlated count per row.
+    /// Symbol order uses text rather than the interner's unrelated atom numbers.
+    fn ordered_rows(&mut self, rel: &str, input: &str) -> Result<usize> {
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let a = self.model.col(input, 0);
+        let b = self.model.col(input, 1);
+        let key = |i: usize| {
+            let c = format!("c{i}");
+            if self.prog.decls[input][i].1 == "sym" && self.model.inputs.atoms.is_some() {
+                format!("sym_text({c})")
+            } else { c }
+        };
+        let sql = format!("INSERT OR IGNORE INTO {} SELECT c0, c1, row_number() OVER (ORDER BY {}, {}) - 1 FROM (SELECT DISTINCT {a} AS c0, {b} AS c1 FROM {})",
+            ident(rel), key(0), key(1), ident(input));
+        super::profile::plan(self.db, &sql);
+        Ok(self.db.execute(&sql, [])?)
     }
 
     /// Read both input batches once, share one adjacency across all demands, and

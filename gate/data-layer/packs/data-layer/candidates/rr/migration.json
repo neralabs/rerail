@@ -490,7 +490,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "fc06de4775bcc825fa23ff54a0015c8a10b4d69c123a2b35494ace5e72e5be1b",
+      "sha256": "2dad893d0edb5ed3e3bf6237bc12c910c7c51d03bcb8f23cafc088d93b073933",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -589,6 +589,11 @@
           "before": "18444d8ef5fed66c4596c66aa8cdcae52a429ff7604b0e1823a5de35e686cbe4",
           "after": "fc06de4775bcc825fa23ff54a0015c8a10b4d69c123a2b35494ace5e72e5be1b",
           "reason": "Expose generic ordered breadth-first batches on the existing Final native-relation boundary"
+        },
+        {
+          "before": "fc06de4775bcc825fa23ff54a0015c8a10b4d69c123a2b35494ace5e72e5be1b",
+          "after": "2dad893d0edb5ed3e3bf6237bc12c910c7c51d03bcb8f23cafc088d93b073933",
+          "reason": "Implement typed batched filesystem discovery with shared directory metadata and one SQL window for scan order"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -1757,11 +1762,19 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
-      "sha256": "be6f62b98f87bafd81e41cc18a8477f94f670d63c94fd7f737248391bbfbfc2b",
+      "sha256": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/discovery.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-source.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-source.json.gz",
+      "importedSha256": "be6f62b98f87bafd81e41cc18a8477f94f670d63c94fd7f737248391bbfbfc2b",
+      "repairs": [
+        {
+          "before": "be6f62b98f87bafd81e41cc18a8477f94f670d63c94fd7f737248391bbfbfc2b",
+          "after": "30204de3087add5278cf9308e5ab1fe73d4680d61879453f7f6d295a0ec8bc0e",
+          "reason": "Implement typed batched filesystem discovery with shared directory metadata and one SQL window for scan order"
+        }
+      ]
     }
   ],
   "rules": [
@@ -2761,7 +2774,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
-    "status": "Root Final shape through 0f0049ec7 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "status": "Root Final shape through 0f0049ec7 with reviewed generic syntax, graph, typed SQL ordering, filesystem metadata, and planner capabilities",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2837,7 +2850,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "3ef943c0a9842c7832457916e9527a030e8c42f3182d2855e53bc4d5d1fcf755"
+        "sha256": "fd8acec084508541326fc8a3f9f4dfe0f35fdc9c238eedc397835b21b1dba545"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
@@ -2849,27 +2862,39 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "8fde919e2c922c0d2edd8776f97b93b5d5f13728fa25e6c8fd6cc62680a0b75e"
+        "sha256": "1813e8ba92a6701ead8954d57edabf7c9327ba12a91eb1d958cb6515eab0618d"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+        "sha256": "3f8acd33d5d1def734e15004b09d3a55de75eb579d60e10056c0be27cf7f1b07"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+        "sha256": "63496dc54df97c1575ad392552ba790168d44a506c28056095e2879751973e99"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
         "sha256": "c5e605336582b31696e9d910f67ddd8e366af83e5f4f94472fd15cafeb533923"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+        "sha256": "02da0bd7aab860b5cc2a3a96d6d894e5f9bb19545c3c3f04fd18e6b1a3592130"
+      },
+      {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "f583e71f0b111c41e4c6c27d4b54f79a841798f5bdce4ad0b631594c4dc2e061"
+        "sha256": "b56b77a714f5058cfe4313602d0882f8f15dc1baffbe232a8be887298f6823b8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "9d27fb896b7aa441940bc9647bd892c8644d37f10b3d33468c63eb4cf2f19f36"
+        "sha256": "49fcc76490b22164281aaad6acd7b6943d60134801174b6ecb4777dc813eae4b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
-        "sha256": "70cf46e2c92160ae5f5a3590dc01286c21006275a08a310879bd79c24f7aeaec"
+        "sha256": "cbfe0340ca97c892c4a1b85b202386fdf13d25fad19f4c19109fba1428601718"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "7d1ff1793965d77bbd0a94e3d675558efd7acdc5548deb921e3730a823520e0b"
+        "sha256": "adf22d21f5a4ad012bf5e0182e976e124a69ca4a741f0de8a8e6fe958036d4f5"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",

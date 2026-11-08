@@ -227,6 +227,9 @@
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
+// Metadata shares dir_entry's cached listing. is_file and bytes follow a link;
+// is_symlink describes the entry itself. Missing link targets have zero bytes.
+.decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, bytes: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
@@ -272,6 +275,10 @@
 // The whole root demand and adjacency are batches, not per-node SQL callbacks.
 // IDs retain the edge relation's types, including numbers and symbols.
 .decl bfs_walk(r: node, hit: node, ordinal: number, edge: relation, roots: relation)
+// ordered_rows(a, b, ordinal, rows): rows has two scalar columns. Distinct rows
+// sort by their typed values (symbols as text), with one zero-based global rank.
+// One SQL window sorts the whole batch. Empty input produces no rows.
+.decl ordered_rows(a: node, b: node, ordinal: number, rows: relation)
 // components(d, c, k, edge, own): document d's strongly connected component of the graph edge(d, e) (d depends on
 // e), named by its smallest document c, and the component's key k: the SHA-256 of its documents' digests own(d, h),
 // sorted, then the keys of the components it depends on, sorted. Equal keys mean equal digests over the whole import

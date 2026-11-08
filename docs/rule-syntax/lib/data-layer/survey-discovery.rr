@@ -38,15 +38,17 @@ sgd_root(i, @replace_all(@replace_all(@replace_all(@replace_all(@replace_all(raw
 .decl sgd_probe(i: number, path: symbol, parent: symbol, name: symbol)
 sgd_probe(i, path, ".", path) :- sgd_root(i, path), path != ".", !contains("/", path).
 sgd_probe(i, path, parent, name) :- sgd_root(i, path), match_all("\\A(?<parent>.*)/(?<name>[^/]+)\\z", path).
+.decl sgd_probe_parent(path: symbol)
+sgd_probe_parent(parent) :- sgd_probe(_, _, parent, _).
 .decl sgd_blocked(path: symbol)
 sgd_blocked(path) :- sgd_root(_, path), match_all("(?:\\A|/)(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)(?:/|\\z)", path).
 .decl sgd_walk(i: number, path: symbol)
 sgd_walk(i, ".") :- sgd_root(i, ".").
-sgd_walk(i, path) :- sgd_probe(i, path, parent, name), dir_entry(parent, name, 1), !sgd_blocked(path).
+sgd_walk(i, path) :- sgd_probe_parent(parent), sgd_probe(i, path, parent, name), dir_entry(parent, name, 1), !sgd_blocked(path).
 sgd_walk(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 1), dir_metadata(path, name, _, 0, _), !match_all("\\A(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)\\z", name).
 .decl sgd_file(root: number, path: symbol)
 // An explicit Python file bypasses directory and test exclusions in the source.
-sgd_file(i, path) :- sgd_probe(i, path, parent, name), dir_metadata(parent, name, 1, _, _), suffix(".py", name), name != ".py".
+sgd_file(i, path) :- sgd_probe_parent(parent), sgd_probe(i, path, parent, name), dir_metadata(parent, name, 1, _, _), suffix(".py", name), name != ".py".
 sgd_file(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 0), suffix(".py", name), name != ".py".
 
 .decl sgd_key(root: number, key: symbol)
