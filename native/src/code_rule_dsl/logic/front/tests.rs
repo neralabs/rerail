@@ -146,6 +146,17 @@ fn named_errors() {
     let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());
 
+    // Depth bounds what preorder cannot: a parent relation with a decorator's edge (to the definition, a later
+    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rr`).
+    let tree = ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl nm(n: node, s: symbol)\n.input child, kind, nm\n\
+        .decl deco(f: node, e: node)\ndeco(f, e) :- kind(dd, \"decorated_definition\"), child(dd, f, 1), child(dd, dc, 0), child(dc, e, 0).\n\
+        .decl up(n: node, p: node)\nup(n, p) :- child(p, n, _), !kind(p, \"block\").\nup(e, f) :- deco(f, e).\nup(n, q) :- child(p, n, _), kind(p, \"block\"), up(p, q).\n";
+    let climb = format!("{tree}.decl qn(k: node, s: symbol)\nqn(k, s) :- kind(k, \"class\"), nm(k, s).\nqn(k, @dot(p, s)) :- kind(k, \"class\"), up(k, o), qn(o, p), nm(k, s).\n");
+    assert!(parse(&climb).is_ok(), "{:?}", parse(&climb).err());
+    // A sibling keeps the depth: no bound.
+    let sideways = format!("{tree}.decl sib(a: node, b: node)\nsib(a, b) :- child(p, a, _), child(p, b, _).\n.decl qn(k: node, s: symbol)\nqn(k, s) :- nm(k, s).\nqn(k, @dot(p, s)) :- sib(k, o), qn(o, p), nm(k, s).\n");
+    assert!(matches!(parse(&sideways), Err(Error::UnboundedValueCycle { .. })));
+
     // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
     let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
