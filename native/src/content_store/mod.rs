@@ -34,7 +34,6 @@ pub(crate) use prefilter::TapePrefilter;
 mod publication;
 mod read_cache;
 mod reclamation;
-pub use reclamation::CorpusRunLease;
 mod relationships;
 mod results;
 mod rows;
