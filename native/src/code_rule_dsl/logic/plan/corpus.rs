@@ -594,7 +594,7 @@ pub(crate) fn run_with_options(
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // A loaded document's module, from its load; and the loaded documents' keys, whose rows are not written.
     let named: HashMap<String, Arc<str>> = world::library_files(options).into_iter().map(|(p, m)| (p, Arc::from(m))).collect();
-    let library_keys: std::collections::HashSet<i64> = docs.iter().filter(|(_, p)| named.contains_key(p)).map(|(d, _)| *d).collect();
+    let loaded_keys: std::collections::HashSet<i64> = docs.iter().filter(|(_, p)| named.contains_key(p)).map(|(d, _)| *d).collect();
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -652,7 +652,9 @@ pub(crate) fn run_with_options(
     };
     // A run that records its manifest holds collection off the store's sources until it has (`CorpusRunLease`): the
     // sources it reads are held by nothing before.
-    let lease = if tapes.is_some() && t.is_none() {
+    // A round of `world` discovering what to load is not a run of the corpus: it records no manifest, so its cut
+    // program's manifests do not evict the run's own (and with them its sources and memo entries).
+    let lease = if tapes.is_some() && t.is_none() && !discovering {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
         Some(store.begin_corpus_run(now + 3600).map_err(|e| Error::Plan(e.to_string()))?)
     } else {
@@ -698,7 +700,8 @@ pub(crate) fn run_with_options(
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
     // after pruning is not memoised (a round of `world` does not read them).
     let reads_declared = prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| a.rel == "declared_ret");
-    let memoised = tapes.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
+    // A round of `world` is not memoised: it is not a run of the corpus, and its cut program is run once.
+    let memoised = tapes.is_some() && t.is_none() && !discovering && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
         (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan; {} relations given a document column", located.as_ref().map_or(0, Vec::len)),
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
@@ -806,11 +809,10 @@ pub(crate) fn run_with_options(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
-    // A cross-file part that reads base relations takes their rows from the chunks it evaluates: a memoised file has
-    // none to give, so such a run is not memoised (all base reads are pushed into the chunks when they can be).
-    let memoised = memoised && stored.is_empty();
-    if !stored.is_empty() && tapes.is_some() && t.is_none() {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
+    // A cross-file part that reads base relations takes their rows from the chunks: a memoised file's entry holds its
+    // rows of them too (`memo::base_key`), every column, so it hands on what an evaluated file would.
+    if !stored.is_empty() && memoised {
+        crate::code_rule_dsl::logic::profile::decision("per-file memo holds base rows", || format!("the cross-file part reads base relations {:?}: each file's entry holds its rows of them", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
@@ -829,6 +831,8 @@ pub(crate) fn run_with_options(
         }
     };
     let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
+    // The base rows memo hits replayed, every column: measured once, after the chunks.
+    let mut replayed: BTreeMap<String, (Vec<String>, Vec<Vec<i64>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
@@ -862,7 +866,7 @@ pub(crate) fn run_with_options(
     main_doing.set("setup");
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0053).
-    let recording = tapes.is_some() && t.is_none();
+    let recording = tapes.is_some() && t.is_none() && !discovering;
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
@@ -887,7 +891,9 @@ pub(crate) fn run_with_options(
         let mut read_sources = Vec::new();
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
-        // A file's memo entry when the run is memoised and the memo has it, else its document, built.
+        // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
+        // without the base rows this run's cross-file part reads is a miss.
+        let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
         let mut stats_read = Vec::new();
         let mut build = |d: &i64, path: &String| -> Result<(Option<crate::content_store::SourceId>, std::result::Result<memo::Entry, syntax::Document>)> {
             worker_doing.set("parse");
@@ -904,7 +910,7 @@ pub(crate) fn run_with_options(
             let known = stat.and_then(|now| stat_index.source(world::store_path(path), now));
             if let (true, Some(id)) = (memoised, known) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
+                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
                     return Ok((known, Ok(entry)));
                 }
             }
@@ -925,7 +931,7 @@ pub(crate) fn run_with_options(
             }
             if let (true, Some(id), false) = (memoised, source_id, known == source_id) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
+                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
                     return Ok((source_id, Ok(entry)));
                 }
             }
@@ -1032,6 +1038,22 @@ pub(crate) fn run_with_options(
             db.execute_batch("BEGIN")?;
             for entry in hits {
                 nodes += entry.nodes as usize;
+                own_totals.add(&Own::taken(&entry.rows));
+                for (rel, names) in &stored {
+                    let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
+                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+                    let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
+                    for name in names {
+                        let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
+                    }
+                    // Kept whole, to be measured once after the chunks, so the cross-file part's statistics count them.
+                    let full = replayed.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![Vec::new(); *width]));
+                    for (c, col) in full.1.iter_mut().enumerate() {
+                        col.extend(values.iter().skip(c).step_by(*width).copied());
+                    }
+                }
                 for (rel, (width, values)) in entry.rows {
                     if values.is_empty() || !split.exports.contains(&rel) {
                         continue;
@@ -1064,6 +1086,7 @@ pub(crate) fn run_with_options(
         let mut stats = t_stats.clone();
         repository_stats(&mut stats);
         let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, n)| (path.as_str(), *n as usize)));
+        let mut chunk_own: Option<Own> = None;
         if own {
             let chunk = match own_once.get(&mix) {
                 Some((first, measured)) if *first > 0 => measured.scaled(chunk_nodes_built as f64 / *first as f64),
@@ -1076,6 +1099,7 @@ pub(crate) fn run_with_options(
             };
             chunk.apply(&mut stats);
             own_totals.add(&chunk);
+            chunk_own = Some(chunk);
         }
         // Guests (decision 0055): the embed slice runs over the chunk, the guests it asks for are parsed, and the
         // batch is built again with them, until a round asks for none new. The batch bound below holds them.
@@ -1121,6 +1145,9 @@ pub(crate) fn run_with_options(
             let d = memo::document_of(v);
             host_of.get(&d).copied().unwrap_or(d)
         };
+        // The base rows a memoised chunk hands on, per relation: the columns in `input_columns` order, and the rows.
+        let mut base_seen: Vec<(String, Vec<usize>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
+        let mut base_whole = true;
         for (rel, source) in sources {
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
@@ -1134,8 +1161,19 @@ pub(crate) fn run_with_options(
                 let held = base_rows.entry(rel.clone()).or_insert_with(|| (have.clone(), vec![None; have.len()]));
                 for name in names {
                     let c = have.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                    let col = held.1[c].get_or_insert_with(Vec::new);
+                    let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                    let col = held.1[to].get_or_insert_with(Vec::new);
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
+                }
+                // Memoised, each row goes to its document's entry whole, in `input_columns` order, as its first
+                // column names it (a node or a document key).
+                if memoised {
+                    let all = super::super::sql::select::input_columns(&rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+                    let at: Option<Vec<usize>> = all.iter().map(|c| have.iter().position(|h| h == c)).collect();
+                    match at {
+                        Some(at) => base_seen.push((rel.clone(), at, source.clone())),
+                        None => base_whole = false,
+                    }
                 }
             }
             let key = (mix.clone(), rel.clone());
@@ -1164,7 +1202,36 @@ pub(crate) fn run_with_options(
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
         // document's by its first location column.
         let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
-        let mut attributable = memoised;
+        let mut attributable = memoised && base_whole && chunk_own.is_some();
+        if let (true, Some(chunk)) = (attributable, &chunk_own) {
+            // Each document's share of the chunk's tree statistics, by its nodes, as a chunk mix is scaled.
+            for entry in entries.values_mut() {
+                chunk.scaled(entry.nodes as f64 / chunk_nodes_built.max(1) as f64).put(&mut entry.rows);
+            }
+        }
+        if attributable {
+            for entry in entries.values_mut() {
+                for (rel, _) in &stored {
+                    let width = super::super::sql::select::input_columns(rel).map_or(0, <[_]>::len);
+                    entry.rows.insert(memo::base_key(rel), (width, Vec::new()));
+                }
+            }
+            'base: for (rel, at, source) in &base_seen {
+                let key = memo::base_key(rel);
+                for r in 0..source.len() {
+                    match at.first().and_then(|c| entries.get_mut(&document_of(source.value(r, *c)))) {
+                        Some(e) => {
+                            let held = &mut e.rows.get_mut(&key).expect("every entry has every base key").1;
+                            held.extend(at.iter().map(|c| source.value(r, *c)));
+                        }
+                        None => {
+                            attributable = false;
+                            break 'base;
+                        }
+                    }
+                }
+            }
+        }
         if memoised {
             for (rel, lines) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied());
@@ -1265,6 +1332,11 @@ pub(crate) fn run_with_options(
     let mut cross_stats = t_stats;
     if own {
         own_totals.apply(&mut cross_stats);
+    }
+    for (rel, (columns, values)) in std::mem::take(&mut replayed) {
+        let rows = crate::code_rule_dsl::logic::native::component::columns_source(columns, values.into_iter().map(Some).collect());
+        let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} (memo)"));
+        totals.add(&rel, rows.estimated_len(), &syntax::statistics(rows.as_ref()));
     }
     totals.apply(&mut cross_stats);
     repository_stats(&mut cross_stats);
@@ -1436,13 +1508,19 @@ pub(crate) fn run_with_options(
     phase("cross", statements.count());
     statements.enter("write");
     let mut rows = BTreeMap::new();
+    // An output with no rows is written empty: a run whose files all came from the memo replays only the lines
+    // there are.
+    for rel in &prog.outputs {
+        outputs.entry(rel.clone()).or_default();
+        node_columns.entry(rel.clone()).or_default();
+    }
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
         let mut decoded: Vec<String> = lines
             .iter()
             // A row about a loaded document (its first node is one) is not the corpus's; a corpus row may name a
             // loaded document's node (a call's target in a stub).
-            .filter(|row| library_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| library_keys.contains(&(v >> 32)))))
+            .filter(|row| loaded_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| loaded_keys.contains(&(v >> 32)))))
             .map(|row| {
                 row.split('\t')
                     .enumerate()
@@ -1974,6 +2052,12 @@ fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, ro
         .collect()
 }
 
+/// A memo entry's rows holding its file's tree statistics (`Own::put`).
+const OWN_KINDS: &str = "own:kinds";
+const OWN_EDGES: &str = "own:edges";
+const OWN_DOCS: &str = "own:docs";
+const OWN_POSTINGS: &str = "own:postings:";
+
 /// The base relations' statistics a chunk measures as it binds them, beyond each column's moments
 /// (`syntax::statistics`), which T's `stats.py` made at ingestion: per kind atom its nodes and summed subtree sizes
 /// (`stat_kind`), per (parent kind, child kind) its edges (`stat_edge`), the documents, and per (relation, column,
@@ -2082,6 +2166,31 @@ impl Own {
         for (key, n) in &other.postings {
             *self.postings.entry(key.clone()).or_default() += n;
         }
+    }
+
+    /// Into a memo entry's rows (decision 0052): a memoised file hands on its share of the tree statistics as an
+    /// evaluated one does.
+    fn put(&self, rows: &mut BTreeMap<String, (usize, Vec<i64>)>) {
+        rows.insert(OWN_KINDS.into(), (3, self.kinds.iter().flat_map(|(k, (n, size))| [*k, *n, *size]).collect()));
+        rows.insert(OWN_EDGES.into(), (3, self.edges.iter().flat_map(|((p, k), n)| [*p, *k, *n]).collect()));
+        rows.insert(OWN_DOCS.into(), (1, vec![self.docs]));
+        for ((rel, col, v), n) in &self.postings {
+            rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, Vec::new())).1.extend([*v, *n]);
+        }
+    }
+
+    /// From a memo entry's rows (`put`).
+    fn taken(rows: &BTreeMap<String, (usize, Vec<i64>)>) -> Own {
+        let mut own = Own::default();
+        let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
+        own.kinds = flat(OWN_KINDS).chunks(3).map(|r| (r[0], (r[1], r[2]))).collect();
+        own.edges = flat(OWN_EDGES).chunks(3).map(|r| ((r[0], r[1]), r[2])).collect();
+        own.docs = flat(OWN_DOCS).first().copied().unwrap_or(0);
+        for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
+            let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
+            own.postings.extend(values.chunks(2).map(|r| ((rel.to_owned(), col.to_owned(), r[0]), r[1])));
+        }
+        own
     }
 
     fn apply(&self, stats: &mut super::Stats) {

@@ -16,6 +16,12 @@ use std::collections::{BTreeMap, HashSet};
 /// The memo's fact schema: bumped when an entry's meaning changes.
 const SCHEMA: u32 = 3;
 
+/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
+/// file hands on its base rows as an evaluated one does.
+pub(super) fn base_key(rel: &str) -> String {
+    format!("base:{rel}")
+}
+
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Entry {

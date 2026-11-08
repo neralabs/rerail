@@ -1798,3 +1798,12 @@ These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured w
   `no columns for <rel>`, and the measure leaves the rule out (O76).
 
 **Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.
+
+## O95. T's facts lack relations the product's programs now read
+
+Found 2026-11-07. `product_programs_derive_t_outputs` runs `typing/programs/*.rr` over T's facts database, which
+predates relations `calls.rr` reads since B6 (`value`, through `python/conditions.rr`, then `str`, and possibly
+more). The test adds empty tables for `strprefix`, `parsed`, `host_node` and now `value`; `str` is next. It is
+ignored with this reason. Close by giving the facts every input relation the programs declare (empty where T has
+none), or by rebuilding T's facts. Separately, `t_programs_run_natively_like_t` fails with "unknown probe kind
+whole" in its child processes, as it already did on 2026-11-06.
