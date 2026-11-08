@@ -1138,7 +1138,7 @@ pub(crate) fn run_with_options(
     // own thread and reported as `parse` and `batch`; the main thread's as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<memo::Entry>, Vec<syntax::Document>);
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry)>, Vec<syntax::Document>);
     #[cfg(not(target_family = "wasm"))]
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
     // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
@@ -1250,7 +1250,7 @@ pub(crate) fn run_with_options(
             match build(d, path) {
                 Ok((source_id, Ok(entry))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
-                    hits.push(entry);
+                    hits.push((path.clone(), entry));
                 }
                 Ok((source_id, Err(doc))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
@@ -1330,7 +1330,26 @@ pub(crate) fn run_with_options(
             let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
             memo_hits += hits.len();
             db.execute_batch("BEGIN")?;
-            for entry in hits {
+            // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
+            // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
+            // memo plans its cross-file part with no kinds (every `kind(n, "identifier")` looks empty), and a
+            // join can start from a cross product of two kinds.
+            if own {
+                let hit_nodes: u64 = hits.iter().map(|(_, e)| e.nodes).sum();
+                let mix = chunk_mix(hits.iter().map(|(path, e)| (path.as_str(), e.nodes as usize)));
+                if !own_once.contains_key(&mix)
+                    && let Some(m) = own_counts(store, &memo_program, &mix)
+                {
+                    own_once.insert(mix.clone(), m);
+                }
+                match own_once.get(&mix) {
+                    Some((first, measured)) if *first > 0 => own_totals.add(&measured.scaled(hit_nodes as f64 / *first as f64)),
+                    _ => {
+                        memo_why.insert(format!("no tree counts for the memo hits' mix {mix}: the cross-file part plans without them"));
+                    }
+                }
+            }
+            for (_, entry) in hits {
                 nodes += entry.nodes as usize;
                 for (rel, (width, values)) in entry.rows {
                     if values.is_empty() || !split.exports.contains(&rel) {
@@ -1377,6 +1396,9 @@ pub(crate) fn run_with_options(
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure constants ({mix})"));
                     let measured = Own::measure(&sources, &constants);
                     own_once.insert(mix.clone(), (chunk_nodes_built, measured.clone()));
+                    if memoised {
+                        record_own_counts(store, &memo_program, &mix, chunk_nodes_built, &measured)?;
+                    }
                     measured
                 }
             };
@@ -1674,6 +1696,12 @@ pub(crate) fn run_with_options(
     }
     totals.apply(&mut cross_stats);
     repository_stats(&mut cross_stats);
+    // RERAIL_DUMP_STATS=a,b: what the cross-file part plans with for those relations (a debugging aid).
+    if let Ok(rels) = std::env::var("RERAIL_DUMP_STATS") {
+        for rel in rels.split(',') {
+            eprintln!("cross stats {}", cross_stats.describe(rel));
+        }
+    }
     // With no documents there was no batch to bind or measure base relations.
     // They are known empty, but global rules (including absence checks) still execute.
     if docs.is_empty() {
@@ -2551,6 +2579,31 @@ fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, ro
 /// (`stat_kind`), per (parent kind, child kind) its edges (`stat_edge`), the documents, and per (relation, column,
 /// constant) of the program's constants its rows (`stat_val`'s `n`). Summed over the chunks for the cross-file part:
 /// a document is in one chunk, so every count adds exactly.
+/// The store name of a chunk mix's measured tree counts under the file-local program `program`.
+fn own_name(program: &[u8; 32], mix: &str) -> String {
+    format!("own-counts/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run.
+fn own_counts(store: &ContentStore, program: &[u8; 32], mix: &str) -> Option<(usize, Own)> {
+    let digest = store.binding(&own_name(program, mix)).ok()??;
+    let source = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest)).ok()??;
+    Own::decode(&store.get_source(source).ok()?)
+}
+
+/// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo.
+fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own) -> Result<()> {
+    use sha2::Digest as _;
+    let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
+    let bytes = own.encode(nodes);
+    store.put_source(&bytes, &[]).map_err(plan)?;
+    let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+    let producer = memo::plan_digest(program);
+    let record = crate::content_store::DerivationRecord { output: own_name(program, mix), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
+    store.record_derivations(&[record]).map_err(plan)?;
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 struct Own {
     kinds: BTreeMap<i64, (i64, i64)>,
@@ -2639,6 +2692,73 @@ impl Own {
             docs: s(self.docs).max(1),
             postings: self.postings.iter().map(|(k, n)| (k.clone(), s(*n))).collect(),
         }
+    }
+
+    /// The counts and the nodes they were measured over, as bytes (`own_counts`).
+    fn encode(&self, nodes: usize) -> Vec<u8> {
+        let mut b = Vec::new();
+        let int = |b: &mut Vec<u8>, v: i64| b.extend_from_slice(&v.to_le_bytes());
+        let text = |b: &mut Vec<u8>, t: &str| {
+            b.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            b.extend_from_slice(t.as_bytes());
+        };
+        b.extend_from_slice(b"own1");
+        int(&mut b, nodes as i64);
+        int(&mut b, self.docs);
+        int(&mut b, self.kinds.len() as i64);
+        for (k, (n, size)) in &self.kinds {
+            [*k, *n, *size].into_iter().for_each(|v| int(&mut b, v));
+        }
+        int(&mut b, self.edges.len() as i64);
+        for ((p, c), n) in &self.edges {
+            [*p, *c, *n].into_iter().for_each(|v| int(&mut b, v));
+        }
+        int(&mut b, self.postings.len() as i64);
+        for ((rel, col, v), n) in &self.postings {
+            text(&mut b, rel);
+            text(&mut b, col);
+            int(&mut b, *v);
+            int(&mut b, *n);
+        }
+        b
+    }
+
+    fn decode(b: &[u8]) -> Option<(usize, Own)> {
+        let mut at = 4usize;
+        if b.get(..4)? != b"own1" {
+            return None;
+        }
+        let mut int = || -> Option<i64> {
+            let v = i64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?);
+            at += 8;
+            Some(v)
+        };
+        let nodes = int()? as usize;
+        let mut own = Own { docs: int()?, ..Own::default() };
+        for _ in 0..int()? {
+            let (k, n, size) = (int()?, int()?, int()?);
+            own.kinds.insert(k, (n, size));
+        }
+        for _ in 0..int()? {
+            let (p, c, n) = (int()?, int()?, int()?);
+            own.edges.insert((p, c), n);
+        }
+        let postings = int()?;
+        let mut text = |at: &mut usize| -> Option<String> {
+            let n = u32::from_le_bytes(b.get(*at..*at + 4)?.try_into().ok()?) as usize;
+            let t = String::from_utf8(b.get(*at + 4..*at + 4 + n)?.to_vec()).ok()?;
+            *at += 4 + n;
+            Some(t)
+        };
+        for _ in 0..postings {
+            let rel = text(&mut at)?;
+            let col = text(&mut at)?;
+            let v = i64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?);
+            let n = i64::from_le_bytes(b.get(at + 8..at + 16)?.try_into().ok()?);
+            at += 16;
+            own.postings.insert((rel, col, v), n);
+        }
+        Some((nodes, own))
     }
 
     fn add(&mut self, other: &Own) {

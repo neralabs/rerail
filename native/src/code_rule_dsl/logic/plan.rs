@@ -241,6 +241,18 @@ pub(in crate::code_rule_dsl) struct Stats {
 }
 
 impl Stats {
+    /// What the planner knows of `rel` (`RERAIL_DUMP_STATS`, a debugging aid): each column's (rows, distinct, sum of
+    /// squared postings, within documents), its cardinality, and its few-valued columns' value counts.
+    pub(in crate::code_rule_dsl) fn describe(&self, rel: &str) -> String {
+        let mut cols: Vec<String> = self.col.iter().filter(|((t, _), _)| t.contains(rel)).map(|((t, c), v)| format!("{t}.{c}={v:?}")).collect();
+        cols.sort();
+        let mut few: Vec<String> = self.dfreq.iter().filter(|((t, _), _)| t.contains(rel)).map(|((t, c), m)| format!("{t}.c{c}: {} values, {} rows", m.len(), m.values().sum::<i64>())).collect();
+        few.sort();
+        let mut card: Vec<String> = self.card.iter().filter(|(t, _)| t.contains(rel)).map(|(t, n)| format!("{t}={n}")).collect();
+        card.sort();
+        let kinds = if rel == "kind" { format!("; {} kinds, {} nodes", self.kfreq.len(), self.kfreq.values().sum::<i64>()) } else { String::new() };
+        format!("{rel}: card {}; {}; {}{kinds}", card.join(" "), cols.join(" "), few.join(" "))
+    }
     fn new(db: &Connection, prog: &Program, inputs: &Inputs) -> Result<Self> {
         if let Some(given) = &inputs.given {
             return Ok(given.clone());
