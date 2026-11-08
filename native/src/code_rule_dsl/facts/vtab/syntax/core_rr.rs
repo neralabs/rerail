@@ -513,7 +513,6 @@ pub(super) struct CoreRows {
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
-    rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
@@ -652,7 +651,7 @@ impl CoreRows {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                if requested_container || i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
+                if requested_container || i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -691,50 +690,6 @@ impl CoreRows {
             let j = starts.partition_point(|&s| s < b);
             if j < toks.len() && toks[j].2 != id {
                 self.token_after.push([id, toks[j].2]);
-            }
-        }
-    }
-
-    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
-    /// one of its lines (`src_line`) or a comment node, is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
-    /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
-    /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
-    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
-        use crate::code_rule_dsl::logic::front::SpanIn;
-        let facts = std::sync::Arc::clone(&p.facts);
-        let src = facts.source.as_str();
-        let base = p.len();
-        // Comment nodes, by local id: their own spans.
-        let comments: Vec<([u32; 2], u32)> = if patterns.iter().any(|(w, _, _)| *w == SpanIn::Comment) {
-            (0..base).filter(|&l| is_comment(dialect.name(&facts, p.core[l as usize]))).map(|l| (p.span(l), l)).collect()
-        } else {
-            Vec::new()
-        };
-        let x = p.extra.as_mut().expect("core.rr's spans");
-        let source = x.tokens;
-        for &(within, pattern, ref re) in patterns {
-            let pat = string(pattern) as i64;
-            // Each container's text and its local id.
-            let containers: Vec<([u32; 2], u32)> = match within {
-                SpanIn::Source => vec![(x.spans[source as usize], base + source)],
-                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| (x.spans[(source + l) as usize], base + source + l)).collect(),
-                SpanIn::Comment => comments.clone(),
-            };
-            for ([a, b], c) in containers {
-                let cid = i64::from(p.key) << 32 | i64::from(c);
-                for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
-                    for (g, name) in re.capture_names().enumerate() {
-                        let name = match (g, name) {
-                            (0, _) => "",
-                            (_, Some(name)) => name,
-                            (_, None) => continue,
-                        };
-                        let Some(m) = caps.get(g) else { continue };
-                        let id = base + x.spans.len() as u32;
-                        x.spans.push([a + m.start() as u32, a + m.end() as u32]);
-                        self.rx_span.push([pat, cid, j as i64, string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
-                    }
-                }
             }
         }
     }
@@ -846,7 +801,6 @@ impl CoreRows {
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
-            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }
 }

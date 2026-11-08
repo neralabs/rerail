@@ -541,8 +541,6 @@ struct Locs {
     lines: Arc<core_rr::Lines>,
     spans: Vec<[u32; 2]>,
     tokens: u32,
-    /// Where `rx_span`'s spans start in `spans` (after the lines); `spans.len()` when there are none.
-    matched: u32,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
     /// spans of its own (`source`, `src_line`): those are its file's.
     host: Option<(Arc<core_rr::Lines>, Placement)>,
@@ -644,9 +642,8 @@ impl Projected {
                 spans.push([0, f.source.len() as u32]);
                 spans.extend((1..=lines.count()).map(|l| lines.span(l)));
             }
-            let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
-            p.extra = Some(Box::new(Locs { lines, spans, tokens, matched, host }));
+            p.extra = Some(Box::new(Locs { lines, spans, tokens, host }));
         }
         p
     }
@@ -825,6 +822,12 @@ struct Extra {
     src_line: bool,
     src_line_lf: bool,
     tape_line: bool,
+///
+/// And in `core.rr`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
+/// group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` span, one of its `src_line` spans
+/// or a comment node, is span `m` (`MATCH`, numbered with `match_all`'s), placed as `match_all`'s. Group "" is the
+/// whole match; a group that takes no part in a match has no row. The spans are those `source` and `src_line` give
+/// here, so the two join.
     line_count: bool,
     text: bool,
     /// `text` of the `source` and `src_line` spans: core.rr's programs make it where a rule reads a copy of such a
@@ -864,6 +867,8 @@ struct Extra {
 /// (`matchgroup_<k>(sp, m, g, gsp)`, when read; `g` a string index), with one numbering of `m` for both.
 struct Found {
     k: usize,
+    rx_span: bool,
+    rx_spans: Vec<[i64; 5]>,
     regex: Arc<regex::Regex>,
     all: bool,
     groups: bool,
@@ -902,6 +907,7 @@ impl Extra {
                 .map(|(k, regex)| Found {
                     k,
                     regex: Arc::clone(regex),
+            rx_span: shape == Shape::Core && read("rx_span"),
                     all: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::MATCHES)),
                     groups: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::GROUPS)),
                     rows: Vec::new(),
@@ -914,11 +920,12 @@ impl Extra {
     }
 
     fn spans(&self) -> bool {
-        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment
+        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment || self.rx_span
     }
 
     /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
     fn line_rows(&self) -> bool {
+    /// Whether spans are made (their matches' too), with places in `line`, `end_line` and `col`.
         self.line && self.spans()
     }
 
@@ -1000,9 +1007,10 @@ impl Extra {
     }
 
     /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
-    /// `splitlines`: its lines split as Python's `str.splitlines()` does.
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, and the spans
+    /// each runs over.
     #[allow(clippy::too_many_arguments)]
-    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
         // A text-only document has no node, so no value.
@@ -1102,20 +1110,25 @@ impl Extra {
                 made.push((sp, r, Some(l)));
             }
         }
+        // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
+        let (mut source_at, mut lines_at) = (None, 0..0);
         if self.tape_line {
             for i in 0..f.lines.starts().len() {
                 let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
                 let r = f.lines.start(i)..f.lines.end(i);
                 self.tape_lines.push([key, l as i64, sp]);
+            source_at = Some(made.len());
                 self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
                 made.push((sp, r, Some(l)));
             }
+            lines_at.start = made.len();
         }
         // Each regex's matches in each span, and their named groups, numbered through the document.
         let mut next: u32 = 0;
         let mut id = |p: &Projected| -> StoreResult<i64> {
             if next >= MATCH {
                 return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches and groups", p.key)));
+            lines_at.end = made.len();
             }
             next += 1;
             Ok(span(MATCH | (next - 1)))
@@ -1176,6 +1189,41 @@ impl Extra {
         }
         if self.tape_line {
             out.push(("tape_line", relation(&["d", "l", "sp"], &mut self.tape_lines.iter().map(|r| r.to_vec()))));
+        // `rx_span`: each pattern over its spans, `j` each match in one.
+        for (within, pattern, re) in if self.rx_span { rx } else { &[] } {
+            use crate::code_rule_dsl::logic::front::SpanIn;
+            let containers: Vec<MadeSpan> = match within {
+                SpanIn::Source => source_at.map(|i| made[i].clone()).into_iter().collect(),
+                SpanIn::Line => made[lines_at.clone()].to_vec(),
+                SpanIn::Comment => match dialect {
+                    Some(dialect) => (0..p.len())
+                        .filter(|&l| core_rr::is_comment(dialect.name(f, p.core[l as usize])))
+                        .map(|l| {
+                            let [a, b] = p.span(l);
+                            (p.global(l), a as usize..b as usize, None)
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                },
+            };
+            let pat = string(pattern) as i64;
+            for (c, r, line) in &containers {
+                for (j, captures) in re.captures_iter(&source[r.clone()]).enumerate() {
+                    for (g, name) in re.capture_names().enumerate() {
+                        let name = match (g, name) {
+                            (0, _) => "",
+                            (_, Some(name)) => name,
+                            (_, None) => continue,
+                        };
+                        let Some(group) = captures.get(g) else { continue };
+                        let m = id(p)?;
+                        self.rx_spans.push([pat, *c, j as i64, string(name) as i64, m]);
+                        let (first, last, col) = place(r, line, group.range());
+                        self.span(m, first, last, col, group.as_str(), true, text, string);
+                    }
+                }
+            }
+        }
         }
         if self.line_count {
             out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.to_vec()))));
@@ -1233,6 +1281,9 @@ struct NodeRows {
     text: Vec<[i64; 2]>,
     intval: Vec<[i64; 2]>,
     op: Vec<[i64; 2]>,
+        if self.rx_span {
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m]))));
+        }
     name: Vec<[i64; 2]>,
     strs: Vec<[i64; 2]>,
     strprefix: Vec<[i64; 2]>,
@@ -1413,14 +1464,7 @@ impl Batch {
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, python_lines)))));
-            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if let Some(dialect) = dialect
-                && !rx_spans.is_empty()
-                && guest.is_none()
-                && !withheld
-            {
-                c.matches(&mut p, dialect, &rx_spans, &mut string);
-            }
+            let p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));
             }
@@ -1476,8 +1520,10 @@ impl Batch {
                 }
             }
             if d.guest.is_none() {
-                // A text document's lines split as W's `lines` regexes split any file's.
-                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut rows.text, &mut string)?;
+                // A text document's lines split as W's `lines` regexes split any file's. A withheld document has no
+                // `rx_span` matches.
+                let rx = if withheld { &[][..] } else { &rx_spans[..] };
+                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &mut rows.text, &mut string)?;
                 tree.document(&p, dialect, python == Some(tag), &mut string);
                 fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
                 cpython.document(&p, dialect, python == Some(tag), &mut string);
