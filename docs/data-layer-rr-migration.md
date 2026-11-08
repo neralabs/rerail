@@ -88,7 +88,10 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **84 target drafts and 16 absent translations**. None has full acceptance yet.
+The current inventory contains **85 target drafts and 15 absent translations**. None has full acceptance yet.
+The 85th draft, `grammar_callable_constructors`, preserves cross-file class membership, source function-scope rules, and breadth-first field assignment selection.
+All three original tests pass, including two positives. Its 124 supplemental API/protocol cases include 84 positive finding lists.
+All 119 reporter cases pass, including 84 positives. Twenty-two disabled-path controls reject missing semantic behavior.
 The 84th draft, `grammar_str_params`, preserves constructor prepasses, textual annotation matching, slot policy, and duplicate render events.
 All five original tests pass, including two positive file checks. Its 117 supplemental API cases include 66 positive finding lists.
 All 108 reporter cases pass, including 66 positive cases. Seventeen disabled-path controls reject missing semantic behavior.
@@ -1034,3 +1037,45 @@ The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-gra
 The five original tests do not exercise every legacy helper or collector event directly.
 Full registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance remain open.
 The inventory is 84 drafts and 16 absent translations. Full migration acceptance remains pending.
+
+## 2026-11-08 — Callable grammar constructors and function symbols
+
+The native rule covers all eight finding families in Datalog over the modern engine's shared syntax relations.
+Renderable constructor names come from direct module classes across the complete selected file set.
+Function-symbol lookup retains the source's module-local names, synchronous function scopes, local shadowing, and direct nested-function precedence.
+Assignments inside nested function bodies can affect the enclosing function's binding set, as they do in the source.
+
+Constructor field assignments follow `ast.walk` breadth-first order.
+The last qualifying assignment uses semantic depth followed by Python visit rank. The first synchronous constructor and render method supply class checks.
+Field tags preserve duplicate findings when separate fields store the same callable parameter.
+Ordinary and keyword-only constructor parameters participate. Positional-only and variadic parameters do not.
+The file selector excludes `tests` components and `fragments.py`, including their registry contributions.
+The default reporter also requires its marker script.
+
+The empty detector failed the two original positive tests and passed the negative test.
+The first implemented detector passed all three original tests but failed 31 supplemental API cases.
+Those failures missed callable annotations because semantic parent lookup skips type wrappers.
+The repaired predicate uses physical containment from constructor annotation roots. It also removes an unnecessary canonical-text dependency.
+
+The final run passes all three original tests with complete DTO comparisons.
+It passes 124 supplemental API/protocol cases and 119 reporter cases, with 84 positive finding lists in each corpus.
+All eight finding families have source-derived positive coverage.
+The corpus covers cross-file visibility, nested binding leakage, breadth-first writes, duplicate fields, keyword splats, async exclusions, and marker admission.
+Case shards retain each case's complete file set. They do not split repository analyses by file.
+
+All 22 disabled-path controls reject the corresponding missing behavior through observable parity differences.
+Five CLI cases retain source argument and summary protocol around native findings. Violation keys and individual format strings execute natively.
+The port adds no engine code and requires no new build.
+All 95 tooling tests and 96 rule/table readers pass. The preceding string-parameter rule's five CLI cases also pass.
+The generator reproduces the committed policy bytes. Final shape remains merged through the unchanged fetched tip `07a6b4171`.
+
+The [native contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-callable-constructors-native-contracts.json.gz) retains every source oracle, native case shard, control, implementation file, and validator.
+The earlier receipts retain the [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-callable-constructors-original-source.json.gz),
+[empty-detector failures](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-callable-constructors-detector-red.json.gz),
+and [missing annotation findings](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-callable-constructors-annotation-red.json.gz).
+
+The three original tests cover only two finding families. The supplemental corpus does not prove every possible Python source input.
+Legacy visitor and private AST-object helper APIs remain outside this snapshot's direct native coverage.
+Nonempty allowlist configuration and signing acceptance remain open. No signing action ran.
+Full registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance also remain open.
+The inventory is 85 drafts and 15 absent translations. Full migration acceptance remains pending.
