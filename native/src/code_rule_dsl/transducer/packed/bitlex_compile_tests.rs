@@ -1140,3 +1140,82 @@ fn json_corpus_tapes_equal_tree_sitter() {
     eprintln!("{equal} equal, {fallback} to tree-sitter, {second} took a second pass, {not_utf8} not UTF-8, {} differ", differ.len());
     assert!(differ.is_empty(), "tapes differ: {differ:?}");
 }
+
+/// Both tiers' CPU time over the files listed in `RERAIL_JSON_FILES`, best of 20, to set beside
+/// simdjson's two stages on the same files (`docs/parser-generators/19`): tier 1's function, its
+/// extract pass (the positions), and tier 2's function writing the tape. Run by name.
+#[test]
+#[ignore = "a measurement; run by name with RERAIL_JSON_FILES"]
+fn json_corpus_cost_against_simdjson() {
+    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
+    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
+    let cpu = JsonCpu::new();
+    let now = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec to write.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let total: usize = bytes.iter().map(Vec::len).sum();
+    let tier1: f64 = bytes.iter().map(|b| cpu.tier1.cpu_seconds(b, 20)).sum();
+    let extract: f64 = bytes
+        .iter()
+        .map(|b| {
+            (0..20)
+                .map(|_| {
+                    let s = now();
+                    std::hint::black_box(cpu.tier1.extract(b));
+                    now() - s
+                })
+                .fold(f64::MAX, f64::min)
+        })
+        .sum();
+    let (mut tier2, mut tokens) = (0.0, 0usize);
+    for b in &bytes {
+        let run = cpu.tier1.extract(b);
+        tokens += run.positions[0].len();
+        tier2 += cpu.tier2.call_cpu_seconds(b, &run.positions[0], &run.positions[1], 20).expect("a tape");
+    }
+    println!("{} files, {total} bytes, {tokens} tokens", bytes.len());
+    println!("tier 1, the function: {:.3} ms, {:.3} ns/byte", tier1 * 1e3, tier1 / total as f64 * 1e9);
+    println!("tier 1 with its extract pass (host): {:.3} ms, {:.3} ns/byte", extract * 1e3, extract / total as f64 * 1e9);
+    println!("tier 2, the function writing the tape: {:.3} ms, {:.3} ns/byte, {:.2} ns/token", tier2 * 1e3, tier2 / total as f64 * 1e9, tier2 / tokens as f64 * 1e9);
+}
+
+/// JSON's tier 2 as Cranelift IR and machine code, at the guessed widths of a small file, and
+/// its words, into the directory `RERAIL_DUMP`; and tier 1's machine code. Run by name.
+#[test]
+#[ignore = "a dump; run by name with RERAIL_DUMP"]
+fn dump_json_tier2_code() {
+    let dir = std::path::PathBuf::from(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP: a directory"));
+    let (p, _) = json_compiled();
+    let cpu = JsonCpu::new();
+    let (clif, asm) = cpu.tier2.code(native_cpu_stream::Shape::guess(0)).unwrap_or_else(|_| panic!("compiles"));
+    std::fs::write(dir.join("tier2.clif"), clif).expect("writes");
+    std::fs::write(dir.join("tier2.s"), asm).expect("writes");
+    std::fs::write(dir.join("tier2.rir"), rir::disassemble(&p, None)).expect("writes");
+    std::fs::write(dir.join("tier1.s"), &cpu.tier1.disassembly).expect("writes");
+}
+
+/// Tier 2's CPU time per token on files of one kind of value each (an array of 100,000), to see
+/// each path's cost. Run by name.
+#[test]
+#[ignore = "a measurement; run by name"]
+fn json_tier2_cost_per_path() {
+    let cpu = JsonCpu::new();
+    let many = |v: &str| format!("[{}]", vec![v; 100_000].join(","));
+    for (name, file) in [
+        ("numbers 1", many("1")),
+        ("numbers 12345.5", many("12345.5")),
+        ("true", many("true")),
+        ("strings \"a\"", many("\"a\"")),
+        ("empty arrays", many("[]")),
+        ("objects {\"a\":1}", many("{\"a\":1}")),
+    ] {
+        let run = cpu.tier1.extract(file.as_bytes());
+        let tokens = run.positions[0].len();
+        let s = cpu.tier2.call_cpu_seconds(file.as_bytes(), &run.positions[0], &run.positions[1], 10).expect("a tape");
+        println!("{name}: {tokens} tokens, {:.2} ns/token", s / tokens as f64 * 1e9);
+    }
+}

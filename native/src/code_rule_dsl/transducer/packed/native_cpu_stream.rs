@@ -21,8 +21,8 @@ use super::native_cpu_block::{self, CompiledBlock, FRONT};
 use super::native_ir::{NativeModule, StructuralOperation};
 use super::stream::{REFUSE, Refused};
 use crate::code_rule_dsl::tape::TAIL_FROM_START;
-use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
+use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::collections::HashMap;
@@ -386,27 +386,16 @@ struct Regs {
     before_last: Variable,
 }
 
-/// The context's fields, loaded once at the entry.
+/// The context: each field is loaded where a word uses it, as simdjson reads its parser's fields
+/// through `this`, so that none is live across the function.
 struct Inputs {
     cx: Value,
-    bytes: Value,
-    len: Value,
-    starts: Value,
-    nstarts: Value,
-    lasts: Value,
-    nlasts: Value,
-    code: Value,
-    size: Value,
-    base: Value,
-    off: Value,
-    tail: Value,
-    node_cap: Value,
-    ids: Value,
-    order: Value,
-    open: Value,
-    returns: Value,
-    stack_cap: Value,
-    words: Value,
+}
+
+impl Inputs {
+    fn get(&self, f: &mut FunctionBuilder<'_>, at: usize) -> Value {
+        f.ins().load(types::I64, MemFlags::trusted().with_readonly(), self.cx, at as i32)
+    }
 }
 
 /// Branch to `to` (with `args`) when `cond`, and go on in a new block otherwise.
@@ -415,6 +404,22 @@ fn guard(f: &mut FunctionBuilder<'_>, cond: Value, to: Block, args: &[Value]) {
     let args: Vec<cranelift_codegen::ir::BlockArg> = args.iter().map(|&v| v.into()).collect();
     f.ins().brif(cond, to, &args, go_on, &[]);
     f.switch_to_block(go_on);
+}
+
+/// Jump to the run `byte` falls in: `runs` are each run's first byte, ascending, and its target.
+fn search(f: &mut FunctionBuilder<'_>, byte: Value, runs: &[(u32, Block)]) {
+    if runs.len() == 1 {
+        f.ins().jump(runs[0].1, &[]);
+        return;
+    }
+    let mid = runs.len() / 2;
+    let (low, high) = (f.create_block(), f.create_block());
+    let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, byte, i64::from(runs[mid].0));
+    f.ins().brif(below, low, &[], high, &[]);
+    f.switch_to_block(low);
+    search(f, byte, &runs[..mid]);
+    f.switch_to_block(high);
+    search(f, byte, &runs[mid..]);
 }
 
 /// `base[index]` for elements of `size` bytes.
@@ -471,6 +476,7 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
     pushed.sort_unstable();
     pushed.dedup();
 
+    // Not optimised: `opt_level=speed` measured slower on the corpus (doc 19).
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let ptr = module.target_config().pointer_type();
@@ -502,28 +508,7 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
         f.switch_to_block(entry);
         let cx = f.block_params(entry)[0];
         let ro = MemFlags::trusted().with_readonly();
-        let field = |f: &mut FunctionBuilder<'_>, at: usize| f.ins().load(types::I64, ro, cx, at as i32);
-        let i = Inputs {
-            cx,
-            bytes: field(&mut f, offset_of!(Context, bytes)),
-            len: field(&mut f, offset_of!(Context, len)),
-            starts: field(&mut f, offset_of!(Context, starts)),
-            nstarts: field(&mut f, offset_of!(Context, nstarts)),
-            lasts: field(&mut f, offset_of!(Context, lasts)),
-            nlasts: field(&mut f, offset_of!(Context, nlasts)),
-            code: field(&mut f, offset_of!(Context, code)),
-            size: field(&mut f, offset_of!(Context, size)),
-            base: field(&mut f, offset_of!(Context, base)),
-            off: field(&mut f, offset_of!(Context, off)),
-            tail: field(&mut f, offset_of!(Context, tail)),
-            node_cap: field(&mut f, offset_of!(Context, node_cap)),
-            ids: field(&mut f, offset_of!(Context, ids)),
-            order: field(&mut f, offset_of!(Context, order)),
-            open: field(&mut f, offset_of!(Context, open)),
-            returns: field(&mut f, offset_of!(Context, returns)),
-            stack_cap: field(&mut f, offset_of!(Context, stack_cap)),
-            words: field(&mut f, offset_of!(Context, words)),
-        };
+        let i = Inputs { cx };
         let var = |f: &mut FunctionBuilder<'_>| {
             let v = f.declare_var(types::I64);
             let zero = f.ins().iconst(types::I64, 0);
@@ -558,7 +543,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
         let close = |f: &mut FunctionBuilder<'_>, r: &Regs, i: &Inputs, at: Value, own_start: Value, e: Value| {
             let nn = f.use_var(r.nodes);
             let size = f.ins().isub(nn, at);
-            put(f, i.size, at, size, shape.size);
+            let in_size = i.get(f, offset_of!(Context, size));
+            put(f, in_size, at, size, shape.size);
             let last = f.use_var(r.last_start);
             let from_last = f.ins().isub(e, last);
             let length = f.ins().isub(e, own_start);
@@ -573,7 +559,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
             let o = f.use_var(r.or_len);
             let o = f.ins().bor(o, length);
             f.def_var(r.or_len, o);
-            put(f, i.tail, at, if shape.from_last { from_last } else { length }, shape.tail);
+            let in_tail = i.get(f, offset_of!(Context, tail));
+            put(f, in_tail, at, if shape.from_last { from_last } else { length }, shape.tail);
         };
         for (pc, block) in words.iter().enumerate() {
             f.switch_to_block(blocks[pc]);
@@ -586,7 +573,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let end = f.use_var(r.end);
                     f.def_var(r.last_end, end);
                     let next = f.use_var(r.next);
-                    let is_end = f.ins().icmp(IntCC::Equal, next, i.nstarts);
+                    let in_nstarts = i.get(&mut f, offset_of!(Context, nstarts));
+                    let is_end = f.ins().icmp(IntCC::Equal, next, in_nstarts);
                     let (ended, take, after) = (f.create_block(), f.create_block(), f.create_block());
                     f.ins().brif(is_end, ended, &[], take, &[]);
                     f.switch_to_block(ended);
@@ -594,7 +582,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     f.def_var(r.at_end, one);
                     f.ins().jump(after, &[]);
                     f.switch_to_block(take);
-                    let at = element(&mut f, i.starts, next, 4);
+                    let in_starts = i.get(&mut f, offset_of!(Context, starts));
+                    let at = element(&mut f, in_starts, next, 4);
                     let s = f.ins().uload32(ro, at, 0);
                     let inside = f.ins().icmp(IntCC::UnsignedLessThan, s, end);
                     guard(&mut f, inside, refused, &[here]);
@@ -613,9 +602,11 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let start = f.use_var(r.start);
                     let e = if last {
                         let taken = f.use_var(r.taken);
-                        let none = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, taken, i.nlasts);
+                        let in_nlasts = i.get(&mut f, offset_of!(Context, nlasts));
+                        let none = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, taken, in_nlasts);
                         guard(&mut f, none, refused, &[here]);
-                        let at = element(&mut f, i.lasts, taken, 4);
+                        let in_lasts = i.get(&mut f, offset_of!(Context, lasts));
+                        let at = element(&mut f, in_lasts, taken, 4);
                         let l = f.ins().uload32(ro, at, 0);
                         let t1 = f.ins().iadd_imm(taken, 1);
                         f.def_var(r.taken, t1);
@@ -643,12 +634,19 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let limit = f.use_var(r.limit);
                     let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, limit);
                     guard(&mut f, past, refused, &[here]);
-                    let p = f.ins().iadd(i.bytes, at);
+                    let in_bytes = i.get(&mut f, offset_of!(Context, bytes));
+                    let p = f.ins().iadd(in_bytes, at);
                     let byte = f.ins().uload8(types::I32, ro, p, 0);
-                    let table: Vec<_> = s.targets.iter().map(|&t| f.func.dfg.block_call(to(t), &[])).collect();
-                    let default = f.func.dfg.block_call(refuse, &[]);
-                    let jt = f.create_jump_table(JumpTableData::new(default, &table));
-                    f.ins().br_table(byte, jt);
+                    // The byte's runs of one target, searched by compares, as a C compiler lowers
+                    // simdjson's `switch (*value)`: a jump table's `csdb` barrier would stop
+                    // speculation at every token.
+                    let mut runs: Vec<(u32, Block)> = Vec::new();
+                    for (b, &t) in s.targets.iter().enumerate() {
+                        if runs.last().is_none_or(|&(_, last)| last != to(t)) {
+                            runs.push((b as u32, to(t)));
+                        }
+                    }
+                    search(&mut f, byte, &runs);
                     f.switch_to_block(refuse);
                     f.ins().jump(refused, &[here.into()]);
                     fall_through = false;
@@ -661,7 +659,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     guard(&mut f, other, refused, &[here]);
                     // One load of the token's bytes and a compare, as simdjson's
                     // `is_valid_true_atom`.
-                    let p = f.ins().iadd(i.bytes, start);
+                    let in_bytes = i.get(&mut f, offset_of!(Context, bytes));
+                    let p = f.ins().iadd(in_bytes, start);
                     let w = f.ins().load(types::I64, any, p, 0);
                     let w = if s.len() < 8 { f.ins().band_imm(w, ((1u64 << (8 * s.len())) - 1) as i64) } else { w };
                     let mut want = [0u8; 8];
@@ -687,7 +686,9 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let rows = f.ins().iadd_imm(i.cx, i64::from(row));
                     let one = f.ins().iconst(types::I64, 1);
                     let callee = f.ins().iconst(ptr, address as i64);
-                    f.ins().call_indirect(check_sig, callee, &[i.bytes, rows, one, i.words]);
+                    let in_bytes = i.get(&mut f, offset_of!(Context, bytes));
+                    let in_words = i.get(&mut f, offset_of!(Context, words));
+                    f.ins().call_indirect(check_sig, callee, &[in_bytes, rows, one, in_words]);
                     // The check's one output: any bit refuses, a word per 64 bytes.
                     let (head, body, done) = (f.create_block(), f.create_block(), f.create_block());
                     f.append_block_param(head, types::I64);
@@ -699,7 +700,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let more = f.ins().icmp(IntCC::UnsignedLessThan, j, blocks_n);
                     f.ins().brif(more, body, &[], done, &[acc.into()]);
                     f.switch_to_block(body);
-                    let at = element(&mut f, i.words, j, 8);
+                    let in_words = i.get(&mut f, offset_of!(Context, words));
+                    let at = element(&mut f, in_words, j, 8);
                     let w = f.ins().load(types::I64, rw, at, 0);
                     let acc = f.ins().bor(acc, w);
                     let j1 = f.ins().iadd_imm(j, 1);
@@ -713,7 +715,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let leaf = matches!(block.operation, S::Leaf { .. });
                     let slot = slot_of[pc].expect("every node word has a slot");
                     let nn = f.use_var(r.nodes);
-                    let no_room = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, nn, i.node_cap);
+                    let in_node_cap = i.get(&mut f, offset_of!(Context, node_cap));
+                    let no_room = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, nn, in_node_cap);
                     guard(&mut f, no_room, full, &[]);
                     let start = f.use_var(r.start);
                     // The base of each 16 nodes is its first node's start (starts do not fall
@@ -723,18 +726,21 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     f.ins().brif(low, based, &[], first, &[]);
                     f.switch_to_block(first);
                     let b = f.ins().ushr_imm(nn, 4);
-                    put(&mut f, i.base, b, start, 4);
+                    let in_base = i.get(&mut f, offset_of!(Context, base));
+                    put(&mut f, in_base, b, start, 4);
                     f.def_var(r.base, start);
                     f.ins().jump(based, &[]);
                     f.switch_to_block(based);
                     let b = f.use_var(r.base);
                     let off = f.ins().isub(start, b);
-                    put(&mut f, i.off, nn, off, shape.off);
+                    let in_off = i.get(&mut f, offset_of!(Context, off));
+                    put(&mut f, in_off, nn, off, shape.off);
                     let o = f.use_var(r.or_off);
                     let o = f.ins().bor(o, off);
                     f.def_var(r.or_off, o);
                     // The code: its slot's number, given at its first use.
-                    let at = f.ins().iadd_imm(i.ids, 2 * i64::from(slot));
+                    let in_ids = i.get(&mut f, offset_of!(Context, ids));
+                    let at = f.ins().iadd_imm(in_ids, 2 * i64::from(slot));
                     let id = f.ins().uload16(types::I64, rw, at, 0);
                     let unset = f.ins().icmp_imm(IntCC::Equal, id, 0xffff);
                     let (new, coded) = (f.create_block(), f.create_block());
@@ -744,21 +750,25 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let nc = f.use_var(r.codes);
                     f.ins().istore16(rw, nc, at, 0);
                     let s = f.ins().iconst(types::I64, i64::from(slot));
-                    put(&mut f, i.order, nc, s, 2);
+                    let in_order = i.get(&mut f, offset_of!(Context, order));
+                    put(&mut f, in_order, nc, s, 2);
                     let nc1 = f.ins().iadd_imm(nc, 1);
                     f.def_var(r.codes, nc1);
                     f.ins().jump(coded, &[nc.into()]);
                     f.switch_to_block(coded);
                     let id = f.block_params(coded)[0];
-                    put(&mut f, i.code, nn, id, 2);
+                    let in_code = i.get(&mut f, offset_of!(Context, code));
+                    put(&mut f, in_code, nn, id, 2);
                     f.def_var(r.last_start, start);
                     if leaf {
                         // A leaf is its own last descendant: its tail is its length.
                         let one = f.ins().iconst(types::I64, 1);
-                        put(&mut f, i.size, nn, one, shape.size);
+                        let in_size = i.get(&mut f, offset_of!(Context, size));
+                        put(&mut f, in_size, nn, one, shape.size);
                         let end = f.use_var(r.end);
                         let length = f.ins().isub(end, start);
-                        put(&mut f, i.tail, nn, length, shape.tail);
+                        let in_tail = i.get(&mut f, offset_of!(Context, tail));
+                        put(&mut f, in_tail, nn, length, shape.tail);
                         for v in [r.or_last, r.or_len] {
                             let o = f.use_var(v);
                             let o = f.ins().bor(o, length);
@@ -766,9 +776,11 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                         }
                     } else {
                         let no = f.use_var(r.open);
-                        let deep = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, no, i.stack_cap);
+                        let in_stack_cap = i.get(&mut f, offset_of!(Context, stack_cap));
+                        let deep = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, no, in_stack_cap);
                         guard(&mut f, deep, full, &[]);
-                        let at = element(&mut f, i.open, no, 8);
+                        let in_open = i.get(&mut f, offset_of!(Context, open));
+                        let at = element(&mut f, in_open, no, 8);
                         let nn32 = f.ins().ireduce(types::I32, nn);
                         f.ins().store(rw, nn32, at, 0);
                         let s32 = f.ins().ireduce(types::I32, start);
@@ -785,7 +797,8 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     guard(&mut f, none, refused, &[here]);
                     let no1 = f.ins().iadd_imm(no, -1);
                     f.def_var(r.open, no1);
-                    let slot = element(&mut f, i.open, no1, 8);
+                    let in_open = i.get(&mut f, offset_of!(Context, open));
+                    let slot = element(&mut f, in_open, no1, 8);
                     let at = f.ins().uload32(rw, slot, 0);
                     let own = f.ins().uload32(rw, slot, 4);
                     let e = if this { f.use_var(r.end) } else { f.use_var(r.last_end) };
@@ -795,9 +808,11 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                 S::NodeField { .. } | S::NodeSuper { .. } => {}
                 S::Push { target } => {
                     let nr = f.use_var(r.returns);
-                    let deep = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, nr, i.stack_cap);
+                    let in_stack_cap = i.get(&mut f, offset_of!(Context, stack_cap));
+                    let deep = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, nr, in_stack_cap);
                     guard(&mut f, deep, full, &[]);
-                    let slot = element(&mut f, i.returns, nr, 4);
+                    let in_returns = i.get(&mut f, offset_of!(Context, returns));
+                    let slot = element(&mut f, in_returns, nr, 4);
                     let t = f.ins().iconst(types::I32, i64::from(target));
                     f.ins().store(rw, t, slot, 0);
                     let nr1 = f.ins().iadd_imm(nr, 1);
@@ -809,14 +824,22 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     guard(&mut f, none, refused, &[here]);
                     let nr1 = f.ins().iadd_imm(nr, -1);
                     f.def_var(r.returns, nr1);
-                    let slot = element(&mut f, i.returns, nr1, 4);
+                    let in_returns = i.get(&mut f, offset_of!(Context, returns));
+                    let slot = element(&mut f, in_returns, nr1, 4);
                     let p = f.ins().uload32(rw, slot, 0);
                     let refuse = f.create_block();
-                    let mut back = Switch::new();
+                    // The states that `PUSH` names, searched by compares (no jump table, whose
+                    // `csdb` would stop speculation).
+                    let mut runs: Vec<(u32, Block)> = vec![(0, refuse)];
                     for &t in &pushed {
-                        back.set_entry(u128::from(t), blocks[usize::from(t) + usize::from(again)]);
+                        let to = (u32::from(t), blocks[usize::from(t) + usize::from(again)]);
+                        match runs.last_mut() {
+                            Some(last) if last.0 == to.0 => *last = to,
+                            _ => runs.push(to),
+                        }
+                        runs.push((u32::from(t) + 1, refuse));
                     }
-                    back.emit(&mut f, p, refuse);
+                    search(&mut f, p, &runs);
                     f.switch_to_block(refuse);
                     f.ins().jump(refused, &[here.into()]);
                     fall_through = false;
@@ -829,15 +852,19 @@ fn compile(native: &NativeModule, shape: Shape, checks: Arc<Vec<CompiledBlock>>)
                     let nr = f.use_var(r.returns);
                     let calls = f.ins().icmp_imm(IntCC::NotEqual, nr, 0);
                     let taken = f.use_var(r.taken);
-                    let left = f.ins().icmp(IntCC::NotEqual, taken, i.nlasts);
+                    let in_nlasts = i.get(&mut f, offset_of!(Context, nlasts));
+                    let left = f.ins().icmp(IntCC::NotEqual, taken, in_nlasts);
                     let a = f.ins().bor(not_end, not_one);
                     let b = f.ins().bor(calls, left);
                     let bad = f.ins().bor(a, b);
                     guard(&mut f, bad, refused, &[here]);
                     // The root closes at the file's end.
-                    let at = f.ins().uload32(rw, i.open, 0);
-                    let own = f.ins().uload32(rw, i.open, 4);
-                    close(&mut f, &r, &i, at, own, i.len);
+                    let in_open = i.get(&mut f, offset_of!(Context, open));
+                    let at = f.ins().uload32(rw, in_open, 0);
+                    let in_open = i.get(&mut f, offset_of!(Context, open));
+                    let own = f.ins().uload32(rw, in_open, 4);
+                    let in_len = i.get(&mut f, offset_of!(Context, len));
+                    close(&mut f, &r, &i, at, own, in_len);
                     for (v, o) in [
                         (r.nodes, offset_of!(Context, node_count)),
                         (r.codes, offset_of!(Context, code_count)),
@@ -910,4 +937,37 @@ pub(super) fn nodes_of(c: &Columns) -> Vec<super::stream::Node> {
             super::stream::Node { kind: kf & 0x3ff, field: kf >> 10, supers: supers.clone(), start: start(i), end: from + cell(&c.tail, i, c.shape.tail), size }
         })
         .collect()
+}
+
+#[cfg(test)]
+impl Tier2Cpu {
+    /// The compiled function's CPU time over one file (thread user + system), best of `reps`,
+    /// at the widths its tape takes, its buffers made before: the cost of the code alone, as
+    /// simdjson's stage 2 is timed with its tape allocated.
+    pub(super) fn call_cpu_seconds(&self, bytes: &[u8], starts: &[u32], lasts: &[u32], reps: usize) -> Option<f64> {
+        let shape = self.tape(bytes, starts, lasts).ok()?.shape;
+        let f = self.function(shape).ok()?;
+        let mut padded = vec![0u8; FRONT];
+        padded.extend_from_slice(bytes);
+        padded.resize(FRONT + bytes.len() + PADDING, 0);
+        let mut stream = starts.to_vec();
+        stream.push(bytes.len() as u32);
+        let mut out = Buffers::new(4 * starts.len() + 8, shape, self.slots.len(), bytes.len());
+        let now = || {
+            let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: `t` is a valid timespec to write.
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+            t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+        };
+        (0..reps)
+            .map(|_| {
+                out.ids.fill(u16::MAX);
+                let start = now();
+                let run = f.call(&padded[FRONT..], bytes.len(), &stream, lasts, &mut out);
+                let t = now() - start;
+                assert_eq!(run.status, 0);
+                t
+            })
+            .reduce(f64::min)
+    }
 }
