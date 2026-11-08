@@ -2110,6 +2110,13 @@ reads base relations) is ignored with this reason, so a session reruns every fil
 **Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
 the session test runs again.
 
+**Closed (2026-11-08):** with the hold-back lifted, the 4096-node run, read whole from the memo, gives 241 `call_open`
+rows and 256 `call_target`, as T and the evaluated run do. Every output file is equal. The guest-hiding fix (O110)
+was in when they first agreed, and it is the likely cause: hiding read `tbv`'s `live_asg` from its annotation copy
+only. That was not proven by reverting it. One gap remained: a run read whole from the memo wrote no
+`rr_embed_req.csv`, a file-local output no file made, which the evaluated run writes empty. Every output now has its
+file. The hold-back is removed, and `a_session_reruns_what_an_edit_changed` runs again.
+
 ## O110. Four builtin receivers are Unknown after the Typing-support merge
 
 After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`

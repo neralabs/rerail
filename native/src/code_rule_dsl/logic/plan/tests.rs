@@ -477,7 +477,7 @@ fn own_ingestion_derives_what_t_facts_do() {
             .collect::<Vec<_>>()
             .join("\t")
     };
-    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
     for name in ["workload", "calls"] {
         let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
