@@ -226,6 +226,9 @@
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol)
+// Demanded host inputs, read once per run. "cpu_count" is the online CPU count;
+// "env:NAME" reads that process environment variable. Missing or unknown keys have no row.
+.decl host_info(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 // Metadata shares dir_entry's cached listing. is_file and bytes follow a link;
 // is_symlink describes the entry itself. Missing link targets have zero bytes.
@@ -432,6 +435,11 @@
 // Python 3.13 repr of scalar Unicode text: quote choice and printable/control character escapes.
 .functor python_repr(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
+// Python 3.13 decimal int syntax (Unicode 15.1), clamped to inclusive i64 bounds.
+// Accepts surrounding Python integer whitespace, signs, and digit-separated underscores.
+// max_digits counts digits, excluding separators; zero disables the limit.
+// Invalid text, bounds, or a negative limit gives no value. Huge integers need no allocation.
+.functor python_int_clamped(s: symbol, lower: number, upper: number, max_digits: number): number
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.

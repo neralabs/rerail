@@ -490,7 +490,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "d78ddd102b74af9f002f04c1e6723ea5a2d917df1076ad5910c2958feb247252",
+      "sha256": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -599,6 +599,11 @@
           "before": "2dad893d0edb5ed3e3bf6237bc12c910c7c51d03bcb8f23cafc088d93b073933",
           "after": "d78ddd102b74af9f002f04c1e6723ea5a2d917df1076ad5910c2958feb247252",
           "reason": "Expose whole-batch weighted partitions with typed task and occurrence identity"
+        },
+        {
+          "before": "d78ddd102b74af9f002f04c1e6723ea5a2d917df1076ad5910c2958feb247252",
+          "after": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
+          "reason": "Add demanded host metadata and exact bounded Python decimal conversion for scanner worker configuration"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2869,7 +2874,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "1db87728025cf033a7bb0f047736257c4b4786f07656dccf03eb653fe163b510"
+        "sha256": "2404f020f0b908767573204a25a14ce0e78684477ee79e7e0fd6b50d73f17354"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -2881,7 +2886,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "b87f2c38cd0579e4770682714ee9cc76a9b3017a9cf00554d3d1dd10d85ab52b"
+        "sha256": "14c19ec4b23791e9061aa3d4309ddd65d7762b8f0468140b6f7ec10ecd88bf13"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
@@ -2889,11 +2894,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "3f8acd33d5d1def734e15004b09d3a55de75eb579d60e10056c0be27cf7f1b07"
+        "sha256": "2bc85a78ea36d396cc29d6eec41c782859d691eb828e0ca37073e9ffee2c09b5"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
-        "sha256": "63496dc54df97c1575ad392552ba790168d44a506c28056095e2879751973e99"
+        "sha256": "9431ef2d41b20be3476403c10a4bf10c216981d1f92b2e3bc74ae8166ad6930e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2901,7 +2906,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "02da0bd7aab860b5cc2a3a96d6d894e5f9bb19545c3c3f04fd18e6b1a3592130"
+        "sha256": "28278c95be78add4ac59046d6db7918920e2955e49a467a011f2d51d23b28c3e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
@@ -2909,7 +2914,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "adaefd742797cabe5e9e6c5e95aeb00a58736f08de1f33d61ef24c2613dce986"
+        "sha256": "144aa2d9c3d4413e123ee8ff58394b3885fb1c8c4d778887222139a7e137cdd9"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -2925,11 +2930,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "232374c66a4d602b2c9384dd8b98454d9912d58833ea69e81d24525411d6ddb8"
+        "sha256": "b8f9b413df663a6e86595ac0978272ce60ca63d41482745e1d830c2680984d35"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "2f3ddc9c4250bfb8762bf272ae9b95b270562e209cfecfcbf3197a6493c750a5"
+        "sha256": "8c33575d893f7ee99f810cb82ae7f59320dab34d836289c054349b2964afcb0b"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
@@ -2938,6 +2943,10 @@
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
         "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+        "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",

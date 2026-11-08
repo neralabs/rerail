@@ -71,6 +71,7 @@ pub(super) struct World {
     root: PathBuf,
     dirs: BTreeMap<String, Vec<DirectoryEntry>>,
     files: BTreeMap<String, Vec<String>>,
+    host: BTreeMap<String, Option<String>>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
@@ -79,6 +80,19 @@ pub(super) struct World {
 }
 
 impl World {
+    /// A demanded host value, cached for this execution, including absent values.
+    /// Host values are world inputs, never persisted as program facts or memo keys.
+    pub(super) fn host(&mut self, key: &str) -> Option<String> {
+        self.host_with(key, |key| match key {
+            "cpu_count" => cpu_count().map(|n| n.to_string()),
+            _ => key.strip_prefix("env:").and_then(|name| std::env::var(name).ok()),
+        })
+    }
+
+    fn host_with(&mut self, key: &str, lookup: impl FnOnce(&str) -> Option<String>) -> Option<String> {
+        self.host.entry(key.to_owned()).or_insert_with(|| lookup(key)).clone()
+    }
+
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
     pub(super) fn new(root: &Path, prog: &front::Program) -> World {
         let canonical = |p: &Path| std::fs::canonicalize(p).ok();
@@ -207,6 +221,18 @@ impl World {
     }
 }
 
+/// Match the OS online-processor count, rather than the process's affinity limit.
+fn cpu_count() -> Option<usize> {
+    #[cfg(unix)]
+    {
+        // SAFETY: sysconf has no pointer arguments and only reads host metadata.
+        let count = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
+        (count > 0).then_some(count as usize)
+    }
+    #[cfg(not(unix))]
+    { std::thread::available_parallelism().ok().map(usize::from) }
+}
+
 /// A document's path as the content store keys it: a loaded document's canonical path without its root.
 pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
@@ -215,6 +241,17 @@ pub(super) fn store_path(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_values_and_absence_are_read_once_per_execution() {
+        let mut world = World::default();
+        assert_eq!(world.host_with("env:present", |_| Some("first".into())), Some("first".into()));
+        assert_eq!(world.host_with("env:present", |_| panic!("read twice")), Some("first".into()));
+        assert_eq!(world.host_with("env:missing", |_| None), None);
+        assert_eq!(world.host_with("env:missing", |_| panic!("absence read twice")), None);
+        let mut next = World::default();
+        assert_eq!(next.host_with("env:present", |_| Some("changed".into())), Some("changed".into()));
+    }
 
     #[test]
     fn directory_projections_share_one_listing_but_new_runs_refresh_it() {

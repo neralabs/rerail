@@ -1958,13 +1958,25 @@ pub(crate) fn run_with_options(
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
-        let text = |atom: i64| -> Result<String> { Ok(db.query_row("SELECT sym_text(?1)", [atom], |r| r.get(0))?) };
         let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
         let mut pauses = 0;
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
+            // World request columns are symbols. Decode their vocabulary once,
+            // rather than SELECT sym_text for every key and every loaded file.
+            let ids: Vec<i64> = rows.iter().flatten().copied().collect::<BTreeSet<_>>().into_iter().collect();
+            let texts: BTreeMap<_, _> = ids.iter().copied().zip(crate::code_rule_dsl::logic::native::text_batch(&db, &ids)?).collect();
+            let text = |id: i64| -> Result<String> { texts.get(&id).cloned().ok_or_else(|| Error::Plan(format!("missing request symbol {id}"))) };
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let mut out = Vec::new();
+                if *produced == "host_info" {
+                    let mut values = Vec::new();
+                    for row in rows {
+                        if let Some(value) = world.host(&text(row[0])?) { values.push((row[0], value)); }
+                    }
+                    let symbols = atoms(&values.iter().map(|(_, value)| value.as_str()).collect::<Vec<_>>())?;
+                    return Ok(vec![(produced.to_string(), values.into_iter().zip(symbols).map(|((key, _), value)| vec![key, value]).collect())]);
+                }
                 for row in rows {
                     let asked = text(row[0])?;
                     if *produced == "dir_entry" {
@@ -1997,9 +2009,12 @@ pub(crate) fn run_with_options(
             for row in rows {
                 let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
                 if let Some(doc) = world.load(&asked, &module, &grammar, label, &corpus) {
-                    loaded_rows.push(vec![atoms(&[doc.path.as_str()])?[0], row[1], row[2]]);
+                    loaded_rows.push(vec![0, row[1], row[2]]);
                     fresh.push(doc);
                 }
+            }
+            for (row, path) in loaded_rows.iter_mut().zip(atoms(&fresh.iter().map(|doc| doc.path.as_str()).collect::<Vec<_>>())?) {
+                row[0] = path;
             }
             let mut out = vec![(world::LOADED.to_owned(), loaded_rows)];
             if fresh.is_empty() {

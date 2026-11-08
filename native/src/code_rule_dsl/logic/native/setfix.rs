@@ -106,6 +106,45 @@ pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl 
     Ok(ids)
 }
 
+/// Decode an entire demand batch directly from the shared atom arena. This
+/// submits no SQL and holds no lock across a producer or SQLite callback.
+pub(in crate::code_rule_dsl) fn text_batch(conn: &Connection, ids: &[i64]) -> Result<Vec<String>> {
+    let shared = symbols(conn)?;
+    let cursor = shared.read().unwrap();
+    ids.iter().map(|&id| {
+        if id < 0 || id as usize >= cursor.len() { return Err(err(format!("no symbol {id}"))); }
+        Ok(cursor.name(id))
+    }).collect()
+}
+
+#[cfg(test)]
+mod text_batch_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn decoding_a_thousand_request_atoms_submits_no_sql() {
+        unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+            // SAFETY: the counter outlives the callback, removed before it drops.
+            unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+            0
+        }
+        let db = Connection::open_in_memory().unwrap();
+        register_symbols(&db).unwrap();
+        let expected: Vec<_> = (0..1000).map(|i| format!("request-{i}-α")).collect();
+        let ids = intern_batch(&db, expected.iter().map(String::as_str)).unwrap();
+        let count = AtomicUsize::new(0);
+        // SAFETY: db and count stay alive until this trace is removed below.
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::from_ref(&count).cast_mut().cast()); }
+        let decoded = text_batch(&db, &ids);
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
+        assert_eq!(decoded.unwrap(), expected);
+        assert_eq!(count.load(Ordering::Relaxed), 0);
+        assert!(text_batch(&db, &[-1]).is_err());
+        assert!(text_batch(&db, &[i64::MAX]).is_err());
+    }
+}
+
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
 /// registers `atoms` and the store's commit hook on `conn` (decision 0049).

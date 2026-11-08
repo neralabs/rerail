@@ -72,6 +72,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
     ("to_number", &[Text], Number),
+    ("python_int_clamped", &[Text, Number, Number, Number], Number),
     // Soufflé's `%`, with no value for a zero divisor.
     ("mod", &[Number, Number], Number),
     // Soufflé's floats, as keys that order as the floats do (`float_key`): `to_float`, arithmetic, `to_string`.
@@ -183,6 +184,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
+        "python_int_clamped" => return super::python_integer::clamped(t(0), numbers[0], numbers[1], numbers[2]).map_or(Value::Null, Value::Integer),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
