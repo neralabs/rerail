@@ -450,22 +450,23 @@ fn rule_file(check: &str) -> Option<PathBuf> {
     rule_files().into_iter().find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy() == name))
 }
 
-/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rr` (its authored file
-/// merged), and the coverage (`coverage.txt`): clauses converted or authored, the gaps by kind, the approximations.
-#[test]
-#[ignore = "writes the converted rules into the pack"]
-fn convert_the_data_layer_pack() {
-    let out = pack().join("datalog");
-    std::fs::create_dir_all(&out).unwrap();
+/// The converter's run over the pack: each rule's id and conversion, its authored file merged.
+fn convert_pack() -> Vec<(String, Result<Converted, Failure>)> {
+    rule_files().into_iter().map(|path| (path.file_stem().unwrap().to_string_lossy().into_owned(), convert(&path, &Adjust::default()))).collect()
+}
+
+/// What the converter's run writes into `candidates/datalog`, by file name: every rule's program, `<rule>.rr` (its
+/// authored file merged), and the coverage, `coverage.txt`: clauses converted or authored, the gaps by kind, the
+/// approximations.
+fn pack_files(run: &[(String, Converted)]) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
     let (mut total, mut converted, mut authored, mut by_options) = (0, 0, 0, 0);
     let mut gaps = BTreeMap::<String, usize>::new();
     let mut approx = BTreeMap::<String, usize>::new();
     let mut per_rule = Vec::new();
-    for path in rule_files() {
-        let id = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let c = convert(&path, &Adjust::default()).unwrap_or_else(|e| panic!("{e}"));
+    for (id, c) in run {
         crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
-        std::fs::write(out.join(format!("{id}.rr")), &c.program).unwrap();
+        files.insert(format!("{id}.rr"), c.program.clone());
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
         let by_hand = c.clauses.iter().filter(|(_, r)| *r == Ok(Origin::Authored)).count();
         total += c.clauses.len();
@@ -514,8 +515,90 @@ fn convert_the_data_layer_pack() {
     for r in per_rule {
         report.push_str(&format!("  {r}\n"));
     }
-    std::fs::write(out.join("coverage.txt"), &report).unwrap();
-    println!("{report}");
+    files.insert("coverage.txt".to_owned(), report);
+    files
+}
+
+/// The converter's run, written into the pack (`pack_files`).
+#[test]
+#[ignore = "writes the converted rules into the pack"]
+fn convert_the_data_layer_pack() {
+    let out = pack().join("datalog");
+    std::fs::create_dir_all(&out).unwrap();
+    let run: Vec<(String, Converted)> = convert_pack().into_iter().map(|(id, c)| (id, c.unwrap_or_else(|e| panic!("{e}")))).collect();
+    let files = pack_files(&run);
+    for (name, text) in &files {
+        std::fs::write(out.join(name), text).unwrap();
+    }
+    println!("{}", files["coverage.txt"]);
+}
+
+/// Every authored file (`datalog/authored/<rule>.rr`) is a rule's, and merges into its conversion (core.rr's
+/// prelude, decision 0047's checks, `rr::check`, lowering, the overlay's rules), each `violation` at a clause its
+/// policy has, which it then authors; and what the pack holds in `datalog` is the converter's run as it is now
+/// (`convert_the_data_layer_pack` writes it): every rule's merged program and `coverage.txt`, and no other `.rr`.
+#[test]
+fn the_pack_holds_the_converters_run_over_every_authored_file() {
+    let run = convert_pack();
+    let ids: BTreeSet<&str> = run.iter().map(|(id, _)| id.as_str()).collect();
+    let mut errors = Vec::new();
+    let mut authored_files = BTreeSet::new();
+    for e in std::fs::read_dir(authored()).unwrap() {
+        let path = e.unwrap().path();
+        if path.extension().is_none_or(|x| x != "rr") {
+            continue;
+        }
+        let id = path.file_stem().unwrap().to_string_lossy().into_owned();
+        if !ids.contains(id.as_str()) {
+            errors.push(format!("{}: no rule of the pack has id {id}", path.display()));
+        }
+        authored_files.insert(id);
+    }
+    assert!(authored_files.len() > 50, "the authored files: {authored_files:?}");
+    for (id, c) in &run {
+        let c = match c {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("{id}: {e}"));
+                continue;
+            }
+        };
+        if !authored_files.contains(id) {
+            continue;
+        }
+        // The clauses the file's `violation`s name, each the policy's and authored.
+        let file = authored().join(format!("{id}.rr"));
+        let program = crate::code_rule_dsl::logic::rr::parse_file(&file).unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
+        let named: BTreeSet<&str> = program.rules.iter().filter_map(violation_of).map(|(_, clause)| clause).collect();
+        if named.is_empty() {
+            errors.push(format!("{}: no violation", file.display()));
+        }
+        for clause in named {
+            match c.clauses.iter().find(|(c, _)| c == clause) {
+                None => errors.push(format!("{}: clause {clause:?} is not the policy's", file.display())),
+                Some((_, r)) if *r != Ok(Origin::Authored) => errors.push(format!("{}: clause {clause:?} is not authored ({r:?})", file.display())),
+                Some(_) => {}
+            }
+        }
+    }
+    assert!(errors.is_empty(), "the authored files:\n{}", errors.join("\n"));
+    let run: Vec<(String, Converted)> = run.into_iter().map(|(id, c)| (id, c.unwrap_or_else(|e| unreachable!("{e}")))).collect();
+    let fresh = pack_files(&run);
+    let out = pack().join("datalog");
+    let mut committed = BTreeMap::new();
+    for e in std::fs::read_dir(&out).unwrap() {
+        let path = e.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_file() && (path.extension().is_some_and(|x| x == "rr") || name == "coverage.txt") {
+            committed.insert(name, std::fs::read_to_string(&path).unwrap());
+        }
+    }
+    let stale: Vec<&String> = fresh.keys().chain(committed.keys()).collect::<BTreeSet<_>>().into_iter().filter(|name| fresh.get(*name) != committed.get(*name)).collect();
+    assert!(
+        stale.is_empty(),
+        "{} differs from the converter's run (missing, extra or stale): {stale:?}; run `cargo test --lib convert_the_data_layer_pack -- --ignored` and commit candidates/datalog",
+        out.display()
+    );
 }
 
 /// One policy's conversion (`RERAIL_CONVERT_POLICY`: its file, or its rule id), under its authored file: each
