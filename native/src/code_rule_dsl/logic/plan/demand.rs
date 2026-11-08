@@ -58,9 +58,30 @@
 use super::super::front::{Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
+thread_local! {
+    /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
+    /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
+    /// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
+    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While the guard lives, `split_negations` splits nothing (`WHOLE`).
+pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WHOLE.with(|w| w.set(self.0));
+        }
+    }
+    Reset(WHOLE.with(|w| w.replace(true)))
+}
+
 /// `prog` with each demandable relation computed for the keys its readers reach (the module's split), and what was
 /// demanded; `None` where nothing is, or where the split would not stratify or type.
 pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(Program, Vec<String>)> {
+    if WHOLE.with(|w| w.get()) {
+        return None;
+    }
     let kept = |rel: &str| {
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)

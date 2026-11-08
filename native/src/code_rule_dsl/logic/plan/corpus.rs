@@ -2061,6 +2061,11 @@ pub(crate) fn run_with_options(
                     // are programs of their own, and would otherwise take each other's place.
                     let mut cell = cells.remove(&ckey);
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
+                        let read: BTreeSet<&String> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| &a.rel).collect();
+                        let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r)).collect();
+                        eprintln!("O125_VERIFY inputs read but not digested: {undigested:?}");
+                    }
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
                     let part = &maintained.program;
@@ -2080,9 +2085,12 @@ pub(crate) fn run_with_options(
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
-                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
                     }
+                    // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
+                    let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
+                    let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     if wanted.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
@@ -2124,6 +2132,16 @@ pub(crate) fn run_with_options(
                         }
                         cross_delta_counts = counts;
                     }
+                    let verify_deltas: HashMap<String, std::collections::HashSet<Vec<i64>>> = if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
+                        part.program
+                            .decls
+                            .iter()
+                            .filter(|(r, c)| (r.ends_with("__del") || r.ends_with("__ins")) && !c.is_empty() && part.program.rules.iter().any(|x| &x.head.rel == *r))
+                            .map(|(r, c)| (r.clone(), held_rows(&db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
                     let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
                     let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -2132,6 +2150,62 @@ pub(crate) fn run_with_options(
                             outputs.entry(rel.clone()).or_default().extend(lines);
                             node_columns.insert(rel, nodes);
                         }
+                    }
+                    // `RERAIL_CROSS_VERIFY`: derive the run's strata again (the cut's program, no maintenance) and name the
+                    // first relations, in stratum order, whose maintained rows differ (spike O125).
+                    if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
+                        let plain = cut.program(&cross);
+                        let mut vkeep = wanted.clone();
+                        vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
+                        let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
+                        let mut shown = 0;
+                        for (rel, width, kept_rows) in &rows {
+                            let want: std::collections::HashSet<Vec<i64>> = held_rows(&db, &again, rel, *width)?.into_iter().collect();
+                            let have: std::collections::HashSet<Vec<i64>> = kept_rows.iter().cloned().collect();
+                            if want != have && shown < 6 {
+                                shown += 1;
+                                let delta = |name: String| -> std::collections::HashSet<Vec<i64>> { verify_deltas.get(&name).cloned().unwrap_or_default() };
+                                let old_rows: std::collections::HashSet<Vec<i64>> = maintained
+                                    .sources
+                                    .iter()
+                                    .find(|(r, _)| *r == format!("{rel}__old"))
+                                    .map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
+                                    .unwrap_or_default();
+                                let (del, ins) = (delta(format!("{rel}__del")), delta(format!("{rel}__ins")));
+                                for row in have.difference(&want).take(3) {
+                                    eprintln!("O125_VERIFY   {rel}{row:?}: in old {}, in del {}, in ins {}", old_rows.contains(row), del.contains(row), ins.contains(row));
+                                }
+                                eprintln!(
+                                    "O125_VERIFY {rel}: {} extra, {} missing; e.g. extra {:?}, missing {:?}",
+                                    have.difference(&want).count(),
+                                    want.difference(&have).count(),
+                                    have.difference(&want).next(),
+                                    want.difference(&have).next()
+                                );
+                            }
+                        }
+                        if let Ok(v) = std::env::var("O125_TRACE") {
+                            let vs: Vec<i64> = v.split(',').map(|x| x.parse().unwrap()).collect();
+                            let hit = |row: &Vec<i64>| vs.iter().all(|v| row.contains(v));
+                            for (rel, width, kept_rows) in &rows {
+                                let fresh = held_rows(&db, &again, rel, *width)?;
+                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
+                                let (a, b): (Vec<_>, Vec<_>) = (kept_rows.iter().filter(|r| hit(r)).collect(), fresh.iter().filter(|r| hit(r)).collect());
+                                let del: Vec<_> = verify_deltas.get(&format!("{rel}__del")).map(|d| d.iter().filter(|r| hit(r)).cloned().collect()).unwrap_or_default();
+                                if !a.is_empty() || !b.is_empty() || !olds.is_empty() {
+                                    eprintln!("O125_TRACE {rel}: old {:?} del {:?} maintained {:?} fresh {:?}", &olds[..olds.len().min(4)], &del[..del.len().min(4)], &a[..a.len().min(4)], &b[..b.len().min(4)]);
+                                }
+                            }
+                            for (rel, src) in &cross_inputs {
+                                let w = src.columns().len();
+                                let now: Vec<Vec<i64>> = (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect();
+                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
+                                if !now.is_empty() || olds.as_ref().is_some_and(|o| !o.is_empty()) {
+                                    eprintln!("O125_TRACE input {rel}: now {now:?} old {olds:?}");
+                                }
+                            }
+                        }
+                        eprintln!("O125_VERIFY done: {shown} relations differ (first 6)");
                     }
                     let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {

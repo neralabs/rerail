@@ -235,6 +235,14 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             part.program.nullary.insert(made);
         }
     }
+    if let Ok(show) = std::env::var("O125_RULES") {
+        for r in rules.iter().filter(|r| r.head.rel.starts_with(show.as_str())) {
+            eprintln!("O125_RULES {r}");
+        }
+        for r in cross.program.rules.iter().filter(|r| r.head.rel == show) {
+            eprintln!("O125_RULES given {r}");
+        }
+    }
     part.program.rules = rules;
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
 }

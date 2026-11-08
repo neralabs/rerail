@@ -1178,7 +1178,12 @@ fn spike_o125_replay() {
             "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s, local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
             cpu(&r), phase(&r, "cross"), phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
         );
-        if each || step == b {
+        // `O125_SAVE`: each step's outputs, `<dir>/NN.txt`, to compare two modes' runs without a full run each.
+        if let Some(dir) = std::env::var_os("O125_SAVE").map(PathBuf::from) {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("{step:02}.txt")), got.iter().map(|v| v.join("\n")).collect::<Vec<_>>().join("\n--\n")).unwrap();
+        }
+        if std::env::var_os("O125_NO_FULL").is_none() && (each || step == b) {
             let f = session::full(run);
             keep(step, "full");
             let want = outputs();
