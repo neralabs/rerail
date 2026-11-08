@@ -6,7 +6,9 @@
 // - attribute lookups are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class asked, and
 //   `found` is not cut to the names some reader asks for;
 // - closed-world `self` and annotations reach the subclasses in the reader's closure, not every importer's;
-// - subtyping (`tsub`, `tsup_open`) is per node, over the classes its closure names.
+// - subtyping (`tsub`, `tsup_open`) is per node, over the classes its closure names;
+// - generics' heads (`ghead`, `ghcls`) are made for every subscript argument, an instance attribute's assignment
+//   (`iattr`) is keyed by the assignment, and a star import binds every public name, not what importers want.
 // Call-target resolution and call chains for Python, in Rerail's Datalog dialect.
 //
 // One points-to relation, `pv(n, kind, v)`: expression n may evaluate to v, a function (`fn`, a function_definition),
@@ -497,7 +499,7 @@ gcall(c, o, f) :- gfn(c, f), icall(c, o, _).
 // typed by it.
 .decl ghcls(v: node, k: node)
 ghcls(m, k) :- gleaf(_, m), ahead(m, h), pv(h, "cls", k).
-ghcls(x, k) :- gcls(_, x, k), ghead(x, h), x != h, cparam(k, _, _).
+ghcls(x, k) :- sarg(_, _, x), ghead(x, h), x != h, pv(h, "cls", k), cparam(k, _, _).
 ghcls(c, k) :- gfn(c, f), rgen(f, r), ahead(r, h), pv(h, "cls", k).
 .decl garg(v: node, i: number, x: node)
 garg(m, i, x) :- ghcls(m, _), sarg(m, i, x).
@@ -527,9 +529,9 @@ gpar(c, a, y, x) :- gcall(c, o, f), method(f, a), pv(o, "inst", k), tfix(k, a, y
 .decl gbind(c: node, x: node)
 gbind(c, x) :- gcall(c, _, f), rtvar(f, a, y), gpar(c, a, y, x).
 .decl ghead(x: node, h: node)
-ghead(x, h) :- gbind(_, x), kind(x, "subscript"), field(x, "value", h).
-ghead(x, h) :- gbind(_, x), kind(x, "generic_type"), child(x, h, 0).
-ghead(x, x) :- gbind(_, x), !kind(x, "subscript"), !kind(x, "generic_type").
+ghead(x, h) :- sarg(_, _, x), kind(x, "subscript"), field(x, "value", h).
+ghead(x, h) :- sarg(_, _, x), kind(x, "generic_type"), child(x, h, 0).
+ghead(x, x) :- sarg(_, _, x), !kind(x, "subscript"), !kind(x, "generic_type").
 // The bound class first, joined with its subclasses last (as `cret`): a new subclass row then reaches only the calls
 // bound to its base, not every class's value.
 .decl gcls(c: node, x: node, k: node)
@@ -664,14 +666,8 @@ qv(m, @dot(q, x), k, v) :- modname(m, q), bv(m, x, k, v).
 .decl star_from(m: node, n: symbol)
 star_from(m, n) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"), nearest(i, m, scope),
     modname(m, _), py_import(i, n).
-.decl starmod(q: symbol, m: node)
-starmod(q, m) :- star_from(m, _), modname(m, q).
-.decl wantx(m: node, x: symbol)
-wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
-wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
-wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).
 .decl starx(m: node, x: symbol, m2: node)
-starx(m, x, m2) :- wantx(m, x), !prefix("_", x), star_from(m, n), modname(m2, n).
+starx(m, x, m2) :- star_from(m, n), modname(m2, n), bv(m2, x, _, _), !prefix("_", x), !rbound(m, x).
 bv(m, x, k, v) :- starx(m, x, m2), bv(m2, x, k, v).
 
 // Binding values: what name x of scope s may hold.
@@ -857,9 +853,9 @@ tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
 tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
 tracked("none"). tracked("subscript"). tracked("for_statement"). tracked("as_pattern_target"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
 tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
-.decl iattr(c: node, a: symbol)
-iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).
-iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).
+.decl iattr(t: node, c: node, a: symbol)
+iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).
+iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).
 // A base that is an external class (a qualified name the workspace does not define, or a builtin): what it holds is
 // no workspace definition. Any other base that is not a workspace class is unknown.
 .decl extb(e: node)
@@ -891,7 +887,7 @@ base_open(c) :- basex(c, e), !pv(e, "cls", _), !extb(e), !gbase(e, _).
 .decl attr_open(n: node, c: node, a: symbol)
 attr_open(n, c, a) :- asks(n, c, a), found(c, a, at), bopen(at, a).
 attr_open(n, c, a) :- asks(n, c, a), anc(c, b), base_open(b).
-attr_open(n, c, a) :- asks(n, c, a), anc(c, b), iattr(b, a), !adeclared(c, a).
+attr_open(n, c, a) :- asks(n, c, a), anc(c, b), iattr(t9, b, a), docof(n, d9), docof(t9, e9), rr_cx_reach(d9, e9), !adeclared(c, a).
 // Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.
 attr_open(n, c, a) :- asks(n, c, a), !found(c, a, _), !ext_base_up(c), a != "__init__", a != "__call__".
 // An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an

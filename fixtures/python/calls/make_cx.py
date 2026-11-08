@@ -100,6 +100,29 @@ rep('tv(n, k, v) :- qn(n, q), tqv(q, k, v).', 'tv(n, k, v) :- qn(n, q), tqv(m9, 
 for bad in ['isqmod', 'qv(q', 'qopen(q)']:
     assert not [l for l in s.split('\n') if bad in l and not l.startswith('//')], (bad, [l for l in s.split('\n') if bad in l])
 
+# Generics: a type expression's head and class for every subscript argument, not those a caller binds.
+rep('ghead(x, h) :- gbind(_, x), kind(x, "subscript"), field(x, "value", h).', 'ghead(x, h) :- sarg(_, _, x), kind(x, "subscript"), field(x, "value", h).')
+rep('ghead(x, h) :- gbind(_, x), kind(x, "generic_type"), child(x, h, 0).', 'ghead(x, h) :- sarg(_, _, x), kind(x, "generic_type"), child(x, h, 0).')
+rep('ghead(x, x) :- gbind(_, x), !kind(x, "subscript"), !kind(x, "generic_type").', 'ghead(x, x) :- sarg(_, _, x), !kind(x, "subscript"), !kind(x, "generic_type").')
+rep('ghcls(x, k) :- gcls(_, x, k), ghead(x, h), x != h, cparam(k, _, _).', 'ghcls(x, k) :- sarg(_, _, x), ghead(x, h), x != h, pv(h, "cls", k), cparam(k, _, _).')
+
+# An attribute assigned on instances: keyed by the assignment, read where the reader's closure holds it.
+rep('.decl iattr(c: node, a: symbol)', '.decl iattr(t: node, c: node, a: symbol)')
+rep('iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).', 'iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).')
+rep('iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).', 'iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).')
+rep('attr_open(n, c, a) :- asks(n, c, a), anc(c, b), iattr(b, a), !adeclared(c, a).', 'attr_open(n, c, a) :- asks(n, c, a), anc(c, b), iattr(t9, b, a), ' + R.format(a='n', b='t9') + ', !adeclared(c, a).')
+
+# A star import binds every public name the module it names binds, not those its importers want.
+rep(""".decl starmod(q: symbol, m: node)
+starmod(q, m) :- star_from(m, _), modname(m, q).
+.decl wantx(m: node, x: symbol)
+wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
+wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
+wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).
+""", '')
+rep('starx(m, x, m2) :- wantx(m, x), !prefix("_", x), star_from(m, n), modname(m2, n).', 'starx(m, x, m2) :- star_from(m, n), modname(m2, n), bv(m2, x, _, _), !prefix("_", x), !rbound(m, x).')
+assert not [l for l in s.split('\n') if ('wantx' in l or 'starmod' in l) and not l.startswith('//')], [l for l in s.split('\n') if 'wantx' in l or 'starmod' in l]
+
 # Subtyping between a node's types, per node: the classes a name names in the node's closure.
 C = 'type_of(n, t), cls_q(c, t), ' + R.format(a='n', b='c') + ', anc(c, b)'
 rep('''.decl tname(t: symbol)
@@ -143,7 +166,9 @@ hdr = '''// calls_cx.rr: calls.rr with every cross-file lookup a function of the
 // - attribute lookups are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class asked, and
 //   `found` is not cut to the names some reader asks for;
 // - closed-world `self` and annotations reach the subclasses in the reader's closure, not every importer's;
-// - subtyping (`tsub`, `tsup_open`) is per node, over the classes its closure names.
+// - subtyping (`tsub`, `tsup_open`) is per node, over the classes its closure names;
+// - generics' heads (`ghead`, `ghcls`) are made for every subscript argument, an instance attribute's assignment
+//   (`iattr`) is keyed by the assignment, and a star import binds every public name, not what importers want.
 '''
 open(dst, 'w').write(hdr + s)
 print("ok")

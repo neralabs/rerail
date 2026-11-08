@@ -893,14 +893,17 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
-/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`.
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
+/// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
+/// callers, which a run memoising per import component (decision 0076) needs.
 const JEDI_SPANS: &str = "
 .decl rr_jedi_cls(c: node, k: node)
 rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
 .decl rr_jedi_at(n: node, s: number, e: number)
 rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
-rr_jedi_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
-rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"function_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"class_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
 .output rr_jedi_cls, rr_jedi_at
 ";
 
