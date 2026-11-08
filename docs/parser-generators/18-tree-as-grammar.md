@@ -41,7 +41,8 @@ tree json {
   other node is inlined into the level that uses it. A non-nested node may not refer to
   itself, directly or through others.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
-- The root spans the file from its first token to its last.
+- The root spans the file from its first token to the file's end, as tree-sitter's does
+  (trailing whitespace included).
 
 ## 2. The automaton
 

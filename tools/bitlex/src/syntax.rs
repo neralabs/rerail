@@ -52,56 +52,24 @@ pub struct MachineDef {
     pub rules: Vec<(String, Vec<String>, String)>,
 }
 
-/// Where a tree node starts.
-#[derive(Clone, Debug)]
-pub enum NodeStart {
-    /// A mask, or a node kind's name (its starts).
-    At(Expr),
-    /// Where a token of a quoted kind starts: a kind a keyword gives (tier 2).
-    Kind(String),
-    FirstToken,
-}
-
-/// Where a tree node ends.
-#[derive(Clone, Debug)]
-pub enum NodeEnd {
-    At(Expr),
-    /// Where a token of a quoted kind ends (tier 2).
-    Kind(String),
-    /// With its child that has this field.
-    With(String),
-    LastToken,
-}
-
-/// A node's nesting.
-#[derive(Clone, Debug)]
-pub enum Nest {
-    /// A `count` scan's level (the one end rule).
-    Level(String),
-    /// The tape writer's stack, at most `max` deep.
-    Nested(Option<u32>),
-}
-
-/// A tier-2 condition at a node's start: the previous token is of one of `after`'s kinds, the
-/// next token after the node's first token (outside strings: the token after a string node) is
-/// of one of `before`'s, and the innermost open node is of kind `parent`. Empty lists hold.
-#[derive(Clone, Debug, Default)]
-pub struct Cond {
-    pub after: Vec<String>,
-    pub before: Vec<String>,
-    pub parent: Option<String>,
-}
-
-/// A code fact's test.
-#[derive(Clone, Debug)]
-pub enum FactWhen {
-    Mask(Expr),
-    StartOf(String),
-    /// `= not start of K`: no node of kind `K` starts at the node's start.
-    NotStartOf(String),
-    Cond(Cond),
-    /// No test: every node of the kinds.
-    Always,
+/// A tree rule's content (docs/parser-generators/18-tree-as-grammar.md §1): what a node spans,
+/// as tree-sitter's `grammar.js` states it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Gram {
+    /// A quoted token: a keyword's kind, `'{'`.
+    Lit(String),
+    /// A token kind, a node or a choice, by name.
+    Sym(String),
+    Seq(Vec<Gram>),
+    Alt(Vec<Gram>),
+    /// `[A]`.
+    Opt(Box<Gram>),
+    /// `A*`.
+    Star(Box<Gram>),
+    /// `A+`.
+    Plus(Box<Gram>),
+    /// `f: A`: the node `A` gives has field `f`.
+    Field(String, Box<Gram>),
 }
 
 #[derive(Clone, Debug)]
@@ -139,27 +107,17 @@ pub enum Stmt {
     /// `tree NAME { … }`: the statements that say where each node starts and ends
     /// (docs/parser-generators/13-tape-on-the-gpu.md).
     Tree { name: String, body: Vec<Stmt> },
-    /// `node KIND start S [when C] end E [level L | nested [max D]]`: a node at each bit of `S`
-    /// (a mask, or another node kind's starts; or `first token`) where `C` holds, ending at the
-    /// first bit of `E` at or after it where count `L` after the byte equals `L` before the
-    /// start; or `end with F`, with its child of field `F`; or `last token`. `nested`: on the
-    /// tape writer's stack (decision 0049).
-    /// `also`: the same nodes by another rule. A target uses one of `when` and `also`, and
-    /// checks the other: a file where they differ goes to tree-sitter.
-    /// `matching`: how a target finds a close's open, `barrier` (the default) or `scan`
-    /// (docs/parser-generators/14-tier-2-design.md §4), for a `nested` node.
-    Node { kind: String, start: NodeStart, when: Option<Cond>, also: Option<Cond>, end: NodeEnd, level: Option<Nest>, matching: Option<String> },
-    /// `field NAME of KIND … = E`, `supertype NAME of KIND … = E`: a fact of the code of a node
-    /// of those kinds that starts at a bit of `E`; `= start of K`, where a node of kind `K` starts
-    /// too; `when C`, where `C` holds at its start.
-    Fact { field: bool, name: String, kinds: Vec<String>, expr: FactWhen },
+    /// `node KIND [nested] = G`: a node of the kind spans what `G` matches; the first is the
+    /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
+    Node { kind: String, nested: bool, body: Gram },
+    /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
+    /// supertype `S`.
+    Choice { name: String, supertype: Option<String>, body: Gram },
     /// `check KIND is VALIDATOR`: each node of the kind is checked by a built-in validator
     /// (`json_number`, `integer`, `float`, …); a failing one sends the file to tree-sitter.
     Check { kind: String, validator: String },
     /// `extra KIND …`: nodes of these kinds carry the extra flag.
     Extra(Vec<String>),
-    /// `untoken KIND …`: tokens of these kinds are not nodes; a `node` statement makes them.
-    Untoken(Vec<String>),
 }
 
 impl Stmt {
@@ -271,7 +229,7 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
             let next = out[k + 1..].iter().find(|t| **t != Tok::Nl);
             // A node's `also` and `end` may start lines of their own: no statement starts so.
             let next_cont = matches!(next, Some(Tok::P("|" | "&" | "^")) | Some(Tok::Str(_)) | Some(Tok::Int(_)) | Some(Tok::UPlus(_)))
-                || matches!(next, Some(Tok::Ident(w)) if w == "also" || w == "end");
+;
             if depth > 0 || prev_cont || next_cont || joined.last() == Some(&Tok::Nl) || joined.is_empty() {
                 continue;
             }
@@ -391,38 +349,57 @@ impl P {
         }
     }
 
-    /// Clauses joined by `and`: `after K`, `after (K | K …)`, `before` likewise, `parent K`.
-    fn cond(&mut self) -> R<Cond> {
-        let mut c = Cond::default();
-        loop {
-            if self.eat_kw("after") {
-                c.after = self.kinds()?;
-            } else if self.eat_kw("before") {
-                c.before = self.kinds()?;
-            } else {
-                self.want_kw("parent")?;
-                c.parent = Some(self.kind()?);
+    /// `A | B …` of sequences.
+    fn gram(&mut self) -> R<Gram> {
+        let mut alts = vec![self.gram_seq()?];
+        while self.eat_p("|") {
+            alts.push(self.gram_seq()?);
+        }
+        Ok(if alts.len() == 1 { alts.pop().expect("one") } else { Gram::Alt(alts) })
+    }
+
+    /// Items up to a `|`, a closing bracket or the end of the line.
+    fn gram_seq(&mut self) -> R<Gram> {
+        let mut items = vec![];
+        while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
+            let mut item = self.gram_atom()?;
+            loop {
+                if self.eat_p("*") {
+                    item = Gram::Star(Box::new(item));
+                } else if self.eat_p("+") {
+                    item = Gram::Plus(Box::new(item));
+                } else {
+                    break;
+                }
             }
-            if !self.eat_kw("and") {
-                return Ok(c);
-            }
+            items.push(item);
+        }
+        match items.len() {
+            0 => self.err("a token, a name, ( or ["),
+            1 => Ok(items.pop().expect("one")),
+            _ => Ok(Gram::Seq(items)),
         }
     }
 
-    /// `K` or `(K | K …)`.
-    fn kinds(&mut self) -> R<Vec<String>> {
-        if !self.eat_p("(") {
-            return Ok(vec![self.kind()?]);
+    fn gram_atom(&mut self) -> R<Gram> {
+        if self.eat_p("(") {
+            let g = self.gram()?;
+            self.want_p(")")?;
+            return Ok(g);
         }
-        let mut out = Vec::new();
-        loop {
-            out.push(self.kind()?);
-            if !self.eat_p("|") {
-                break;
-            }
+        if self.eat_p("[") {
+            let g = self.gram()?;
+            self.want_p("]")?;
+            return Ok(Gram::Opt(Box::new(g)));
         }
-        self.want_p(")")?;
-        Ok(out)
+        if let Some(Tok::Str(_)) = self.peek() {
+            return Ok(Gram::Lit(self.kind()?));
+        }
+        let name = self.ident()?;
+        if self.eat_p(":") {
+            return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
+        }
+        Ok(Gram::Sym(name))
     }
 
     // --- expressions ---
@@ -708,80 +685,27 @@ impl P {
             }
             "node" => {
                 let kind = self.kind()?;
-                self.want_kw("start")?;
-                let start = if self.is_kw("first") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
-                    self.i += 2;
-                    NodeStart::FirstToken
-                } else if matches!(self.peek(), Some(Tok::Str(_))) {
-                    NodeStart::Kind(self.kind()?)
-                } else {
-                    NodeStart::At(self.expr()?)
-                };
-                let when = if self.eat_kw("when") { Some(self.cond()?) } else { None };
-                let also = if self.eat_kw("also") {
-                    self.want_kw("when")?;
-                    Some(self.cond()?)
-                } else {
-                    None
-                };
-                self.want_kw("end")?;
-                let end = if self.eat_kw("with") {
-                    NodeEnd::With(self.ident()?)
-                } else if self.is_kw("last") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
-                    self.i += 2;
-                    NodeEnd::LastToken
-                } else if matches!(self.peek(), Some(Tok::Str(_))) {
-                    NodeEnd::Kind(self.kind()?)
-                } else {
-                    NodeEnd::At(self.expr()?)
-                };
-                let level = if self.eat_kw("level") {
-                    Some(Nest::Level(self.ident()?))
-                } else if self.eat_kw("nested") {
-                    Some(Nest::Nested(if self.eat_kw("max") { Some(self.int()? as u32) } else { None }))
-                } else {
-                    None
-                };
-                let matching = if self.eat_kw("match") { Some(self.ident()?) } else { None };
-                Stmt::Node { kind, start, when, also, end, level, matching }
+                let nested = self.eat_kw("nested");
+                self.want_p("=")?;
+                Stmt::Node { kind, nested, body: self.gram()? }
+            }
+            "choice" => {
+                let name = self.ident()?;
+                let supertype = if self.eat_kw("supertype") { Some(self.ident()?) } else { None };
+                self.want_p("=")?;
+                Stmt::Choice { name, supertype, body: self.gram()? }
             }
             "check" => {
                 let kind = self.kind()?;
                 self.want_kw("is")?;
                 Stmt::Check { kind, validator: self.ident()? }
             }
-            "field" | "supertype" => {
-                let name = self.ident()?;
-                self.want_kw("of")?;
-                let mut kinds = vec![];
-                while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) && !self.is_kw("when") {
-                    kinds.push(self.kind()?);
-                }
-                let start_of = |p: &P| p.is_kw("start") && matches!(p.peek_at(1), Some(Tok::Ident(t)) if t == "of");
-                let expr = if self.eat_kw("when") {
-                    FactWhen::Cond(self.cond()?)
-                } else if !self.eat_p("=") {
-                    FactWhen::Always
-                } else if start_of(self) {
-                    self.i += 2;
-                    FactWhen::StartOf(self.kind()?)
-                } else if self.is_kw("not") && {
-                    self.i += 1;
-                    start_of(self)
-                } {
-                    self.i += 2;
-                    FactWhen::NotStartOf(self.kind()?)
-                } else {
-                    FactWhen::Mask(self.expr()?)
-                };
-                Stmt::Fact { field: kw == "field", name, kinds, expr }
-            }
-            "extra" | "untoken" => {
+            "extra" => {
                 let mut kinds = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
                     kinds.push(self.kind()?);
                 }
-                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Untoken(kinds) }
+                Stmt::Extra(kinds)
             }
             "token" => {
                 let kind = self.kind()?;
@@ -917,70 +841,34 @@ mod tier2_tests {
 
     /// The tier-2 forms of decision 0049, as JSON's tree section writes them.
     #[test]
-    fn tier2_rules_parse() {
+    fn tree_grammar_parses() {
         let src = r#"
 lexer t
-class lbrace = '{'
-mask s = lbrace
-token number = start s last s
 tree json {
-  node document start first token end last token
-  node object start s end s nested max 13
-  node pair start string when after ('{' | ',') and parent object end with value
-  field key of string = start of pair
-  field value of number object when after ':'
-  supertype _value of object number = s
-  check number is json_number
-  supertype _value of object number
-  supertype _value of string = not start of pair
-  node array start '[' end ']' nested
+  node document               = value
+  node object nested          = '{' [pair (',' pair)*] '}'
+  node pair                   = key: string ':' value: value
+  node array nested           = '[' [value (',' value)*] ']'
+  node string                 = '"' (string_content | escape_sequence)* '"'
+  choice value supertype _value = object | array | string | number | true | false | null
+  node list = item+ | '(' ')'
 }
 "#;
         let stmts = parse(src).expect("parses");
         let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
-        assert!(matches!(stmts.iter().find(|s| matches!(s, Stmt::Token { .. })), Some(Stmt::Token { last: Some(_), through: None, .. })));
-        assert!(matches!(&body[0], Stmt::Node { start: NodeStart::FirstToken, end: NodeEnd::LastToken, when: None, level: None, .. }));
-        assert!(matches!(&body[1], Stmt::Node { level: Some(Nest::Nested(Some(13))), .. }));
-        let Stmt::Node { when: Some(c), end: NodeEnd::With(f), start: NodeStart::At(Expr::Name(k)), .. } = &body[2] else { panic!("pair: {:?}", body[2]) };
-        assert_eq!((c.after.clone(), c.parent.clone(), f.as_str(), k.as_str()), (vec!["{".to_owned(), ",".to_owned()], Some("object".to_owned()), "value", "string"));
-        assert!(matches!(&body[3], Stmt::Fact { expr: FactWhen::StartOf(k), .. } if k == "pair"));
-        assert!(matches!(&body[4], Stmt::Fact { expr: FactWhen::Cond(Cond { after, parent: None, .. }), kinds, .. } if after == &[":"] && kinds.len() == 2));
-        assert!(matches!(&body[5], Stmt::Fact { expr: FactWhen::Mask(_), .. }));
-        assert!(matches!(&body[6], Stmt::Check { kind, validator } if kind == "number" && validator == "json_number"));
-        assert!(matches!(&body[7], Stmt::Fact { expr: FactWhen::Always, kinds, .. } if kinds.len() == 2));
-        assert!(matches!(&body[8], Stmt::Fact { expr: FactWhen::NotStartOf(k), .. } if k == "pair"));
-        assert!(matches!(&body[9], Stmt::Node { start: NodeStart::Kind(s), end: NodeEnd::Kind(e), .. } if s == "[" && e == "]"));
-    }
-
-    /// `before` reads the next token, as `after` reads the one before; `also when` gives the
-    /// same nodes by another rule, which a target that uses one checks with the other.
-    #[test]
-    fn before_and_also_parse() {
-        let src = r#"
-lexer t
-class q = '"'
-mask s = q
-token number = start s last s
-tree json {
-  node pair start string when before ':' also when after ('{' | ',') and parent object end with value
-  field value of number when after ':'
-  node x start s when before (':' | ',') and after '{' end s
-  node y start s when before ':'
-         also when after '{'
-         end s
-  node z start s end s nested max 13 match scan
-}
-"#;
-        let stmts = parse(src).expect("parses");
-        let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
-        let Stmt::Node { when: Some(w), also: Some(a), .. } = &body[0] else { panic!("pair: {:?}", body[0]) };
-        assert_eq!((w.before.clone(), w.after.clone(), w.parent.clone()), (vec![":".to_owned()], vec![], None));
-        assert_eq!((a.before.clone(), a.after.clone(), a.parent.clone()), (vec![], vec!["{".to_owned(), ",".to_owned()], Some("object".to_owned())));
-        let Stmt::Node { when: Some(w), also: None, .. } = &body[2] else { panic!("x: {:?}", body[2]) };
-        assert_eq!((w.before.clone(), w.after.clone()), (vec![":".to_owned(), ",".to_owned()], vec!["{".to_owned()]));
-        // Over three lines.
-        let Stmt::Node { kind, also: Some(a), .. } = &body[3] else { panic!("y: {:?}", body[3]) };
-        assert_eq!((kind.as_str(), a.after.clone()), ("y", vec!["{".to_owned()]));
-        assert!(matches!(&body[4], Stmt::Node { matching: Some(m), level: Some(Nest::Nested(Some(13))), .. } if m == "scan"));
+        let lit = |s: &str| Gram::Lit(s.to_owned());
+        let sym = |s: &str| Gram::Sym(s.to_owned());
+        assert!(matches!(&body[0], Stmt::Node { kind, nested: false, body: Gram::Sym(v) } if kind == "document" && v == "value"));
+        let Stmt::Node { nested: true, body: object, .. } = &body[1] else { panic!("object: {:?}", body[1]) };
+        let pairs = Gram::Seq(vec![sym("pair"), Gram::Star(Box::new(Gram::Seq(vec![lit(","), sym("pair")])))]);
+        assert_eq!(object, &Gram::Seq(vec![lit("{"), Gram::Opt(Box::new(pairs)), lit("}")]));
+        let Stmt::Node { body: pair, .. } = &body[2] else { panic!("pair") };
+        assert_eq!(pair, &Gram::Seq(vec![Gram::Field("key".into(), Box::new(sym("string"))), lit(":"), Gram::Field("value".into(), Box::new(sym("value")))]));
+        let Stmt::Node { body: string, .. } = &body[4] else { panic!("string") };
+        assert_eq!(string, &Gram::Seq(vec![lit("\""), Gram::Star(Box::new(Gram::Alt(vec![sym("string_content"), sym("escape_sequence")]))), lit("\"")]));
+        let Stmt::Choice { name, supertype: Some(s), body: Gram::Alt(alts) } = &body[5] else { panic!("value: {:?}", body[5]) };
+        assert_eq!((name.as_str(), s.as_str(), alts.len()), ("value", "_value", 7));
+        let Stmt::Node { body: Gram::Alt(alts), .. } = &body[6] else { panic!("list") };
+        assert_eq!(alts, &vec![Gram::Plus(Box::new(sym("item"))), Gram::Seq(vec![lit("("), lit(")")])]);
     }
 }

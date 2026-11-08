@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, FactWhen, MachineDef, Nest, NodeEnd, NodeStart, Stmt, UClass};
+use crate::syntax::{Arg, Expr, MachineDef, Stmt, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -36,20 +36,14 @@ pub struct Token {
     pub soft: bool,
 }
 
-/// A `tree` section's declarations, its masks evaluated.
+/// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
 #[derive(Clone, Default)]
 pub struct TreeDecl {
-    /// Each node kind in order (its rank): kind, start mask, end mask, level (a count after each
-    /// byte).
-    pub nodes: Vec<(String, Mask, Mask, Option<Vec<i32>>)>,
-    /// Code facts: whether a field (else a supertype), its name, the kinds, the mask.
-    pub facts: Vec<(bool, String, Vec<String>, Mask)>,
+    /// Each `node` rule in order: kind, nested, content. The first is the root.
+    pub rules: Vec<(String, bool, crate::syntax::Gram)>,
+    /// Each `choice`: name, supertype, alternatives.
+    pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
-    pub untoken: Vec<String>,
-    /// The section has tier-2 rules (decision 0049): conditions on the token stream, ends with a
-    /// child, nesting on the writer's stack. Their executor is the engine's tape writer, checked
-    /// against tree-sitter; this evaluator keeps the masks only.
-    pub tier2: bool,
 }
 
 pub struct Output {
@@ -336,38 +330,11 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, start, when, end, level, .. } => {
-                let (NodeStart::At(start), None, NodeEnd::At(end), None | Some(Nest::Level(_))) = (start, when, end, level) else {
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                };
-                if matches!(start, Expr::Name(n) if !self.vars.contains_key(n)) {
-                    // Another node kind's starts: a tier-2 rule.
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                }
-                let (start, end) = (self.mask(start)?, self.mask(end)?);
-                let level = match level {
-                    Some(Nest::Level(l)) => match self.vars.get(l) {
-                        Some(Val::C(c)) => Some(c.clone()),
-                        _ => return Err(format!("node {kind}: level `{l}` is not a count")),
-                    },
-                    _ => None,
-                };
-                self.tree.get_or_insert_with(TreeDecl::default).nodes.push((kind.clone(), start, end, level));
-            }
-            Stmt::Fact { field, name, kinds, expr } => {
-                let FactWhen::Mask(expr) = expr else {
-                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
-                    return Ok(());
-                };
-                let m = self.mask(expr)?;
-                self.tree.get_or_insert_with(TreeDecl::default).facts.push((*field, name.clone(), kinds.clone(), m));
-            }
-            // A validator runs once per token, in tier 2 (or as masks the compiler writes).
-            Stmt::Check { .. } => self.tree.get_or_insert_with(TreeDecl::default).tier2 = true,
+            Stmt::Node { kind, nested, body } => self.tree.get_or_insert_with(TreeDecl::default).rules.push((kind.clone(), *nested, body.clone())),
+            Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
+            // A validator is tier-1 masks, as the lexer writes them; the statement names it.
+            Stmt::Check { .. } => {}
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
-            Stmt::Untoken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untoken.extend(kinds.iter().cloned()),
             Stmt::Error(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
