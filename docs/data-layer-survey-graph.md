@@ -33,7 +33,7 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Implement ordered class traversal and member lookup for self, super, imported objects, annotated parameters, and chained attributes.
+1. Resolve self, super, module, and chained references using the tested class walks, instance annotations, and parameter annotations.
 2. Emit complete calls, class uses, callers, and legacy synthetic edges from the resolved references.
 3. Derive `__all__`, exported roots, and source-derived literal dynamic-import roots. Preserve the original discovery scope and ordering.
 4. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
@@ -47,7 +47,7 @@ Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
 
 The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
-Sixty-one source fixtures compare producer fields with the pinned `_ModuleVisitor` and graph builder.
+Sixty-nine source fixtures compare producer fields with the pinned `_ModuleVisitor` and graph builder.
 They cover symbol occurrences, definition lists, module names, imports, signatures, decorators, bases, abstract flags, class attributes, and module references.
 They include nested classes, omitted nested functions, duplicate definitions, Unicode names, package paths, and imports from nested scopes.
 The native command reads an offline source recording. It does not import the Python scanner.
@@ -78,21 +78,34 @@ The source implementations are [body collection](https://github.com/neralabs/ner
 
 The original helper tests supply opaque class-accessor facts through a graph double.
 Those facts are external input to the native helper tests.
-The corresponding accessor over a raw repository graph is not implemented.
-The adapter raises an explicit unsupported error for that case; it does not return an incomplete root set.
+The corresponding raw-graph accessor now runs through the same ordered-member library as the source producer.
+Twelve supplied-graph cases compare complete root sets and five missing-target errors with the original helper.
+There is no remaining `IDC_GRAPH_ACCESSOR_REQUIRED` refusal.
 
-Native accessor production must preserve the source's breadth-first base order and first eligible method for each name.
+Native accessor production preserves the source's breadth-first base order and first eligible method for each name.
 A property or private method does not claim a public method name before an eligible base method.
 Include the source's constructor dunders and exclude its `PUBLIC_METHOD_SKIP` names.
 The source implementation is [public method selection](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2364).
 The existing legacy hierarchy's fixed widening limit does not prove exact behavior for arbitrary graphs.
 
-The next traversal rung must compare cycles, diamonds, reversed base order, repeated bases, and inheritance deeper than 64 levels.
+The traversal corpus covers cycles, diamonds, reversed bases, constructor order, property overrides, function bases, and a 70-level chain.
 The source base walk starts from the ordered direct bases with an empty visited set. A cycle can therefore return the original class.
 Public method selection starts from the class itself and applies its own visited-name and eligibility rules.
 Do not replace either walk with unordered reachability or depth-first traversal.
 Keep any native traversal primitive generic and batch all demanded roots through the existing engine's relation interfaces.
 The relevant source is [ordered base traversal](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1715).
+
+The generic `bfs_walk(root, hit, ordinal, edge, roots)` operator uses Final's existing native-relation interface.
+`edge` has source, destination, and numeric order columns. `roots` is unary; all vertices share a symbol or numeric domain.
+Each root starts from its ordered outgoing edges, without pre-visiting itself. Cycles can therefore return the root.
+Repeated arrivals are visited once. Results have zero-based ordinals, with no depth limit.
+One adjacency batch serves the entire root demand. SQL reads both inputs in batches and publishes rows through the existing bulk writer.
+The operator has no rule names, Python execution, or per-node SQL callbacks. Its serialized program facts retain the edge and root relations.
+
+`ordered-class-members.rr` keeps public-method eligibility and constructor selection in Datalog.
+Constructor lists preserve repeated root hooks on cycles. Missing targets are checked before eligibility unless an earlier public method claimed the name.
+The raw helper demands only its requested imported classes. Other helper entries do not demand these walks.
+The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the complete source, raw-graph, mutation, and native regression evidence.
 
 ## Acceptance still required
 

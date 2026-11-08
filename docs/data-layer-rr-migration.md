@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`3de761e18`. Merge `eae3e8e01` adopts Final's live run dumps and span memory profiling.
+`220a5d4f5`. Merge `a8124a128` adopts Final's terminating hiding pass, type checks, and rule-specific planning errors.
+Merge `eae3e8e01` adopts Final's live run dumps and span memory profiling.
 Merge `13874e415` adopts Final's regex scans over node kinds and captures.
 It also adopts Final's 64-bit boundary for corpus row bindings.
 Earlier merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
@@ -54,7 +55,7 @@ The `annotation_constant_repr` relation supplies non-string literal values withi
 It shares the existing demanded native AST pass and excludes literals outside annotations.
 Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
 Boolean operand formatting also follows CPython: each operand increases the required precedence, with saturation at `ATOM`.
-The manifest records all 21 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
+The manifest records all 27 extension files, including the dependency lock, typed shard-column mapping, and generic BFS operator, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
 The audit checks both the local Final shape branch and its fetched remote tip.
@@ -1562,3 +1563,52 @@ Earlier [body](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-body-p
 The production draft still emits `IDC_SOURCE_GRAPH_REQUIRED` for source-only execution; a current-engine probe verifies that refusal.
 Ordered member lookup, complete call and class-use edges, exported roots, discovery, production integration, and lifecycle acceptance remain incomplete.
 The inventory remains 89 drafts and eleven absent translations. This checkpoint does not complete rule 89 or the migration.
+
+## 2026-11-08 — Ordered class walks and raw-graph accessors
+
+The next source rung adds diamonds, reversed bases, property overrides, constructor order, cycles, a function base, and a 70-level chain.
+It records ordered base walks, public methods, and constructor hooks for every queried class owner.
+Forty of sixty-nine comparisons fail before these accessors exist (`81b4f8674`).
+The existing engine also refuses the standalone `bfs_walk` probe. Ordinary reachability does not supply the ordered rows these helpers consume.
+
+`787150d17` adds a generic batched BFS on Final's existing native-relation interface.
+Its inputs are an ordered adjacency relation and a unary root-demand relation. Its output is typed root, reached vertex, and visit ordinal rows.
+One adjacency serves all demanded roots. SQL reads complete input batches and uses the existing bulk writer; there is no SQL query per root or node.
+The traversal has no rule-specific names or behavior. It retains cycles that return to the root and has no fixed depth limit.
+Prepared program facts, dependency renaming, and printing retain the operator's input relations.
+
+Two kernel tests pass, including 2,000 random graph comparisons against an independent queue implementation.
+The integration test initially uses the public file reader for printed internal programs and fails on reserved `rr_` names.
+`c79c29000` corrects that test to use the internal text boundary, as Final's existing roundtrip tests do.
+The test then verifies program-fact encoding, decoding, printing, parsing, and execution with symbol IDs.
+A separate two-policy run keeps identically named edges and roots separate; each policy returns only its own target.
+
+The shared `ordered-class-members.rr` library implements public eligibility, first eligible names, stable sorting, and constructor order in Datalog.
+Its literal skip and constructor tables come from the pinned source generator.
+Properties do not claim public method names. Constructor lists retain the source's duplicate root hooks on cycles.
+All sixty-nine complete source comparisons pass after this translation.
+
+Twelve additional raw-graph cases exercise the real `_resolve_dynamic_import_roots` helper.
+The source records seven returned sets and five `KeyError`s. The old native adapter aborts at the first raw graph with its explicit unsupported error.
+The replacement uses the same ordered-member library as the source producer. It preserves missing private and constructor targets as errors too.
+An earlier public method can hide a missing base target. Error selection follows method order and the caller's supplied import iteration order.
+The raw adapter demands only requested imported classes. It no longer raises `IDC_GRAPH_ACCESSOR_REQUIRED` or returns incomplete roots for those cases.
+All twelve complete comparisons pass without source graph-algorithm fallback.
+
+The API audit finds that mixed symbol/numeric vertex domains were accepted. `378743b6b` rejects mixed domains and malformed edge or root schemas.
+The mixed-domain probe changes from reader success to an explicit refusal. A native test covers four invalid relation shapes.
+All twelve mutation controls cause complete row or DTO mismatches through successful native execution.
+They cover base order, depth caps, properties, skip names, initial owners, sorting, cycle roots, constructor multiplicity, and exact error selection.
+
+Final advances during this work. Merge `a8124a128` adopts `220a5d4f5`, including its hiding termination fix, type checks, and planning diagnostics.
+The final root CLI is `0b2345ad5df45c2e`; the standard native test executable is `bd131cf98c36f4e1`.
+Their builds take 118.199 and 122.805 seconds respectively. These are compilation times, separate from execution.
+All sixty-nine source comparisons, twelve raw-graph cases, four original tests, and thirty-six graph-consumer cases pass on that CLI.
+All 107 tooling tests, 34 subtests, 100 typed policy readers, and seven focused native tests pass.
+The native diff now has 27 reviewed extension files. The six added paths implement this generic capability through Final's current architecture.
+No Linear issue was created.
+
+The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the source and raw-graph records, controls, complete programs, build identities, and regression logs.
+The production default still emits `IDC_SOURCE_GRAPH_REQUIRED`, verified again on the final CLI.
+Self, super, module, and chained-reference resolution still need source-level integration. Complete edges, exported roots, discovery, and lifecycle acceptance remain open.
+This work closes the ordered class-accessor gap. It does not complete rule 89 or the 100-rule migration.
