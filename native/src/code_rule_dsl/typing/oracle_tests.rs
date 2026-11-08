@@ -179,24 +179,6 @@ fn python_calls_program_agrees_with_the_runtime() {
     assert!(agree >= 84, "{agree} agree");
 }
 
-/// O41 (decision 0047): rounds cut before the fixpoint make a call unknown, never no edge. At k = 1 (and the
-/// pending round) the package re-export in `main.py`, three files deep, is not reached: it is unknown. No call is
-/// no edge or wrong where CPython ran a workspace function, and the fixpoint's departures stay.
-#[test]
-fn python_calls_program_cut_short_is_unknown_not_no_edge() {
-    let (agree, departures, never_ran) = crate::code_rule_dsl::typing::cross_rounds::with_k(1, || score_python(&program("calls")));
-    println!("calls.rr at k = 1: {agree} agree, {} depart", departures.len());
-    for (at, d) in &departures {
-        println!("  {d:?}\t{at}");
-    }
-    assert!(never_ran.is_empty(), "{never_ran:#?}");
-    assert!(!departures.values().any(|d| matches!(d, Departure::NoEdge | Departure::Wrong)), "{departures:#?}");
-    assert_eq!(departures.get("main.py:10 `pkg.exported_helper(2)`"), Some(&Departure::Unknown));
-    for (at, d, _) in PYTHON_DEPARTURES {
-        assert_eq!(departures.get(*at), Some(d), "{at}");
-    }
-}
-
 /// 1-based line and code-point column of a byte offset, as rust-analyzer's recording writes them.
 fn line_column(source: &str, offset: usize) -> (u64, u64) {
     let start = source[..offset].rfind('\n').map_or(0, |i| i + 1);

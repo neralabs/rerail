@@ -103,7 +103,7 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
 Each step is measured on the 84-file corpus (Jedi agreement, CPU, RSS) and on the 9,010-file data layer before the
 next step.
 
-1. **One fixpoint.** Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
+1. **One fixpoint** (done, measured above). Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
    chains no longer cut (`next(iter(xs))` decided), and the cost of one deep fixpoint compared with four rounds.
 2. **Stored cross-file facts.** The store keeps them as derivations, and a run reads the valid ones. The typing
    runs' per-file memo is turned on (0052 turns it off when a run uses typing). Measured: a second run of the same
@@ -114,6 +114,29 @@ next step.
 
 Steps 1 and 3 change `calls.rr` throughout. Step 2 changes `logic/plan/corpus.rs`, the native fixpoint (`setfix`)
 and the store. The wolfeel session owns the final shape, so each step lands on a sibling `final-rerail-shape-*` branch.
+
+## Measured
+
+**Step 1** (2026-11-07, debug build). Every typing program dropped the pragma; `calls.rr` dropped the pending round
+(`unconverged`, and `extq`/`extn`, which only it read). The program stratifies as it is: no rule needed rewriting.
+
+```text
+// one-file probe (contextlib, iter, next, sorted; 64 typeshed documents), load about 46
+                 cross-file CPU   peak RSS   calls open   call targets
+k = 4 rounds     18.3 s           342 MB     3            21
+one fixpoint      3.1 s           241 MB     0            22      next(iter(vs)).run() is V.run
+
+// 84 files of the data layer with typeshed (267 documents), against Jedi 0.19.2, load about 19
+                          agree   unknown, Jedi decided   no edge, Jedi a definition   CPU, RSS
+k = 1 and pending         6,198   825                     412                          45.4 s, 674 MB
+k = 4 (before the ffit fix)                                                            202.6 s, 5.5 GB
+one fixpoint              6,299   722                     414                          29.7 s, 582 MB
+```
+
+Per call, against k = 1: 924 unknown calls are decided and agree, 63 that agreed are unknown (the fixpoint
+finds more open values), and 2 unknown calls get no edge: `_active_batch_context.get().queue_single(...)` in
+`lazy_reads.py`, whose `ContextVar[BatchContext | None]` is also given `default=None`. The pending round had hidden
+that gap; it is not yet diagnosed.
 
 ## What it reverses
 

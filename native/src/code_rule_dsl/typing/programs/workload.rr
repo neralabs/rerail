@@ -1,8 +1,7 @@
 // The spike workload (../souffle/workload.dl) in Rerail's Datalog dialect.
 // Tree structure comes from the tape: `nearest($n, $s, set)` is n's nearest strict ancestor whose kind is in `set`.
 // No relation materializes it; the planner chooses a climb from n or a descent from s by cost.
-// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
-.pragma "cross-rounds" "4"
+// Its cross-file part is one fixpoint over every loaded document, as any program's is (decision 0060).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
