@@ -1461,7 +1461,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
-      "sha256": "fdd344d62e169f3cb1087de08d08841bb0660e7dc9c57ca70cc5ff43eb7f606c",
+      "sha256": "7645ebaf5289ae03db187e630b9791fa7bc1ab7cd9bd85a90b83e3c4bd4838f6",
       "origin": "authored",
       "upstreamPath": "scripts/lint_render_fstrings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1752,7 +1752,7 @@
       "legacySha256": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
-      "ruleSha256": "fdd344d62e169f3cb1087de08d08841bb0660e7dc9c57ca70cc5ff43eb7f606c"
+      "ruleSha256": "7645ebaf5289ae03db187e630b9791fa7bc1ab7cd9bd85a90b83e3c4bd4838f6"
     },
     {
       "check": "render_raw_strings",
@@ -2501,7 +2501,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "e51f29f3a37ca2c24ae5959ed0bd97af8548a21928e10eba0dfc9c1616a58a72"
+        "sha256": "6656460e70cc134bd3395ace27f7a02e68255de171eee9252d2c570682b0f6e2"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2545,7 +2545,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "7787dcd0311af782a0ead82e8334f5f2e477fc1f3047eef192b051c29d345e90"
+        "sha256": "238d0744b0130dad06083f147dc4b9d7843e3755aedd1c9a0334e1af8aa51a0e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",

@@ -160,7 +160,7 @@ Piece(n, i, off, value, spec) :- str_part_offset(n, i, off), str_part(n, i, valu
     let values: Vec<_> = rows.iter().map(|r| (r["parameters"]["offset"].as_i64().unwrap() as usize,
         r["parameters"]["value"].as_str().unwrap(), r["parameters"]["spec"].as_i64().unwrap())).collect();
     assert_eq!(values, [(source.find("漢").unwrap(), "漢", 0), (source.find('>').unwrap(), ">", 1),
-        (source.find("tail").unwrap(), "tail", 0), (source.rfind("x=").unwrap(), "x=", 0)]);
+        (source.find("tail").unwrap(), "tail", 0), (source.rfind("{x=").unwrap(), "x=", 0)]);
 }
 
 /// Word runs are decoded code points, including non-scalar delimiters and adjacent literals.

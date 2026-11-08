@@ -299,6 +299,12 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
 /// to three digits, `\x`, `\u`, `\U`, a backslash-newline joins lines. For bytes and f-string pieces, which
 /// `str_value` does not decode.
 pub(super) fn py_unescape(s: &str) -> String {
+    // Use the shared language decoder for valid scalar text, including Unicode names.
+    // Keep the existing tolerant fallback for non-scalar or incomplete input.
+    if let Some(value) = crate::code_rule_dsl::value::python::decode_escapes(s, false)
+        .and_then(|units| units.into_iter().map(char::from_u32).collect::<Option<String>>()) {
+        return value;
+    }
     let c: Vec<char> = s.chars().collect();
     let mut out = String::new();
     let mut i = 0;
