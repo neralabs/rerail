@@ -87,3 +87,33 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     drop(store);
     let _ = std::fs::remove_file(path);
 }
+
+/// A parser's inputs resident as sources (decision 0067): each file's bytes at a 16-byte offset
+/// of a slab, at least 16 bytes of room; asked again, the same sources, not copied again; at most
+/// `MAX_SLABS` slabs bound for them.
+#[test]
+fn sources_are_admitted_once_and_read_in_place() {
+    if metal::Device::system_default().is_none() {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let files: Vec<Vec<u8>> = vec![b"{\"a\": [1, 2]}".to_vec(), Vec::new(), vec![b'x'; 1000], b"{\"a\": [1, 2]}".to_vec()];
+    let bytes: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let first = admit_sources(&bytes).expect("admits");
+    for (source, file) in first.iter().zip(&files) {
+        assert_eq!(source.offset % 16, 0);
+        assert_eq!(source.bytes(), &file[..]);
+        assert!(source.offset + source.len.max(16) <= source.slab.buffer.byte_length());
+    }
+    // The same bytes are one source.
+    assert!(Arc::ptr_eq(&first[0], &first[3]));
+    let again = admit_sources(&bytes).expect("admits");
+    for (a, b) in first.iter().zip(&again) {
+        assert!(Arc::ptr_eq(a, b), "a resident source is not copied again");
+    }
+    let (slabs, at) = source_slabs(&again).expect("within MAX_SLABS");
+    assert!(slabs.len() <= MAX_SLABS);
+    for (source, &k) in again.iter().zip(&at) {
+        assert_eq!(slabs[k as usize].id, source.slab.id);
+    }
+}

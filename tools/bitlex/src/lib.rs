@@ -8,3 +8,4 @@ pub mod eval;
 pub mod mask;
 pub mod oracle;
 pub mod syntax;
+pub mod tree;
