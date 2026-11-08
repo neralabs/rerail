@@ -61,7 +61,8 @@ pub(crate) enum Shape {
 }
 
 /// The projection a run binds: its shape, and the relations its program reads (`None`: all). A relation no rule
-/// reads is not made where making it costs (`text` of every node, the tokens).
+/// reads is not made where making it costs (`text` of every node, the tokens); one the program derives is not bound
+/// (`derived`).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Projection {
     pub(crate) shape: Shape,
@@ -78,11 +79,15 @@ pub(crate) struct Projection {
     /// In T's shape, `syntax_error` is core.rr's `syntax_error(d, l, msg)`, CPython's verdict, not T's
     /// `syntax_error(d)`: the program declares that one (a program of core.rr's base relations, not T's).
     verdict: bool,
+    /// The relations the program's rules derive: the batch binds none of them, made or viewed (T's programs derive
+    /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
+    /// bound table of that name would be the planner's to drop.
+    derived: BTreeSet<String>,
 }
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new(), verdict: false }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -101,7 +106,9 @@ impl Projection {
             _ => None,
         });
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect(), verdict }
+        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect(), verdict, derived }
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -2017,7 +2024,9 @@ pub(crate) fn with_nearest(
     let (batch, relations, matched, (strings, symbols)) = Batch::build(store, documents, projection, &tests.matches, &tests.markers)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
-    let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    // The batch's relations and views, but none the program derives (`Projection::derived`).
+    let mut out: Vec<(String, Arc<dyn Source>)> =
+        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
     out.extend(matched.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
@@ -2030,7 +2039,7 @@ pub(crate) fn with_nearest(
     }
     drop(text);
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
-    out.extend(views(&batch).into_iter().map(|(name, source)| (name.to_owned(), source)));
+    out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
