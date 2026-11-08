@@ -627,7 +627,8 @@ built: no tuning on OSS data, and nobody who changes the mechanism reads OSS lab
 - **Ledger.** Built once per label before any run (`--build-ledgers`) on the build hosts, judge on Bedrock
   `openai.gpt-6-luna` through Codex 0.158, and stored; the runs read the stored ledgers. Inputs as in Ledger inputs
   above: first and every `concurrent` pull request as visible at second's start, the area pre-filter (stated as part
-  of the mechanism; it keeps every ref with a change), positions from design docs, commit messages and pull request
+  of the mechanism: a ref is kept only if its visible commits share an area with the repository at the base; it drops
+  refs on six ledgers, most on mdBook, 37 of 94 and 37 of 96), positions from design docs, commit messages and pull request
   descriptions as they read then (fetched once, read-only, edit history respected). The build's counts (refs, units by
   kind, judge calls) are reported with the results.
 - **Pairs.** The 26 completion labels of the earlier completion run (11 D1, 15 D2), `--exclude encode-httpx-3304-3335`,
