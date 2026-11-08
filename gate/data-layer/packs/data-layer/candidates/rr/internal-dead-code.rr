@@ -80,7 +80,7 @@ sg_edge(sid, target) :- sgp_active(), sgr_ambiguous(sid, i), sgr_query(sid, i, "
 .decl idc_source_unproven()
 idc_source_unproven() :- idc_mixin_unproven(_, _).
 .violation IDCSourceChoiceRequired(at: span, owner: symbol, attr: symbol) code "IDC_SOURCE_CHOICE_REQUIRED" "Cannot prove equivalent mixin targets for {owner}.{attr}"
-IDCSourceChoiceRequired(@place(path, row), c, attr) :- option("entryPoint", "analyze_dead_code"), idc_mixin_unproven(c, attr), sgc_symbol(n, _, _, c), sgs_symbol(n, d, _, _, _, _, _, _, _, row, _), sgs_module(d, path, _).
+IDCSourceChoiceRequired(@place(path, row), c, attr) :- option("entryPoint", entry), (entry = "analyze_dead_code" ; entry = "report_text" ; entry = "report_json"), idc_mixin_unproven(c, attr), sgc_symbol(n, _, _, c), sgs_symbol(n, d, _, _, _, _, _, _, _, row, _), sgs_module(d, path, _).
 .decl idc_protocol(sid: symbol)
 idc_protocol(sid) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _), suffix("Protocol", name).
 idc_protocol(sid) :- sg_base_text(sid, base), contains("Protocol", base).
@@ -137,8 +137,14 @@ IDCItem(@place("", 0), category, sid, ordinal) :- option("entryPoint", "analyze_
 srep_mode("text") :- option("entryPoint", "_print_text").
 srep_mode("json") :- option("entryPoint", "_print_json").
 srep_mode("worst") :- option("entryPoint", "_worst_files").
+.decl idc_graph_report()
+idc_graph_report() :- option("entryPoint", entry), (entry = "report_text" ; entry = "report_json").
+srep_mode("text") :- option("entryPoint", "report_text").
+srep_mode("json") :- option("entryPoint", "report_json").
 srep_category(i, category) :- srep_mode(_), option_item("resultCategories", i, category).
 srep_item(category, i, sid) :- srep_mode(_), idc_supplied(category, sid, i).
+srep_category(i, category) :- idc_graph_report(), idc_category(i, category), !idc_source_unproven().
+srep_item(category, i, sid) :- idc_graph_report(), idc_sorted(category, sid, i), !idc_excluded(sid), !idc_source_unproven().
 srep_symbol(sid, path, line, qual) :- srep_mode(_), sg_symbol(_, sid, _, _, _, path, line, _, _, _), sg_qualname(sid, qual).
 srep_worst_input(i, sid) :- srep_mode("worst"), option_item("worstSymbols", i, sid).
 srep_worst_input(i, sid) :- srep_mode("text"), srep_item("high_confidence_functions", i, sid).

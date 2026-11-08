@@ -1600,7 +1600,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
+      "sha256": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1625,6 +1625,11 @@
           "before": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
           "after": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
           "reason": "Render exact source survey reports from typed rows, with occurrence order, error precedence, Python limits, and JSON formatting"
+        },
+        {
+          "before": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
+          "after": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3",
+          "reason": "Feed the report formatter from native discovered-source analysis, without supplied expected result rows; preserve explicit ambiguity refusals"
         }
       ]
     },
@@ -2264,7 +2269,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b"
+      "ruleSha256": "d4660d328064cf4db114b3bb58fc37ec9eb804ca9569bfe21bbb108c7332d9f3"
     },
     {
       "check": "imperative_private_functions",

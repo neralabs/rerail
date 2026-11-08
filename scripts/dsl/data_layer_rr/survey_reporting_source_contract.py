@@ -12,7 +12,7 @@ import tempfile
 from migration import PIN, ROOT, git, sha, write_json
 from replay import write_fixture
 from survey_discovery_contract import CASES as DISCOVERY_CASES, case, file, process_environment, program as discovery_program
-from survey_analysis_contract import native_result, same_result
+from survey_analysis_contract import MIXINS, native_result, same_result
 
 
 FORMAT='rerail.survey-source-reporting/v1'
@@ -25,6 +25,7 @@ def cases():
             case('unicode',[file('impl/é😀.py','class É:\n def méthode(self): pass\ndef façade(): pass\n')],['impl']),
             case('category-overlap',[file('impl/a.py','class SqlIntent(SqlGrammarBase): pass\nclass Other: pass\ndef dead(): pass\n')],['impl']),
             case('parse-failure',[file('impl/a.py'),file('impl/bad.py','def bad(\n')],['impl']),
+            case('mixin-equivalence',[file('impl/a.py',MIXINS)],['impl']),
             weighted]
     result=[]
     for item in inputs:
