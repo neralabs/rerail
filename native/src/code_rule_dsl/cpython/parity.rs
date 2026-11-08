@@ -231,7 +231,9 @@ fn syntax_error_parity() {
 }
 
 /// The names of an annotation's tree as the oracle's `annotations` mode gives them: each identifier but a keyword
-/// argument's name (CPython's `Name` ids and `Attribute` attrs), sorted and distinct.
+/// argument's name (CPython's `Name` ids and `Attribute` attrs), sorted and distinct. An identifier is its text, as
+/// written in the string, under `@nfkc`, as the rules read a name (`bootstrap_str_names`): CPython's parser
+/// normalizes it (PEP 3131), the guest's tree holds it as written.
 fn annotation_names(tree: &crate::code_rule_dsl::literal::SubTree) -> Vec<String> {
     use crate::code_rule_dsl::literal::annotation::{kind_name, python};
     let name = python().field_id_for_name("name").map_or(0, |f| f.get());
@@ -240,7 +242,7 @@ fn annotation_names(tree: &crate::code_rule_dsl::literal::SubTree) -> Vec<String
     for node in &nodes {
         let keyword = node.field == name && node.parent.is_some_and(|p| kind_name(nodes[p as usize].kind) == "keyword_argument");
         if kind_name(node.kind) == "identifier" && node.named && !keyword {
-            out.insert(tree.text()[node.start as usize..node.end as usize].to_owned());
+            out.insert(crate::code_rule_dsl::identifier::nfkc(&tree.text()[node.start as usize..node.end as usize]).into_owned());
         }
     }
     out.into_iter().collect()
@@ -463,10 +465,10 @@ fn printed_parity() {
                         if matches!(class, "FunctionDef" | "AsyncFunctionDef") {
                             let (c, g) = (r[5].as_str(), e.body_sha256.as_deref());
                             t[5].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
-                        }
-                    }
                             let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
                             t[6].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        }
+                    }
                     for key in engine.keys().filter(|k| !seen.contains(*k)) {
                         t[0].add(false, || format!("{shown}@{} {}: engine node at no CPython node", key.0, key.2));
                     }
@@ -484,9 +486,9 @@ fn printed_parity() {
                 "located nodes (span and class)",
                 "unparse of expressions, keywords, args, aliases: text or none",
                 "those with a text on either side",
+                "those whose CPython text holds a lone surrogate (no UTF-8): none",
                 "dump_sha256",
                 "body_sha256 of defs",
-                "those whose CPython text holds a lone surrogate (no UTF-8): none",
                 "signature_sha256 of defs",
             ];
             for (t, w) in total.iter().zip(what) {
