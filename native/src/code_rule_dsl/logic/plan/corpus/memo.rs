@@ -79,6 +79,15 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
     hash.finalize().into()
 }
 
+/// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
+pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-options/v1\0");
+    hash.update(digest);
+    hash.update(options.to_string().as_bytes());
+    hash.finalize().into()
+}
+
 /// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
 /// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
 pub(super) fn off() {
