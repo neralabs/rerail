@@ -45,6 +45,30 @@ fn syntax_errors_are_ast_parses() {
         ("x = (1 2\n", Some((1, "'(' was never closed"))),
         ("try:\n  pass\nelse:\n  pass\n", Some((3, "expected 'except' or 'finally' block"))),
         ("\tif 1:\n        x\n\ty\n", Some((1, "unexpected indent"))),
+        ("class A:\n\n\n", Some((3, "expected an indented block after class definition on line 1"))),
+        ("def f():\n  if x:\n\n\n  ", Some((5, "expected an indented block after 'if' statement on line 2"))),
+        ("if x\n  pass\ny = '\n", Some((3, "unterminated string literal (detected at line 3)"))),
+        ("print \"a\"\n", Some((1, "Missing parentheses in call to 'print'. Did you mean print(...)?"))),
+        ("x = 1\nexec \"c\"\n", Some((2, "Missing parentheses in call to 'exec'. Did you mean exec(...)?"))),
+        ("f(print \"a\")\n", Some((1, "Missing parentheses in call to 'print'. Did you mean print(...)?"))),
+        ("print -1\nx y\n", Some((1, "Missing parentheses in call to 'print'. Did you mean print(...)?"))),
+        ("print [1] = 3\nx y\n", Some((2, "invalid syntax"))),
+        ("x.print \"a\"\n", Some((1, "invalid syntax"))),
+        ("x y\nprint [1]\n", Some((1, "invalid syntax"))),
+        ("print \"a\"\nx = '\n", Some((2, "unterminated string literal (detected at line 2)"))),
+        ("print \"a\"\nx = (\n", Some((1, "Missing parentheses in call to 'print'. Did you mean print(...)?"))),
+        ("print [1]\nx = (\n", Some((2, "'(' was never closed"))),
+        ("print [1]\n\"\\x\"\n", Some((2, "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: truncated \\xXX escape"))),
+        ("\"\\x\"\ny = '\n", Some((2, "unterminated string literal (detected at line 2)"))),
+        ("\"é\\x\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 10-11: truncated \\xXX escape"))),
+        ("x = '''\n\\x'''\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 1-2: truncated \\xXX escape"))),
+        ("\"\\u12\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-3: truncated \\uXXXX escape"))),
+        ("\"\\U0011ffff\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-9: illegal Unicode character"))),
+        ("\"\\N{}\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: malformed \\N character escape"))),
+        ("\"\\N{BAD NAME}\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-11: unknown Unicode character name"))),
+        ("x = f\"\"\"\n\\x{1}\n\"\"\"\n", Some((3, "(unicode error) 'unicodeescape' codec can't decode bytes in position 1-2: truncated \\xXX escape"))),
+        ("f\"a{{b\\x\"\n", Some((1, "(unicode error) 'unicodeescape' codec can't decode bytes in position 1-2: truncated \\xXX escape"))),
+        ("b\"ab\\x4\"\n", Some((1, "(value error) invalid \\x escape at position 2"))),
     ];
     let mut wrong = Vec::new();
     for (source, want) in cases {
@@ -224,6 +248,9 @@ fn unparse_is_cpythons() {
         (r#"{1, 2}"#, r#"{1, 2}"#),
         (r#"a if (b := c) else d"#, r#"a if (b := c) else d"#),
         (r#"'\ud800'"#, r#"'\ud800'"#),
+        (r#"f"\ud800json{x}json\udfff""#, r#"f'\ud800json{x}json\udfff'"#),
+        (r#"f"a{{\ud800}}b{x}""#, r#"f'a{{\ud800}}b{x}'"#),
+        (r#"'a' f"\udfff{x}""#, r#"f'a\udfff{x}'"#),
         (r#"f'{x!a}' 'tail\'s'"#, r#"f"{x!a}tail's""#),
         (r#"f'''a
 b{x}'''"#, r#"f'a\nb{x}'"#),
@@ -245,12 +272,13 @@ b{x}'''"#, r#"f'a\nb{x}'"#),
         let value = stmt.node("value").unwrap_or_else(|| panic!("{source:?} is an expression"));
         assert_eq!(super::unparse::unparse(value).as_deref(), Some(unparsed), "unparse of {source:?}");
     }
+    // A format spec's lone surrogate is written as it is: CPython's text is no UTF-8.
+    let root = module(r#"f"{x:json\ud800}""#).expect("parses");
+    let Some(F::Node(stmt)) = root.list("body").first() else { panic!("a statement") };
+    assert_eq!(super::unparse::unparse(stmt.node("value").expect("an expression")), None);
 }
 
 /// The sha256 of `ast.dump(node, include_attributes=False)` of an expression statement's value, as CPython 3.13.14
-        (r#"f"\ud800json{x}json\udfff""#, r#"f'\ud800json{x}json\udfff'"#),
-        (r#"f"a{{\ud800}}b{x}""#, r#"f'a{{\ud800}}b{x}'"#),
-        (r#"'a' f"\udfff{x}""#, r#"f'a\udfff{x}'"#),
 /// gives it (W's `dump_sha256`): fields left out where `None` or empty, constants' and identifiers' reprs.
 #[test]
 fn dump_is_cpythons() {
@@ -272,10 +300,6 @@ fn dump_is_cpythons() {
         (r#"lambda *, k=2: k"#, "595ba6c99f02775c61af0fe70760b219e58e67e22fc616cc901d4bdf7ab2b579"),
         (r#"(yield)"#, "2f5cbc5542dfba1332aa4db3b30475074906fb2520efc1b7d133e6e17716406c"),
         (r#"(yield x + 1)"#, "e13768f372814781ccefa54725ff9c166748bb5d25d3de0fb6b5319060c76efd"),
-    // A format spec's lone surrogate is written as it is: CPython's text is no UTF-8.
-    let root = module(r#"f"{x:json\ud800}""#).expect("parses");
-    let Some(F::Node(stmt)) = root.list("body").first() else { panic!("a statement") };
-    assert_eq!(super::unparse::unparse(stmt.node("value").expect("an expression")), None);
         (r#"(x := a + b)"#, "59e71585fecfc339a4d2f76588ca4c5cebb110e2a22e09d7e3efe412a1a47eb4"),
         (r#"await f(x)"#, "0dbe68bf486877dcd553d927dc13ac03303b38c9a02eb914ac32f220174453b7"),
         (r#"f(*a, **k, x=1)"#, "599cfd5818f9c6fdd4b2946bc90ef8a280ecfdfd7f6f41ac1cc6ab547a8e45de"),
@@ -335,6 +359,10 @@ fn dump_is_cpythons() {
         (r#"{1, 2}"#, "7278e1239e592ff1756503ba1d32f6539041e52125053030bd105b998b877cb0"),
         (r#"a if (b := c) else d"#, "0f9d24719ddb6fbac4d66ccf415650db1808aa90112215ea5d229ea446daaefb"),
         (r#"'\ud800'"#, "cbe17708ec00aea54a34e395dbb59ddb76657198fe19ed002a16a63b3a7ac6bc"),
+        (r#"f"\ud800json{x}json\udfff""#, "00bfe1571383a0a16f9a4a7a81733c49f66bee6ec08f3683aa84bda0389c79f6"),
+        (r#"f"{x:json\ud800}""#, "85c25d27241ec400fc4707ede0a732c823eb09e9e06fe39843c98c85ee2ffb98"),
+        (r#"f"a{{\ud800}}b{x}""#, "5bc55e1f9dc7b796ba357752f86e825d0802efdc6c69a6f64a9fd345c53b7470"),
+        (r#"'a' f"\udfff{x}""#, "dfd80fa8cd77e55ec25f12203ab4d7fba86d5732f9bc823c7a9c6c197297e169"),
         (r#"f'{x!a}' 'tail\'s'"#, "dc345a94fc186d49976a96b453dfeab4aee396b9c3f64ea14ef71ee6a6ac65b6"),
         (r#"f'''a
 b{x}'''"#, "b10b63fb5ab09d3c9794cfe157dab54afcb2debf26c6ae5f94baa4cd1f85aa44"),
@@ -359,10 +387,6 @@ b{x}'''"#, "b10b63fb5ab09d3c9794cfe157dab54afcb2debf26c6ae5f94baa4cd1f85aa44"),
 }
 
 /// W's `body_sha256` and `signature_sha256` of a def, and the text each hashes, as CPython 3.13.14 gives them.
-        (r#"f"\ud800json{x}json\udfff""#, "00bfe1571383a0a16f9a4a7a81733c49f66bee6ec08f3683aa84bda0389c79f6"),
-        (r#"f"{x:json\ud800}""#, "85c25d27241ec400fc4707ede0a732c823eb09e9e06fe39843c98c85ee2ffb98"),
-        (r#"f"a{{\ud800}}b{x}""#, "5bc55e1f9dc7b796ba357752f86e825d0802efdc6c69a6f64a9fd345c53b7470"),
-        (r#"'a' f"\udfff{x}""#, "dfd80fa8cd77e55ec25f12203ab4d7fba86d5732f9bc823c7a9c6c197297e169"),
 #[test]
 fn def_hashes_are_ws() {
     use super::ast::{F, module};
