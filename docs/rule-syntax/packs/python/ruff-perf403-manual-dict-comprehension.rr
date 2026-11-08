@@ -16,7 +16,7 @@
 //   perf_for, perf_body, perf_mentions, perf_only_binding, perf_dict_site, perf_used_after
 
 .violation PERF403(at: node, l: node) code "PERF403"
-    "Build the dict with a comprehension (`{k: v for ...}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
+    "Build the dict with a comprehension (`{{k: v for ...}}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
     suppress ruff "PERF403"
 PERF403(a, o) :- perf_for(f, t, _), perf_body(f, st, test), store(st, a, o, key, value), from_target(t, key),
     from_target(t, value), kind(o, "identifier"), text(o, l), !perf_mentions(test, l),

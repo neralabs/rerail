@@ -15,6 +15,6 @@
 #include "python/misc2-messages.rr"
 
 .violation INT002(at: node) code "INT002"
-    "Translate the template, then format it: `_(\"Hello, {}!\").format(name)`, not `_(\"Hello, {}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress ruff "INT002"
 INT002(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "format").

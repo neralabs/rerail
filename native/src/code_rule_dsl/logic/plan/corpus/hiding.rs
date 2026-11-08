@@ -307,23 +307,49 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
 fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> BTreeMap<String, Vec<Fact>> {
     let mut carried: BTreeMap<String, Vec<Fact>> =
         prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
-    loop {
-        let mut changed = false;
-        for (rule, seed) in prog.rules.iter().zip(seeds) {
-            let facts = analyse(rule, base, &carried, seed);
-            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
-            for (c, t) in rule.head.args.iter().enumerate() {
-                if let (Term::Var(v), Some(slot)) = (t, cols.get_mut(c))
-                    && let Some(f) = facts.get(v)
-                {
-                    changed |= slot.join(f);
+    // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
+    // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
+    let mut readers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, rule) in prog.rules.iter().enumerate() {
+        for l in &rule.body {
+            if let Literal::Atom(a) = l
+                && !a.neg
+            {
+                let list = readers.entry(a.rel.as_str()).or_default();
+                if list.last() != Some(&i) {
+                    list.push(i);
                 }
             }
         }
-        if !changed {
-            break;
-        }
     }
+    let fixpoint = |carried: &mut BTreeMap<String, Vec<Fact>>, step: &dyn Fn(&BTreeMap<String, Fact>, &Term, &mut Fact) -> bool| {
+        let mut queued = vec![true; prog.rules.len()];
+        let mut work: std::collections::VecDeque<usize> = (0..prog.rules.len()).collect();
+        while let Some(i) = work.pop_front() {
+            queued[i] = false;
+            let (rule, seed) = (&prog.rules[i], &seeds[i]);
+            let facts = analyse(rule, base, carried, seed);
+            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
+            let mut changed = false;
+            for (c, t) in rule.head.args.iter().enumerate() {
+                if let Some(slot) = cols.get_mut(c) {
+                    changed |= step(&facts, t, slot);
+                }
+            }
+            if changed {
+                for &j in readers.get(rule.head.rel.as_str()).into_iter().flatten() {
+                    if !queued[j] {
+                        queued[j] = true;
+                        work.push_back(j);
+                    }
+                }
+            }
+        }
+    };
+    fixpoint(&mut carried, &|facts, t, slot| match t {
+        Term::Var(v) => facts.get(v).is_some_and(|f| slot.join(f)),
+        _ => false,
+    });
     // Which scoped columns only guest values fill: every column scoped is taken as definite, then a rule filling it
     // with a variable that is not (a host node, or a column filled by one) makes it not, to a fixpoint.
     for cols in carried.values_mut() {
@@ -331,26 +357,16 @@ fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<
             f.definite = f.scoped;
         }
     }
-    loop {
-        let mut changed = false;
-        for (rule, seed) in prog.rules.iter().zip(seeds) {
-            let facts = analyse(rule, base, &carried, seed);
-            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
-            for (c, t) in rule.head.args.iter().enumerate() {
-                let definite = matches!(t, Term::Var(v) if facts.get(v).is_some_and(|f| f.definite));
-                if let Some(slot) = cols.get_mut(c)
-                    && slot.definite
-                    && !definite
-                {
-                    slot.definite = false;
-                    changed = true;
-                }
-            }
+    fixpoint(&mut carried, &|facts, t, slot| {
+        let definite = matches!(t, Term::Var(v) if facts.get(v).is_some_and(|f| f.definite));
+        if slot.definite && !definite {
+            slot.definite = false;
+            true
+        } else {
+            false
         }
-        if !changed {
-            return carried;
-        }
-    }
+    });
+    carried
 }
 
 /// A rule's variables that are scoped, and their grammars; `seed` holds what a specialized copy's head is.

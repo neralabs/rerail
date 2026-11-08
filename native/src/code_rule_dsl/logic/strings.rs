@@ -267,15 +267,22 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
     let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
         .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
         .collect();
+    // Each relation's rules, found once: scanning every rule for every declaration in every round was quadratic in a
+    // combined pack (O111).
+    let mut by_head: HashMap<&str, Vec<&super::front::Rule>> = HashMap::new();
+    for rule in &prog.rules {
+        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let inputs: HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     loop {
         let mut found = Vec::new();
         for (relation, declaration) in &prog.decls {
             // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
             if prog.facts.get(relation).is_some_and(|rows| !rows.is_empty())
-                || (prog.inputs.contains(relation) && !columns.contains_key(relation)) {
+                || (inputs.contains(relation.as_str()) && !columns.contains_key(relation)) {
                 continue;
             }
-            let writers: Vec<_> = prog.rules.iter().filter(|r| &r.head.rel == relation).collect();
+            let writers: &[&super::front::Rule] = by_head.get(relation.as_str()).map_or(&[], Vec::as_slice);
             if writers.is_empty() {
                 continue;
             }

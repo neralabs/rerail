@@ -16,6 +16,6 @@
 #include "python/misc2-messages.rr"
 
 .violation INT001(at: node) code "INT001"
-    "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {name}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {{name}}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress ruff "INT001"
 INT001(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "fstr").
