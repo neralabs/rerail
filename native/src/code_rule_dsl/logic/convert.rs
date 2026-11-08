@@ -217,7 +217,7 @@ impl Emitter {
                 let mut body = self.body(&c.rule, n)?;
                 for (name, rule) in &c.constraints {
                     let Some(v) = self.captures.get(name).cloned() else { return gap(format!("constraint on ${name}, not captured")) };
-                    body.extend(self.body(rule, &v)?);
+                    body.extend(self.at_node(&v, &v, |e| e.body(rule, &v))?);
                 }
                 body
             }
@@ -245,7 +245,7 @@ impl Emitter {
             }
             AstMatcher::Any(ms) => {
                 let mark = self.next;
-                let bodies = ms.iter().map(|t| self.scoped(|e| e.body(t, "$n"))).collect::<Res<Vec<_>>>()?;
+                let bodies = ms.iter().map(|t| self.at_node(n, "$n", |e| e.scoped(|e| e.body(t, "$n")))).collect::<Res<Vec<_>>>()?;
                 if bodies.iter().any(Vec::is_empty) {
                     return Ok(Vec::new());
                 }
@@ -256,7 +256,7 @@ impl Emitter {
             }
             AstMatcher::Not(t) => {
                 let mark = self.next;
-                let body = self.scoped(|e| e.body(t, "$n"))?;
+                let body = self.at_node(n, "$n", |e| e.scoped(|e| e.body(t, "$n")))?;
                 if body.is_empty() {
                     return Ok(self.never(n));
                 }
@@ -333,6 +333,16 @@ impl Emitter {
         let saved = self.captures.clone();
         let out = f(self);
         self.captures = saved;
+        out
+    }
+
+    /// Runs `f` converting a rule at the node named `inner`, the node `n` here (a helper relation's `$n`) or another
+    /// (`n` = `inner`): what the enclosing `all` says of the node's kinds holds there only if that node is `n`.
+    fn at_node<T>(&mut self, n: &str, inner: &str, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = self.node_kinds.clone();
+        self.node_kinds = saved.clone().filter(|(node, _)| node == n).map(|(_, kinds)| (inner.to_owned(), kinds));
+        let out = f(self);
+        self.node_kinds = saved;
         out
     }
 
@@ -427,7 +437,7 @@ impl Emitter {
                     } else {
                         b.push(format!("inside($low, $s, {stops})"));
                         let mark = self.next;
-                        let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
+                        let is_stop = self.at_node("$s", "$s", |e| e.scoped(|e| e.body(stop, "$s")))?;
                         if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
                             return gap("a stop rule reading a metavariable bound outside it");
                         }
@@ -461,7 +471,7 @@ impl Emitter {
         if matches!(axis, Axis::Has | Axis::Inside) && matches!(stop, StopBy::Neighbor) {
             self.approx.insert("neighbours among named children".into());
         }
-        body.extend(self.body(rule, &m)?);
+        body.extend(self.at_node(&m, &m, |e| e.body(rule, &m))?);
         Ok(body)
     }
 
