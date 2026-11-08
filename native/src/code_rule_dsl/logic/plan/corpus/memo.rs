@@ -14,6 +14,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
+/// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
+/// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
 const SCHEMA: u32 = 5;
 
 /// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
@@ -21,6 +23,14 @@ const SCHEMA: u32 = 5;
 pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
 }
+const _: () = {
+    let retired = crate::content_store::RETIRED_CORPUS_MEMO_SCHEMAS;
+    let mut i = 0;
+    while i < retired.len() {
+        assert!(retired[i] != SCHEMA, "the corpus memo's schema is retired");
+        i += 1;
+    }
+};
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

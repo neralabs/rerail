@@ -24,10 +24,16 @@ pub(in crate::code_rule_dsl) struct Session {
     /// The store's file, which each run's SQL connection opens (its atoms are the store's).
     pub(super) path: PathBuf,
     pub(super) store: ContentStore,
+    /// In a test build, the thread that started the session, the only one whose runs are its: the other tests run
+    /// beside it, in the same process, and are no session's.
+    #[cfg(test)]
+    thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
     /// The thread that started it: in tests, which run in parallel in one process, a session is its own test's.
     #[cfg(test)]
     owner: std::thread::ThreadId,
+    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
+    pub(super) cross: Mutex<Option<super::retain::Retained>>,
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -41,7 +47,12 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join("session.sqlite");
     let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    *session = Some(Session { path, store, memo: Default::default(), #[cfg(test)] owner: std::thread::current().id() });
+    *session = Some(Session { path, store, memo: Default::default(), cross: Mutex::new(None),
+        #[cfg(test)]
+        thread: std::thread::current().id(),
+        #[cfg(test)]
+        owner: std::thread::current().id(),
+    });
     Ok(())
 }
 
@@ -69,7 +80,12 @@ pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
 
 /// The session, held for a run (`None`: none started, or a full run).
 pub(super) fn current() -> Held {
-    Held(SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner), FULL.load(std::sync::atomic::Ordering::Relaxed))
+    let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    #[cfg(test)]
+    let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
+    #[cfg(not(test))]
+    let skip = false;
+    Held(held, skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The session held for a run, unless the run is a full one.
@@ -97,10 +113,14 @@ mod tests {
     use super::*;
     use crate::code_rule_dsl::typing::file_local::Binding;
 
+    /// The process has one session: its tests take turns.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     /// Two runs of one program in a session: the second compiles nothing and reads the unchanged file from the memo;
     /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
     #[test]
     fn a_session_reruns_what_an_edit_changed() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();
@@ -122,6 +142,129 @@ mod tests {
         let third = run();
         assert_eq!(third.memo.0, 1, "only the edited file is evaluated");
         assert!(findings().lines().count() == expected.lines().count() + 1, "the edit's finding: {}", findings());
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A session keeps its cross-file part (decision 0077): a run over unchanged files evaluates no cross-file stratum,
+    /// a run after an edit evaluates those whose inputs changed, and every run's findings are a full run's.
+    #[test]
+    fn a_session_runs_the_cross_file_strata_an_edit_changed() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-cross-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(src.join("pkg")).unwrap();
+        std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+        std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+        std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+        std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
+        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+        let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
+        let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            let report = full(run);
+            assert_eq!(report.cross_strata, None, "a full run is no session's");
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        let first = run();
+        let (ran, all) = first.cross_strata.expect("a session's run");
+        assert_eq!(ran, all, "the first run evaluates every stratum");
+        assert!(all > 0, "the rules have a cross-file part");
+        let expected = full();
+        assert_eq!(findings(), expected);
+        let again = run();
+        assert_eq!(again.cross_strata, Some((0, all)), "nothing changed: no stratum runs");
+        assert_eq!(findings(), expected);
+        let edits: [(&str, &str); 3] = [
+            ("other.py", "import json\nimport pickle\njson.loads('1')\npickle.loads(b'2')\n"),
+            ("main.py", "from pkg.loader import load\nload(b'x')\neval('1')\n"),
+            ("pkg/loader.py", "import marshal as p\n\ndef load(b):\n    return p.loads(b)\n"),
+        ];
+        let mut maintained = 0;
+        for (path, text) in edits {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            let got = findings();
+            assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
+            let (ran, _) = report.cross_strata.expect("a session's run");
+            assert!(ran <= all, "{path}: {ran} of {all}");
+            eprintln!("{path}: {ran} of {all} strata run, {} maintained from deltas ({} recursive); {} findings", report.cross_maintained.0, report.cross_maintained.1, got.len());
+            maintained += report.cross_maintained.0;
+        }
+        assert!(maintained > 0, "an edit's strata are maintained from deltas (stage 2)");
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A recursive cross-file stratum (import reachability) is maintained by delete-and-rederive (decision 0077 §3):
+    /// an edit that breaks a cycle deletes the rows that lost every derivation, one that closes it again inserts them,
+    /// and every run's findings are a full run's.
+    #[test]
+    fn a_session_maintains_a_recursive_cross_file_stratum() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-cycle" revision 1
+.description "An import that closes a cycle of imports."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
+        let edits: [(&str, &str); 4] = [
+            ("c.py", "from d import z\n"),
+            ("d.py", "from a import w\n"),
+            ("b.py", "x = 2\n"),
+            ("b.py", "from c import y\n"),
+        ];
+        let mut recursive = 0;
+        for (path, text) in edits {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            let got = findings();
+            assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
+            eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
+            recursive += report.cross_maintained.1;
+        }
+        assert!(recursive > 0, "the recursive stratum is maintained");
         stop();
         let _ = std::fs::remove_dir_all(&base);
     }
