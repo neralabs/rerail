@@ -1455,6 +1455,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
+      "sha256": "fdd344d62e169f3cb1087de08d08841bb0660e7dc9c57ca70cc5ff43eb7f606c",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_render_fstrings.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1738,8 +1745,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-render-fstrings.json",
       "legacySha256": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/render-fstrings.rr",
+      "ruleSha256": "fdd344d62e169f3cb1087de08d08841bb0660e7dc9c57ca70cc5ff43eb7f606c"
     },
     {
       "check": "render_raw_strings",

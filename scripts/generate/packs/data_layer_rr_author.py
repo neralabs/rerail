@@ -158,6 +158,7 @@ def main():
     from data_layer_rr_transaction_patterns import transaction_patterns
     from data_layer_rr_lazy_results import lazy_result_usage
     from data_layer_rr_module_caches import module_level_caches
+    from data_layer_rr_render_fstrings import render_fstrings
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -190,6 +191,7 @@ def main():
                   ('transaction_patterns', lambda s, t: transaction_patterns(s, t, header)),
                   ('lazy_result_usage', lambda s, t: lazy_result_usage(s, t, header)),
                   ('module_level_caches', lambda s, t: module_level_caches(s, t, header)),
+                  ('render_fstrings', lambda s, t: render_fstrings(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]
