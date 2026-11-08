@@ -147,6 +147,22 @@ Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, 
     assert_eq!(rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["column"].as_i64().unwrap())).collect::<Vec<_>>(), [(1, 8), (2, 3)]);
 }
 
+/// Literal pieces use source byte offsets, including non-ASCII constants and format specifications.
+#[test]
+fn decoded_constant_offsets_join_to_source_byte_ranges() {
+    let source = "x = f\"漢{x:>{w}}tail\"\ny = f\"{x=}\"\n";
+    let mut rows = finding_contract(source, r#"
+.language python
+.violation Piece(at: node, ordinal: number, offset: number, value: symbol, spec: number) "{value}"
+Piece(n, i, off, value, spec) :- str_part_offset(n, i, off), str_part(n, i, value, _, spec).
+"#);
+    rows.sort_by_key(|r| r["parameters"]["offset"].as_i64().unwrap());
+    let values: Vec<_> = rows.iter().map(|r| (r["parameters"]["offset"].as_i64().unwrap() as usize,
+        r["parameters"]["value"].as_str().unwrap(), r["parameters"]["spec"].as_i64().unwrap())).collect();
+    assert_eq!(values, [(source.find("漢").unwrap(), "漢", 0), (source.find('>').unwrap(), ">", 1),
+        (source.find("tail").unwrap(), "tail", 0), (source.rfind("x=").unwrap(), "x=", 0)]);
+}
+
 /// Word runs are decoded code points, including non-scalar delimiters and adjacent literals.
 #[test]
 fn python_constant_word_runs_preserve_surrogate_boundaries() {

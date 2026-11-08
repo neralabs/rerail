@@ -478,7 +478,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
+      "sha256": "4423a4cd57d2405766329e3a3fc5156523ccd8e7c5bd89a4971e73c225cb8fc6",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -552,6 +552,11 @@
           "before": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
           "after": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
           "reason": "Expose JSON type facts and complete loader DTO transport from the same cached native parse; transaction_patterns requires both"
+        },
+        {
+          "before": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
+          "after": "4423a4cd57d2405766329e3a3fc5156523ccd8e7c5bd89a4971e73c225cb8fc6",
+          "reason": "Expose the existing literal producer absolute byte starts for joins to format-specification spans; preserve line/column API"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2492,11 +2497,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "a84a0a7e472c72e35724b59525927b4ea5290a11e5db4d25de9686296ca4e6a3"
+        "sha256": "124696c49dcfc8bb1f889eca85c17217d3c0f3fc700859ece6d795db006101b5"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "da11e02d3ace533f0ac8133485dcf1b254b0dac9c412922a780409133526fc38"
+        "sha256": "e51f29f3a37ca2c24ae5959ed0bd97af8548a21928e10eba0dfc9c1616a58a72"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2532,7 +2537,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "fc53677409ec8a135e072a52c821b2f70e60a89bc0f3d04558f2870b5383c39d"
+        "sha256": "41dc687906f14fe13b0bcb4f202b83ce87143b2d87e4d7ed5c16a4dc433631ce"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2540,15 +2545,19 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "bbce6d191b33e0a4c866bf22cbe0e5830a3078f3b3ef9a272430dad61e542ca4"
+        "sha256": "7787dcd0311af782a0ead82e8334f5f2e477fc1f3047eef192b051c29d345e90"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "4ba17d77f0e303a28658f35010257ef0d28f0371096f203ca6be5cb22862b454"
+        "sha256": "c81073ee4b1adfc2f93d220b029717efb46f5478eb837c61669c2f5fa054fde2"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
         "sha256": "a3ee5521ae63cdb8b18f209542157ab88336103a661b56fffde91cd763e66cd3"
+      },
+      {
+        "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
+        "sha256": "f839910c89293ab01274e29f44ce0e038a89786cf95ecf8b32ef920249051765"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",

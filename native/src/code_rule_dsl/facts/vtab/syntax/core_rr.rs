@@ -515,6 +515,7 @@ pub(super) struct CoreRows {
     line_count: Vec<[i64; 2]>,
     str_part: Vec<[i64; 5]>,
     str_part_start: Vec<[i64; 4]>,
+    str_part_offset: Vec<[i64; 3]>,
     str_part_word: Vec<[i64; 5]>,
     first_token: Vec<[i64; 2]>,
     last_token: Vec<[i64; 2]>,
@@ -560,7 +561,7 @@ impl CoreRows {
         Ok(())
     }
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_part_offsets: bool, wants_words: bool) {
         let f = &*p.facts;
         let id = p.core[local as usize];
         let n = p.global(local);
@@ -630,7 +631,7 @@ impl CoreRows {
                 self.value_type.insert([v, string(ty) as i64]);
             }
             if dialect.family == Family::Python
-                && (wants_parts || wants_part_starts || wants_words)
+                && (wants_parts || wants_part_starts || wants_part_offsets || wants_words)
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
@@ -642,16 +643,19 @@ impl CoreRows {
                         }
                     }
                 }
-                let position_parts = if wants_parts || wants_part_starts && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
-                    else if wants_part_starts { word_parts } else { Vec::new() };
+                let position_parts = if wants_parts || (wants_part_starts || wants_part_offsets) && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
+                    else if wants_part_starts || wants_part_offsets { word_parts } else { Vec::new() };
                 for (i, (v, at, spec, offset)) in position_parts.into_iter().enumerate() {
                     if wants_parts {
                         self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
                     }
-                    if wants_part_starts {
+                    if wants_part_starts || wants_part_offsets {
                         let absolute = f.start[p.core[at as u32 as usize] as usize] + offset as u32;
-                        let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
-                        self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
+                        if wants_part_offsets { self.str_part_offset.push([n, i as i64, i64::from(absolute)]); }
+                        if wants_part_starts {
+                            let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
+                            self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
+                        }
                     }
                 }
             }
@@ -876,6 +880,7 @@ impl CoreRows {
             ("line_count", pair(&["d", "k"], &self.line_count)),
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
+            ("str_part_offset", make(&["lit", "i", "offset"], &self.str_part_offset, [false; 3], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
             ("first_token", pair(&["n", "t"], &self.first_token)),
             ("last_token", pair(&["n", "t"], &self.last_token)),

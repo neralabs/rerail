@@ -470,9 +470,11 @@
 // Surrogates delimit runs. This projection does not replace full decoded string values.
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
+// Absolute UTF-8 byte start of the same piece. Joins directly to node byte ranges, including format specifications.
+.decl str_part_offset(lit: node, i: number, offset: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_word, str_part_start
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_word, str_part_start, str_part_offset
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

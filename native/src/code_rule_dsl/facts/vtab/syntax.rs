@@ -914,7 +914,7 @@ impl Batch {
                     _ => {}
                 }
                 if core {
-                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
+                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_offset"), projection.wants("str_part_word"));
                 }
             }
             if let Some((line, msg)) = &error {

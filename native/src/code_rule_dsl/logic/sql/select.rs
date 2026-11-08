@@ -115,6 +115,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "split_line" | "lf_line" => &["d", "l", "t"],
         "str_part" => &["lit", "i", "v", "at", "spec"],
         "str_part_word" => &["lit", "i", "w", "at", "spec"],
+        "str_part_offset" => &["lit", "i", "offset"],
         "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
