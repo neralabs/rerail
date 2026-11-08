@@ -204,6 +204,11 @@ pub(crate) struct Report {
     pub(crate) cross_strata: Option<(usize, usize)>,
     /// Of those, strata maintained from deltas, and of them recursive (decision 0077 §3).
     pub(crate) cross_maintained: (usize, usize),
+    /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
+    pub(crate) cross_changed: Vec<String>,
+    pub(crate) cross_again: BTreeMap<&'static str, usize>,
+    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows overdeleted, inserted, and held by the maintained relations.
+    pub(crate) cross_delta_counts: [usize; 3],
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1938,6 +1943,8 @@ pub(crate) fn run_with_options(
     // Strata a session's run evaluated, of all (decision 0077).
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
+    let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
+    let mut cross_delta_counts = [0usize; 3];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`).
     // A program that declares it and derives no row of it (a library that only names it) holds nothing.
@@ -2048,7 +2055,10 @@ pub(crate) fn run_with_options(
                 Some(cell) => {
                     let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
                     let ckey = retain::key(&prepared_key, &cross.program);
-                    let mut cell = cell.lock().expect("the session's cross-file part");
+                    let mut cells = cell.lock().expect("the session's cross-file part");
+                    // One kept part per cross-file program: a run's passes (each over the documents loaded so far)
+                    // are programs of their own, and would otherwise take each other's place.
+                    let mut cell = cells.remove(&ckey);
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
@@ -2058,12 +2068,20 @@ pub(crate) fn run_with_options(
                     for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let measured = syntax::statistics(source.as_ref());
                         stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+                        // Old rows (`kind__old($n, "identifier")`) are planned with their constants' counts: a measured
+                        // column without them prices every constant at no rows, and a large class looks empty.
+                        if rel.ends_with("__old") {
+                            stats.measured(&rel, [], value_counts(source.as_ref(), &measured));
+                        }
                         modules.bind(&db, &rel, source)?;
                     }
                     let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
+                        keep.extend(part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned());
+                    }
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     if wanted.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
@@ -2075,6 +2093,19 @@ pub(crate) fn run_with_options(
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
                         .collect::<Result<Vec<_>>>()?;
+                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
+                    // and hold after the run, for measuring delete-and-rederive (spike O125).
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
+                        let mut counts = [0usize; 3];
+                        for (rel, cols) in &part.program.decls {
+                            if !part.program.rules.iter().any(|r| &r.head.rel == rel) || cols.is_empty() {
+                                continue;
+                            }
+                            let at = if rel.ends_with("__del") { 0 } else if rel.ends_with("__ins") { 1 } else if part.program.decls.contains_key(&format!("{rel}__del")) { 2 } else { continue };
+                            counts[at] += held_rows(&db, &got, rel, cols.len()).map_or(0, |r| r.len());
+                        }
+                        cross_delta_counts = counts;
+                    }
                     let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
                     let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -2100,8 +2131,10 @@ pub(crate) fn run_with_options(
                     });
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
+                    cross_changed = cut.changed.clone();
+                    cross_again = maintained.again.clone();
                     cross_recursive = maintained.recursive;
-                    *cell = Some(next);
+                    cells.insert(ckey, next);
                 }
                 None => {
                 let exports: BTreeSet<&String> = split.exports.iter().collect();
@@ -2355,7 +2388,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive), cross_changed, cross_again, cross_delta_counts })
 }
 
 
@@ -2435,6 +2468,23 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
 /// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
 /// round's outcome is the part's.
 /// A relation's rows after a run: held by the engine (`kept`), or in its table.
+/// Each value's row count in `source`'s columns of few distinct values (`measured`'s NDV at most 4096): a source's
+/// constants' counts, for planning a probe on one.
+fn value_counts(source: &dyn crate::code_rule_dsl::facts::vtab::Source, measured: &[(String, i64, i64, i64, i64)]) -> Vec<(String, i64, i64)> {
+    let mut out = Vec::new();
+    for (c, (name, _, ndv, _, _)) in measured.iter().enumerate() {
+        if *ndv > 4096 {
+            continue;
+        }
+        let mut n: HashMap<i64, i64> = HashMap::new();
+        for i in 0..source.len() {
+            *n.entry(source.value(i, c)).or_default() += 1;
+        }
+        out.extend(n.into_iter().map(|(v, k)| (name.clone(), v, k)));
+    }
+    out
+}
+
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vec<i64>>> {
     use crate::code_rule_dsl::logic::native::component;
     let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {

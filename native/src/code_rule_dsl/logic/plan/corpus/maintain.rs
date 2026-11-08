@@ -22,8 +22,11 @@
 //!
 //! An overdeleted row is a superset of the rows that lost every derivation; a survivor holds in the new rows. A new
 //! row not among the old has a derivation using a gained row at some position, by induction on its derivation, so
-//! the insert rules reach it. A stratum with an aggregate, a native operator, a lattice, an `ast` or `nearest`
-//! literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
+//! the insert rules reach it. A head's computed term (`@dot(p, s)`) is first named: `h(@dot(p, s)) :- B` is read as
+//! `h(v) :- B, v = @dot(p, s)`, so the rows above are rows of variables. A `nearest` literal reads the tree, which the
+//! part does not change (it reads it as stage 1's cut does: not an input), so it is copied as a comparison is. A
+//! stratum with an aggregate, a relation made natively, a lattice, an `ast` literal, or a changed read whose old rows
+//! were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};
@@ -43,6 +46,8 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) derived_again: usize,
     /// Of those maintained, strata that are recursive.
     pub(in crate::code_rule_dsl) recursive: usize,
+    /// Why the strata derived again were: each reason's count (none kept: every changed stratum).
+    pub(in crate::code_rule_dsl) again: std::collections::BTreeMap<&'static str, usize>,
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -57,18 +62,48 @@ fn row(width: usize) -> Vec<Term> {
     (0..width).map(|i| Term::Var(format!("_m{i}"))).collect()
 }
 
-/// Whether a stratum's rules can be maintained: joins, negations and comparisons only, heads of variables and
-/// constants, and every read that changed has its old rows.
-fn maintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule], changed: &BTreeSet<String>, old: &dyn Fn(&str) -> bool) -> bool {
-    scc.iter().all(|r| old(r) && !prog.natives.contains_key(r) && !prog.lattice.contains_key(r))
-        && rules.iter().all(|rule| {
-            rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)))
-                && rule.body.iter().all(|l| match l {
-                    Literal::Atom(a) => !a.gated && (!changed.contains(&a.rel) || scc.contains(&a.rel) || old(&a.rel)),
-                    Literal::Cmp { .. } => true,
-                    _ => false,
-                })
-        })
+/// Why a stratum's rules cannot be maintained, if they cannot: joins, negations, comparisons and `nearest` only, heads
+/// of variables and constants (after `named_heads`), and every read that changed has its old rows.
+fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule], changed: &BTreeSet<String>, old: &dyn Fn(&str) -> bool) -> Option<&'static str> {
+    for r in scc {
+        if prog.natives.contains_key(r) {
+            return Some("a relation made natively");
+        }
+        if prog.lattice.contains_key(r) {
+            return Some("a lattice");
+        }
+        if !old(r) {
+            return Some("its own old rows not kept");
+        }
+    }
+    for rule in rules {
+        if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
+            return Some("a head term");
+        }
+        for l in &rule.body {
+            match l {
+                Literal::Atom(a) if a.gated => return Some("a gated negation"),
+                Literal::Atom(a) if changed.contains(&a.rel) && !scc.contains(&a.rel) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
+                Literal::Atom(_) | Literal::Cmp { .. } | Literal::Nearest { .. } => {}
+                Literal::Agg { .. } => return Some("an aggregate"),
+                Literal::Ast { .. } => return Some("an ast literal"),
+            }
+        }
+    }
+    None
+}
+
+/// `rule` with each computed head term named by a variable the body binds: `h(@f(x)) :- B` as `h(v) :- B, v = @f(x)`.
+fn named_heads(rule: &Rule) -> Rule {
+    let mut rule = rule.clone();
+    for (i, t) in rule.head.args.iter_mut().enumerate() {
+        if matches!(t, Term::Call(..)) {
+            let v = Term::Var(format!("_h{i}"));
+            let call = std::mem::replace(t, v.clone());
+            rule.body.push(Literal::Cmp { l: v, op: "=", r: call });
+        }
+    }
+    rule
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
@@ -77,7 +112,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0 });
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again: [("nothing kept", dirty.len())].into() });
     };
     let old = |rel: &str| kept.old(rel).is_some();
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
@@ -85,12 +120,16 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut olds: BTreeSet<String> = BTreeSet::new();
     let mut deltas: BTreeSet<String> = BTreeSet::new();
     let (mut maintained, mut derived_again, mut recursive) = (0, 0, 0);
+    let mut again: std::collections::BTreeMap<&'static str, usize> = Default::default();
     let mut fresh: Vec<(String, String)> = Vec::new();
     for scc in dirty {
-        let mine: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
-        if !maintainable(&part.program, scc, &mine, &changed, &old) {
+        let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
+        let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
+        let mine: Vec<&Rule> = named_rules.iter().collect();
+        if let Some(why) = unmaintainable(&part.program, scc, &mine, &changed, &old) {
+            *again.entry(why).or_default() += 1;
             derived_again += 1;
-            rules.extend(mine.into_iter().cloned());
+            rules.extend(given.into_iter().cloned());
             changed.extend(scc.iter().cloned());
             continue;
         }
@@ -161,7 +200,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut sources = Vec::new();
     for rel in &olds {
         let columns = kept.old(rel).expect("a maintained read's old rows");
-        let names = (0..columns.len()).map(|c| format!("c{c}")).collect();
+        // Named as the planner reads the relation's columns (`rr_nearest_*` by name, others positionally).
+        let names = (0..columns.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&named(rel, "old"), c)).collect();
         sources.push((named(rel, "old"), crate::code_rule_dsl::logic::native::component::columns_source(names, columns.iter().cloned().map(Some).collect())));
         fresh.push((rel.clone(), named(rel, "old")));
         part.program.inputs.push(named(rel, "old"));
@@ -177,5 +217,5 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive })
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
 }

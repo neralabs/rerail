@@ -32,8 +32,9 @@ pub(in crate::code_rule_dsl) struct Session {
     /// The thread that started it: in tests, which run in parallel in one process, a session is its own test's.
     #[cfg(test)]
     owner: std::thread::ThreadId,
-    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
-    pub(super) cross: Mutex<Option<super::retain::Retained>>,
+    /// The cross-file part as the last run left it (decision 0077), by its program's key: an edit runs the strata
+    /// whose inputs changed.
+    pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -47,7 +48,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join("session.sqlite");
     let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    *session = Some(Session { path, store, memo: Default::default(), cross: Mutex::new(None),
+    *session = Some(Session { path, store, memo: Default::default(), cross: Default::default(),
         #[cfg(test)]
         thread: std::thread::current().id(),
         #[cfg(test)]

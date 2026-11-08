@@ -379,6 +379,10 @@ Each spike answers one question that could change the plan, and is tracked as an
    - Measure: rows over-deleted and re-derived, CPU against a cold run, and the result against a full run.
    - Success: an edit to one function costs under 5% of a cold run, with no case past the cold run. If not,
      measure support counts per row, then maintenance per component of definitions.
+   - First result (O125, 2026-11-08). Delete-and-rederive is right on three edits, and their deltas are tiny
+     (3–88 rows of 1.14 M). But written as rules over whole-relation copies, it costs 2.5–4x a cold derivation of
+     the cross part, because every run copies, binds, measures and replans the whole stored fixpoint. §2 then needs
+     maintenance in place: an indexed store kept across runs, deltas applied to it, and the rewritten plans kept.
 2. (O126) **The size of the base delta per definition.**
    - Method: replay the data layer's git history (a few hundred commits). For each commit, count files changed,
      definitions whose digest changed, and base rows changed under `(document, preorder)` ids against

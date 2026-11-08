@@ -1022,3 +1022,98 @@ fn benchmark_python_calls_program_corpus() {
         }
     }
 }
+
+/// Spike O125 (decision 0083 §2): `calls.rr`'s cross-file part kept by a session and maintained from deltas
+/// (decision 0077's delete-and-rederive) over `RERAIL_PYTHON_CALLS_ROOT`, copied, edited a file at a time. Each run's
+/// outputs must be a full run's; prints each run's strata run and maintained and its CPU against the full run's.
+#[test]
+#[ignore = "calls.rr in a session over a Python corpus, edited (minutes)"]
+fn spike_o125_session_maintains_calls() {
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let given = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let base = std::env::temp_dir().join(format!("rerail-o125-{}", std::process::id()));
+    let (root, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&base).unwrap();
+    let copy = std::process::Command::new("cp").arg("-R").arg(&given).arg(&root).status().unwrap();
+    assert!(copy.success());
+    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": [] })).unwrap();
+    let rels = ["call_target", "call_open", "type_of", "possible_type", "finding"];
+    let outputs = || -> Vec<Vec<String>> {
+        rels.iter().map(|r| {
+            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            v.sort();
+            v
+        }).collect()
+    };
+    let cpu = |r: &corpus::Report| -> f64 { r.phases.iter().map(|p| p.1 + p.2).sum() };
+    session::start(&base.join("session")).unwrap();
+    let t = std::time::Instant::now();
+    let first = run();
+    println!("o125 cold session run: {:.1} s CPU (main), {:.1} s wall, strata {:?}", cpu(&first), t.elapsed().as_secs_f64(), first.cross_strata);
+    println!("o125 rows {:?}", outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    let mut files: Vec<PathBuf> = walk(&root);
+    files.sort();
+    let pick = |i: usize| files[i * files.len() / 4].clone();
+    let exceptions = root.join("l1100_exceptions/exceptions.py");
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let (e0, a0, b0) = (read(&exceptions), read(&pick(1)), read(&pick(2)));
+    let edits: Vec<(String, PathBuf, String)> = vec![
+        ("comment".into(), exceptions.clone(), format!("{e0}# an edit to a comment\n")),
+        ("comment reverted".into(), exceptions.clone(), e0.clone()),
+        ("a function added".into(), pick(1), format!("{a0}\n\ndef o125_added(x):\n    return len(x)\n")),
+        ("an import added".into(), pick(2), format!("import os\n{b0}")),
+        ("a body changed".into(), pick(1), a0.replacen("return", "return None or", 1)),
+        ("all reverted".into(), pick(2), b0.clone()),
+    ];
+    // `O125_EDITS`: which edits, by index (each costs a session run and a full one).
+    let wanted: Vec<usize> = std::env::var("O125_EDITS").map(|v| v.split(',').map(|i| i.parse().unwrap()).collect()).unwrap_or_else(|_| (0..edits.len()).collect());
+    for (i, (what, path, text)) in edits.into_iter().enumerate() {
+        if !wanted.contains(&i) {
+            continue;
+        }
+        std::fs::write(&path, text).unwrap();
+        if what == "all reverted" {
+            std::fs::write(pick(1), &a0).unwrap();
+        }
+        let t = std::time::Instant::now();
+        let r = run();
+        let (wall, got) = (t.elapsed().as_secs_f64(), outputs());
+        // `O125_NO_FULL`: skip the full run (its profile would replace the session run's).
+        if std::env::var_os("O125_NO_FULL").is_some() {
+            println!("o125 {what}: session {:.1} s CPU, {wall:.1} s wall; strata run {:?}, maintained {:?}; derived again {:?}; rows overdeleted, inserted, held {:?}", cpu(&r), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts);
+            continue;
+        }
+        let f = session::full(run);
+        let same = got == outputs();
+        println!(
+            "o125 {what} ({}): session {:.1} s CPU (main), {wall:.1} s wall; full {:.1} s CPU; strata run {:?}, maintained (all, recursive) {:?}; files evaluated {:?}; same as full: {same}",
+            path.strip_prefix(&root).unwrap().display(), cpu(&r), cpu(&f), r.cross_strata, r.cross_maintained, r.memo
+        );
+        let ph = |r: &corpus::Report| r.phases.iter().filter(|p| p.1 + p.2 > 0.3).map(|p| format!("{} {:.1}", p.0, p.1 + p.2)).collect::<Vec<_>>().join(", ");
+        println!("  maintained rows: overdeleted {}, inserted {}, held after {}", r.cross_delta_counts[0], r.cross_delta_counts[1], r.cross_delta_counts[2]);
+        println!("  phases: session [{}]; full [{}]", ph(&r), ph(&f));
+        println!("  inputs changed ({}): {:?}; derived again: {:?}", r.cross_changed.len(), r.cross_changed.iter().take(30).collect::<Vec<_>>(), r.cross_again);
+        if !same {
+            let want = outputs();
+            for (i, rel) in rels.iter().enumerate() {
+                let (a, b): (BTreeSet<&String>, BTreeSet<&String>) = (got[i].iter().collect(), want[i].iter().collect());
+                let (extra, missing) = (a.difference(&b).count(), b.difference(&a).count());
+                if extra + missing > 0 {
+                    println!("  {rel}: {extra} extra, {missing} missing; e.g. {:?} / {:?}", a.difference(&b).next(), b.difference(&a).next());
+                }
+            }
+        }
+    }
+    session::stop();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() { out.extend(walk(&p)); } else if p.extension().is_some_and(|x| x == "py") { out.push(p); }
+    }
+    out
+}

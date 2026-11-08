@@ -2398,6 +2398,56 @@ deltas to today's fixpoint, through More-ergonomic-rule-syntax's `maintain.rs`.
 A one-function edit costs under 5% of a cold run, or the fallback (support counts per row, or maintenance per
 component of definitions) is measured and chosen.
 
+**Measured, in part** (2026-11-08). The spike is the ignored test `spike_o125_session_maintains_calls`, run over the
+84 files without typeshed. It runs `calls.rr` in a session, makes one edit at a time, and compares each run with a
+full run. The edits are three hand-made ones (a comment, a function added at the end of a module, a `return` changed),
+not yet the last 20 commits.
+
+- **The results are right.** Every edit's outputs equal a full run's (`call_target`, `call_open`, `type_of`,
+  `possible_type`).
+- **Most strata are maintained.** 180–200 of 218 strata are maintained from deltas, 19–21 of them recursive. Three are
+  derived again because they hold an aggregate.
+- **The deltas are tiny.** An edit over-deletes 3–88 rows and inserts 3–88, out of 1.14 M rows the maintained
+  relations hold.
+- **The cost is not.** It follows the fixpoint's size, not the delta's (CPU on the main thread; machine load 6–15):
+
+  | Edit | Strata run | Session: cross part | Full run: cross part |
+  |---|---|---|---|
+  | comment in `exceptions.py` | 183 of 218 | 11.4 s | 4.5 s |
+  | function added | 203 of 218 | 17.7 s | 4.2 s |
+  | `return` changed | 203 of 218 | 16.4 s | 4.5 s |
+
+  The file-local part does shrink (7.5–8.0 s to 1.0–1.7 s: one file evaluated), but the cross part costs 2.5–4x a
+  cold derivation.
+- **Where the time goes.** About 7.7 s is the strata themselves. The points-to component alone goes from 1.7 s cold
+  to 3.6 s maintained (its insert rules plus its over-delete rules: 1,697 and 1,147 rules against 464). Over 4 s is
+  outside any stratum, and each item is linear in the stored fixpoint:
+  - the survivor rules (`h :- h__old, !h__del`) copy every held row;
+  - every kept relation and input is bound as a source, measured and digested;
+  - every derived relation's rows are copied out for the next run;
+  - the rewritten strata (3–4x the rules) are planned again.
+- **Why so many strata run.** A comment adds a tree-sitter node, so `node` changes and 183 strata read it. A
+  function added changes 41 inputs.
+
+**What it took to run at all** (in this branch, not More-ergonomic's):
+- `maintain.rs` takes a head's computed term (`@dot`) by naming it with a variable the body binds, and copies
+  `nearest` literals as it copies comparisons;
+- the session keeps one cross part per program key, since a run's passes are different programs and took each
+  other's place;
+- the `r__old` sources carry their constants' counts. Without them a measured column prices every constant at no
+  rows, and the over-delete plans began with a cross product of `kind__old(_, identifier)` (the run did not end in
+  400 s);
+- the demand split's nullary `pre_` relation gets the unit column every nullary relation has.
+
+**Not closed.** Delete-and-rederive written as rules over whole-relation copies is O(fixpoint) per edit. The 5%
+target needs maintenance in place:
+- maintained relations held in an indexed store across runs, so survivors are not copied;
+- deltas applied to that store;
+- old rows read where they are, not rebound and measured again;
+- plans of the rewritten strata kept.
+
+Still to run: the last 20 commits touching the 84 files, and the same with typeshed.
+
 ## O126. How big a base delta is per definition (decision 0083, spike 2)
 
 0083 §2–3 make the definition the unit of change, with node ids `(definition, index)`.
