@@ -7,10 +7,11 @@
 //! `u` string's first part gives `kind='u'`. A node's span is CPython's: a def or class starts at its keyword, after
 //! its decorators; a generator that is a call's only argument takes the call's parentheses.
 //!
-//! A value Ruff cannot give exactly (a lone surrogate escape in an f-string's text, which it decodes as U+FFFD; a
-//! dict comprehension unpacking `**`) is `F::Unknown`: a dump or an unparse that reaches it has no text.
+//! A lone surrogate escape, which Ruff decodes as U+FFFD, is decoded from the text (`value::string_part`,
+//! `value::fstring_literal`). A value Ruff cannot give exactly (such a text with a `\N{…}` escape too; a dict
+//! comprehension unpacking `**`) is `F::Unknown`: a dump or an unparse that reaches it has no text.
 
-use super::value::{Int, PyStr, join, string_part};
+use super::value::{Int, PyStr, fstring_literal, join, string_part};
 use ruff_python_ast::{self as rast, Expr, Stmt};
 use ruff_text_size::{Ranged, TextRange};
 
@@ -601,13 +602,13 @@ impl Builder<'_> {
     /// pieces and debug fields' text) joined into one `Constant` between fields, empty text left out.
     fn joined(&self, x: &rast::ExprFString, r: Option<TextRange>) -> Node {
         let mut values = Vec::new();
-        let mut text = String::new();
+        let mut text = Vec::new();
         let mut exact = true;
         for part in x.value.as_slice() {
             match part {
                 rast::FStringPart::Literal(lit) => match string_part(&lit.value, &self.source[lit.range()]) {
-                    Some(PyStr::Text(t)) => text.push_str(&t),
-                    _ => exact = false,
+                    Some(s) => text.push(s),
+                    None => exact = false,
                 },
                 rast::FStringPart::FString(f) => {
                     let raw = f.flags.prefix().is_raw();
@@ -621,19 +622,20 @@ impl Builder<'_> {
     }
 
     /// An f-string's (or a format spec's) elements into `values`, literal text gathered in `text`.
-    fn elements(&self, elements: &[rast::InterpolatedStringElement], escapes: bool, values: &mut Vec<F>, text: &mut String, exact: &mut bool) {
+    fn elements(&self, elements: &[rast::InterpolatedStringElement], escapes: bool, values: &mut Vec<F>, text: &mut Vec<PyStr>, exact: &mut bool) {
         for e in elements {
             match e {
                 rast::InterpolatedStringElement::Literal(l) => {
-                    // Ruff decodes a lone surrogate escape as U+FFFD.
-                    if escapes && l.value.contains('\u{fffd}') {
-                        *exact = false;
+                    // Ruff decodes a lone surrogate escape as U+FFFD: the piece is decoded from its text.
+                    let piece = if escapes { fstring_literal(&l.value, &self.source[l.range()]) } else { Some(PyStr::Text(l.value.to_string())) };
+                    match piece {
+                        Some(s) => text.push(s),
+                        None => *exact = false,
                     }
-                    text.push_str(&l.value);
                 }
                 rast::InterpolatedStringElement::Interpolation(i) => {
                     if let Some(debug) = &i.debug_text {
-                        text.push_str(debug.as_str());
+                        text.push(PyStr::Text(debug.as_str().to_owned()));
                     }
                     flush(values, text);
                     let conversion = match i.conversion.to_byte() {
@@ -642,7 +644,7 @@ impl Builder<'_> {
                         None => -1,
                     };
                     let spec = i.format_spec.as_deref().map(|spec| {
-                        let (mut inner, mut inner_text) = (Vec::new(), String::new());
+                        let (mut inner, mut inner_text) = (Vec::new(), Vec::new());
                         self.elements(&spec.elements, escapes, &mut inner, &mut inner_text, exact);
                         flush(&mut inner, &mut inner_text);
                         node(Node::new("JoinedStr", Some(spec.range), vec![("values", F::List(inner))]))
@@ -659,9 +661,10 @@ impl Builder<'_> {
 }
 
 /// The text gathered so far as a `Constant`, if any.
-fn flush(values: &mut Vec<F>, text: &mut String) {
-    if !text.is_empty() {
-        values.push(node(Node::new("Constant", None, vec![("value", F::Const(Const::Str(PyStr::Text(std::mem::take(text))))), ("kind", F::Absent)])));
+fn flush(values: &mut Vec<F>, text: &mut Vec<PyStr>) {
+    let s = join(std::mem::take(text));
+    if s.points().next().is_some() {
+        values.push(node(Node::new("Constant", None, vec![("value", F::Const(Const::Str(s))), ("kind", F::Absent)])));
     }
 }
 

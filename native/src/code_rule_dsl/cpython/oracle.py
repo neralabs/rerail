@@ -7,8 +7,9 @@ runs the files. Modes:
 - `ast`: {"p", "n"}: every located node of the file's tree (none where it does not parse) but an f-string's own pieces
   (a JoinedStr's values and their format specs; the expressions of its fields are kept), each
   [start, end, type, unparse, dump_sha256, body_sha256, signature_sha256]: start and end are UTF-8 byte offsets,
-  unparse is `ast.unparse` of an expression, a keyword, an arg or an alias (null for another node or where it raises),
-  dump_sha256 the sha256 of `ast.dump(node, include_attributes=False)` (null where it raises), body_sha256 and
+  unparse is `ast.unparse` of an expression, a keyword, an arg or an alias (null for another node or where it raises;
+  {"surrogates": its ascii} where it holds a lone surrogate, which UTF-8 cannot: a format spec's text is written as it
+  is), dump_sha256 the sha256 of `ast.dump(node, include_attributes=False)` (null where it raises), body_sha256 and
   signature_sha256 a def's as W's python_ast worker hashed them (null but for a def).
 - `names`: {"p", "n"}: each Name id, Attribute attr, def/class name and arg, [start, end, text].
 - `literals`: {"p", "n"}: each expression but an f-string's own pieces, [start, end, type, literal_json] (literal_json as
@@ -26,6 +27,7 @@ import sys
 
 MODE = sys.argv[1]
 LINES = re.compile(rb"\r\n?|\n")
+SURROGATE = re.compile(r"\\ud[89a-f]")
 
 
 def read(path):
@@ -159,12 +161,40 @@ def one(path):
     return {"p": path, "n": out}
 
 
+def utf8(value):
+    """`value` with each str that UTF-8 cannot hold (a lone surrogate: `ast.unparse` writes a format spec's text as it
+    is) as {"surrogates": its `ascii`}, which no str of the engine is."""
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+            return value
+        except UnicodeEncodeError:
+            return {"surrogates": ascii(value)}
+    if isinstance(value, list):
+        return [utf8(v) for v in value]
+    if isinstance(value, dict):
+        return {k: utf8(v) for k, v in value.items()}
+    return value
+
+
+def row_line(path):
+    """The JSON line of `path`'s row (ASCII), none where it is not read."""
+    row = one(path)
+    if row is None:
+        return None
+    text = json.dumps(row, ensure_ascii=True)
+    # A surrogate escape: of a pair (which UTF-8 holds) or a lone one (which it does not).
+    if SURROGATE.search(text):
+        text = json.dumps(utf8(row), ensure_ascii=True)
+    return text
+
+
 def main():
     paths = [line.rstrip("\n") for line in sys.stdin if line.strip()]
     with multiprocessing.get_context("fork").Pool() as pool:
-        for row in pool.imap(one, paths, chunksize=16):
-            if row is not None:
-                sys.stdout.write(json.dumps(row, ensure_ascii=True) + "\n")
+        for text in pool.imap(row_line, paths, chunksize=16):
+            if text is not None:
+                sys.stdout.write(text + "\n")
 
 
 sys.setrecursionlimit(10000)

@@ -41,12 +41,23 @@ pub(crate) fn string_part(value: &str, text: &str) -> Option<PyStr> {
     let quoted = &text[prefix..];
     let q = if quoted.starts_with("\"\"\"") || quoted.starts_with("'''") { 3 } else { 1 };
     let body = &quoted[q..quoted.len() - q];
-    let points = decode(body)?;
+    let points = decode(body, false)?;
     Some(if points.iter().any(|p| (0xd800..=0xdfff).contains(p)) { PyStr::Points(points) } else { PyStr::Text(value.to_owned()) })
 }
 
-/// A non-raw str literal's body decoded as CPython does, to code points; `None` for a `\N{…}` escape (no name table).
-pub(crate) fn decode(body: &str) -> Option<Vec<u32>> {
+/// An f-string's literal piece (`text`, as written: its doubled braces, its escapes) as `string_part` decodes a
+/// part, where Ruff replaced a lone surrogate escape by U+FFFD.
+pub(crate) fn fstring_literal(value: &str, text: &str) -> Option<PyStr> {
+    if !value.contains('\u{fffd}') {
+        return Some(PyStr::Text(value.to_owned()));
+    }
+    let points = decode(text, true)?;
+    Some(if points.iter().any(|p| (0xd800..=0xdfff).contains(p)) { PyStr::Points(points) } else { PyStr::Text(value.to_owned()) })
+}
+
+/// A non-raw str literal's body decoded as CPython does, to code points (with `braces`, an f-string's literal text,
+/// its doubled braces single); `None` for a `\N{…}` escape (no name table).
+pub(crate) fn decode(body: &str, braces: bool) -> Option<Vec<u32>> {
     let mut out = Vec::with_capacity(body.len());
     let mut chars = body.chars().peekable();
     let hex = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>, n: usize| -> Option<u32> {
@@ -58,6 +69,9 @@ pub(crate) fn decode(body: &str) -> Option<Vec<u32>> {
     };
     while let Some(c) = chars.next() {
         if c != '\\' {
+            if braces && matches!(c, '{' | '}') && chars.peek() == Some(&c) {
+                chars.next();
+            }
             out.push(u32::from(c));
             continue;
         }
@@ -99,6 +113,9 @@ pub(crate) fn decode(body: &str) -> Option<Vec<u32>> {
             'N' => return None,
             other => {
                 out.push(u32::from('\\'));
+                if braces && matches!(other, '{' | '}') && chars.peek() == Some(&other) {
+                    chars.next();
+                }
                 out.push(u32::from(other));
             }
         }

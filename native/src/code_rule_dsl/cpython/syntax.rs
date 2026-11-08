@@ -5,16 +5,18 @@
 //! syntax it reports (`unsupported_syntax_errors`: a t-string, `except A, B:`) are where CPython's parser fails. Only
 //! what `ast.parse` rejects counts: compile-time errors (`return` outside a function, a repeated keyword argument, a
 //! duplicate parameter, `nonlocal` at module level) are not syntax errors here, as they are not in `ast.parse`.
-//! CPython's choice among several errors is followed where it differs from the earliest: a generic `invalid syntax`
-//! gives way to a tokenizer error later in the file (an unterminated string, a stray bracket, a bad dedent) and to a
-//! bracket left open on an earlier line (`'(' was never closed`), as `_PyPegen_tokenize_full_source_to_check_for_errors`
-//! does. Messages are CPython's for the errors CPython names (indentation, unterminated strings, brackets, `expected
-//! ':'`, invalid targets); any other is `invalid syntax`.
+//! CPython's choice among several errors is followed where it differs from the earliest: an error its parser raises
+//! gives way to a tokenizer error later in the file (an unterminated string, a stray bracket, a bad dedent), and a
+//! generic `invalid syntax` to a bracket left open on an earlier line (`'(' was never closed`), as
+//! `_PyPegen_tokenize_full_source_to_check_for_errors` does; where the first pass fails in the parser, its second
+//! pass's `print` or `exec` before an expression (`invalid_legacy_expression`, on valid code too) comes first.
+//! Messages are CPython's for the errors CPython names (indentation, unterminated strings, brackets, `expected ':'`,
+//! invalid targets, a legacy `print`, an escape a literal cannot decode); any other is `invalid syntax`.
 
 use ruff_python_ast::statement_visitor::{StatementVisitor, walk_stmt};
 use ruff_python_ast::token::{TokenKind, Tokens};
 use ruff_python_ast::visitor::{Visitor, walk_expr};
-use ruff_python_ast::{Expr, Mod, Stmt};
+use ruff_python_ast::{Expr, ExprContext, Mod, Stmt};
 use ruff_python_parser::{
     InterpolatedStringErrorType, LexicalErrorType, Mode, ParseErrorType, ParseOptions, UnsupportedSyntaxErrorKind, parse_unchecked,
 };
@@ -57,27 +59,37 @@ pub(crate) fn syntax_error(source: &str) -> Option<SyntaxError> {
     found.sort_by_key(|f| (f.at, f.rank()));
     let first = found.first()?;
     let mut chosen = first.message(&cx);
+    // Where the first pass failed in the parser (raising nothing), the second pass raises the first error it finds: a
+    // `print` or `exec` before an expression, at or before the failure, is one (`invalid_legacy_expression`).
+    let legacy = if first.first_pass(source) { None } else { legacy_call(&cx, first.at) };
+    if let Some((line, name)) = &legacy {
+        chosen = Chosen { line: *line, msg: format!("Missing parentheses in call to '{name}'. Did you mean {name}(...)?"), generic: false, at_eof: false };
+    }
     let unclosed = brackets.open.last().map(|&(open, kind)| Chosen {
         line: lines.line(open),
         msg: format!("'{}' was never closed", bracket_char(kind)),
         generic: false,
         at_eof: false,
     });
-    if chosen.generic {
-        // CPython tokenizes the rest of the file after a generic error: a tokenizer error there replaces it, and so does
-        // a bracket still open at the end that opened on an earlier line.
-        if let Some(later) = found.iter().skip(1).filter(|f| f.at > first.at).find(|f| f.is_tokenizer()) {
-            chosen = later.message(&cx);
-        } else if let Some(unclosed) = unclosed
-            && (chosen.at_eof || unclosed.line < chosen.line)
-        {
+    // CPython tokenizes the rest of the file after an error its parser raised (`_Pypegen_set_syntax_error`): a tokenizer
+    // error there replaces it, and so does a bracket still open at the end that opened on a line before the one the
+    // first pass failed on.
+    if let Some(later) = found.iter().skip(1).filter(|f| f.at > first.at).find(|f| f.is_tokenizer())
+        && !first.is_tokenizer()
+    {
+        chosen = later.message(&cx);
+    } else if let Some(unclosed) = unclosed {
+        let replaced = if chosen.generic {
+            chosen.at_eof || unclosed.line < chosen.line
+        } else if legacy.is_some() {
+            unclosed.line < lines.line(first.at)
+        } else {
+            // The parser ran into the end of the file inside a bracket.
+            chosen.at_eof
+        };
+        if replaced {
             chosen = unclosed;
         }
-    } else if chosen.at_eof
-        && let Some(unclosed) = unclosed
-    {
-        // The parser ran into the end of the file inside a bracket.
-        chosen = unclosed;
     }
     Some(SyntaxError { line: chosen.line, msg: chosen.msg })
 }
@@ -216,6 +228,31 @@ impl Found<'_> {
         }
     }
 
+    /// Raised in CPython's first pass, by its tokenizer or by an action building a literal (decoding a string's
+    /// escapes, mixing bytes and str, an f-string's conversion): its second pass then raises nothing else.
+    fn first_pass(&self, source: &str) -> bool {
+        let fstring = |f: &InterpolatedStringErrorType| match f {
+            InterpolatedStringErrorType::LambdaWithoutParentheses => false,
+            // `!z` (the action's check), not `!` without a name (`invalid_conversion_character`).
+            InterpolatedStringErrorType::InvalidConversionFlag => conversion_name(&source[self.at.to_usize()..]).is_some(),
+            _ => true,
+        };
+        self.is_tokenizer()
+            || match &self.what {
+                What::Parse(ParseErrorType::Lexical(l)) => match l {
+                    LexicalErrorType::UnicodeError
+                    | LexicalErrorType::MissingUnicodeLbrace
+                    | LexicalErrorType::MissingUnicodeRbrace
+                    | LexicalErrorType::InvalidByteLiteral => true,
+                    LexicalErrorType::FStringError(f) => fstring(f),
+                    _ => false,
+                },
+                What::Parse(ParseErrorType::FStringError(f)) => fstring(f),
+                What::Parse(ParseErrorType::OtherError(msg)) => msg == "Bytes literal cannot be mixed with non-bytes literals",
+                _ => false,
+            }
+    }
+
     fn message(&self, cx: &Cx) -> Chosen {
         let (source, lines, tokens) = (cx.source, cx.lines, cx.tokens);
         let line = lines.line(self.at);
@@ -251,6 +288,12 @@ impl Found<'_> {
                     LexicalErrorType::LineContinuationError => named(line, "unexpected character after line continuation character".into()),
                     LexicalErrorType::InvalidByteLiteral => named(line, "bytes can only contain ASCII literal characters".into()),
                     LexicalErrorType::FStringError(f) => fstring(f, self, cx, line, &named),
+                    LexicalErrorType::UnicodeError | LexicalErrorType::MissingUnicodeLbrace | LexicalErrorType::MissingUnicodeRbrace => {
+                        match escape_error(cx, self.at) {
+                            Some((line, msg)) => named(line, msg),
+                            None => generic(line),
+                        }
+                    }
                     _ => generic(line),
                 },
                 ParseErrorType::FStringError(f) => fstring(f, self, cx, line, &named),
@@ -276,8 +319,9 @@ impl Found<'_> {
                 ParseErrorType::OtherError(msg) => match msg.strip_prefix("Expected an indented block after ") {
                     Some(clause) => {
                         let header = header_line(tokens, self.at, lines);
-                        // At the end of the file CPython's position is its last line, comments included.
-                        let line = if at_eof { last_content_line(source, lines).max(line) } else { line };
+                        // At the end of the file CPython's position is the tokenizer's line there: its last
+                        // character's, blank lines and comments included.
+                        let line = if at_eof { lines.count().max(line) } else { line };
                         named(line, format!("expected an indented block after {} on line {header}", clause_name(clause)))
                     }
                     None => match other_message(msg) {
@@ -452,6 +496,12 @@ fn header_line(tokens: &Tokens, at: TextSize, lines: &Lines) -> usize {
     lines.line(before[start].start())
 }
 
+/// The name an f-string's conversion is written with, at the start of `text`.
+fn conversion_name(text: &str) -> Option<&str> {
+    let end = text.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(text.len());
+    text.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_').then(|| &text[..end])
+}
+
 /// CPython's message for an f-string error of Ruff's.
 fn fstring(e: &InterpolatedStringErrorType, at: &Found, cx: &Cx, line: usize, named: &dyn Fn(usize, String) -> Chosen) -> Chosen {
     let text = &cx.source[at.at.to_usize()..];
@@ -465,14 +515,10 @@ fn fstring(e: &InterpolatedStringErrorType, at: &Found, cx: &Cx, line: usize, na
         InterpolatedStringErrorType::NewlineInFormatSpec => {
             "f-string: newlines are not allowed in format specifiers for single quoted f-strings".into()
         }
-        InterpolatedStringErrorType::InvalidConversionFlag => {
-            let name: String = text.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-            if name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
-                format!("f-string: invalid conversion character '{name}': expected 's', 'r', or 'a'")
-            } else {
-                "f-string: invalid conversion character".into()
-            }
-        }
+        InterpolatedStringErrorType::InvalidConversionFlag => match conversion_name(text) {
+            Some(name) => format!("f-string: invalid conversion character '{name}': expected 's', 'r', or 'a'"),
+            None => "f-string: invalid conversion character".into(),
+        },
         InterpolatedStringErrorType::UnterminatedString => format!("unterminated f-string literal (detected at line {})", cx.lines.line(at.end)),
         InterpolatedStringErrorType::UnterminatedTripleQuotedString => {
             format!("unterminated triple-quoted f-string literal (detected at line {})", cx.lines.count())
@@ -529,9 +575,328 @@ fn starts_expression(kind: TokenKind) -> bool {
     )
 }
 
-/// The last line holding anything but whitespace, comments included.
-fn last_content_line(source: &str, lines: &Lines) -> usize {
-    source.char_indices().rev().find(|(_, c)| !c.is_whitespace()).map_or(1, |(i, _)| lines.line(TextSize::new(i as u32)))
+/// Whether a token can start `star_expressions` (an operand of `invalid_legacy_expression`): an expression, a unary
+/// operator, a `*`, or a name (the soft keywords too).
+fn starts_star_expressions(kind: TokenKind) -> bool {
+    starts_expression(kind)
+        || matches!(
+            kind,
+            TokenKind::Minus
+                | TokenKind::Plus
+                | TokenKind::Star
+                | TokenKind::TStringStart
+                | TokenKind::Case
+                | TokenKind::Lazy
+                | TokenKind::Match
+                | TokenKind::Type
+        )
+}
+
+/// `invalid_legacy_expression` (`NAME !'(' star_expressions`, a name `print` or `exec`), which CPython's second pass
+/// tries wherever it reads an `expression`, before the expression's own forms, so on valid code too (`print -1`): the
+/// first at or before `failure`, its line and name. An expression is read at the start of a statement that is no
+/// assignment to it, and after a bracket, a comma, `=`, `:=`, `->`, `:` and the keywords before an expression, but
+/// not after an operator (an operand is no `expression`), in a comprehension's or a ternary's condition, or in a
+/// target (`print [1] = x`).
+fn legacy_call(cx: &Cx, failure: TextSize) -> Option<(usize, String)> {
+    let all: Vec<_> = cx.tokens.iter().filter(|t| !matches!(t.kind(), TokenKind::Comment | TokenKind::NonLogicalNewline)).collect();
+    let statement_start = |j: Option<usize>| j.is_none_or(|j| matches!(all[j].kind(), TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent));
+    let mut positions: Option<Positions> = None;
+    for (i, t) in all.iter().enumerate() {
+        if t.start() > failure {
+            break;
+        }
+        if t.kind() != TokenKind::Name {
+            continue;
+        }
+        // CPython compares the name's id: its NFKC form.
+        let name = crate::code_rule_dsl::identifier::nfkc(&cx.source[t.range()]);
+        if name != "print" && name != "exec" {
+            continue;
+        }
+        let Some(next) = all.get(i + 1) else { continue };
+        if next.kind() == TokenKind::Lpar || !starts_star_expressions(next.kind()) {
+            continue;
+        }
+        let positions = positions.get_or_insert_with(|| Positions::of(cx.module));
+        let before = i.checked_sub(1);
+        let reads = match before.map(|j| all[j].kind()) {
+            None
+            | Some(
+                TokenKind::Newline
+                | TokenKind::Indent
+                | TokenKind::Dedent
+                | TokenKind::Semi
+                | TokenKind::Lpar
+                | TokenKind::Lsqb
+                | TokenKind::Lbrace
+                | TokenKind::Comma
+                | TokenKind::Equal
+                | TokenKind::ColonEqual
+                | TokenKind::Rarrow
+                | TokenKind::Colon
+                | TokenKind::Return
+                | TokenKind::Yield
+                | TokenKind::Assert
+                | TokenKind::Raise
+                | TokenKind::From
+                | TokenKind::Elif
+                | TokenKind::While
+                | TokenKind::Match
+                | TokenKind::With
+                | TokenKind::Except
+                | TokenKind::Else,
+            ) => true,
+            // A statement's `if` (not a ternary's or a comprehension's), a decorator's `@` (not a product's).
+            Some(TokenKind::If | TokenKind::At) => statement_start(before.and_then(|j| j.checked_sub(1))),
+            // A `for` statement's iterable (not a comprehension's, not a comparison's operand).
+            Some(TokenKind::In) => positions.iters.contains(&t.start()),
+            _ => false,
+        };
+        if reads && !positions.targets.iter().any(|r| r.contains(t.start())) {
+            return Some((cx.lines.line(t.start()), name.into_owned()));
+        }
+    }
+    None
+}
+
+/// Where a module reads no expression or a `for` statement's: the ranges of its targets (an assignment's, `del`'s,
+/// `for`'s, `with … as`'s: what Ruff stores to or deletes) and the starts of its `for` statements' iterables.
+#[derive(Default)]
+struct Positions {
+    targets: Vec<TextRange>,
+    iters: Vec<TextSize>,
+}
+
+impl Positions {
+    fn of(module: &Mod) -> Self {
+        let mut p = Self::default();
+        if let Mod::Module(m) = module {
+            p.visit_body(&m.body);
+        }
+        p
+    }
+}
+
+impl<'a> Visitor<'a> for Positions {
+    fn visit_stmt(&mut self, stmt: &'a Stmt) {
+        if let Stmt::For(f) = stmt {
+            self.iters.push(f.iter.start());
+        }
+        ruff_python_ast::visitor::walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        let ctx = match expr {
+            Expr::Name(x) => Some(x.ctx),
+            Expr::Attribute(x) => Some(x.ctx),
+            Expr::Subscript(x) => Some(x.ctx),
+            Expr::Starred(x) => Some(x.ctx),
+            Expr::List(x) => Some(x.ctx),
+            Expr::Tuple(x) => Some(x.ctx),
+            _ => None,
+        };
+        if matches!(ctx, Some(ExprContext::Store | ExprContext::Del)) {
+            self.targets.push(expr.range());
+        } else {
+            walk_expr(self, expr);
+        }
+    }
+}
+
+/// CPython's error for a literal's escape it cannot decode (Ruff's `UnicodeError`, `MissingUnicodeLbrace` or
+/// `MissingUnicodeRbrace` at `at`), its line and message, as the parser's action building the literal raises it: a
+/// str's text decoded by `decode_unicode_with_escapes` (`(unicode error) …`, at the str's first line), an f-string's
+/// pieces at its end, a bytes' text by `_PyBytes_DecodeEscape2` (`(value error) …`). `None` in an f-string's format
+/// spec, where CPython's `UnicodeDecodeError` is no `SyntaxError`.
+fn escape_error(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
+    let all: Vec<_> = cx.tokens.iter().collect();
+    let i = all.iter().position(|t| matches!(t.kind(), TokenKind::String | TokenKind::FStringMiddle) && t.start() <= at && at <= t.end())?;
+    let token = all[i];
+    let text = &cx.source[token.range()];
+    let base = token.start().to_usize();
+    // A `\N{…}` Ruff finds no character for, CPython finds none for either (there is no name table here).
+    let unknown = |start: usize, end: usize| (start..=end).contains(&at.to_usize());
+    if token.kind() == TokenKind::String {
+        let prefix = text.bytes().take_while(u8::is_ascii_alphabetic).count();
+        let quoted = &text[prefix..];
+        let q = if quoted.starts_with("\"\"\"") || quoted.starts_with("'''") { 3 } else { 1 };
+        let body = quoted.get(q..quoted.len().checked_sub(q)?)?;
+        let line = cx.lines.line(token.start());
+        let (buf, from) = escape_buffer(body, base + prefix + q);
+        if text[..prefix].contains(['b', 'B']) {
+            return bytes_escape_error(&buf).map(|p| (line, format!("(value error) invalid \\x escape at position {p}")));
+        }
+        return unicode_escape_error(&buf, |s, e| unknown(from[s], from[e])).map(|e| (line, unicode_message(&buf, e)));
+    }
+    // An f-string's text, in a replacement field only in its format spec.
+    let mut fields: Vec<usize> = Vec::new();
+    for t in &all[..i] {
+        match t.kind() {
+            TokenKind::FStringStart | TokenKind::TStringStart => fields.push(0),
+            TokenKind::FStringEnd | TokenKind::TStringEnd => {
+                fields.pop();
+            }
+            TokenKind::Lbrace => fields.last_mut().into_iter().for_each(|d| *d += 1),
+            TokenKind::Rbrace => fields.last_mut().into_iter().for_each(|d| *d = d.saturating_sub(1)),
+            _ => {}
+        }
+    }
+    if fields.last().is_some_and(|&d| d > 0) {
+        return None;
+    }
+    // CPython decodes an f-string's text once it has read the f-string's end, where it reports the error.
+    let mut depth = 0usize;
+    let end = all[i + 1..].iter().find(|t| match t.kind() {
+        TokenKind::FStringStart | TokenKind::TStringStart => {
+            depth += 1;
+            false
+        }
+        TokenKind::FStringEnd | TokenKind::TStringEnd if depth == 0 => true,
+        TokenKind::FStringEnd | TokenKind::TStringEnd => {
+            depth -= 1;
+            false
+        }
+        _ => false,
+    });
+    let line = cx.lines.line(end.map_or(token.start(), |t| t.start()));
+    // Its tokenizer ends a piece of text after a doubled brace's first brace; each piece is decoded apart.
+    let bytes = text.as_bytes();
+    let mut pieces = Vec::new();
+    let (mut from, mut k) = (0, 0);
+    while k < bytes.len() {
+        if matches!(bytes[k], b'{' | b'}') && bytes.get(k + 1) == Some(&bytes[k]) {
+            pieces.push(from..k + 1);
+            k += 2;
+            from = k;
+        } else {
+            k += 1;
+        }
+    }
+    pieces.push(from..bytes.len());
+    pieces.into_iter().find_map(|r| {
+        let (buf, map) = escape_buffer(&text[r.clone()], base + r.start);
+        unicode_escape_error(&buf, |s, e| unknown(map[s], map[e])).map(|e| (line, unicode_message(&buf, e)))
+    })
+}
+
+/// `decode_unicode_with_escapes`'s buffer of a literal's text (at source offset `base`): its line breaks `\n` (as the
+/// tokenizer reads them), each non-ASCII character `\UXXXXXXXX`, and `u005c` after a backslash before one or ending
+/// the text; each byte with the source offset it comes from.
+fn escape_buffer(text: &str, base: usize) -> (Vec<u8>, Vec<usize>) {
+    let mut chars: Vec<(usize, char)> = Vec::with_capacity(text.len());
+    let mut it = text.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if c == '\r' {
+            it.next_if(|&(_, n)| n == '\n');
+            chars.push((base + i, '\n'));
+        } else {
+            chars.push((base + i, c));
+        }
+    }
+    let (mut buf, mut from) = (Vec::with_capacity(text.len()), Vec::with_capacity(text.len()));
+    let mut push = |b: &[u8], at: usize| {
+        buf.extend_from_slice(b);
+        from.extend(std::iter::repeat_n(at, b.len()));
+    };
+    let mut k = 0;
+    while k < chars.len() {
+        if chars[k].1 == '\\' {
+            push(b"\\", chars[k].0);
+            k += 1;
+            if chars.get(k).is_none_or(|&(_, c)| !c.is_ascii()) {
+                push(b"u005c", chars[k - 1].0);
+                if k == chars.len() {
+                    break;
+                }
+            }
+        }
+        let (at, c) = chars[k];
+        if c.is_ascii() {
+            push(&[c as u8], at);
+        } else {
+            push(format!("\\U{:08x}", u32::from(c)).as_bytes(), at);
+        }
+        k += 1;
+    }
+    (buf, from)
+}
+
+/// `_PyUnicode_DecodeUnicodeEscapeInternal`'s first error in `buf`: its start and end and its reason; `unknown` says
+/// whether the name of a `\N{…}` (between two positions) names no character.
+fn unicode_escape_error(buf: &[u8], unknown: impl Fn(usize, usize) -> bool) -> Option<(usize, usize, &'static str)> {
+    let n = buf.len();
+    let mut s = 0;
+    while s < n {
+        s += 1;
+        if buf[s - 1] != b'\\' {
+            continue;
+        }
+        let start = s - 1;
+        let Some(&c) = buf.get(s) else { return Some((start, s, "\\ at end of string")) };
+        s += 1;
+        let (count, reason) = match c {
+            b'x' => (2, "truncated \\xXX escape"),
+            b'u' => (4, "truncated \\uXXXX escape"),
+            b'U' => (8, "truncated \\UXXXXXXXX escape"),
+            b'N' => {
+                let reason = "malformed \\N character escape";
+                if buf.get(s) != Some(&b'{') {
+                    return Some((start, s, reason));
+                }
+                s += 1;
+                let name = s;
+                while s < n && buf[s] != b'}' {
+                    s += 1;
+                }
+                if s == n || s == name {
+                    return Some((start, s, reason));
+                }
+                s += 1;
+                if unknown(name, s - 1) {
+                    return Some((start, s, "unknown Unicode character name"));
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        let mut ch: u32 = 0;
+        for _ in 0..count {
+            let Some(d) = buf.get(s).and_then(|&b| char::from(b).to_digit(16)) else { return Some((start, s, reason)) };
+            ch = ch << 4 | d;
+            s += 1;
+        }
+        if ch > 0x10ffff {
+            return Some((start, s, "illegal Unicode character"));
+        }
+    }
+    None
+}
+
+/// `str(UnicodeDecodeError)` of the `unicodeescape` codec's error, as CPython's parser reports it.
+fn unicode_message(buf: &[u8], (start, end, reason): (usize, usize, &str)) -> String {
+    let what = if end == start + 1 { format!("byte 0x{:02x} in position {start}", buf[start]) } else { format!("bytes in position {start}-{}", end - 1) };
+    format!("(unicode error) 'unicodeescape' codec can't decode {what}: {reason}")
+}
+
+/// `_PyBytes_DecodeEscape2`'s first error in `buf`: the position of a `\x` without two hex digits.
+fn bytes_escape_error(buf: &[u8]) -> Option<usize> {
+    let mut s = 0;
+    while s < buf.len() {
+        s += 1;
+        if buf[s - 1] != b'\\' {
+            continue;
+        }
+        let c = *buf.get(s)?;
+        s += 1;
+        if c == b'x' {
+            if !buf.get(s..s + 2).is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit)) {
+                return Some(s - 2);
+            }
+            s += 2;
+        }
+    }
+    None
 }
 
 /// `try:` with an `else` and no `except` (a `finally` or not): Ruff accepts it, CPython's grammar does not, at the
