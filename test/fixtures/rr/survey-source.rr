@@ -1,0 +1,8 @@
+.policy "survey-source-inventory" revision 1
+.language python
+.mode log
+.scope include "**/*.py"
+.scope exclude
+#include "python/ast.rr"
+.violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
+Inventory(@place(path, 0), "module", path, module) :- doc(_, path, module), 1 = 0.
