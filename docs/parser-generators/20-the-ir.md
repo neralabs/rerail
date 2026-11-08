@@ -21,7 +21,14 @@ defines. A backend may only lower instructions: each instruction, by its operand
 machine code with the interpreter's meaning.
 
 Earlier backends broke that rule. They held a tape format, a width policy and a call
-protocol that no instruction states. Those backends are deleted (§6).
+protocol that no instruction states. Those backends were deleted. What they held is
+now in the program: outputs at their delays, extracts and totals as tier-1 rows, the
+stream each word reads, and the node table (§4.2, §6). A guard refuses any generated
+function that calls out or loops over single bytes (§6).
+
+The ladder (§9) checks that this is not JSON's alone. It is thirteen languages, from
+one keyword to JSON with comments, each a Bitlex file, each parsed with no Rust
+between the bytes and the nodes.
 
 ## 1. The path
 
@@ -158,9 +165,10 @@ Each word is 32 bits: an opcode, a mode and a 16-bit operand.
 
 | word | does | refuses when |
 |---|---|---|
-| `TOKEN` | takes the next start; sets `start = end = s` and `limit` | past the end; `s < end` |
+| `TOKEN e` | takes the next start of extract `e`; sets `start = end = s` and `limit` | past the end; `s < end` |
 | `SPAN m=0 n` | `end = start + n` | `end > limit` |
-| `SPAN m=1` | `end = lasts[taken] + 1`; `taken += 1` | no last byte; it is before `start`; `end > limit` |
+| `SPAN m=1 e` | `end = lasts[taken] + 1` from extract `e`; `taken += 1` | no last byte; it is before `start`; `end > limit` |
+| `EMPTY t` | — | tier 1's total `t` is not zero (the file goes to tree-sitter) |
 | `SWITCH T` | goes to `T`'s target for byte `start + offset`, or to its end target | the target is `refuse` |
 | `WORD_IS m=0 S` | — | the token's bytes are not string `S` (8 bytes at most) |
 | `WORD_IS m=1 S` | a test: if the token is not `S`, skips the next word | — |
@@ -174,6 +182,18 @@ Each word is 32 bits: an opcode, a mode and a 16-bit operand.
 | `RETURN m` | pops `P`; goes to `P + m` | no return state |
 | `ACCEPT` | the root ends at the file's end | not at the end; open nodes but the root; returns left; lasts unread |
 | `GOTO P`, `STOP` | jump; refuse | `STOP` always |
+
+`TOKEN` and `SPAN m=1` name the extract they read, so the stream is the program's,
+not a convention of the backend. `EMPTY` reads a **total**: a block row
+`total %v` asks tier 1 for the number of set bits of output `%v`. The compiler makes
+each fallback output a total, and the words begin with an `EMPTY` per total. So the
+decision to send a file to tree-sitter is the program's own first words, not a
+caller reading outputs.
+
+The nodes go to a **node table**, one row per node in preorder, with columns kind,
+field, start, end and size, and a second table of supertypes. Each backend writes
+the same table. It is sized from the program: the longest path between two
+`TOKEN`s, times the number of tokens.
 
 Its tables:
 
@@ -218,27 +238,33 @@ an output by its label.
 | part | interpreter | Cranelift | Metal | generic? |
 |---|---|---|---|---|
 | tier 1 operations | yes | per op | per op | yes |
-| output delays | Rust `undelay` | Rust `undelay` after the call | Rust `undelay` after the call | no: host Rust on every output |
-| `extract` rows | Rust | none (deleted) | a fused helper with a look-back and a layout of its own | no |
-| tier 2 words | yes | none (deleted) | none | no: see below |
-| `CHECK` | runs the check | none | none | the call protocol is not stated |
-| fallback | caller reads outputs | caller reads outputs | caller reads outputs | no: host Rust over words |
+| output delays | its own undelay | in the loop: a held word per delayed output | `write_output`: two atomic ORs per word | yes |
+| extracts | yes | in the loop: eight set bits at a time | `count_sink`: a look-back sum, then the positions | yes |
+| totals | yes | a running count | `count_sink`; the file's last group writes it | yes |
+| tier 2 words | yes | per word, one function | none | Metal open |
+| `CHECK` | runs the check | the check's block body inlined, a loop over 64-byte blocks | none | Metal open |
+| fallback | `EMPTY` words | `EMPTY` words | tier 1's totals | yes |
 
-**Deleted on 2026-11-08.**
+The CPU interpreter's undelay is how the interpreter is written: it is the
+reference, not a backend.
 
-- `native_cpu_stream`, tier 2 on Cranelift. Each word expanded to a fixed template.
-  The backend held:
-  - v9np's columns and widths;
-  - the width guess and rerun;
-  - codes numbered at first use;
-  - the stacks' sizes;
-  - how `CHECK` calls a check.
-- Tier 1's compiled extract. A fixed flatten, with a buffer layout the backend chose.
+**The compiled path** (`native_cpu_stream::Parser`) is two generated functions: tier
+1's, then tier 2's, reading tier 1's buffers as tier 1 wrote them. No Rust runs
+between the file's bytes and the node table.
 
-**Why tier 2 cannot be lowered generically as it is.** `OPEN`, `CLOSE`, `LEAF`,
-`NODE_FIELD`, `NODE_SUPER` and `ACCEPT` mean "add to the node list". A backend must
-store that list somewhere, so any lowering has to choose a tape format. The format is
-the compiler's to choose, and the IR has no instruction that says it.
+**The shape guard** (`native_cpu_shape`). Each generated Cranelift function is
+checked before code generation, and refused if:
+
+- it has a call instruction of any kind;
+- it has a loop the lowering did not name. Each loop head is named with what one
+  turn steps over: a file of the batch, a 64-byte block, eight set bits of a mask,
+  or a token. With the named heads taken out, the graph must have no cycle.
+
+So a loop over single bytes cannot be generated, and neither can a call out to the
+host.
+
+**Still open.** Tier 2 on Metal. The words lower the same way (one block of code
+per word, a loop over the stream), but nothing generates it yet.
 
 ## 7. Checking generated code: the corpus
 
@@ -315,3 +341,82 @@ The inputs:
 - lengths around Metal's group spans (512, 1024, 2048) and twice them;
 - random bytes;
 - bytes that make carries long: backslash runs, quotes, nesting.
+
+## 8. Extras
+
+An **extra** (`extra comment`) is a token kind the grammar does not name. It may
+come between any two tokens, as tree-sitter's comments do.
+
+**Where it goes.** tree-sitter's parser puts an extra in the lowest node that holds
+the tokens on either side of it, after the nodes that end before it. At either end
+of the file it goes in the root, which then starts at the first extra. The reference
+(`tools/bitlex::tree`) parses without the extras, then places each one so.
+
+**In tier 2.** An arm closes the nodes that ended at the token before, then opens
+the ones that start at its own token. So where an extra goes depends on which arm
+comes next, unless every way on from the state closes the same number of nodes. A
+pass over the state machine (`grammar::with_extras`) adds the extra's arm where it
+does:
+
+```
+state S:   ',' -> close, leaf ...     ; both ways on close one node
+           '}' -> close, leaf ...
+extra in S -> close, leaf comment, to S'
+state S':  ',' -> leaf ...            ; S without its close
+           '}' -> leaf ...
+```
+
+- In state 0 nothing is open yet, so the extra's arm opens the root first.
+- A state gets no extra arm where its ways on differ, or where a nested level may
+  end or go on. An extra there sends the file to tree-sitter.
+- A state gets no extra arm where its tokens begin with the extra's first bytes.
+  Inside a string, a `/` starts the string's content; tier 1 makes no comment
+  there anyway.
+
+## 9. The ladder: one keyword to JSON with comments
+
+The ladder is thirteen Bitlex files, in
+`native/src/code_rule_dsl/transducer/packed/bitlex_ladder/`. Each step adds one
+construct to the step before:
+
+| step | the language | what is new |
+|---|---|---|
+| 1 | `true` | a token, a required keyword |
+| 2 | `true` or `false` | a choice |
+| 3 | `true, false` | a one-byte token, a repetition |
+| 4 | and `null` | a third keyword |
+| 5 | `[true, null]` | brackets |
+| 6 | `[[true], []]` | a nested node, a supertype |
+| 7 | strings | the string state, a prefix XOR |
+| 8 | escapes | simdjson's escaped bytes |
+| 9 | integers | a `check` over a token's bytes |
+| 10 | numbers | the full number check |
+| 11 | objects | fields: all of JSON |
+| 12 | `//` comments | an extra |
+| 13 | `/* */` comments | JSON with comments |
+
+The test (`bitlex_ladder_tests`) knows no language. Each step's documents are drawn
+from its own tree grammar, keyword lists and checks, with extras between tokens.
+Each is then changed by a byte. On every document these give the same nodes, or all
+refuse:
+
+- the reference: the evaluator and its tree parser;
+- the interpreters: tier 1, then the words;
+- the compiled path: the two Cranelift functions;
+- tree-sitter-json, on each file a JSON step accepts.
+
+Tier 1 on Cranelift and on Metal's generated code equals its interpreter. Each step
+also has the promised shape:
+
+- tier 1's block body branches only for its loop and the extracts' flattening;
+- tier 2 loops only over tokens, and over 64-byte blocks inside a `check`;
+- neither function calls anything.
+
+What it found, fixed:
+
+- **A keyword longer than its word.** A row of keywords only took the word's length
+  as the token's, so `truee` parsed as `true`. Such a row now reads its token's last
+  byte and compares the whole token. JSON's escapes pay for it: one more carried bit.
+- **First bytes past twelve free values** were every byte, so two rows clashed. They
+  are now found in three-valued logic: still sound, and sharp enough.
+
