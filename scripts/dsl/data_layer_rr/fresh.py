@@ -109,6 +109,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'grammar_render_methods' in modules:
+            from grammar_render_methods_port import install
+            install(backend,modules['grammar_render_methods'])
         if 'sql_grammar_escape_hatches' in modules:
             from grammar_escape_port import install
             install(backend,modules['sql_grammar_escape_hatches'])
@@ -241,7 +244,7 @@ def run(args):
                         action = lambda: owner.analyze(values['tree'])
                     def call():
                         return analyzed_state(owner, action())
-                elif native and case['check']=='sql_grammar_escape_hatches':
+                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods'}:
                     backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:getattr(module,case['entry'])(**values)
                 elif native:
@@ -257,7 +260,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check']=='sql_grammar_escape_hatches':
+                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

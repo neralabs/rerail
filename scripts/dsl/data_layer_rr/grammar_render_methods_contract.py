@@ -18,7 +18,7 @@ from migration import ROOT, PIN, compare, git, read_json, sha, write_json
 
 FUNCTIONS = ['_get_public_key_bytes','_compute_signature_message','_verify_allowlist_integrity',
     'scan_file','scan_source','_dedupe_violations','_violation_from_fact','_violations_for_files',
-    'print_autofix_hint','cli_main']
+    'print_autofix_hint','_sign_allowlist','cli_main']
 CLASSES = ['GrammarRenderMethodsCollector','RenderMethodVisitor','DetailedRenderVisitor','RenderBodyAnalyzer']
 PROPERTIES = {}
 
@@ -31,6 +31,7 @@ class Contract:
         self.module=None
         self.selected=[]
         self.fallbacks, self.depth, self.item, self.observed = [], 0, None, {}
+        self.host_protocol_calls = []
         self.baseline = read_json(args.baseline) if args.command == 'native' else None
         self.backend = None
         names = ['grammar_render_methods_port.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py']
@@ -110,7 +111,13 @@ class Contract:
             def guard(frame, event, arg):
                 if event == 'call' and frame.f_code in originals:
                     _, name, passive = originals[frame.f_code]
-                    if not passive and name != 'cli_main' and not (name == '_sign_allowlist' and 'NERA_SIGNING_KEY' not in os.environ):
+                    signing_error_case = (self.item is not None and self.item.name in {
+                        'test_sign_allowlist_invalid_hex_returns_none', 'test_sign_allowlist_wrong_length_returns_none'})
+                    host_protocol = name == 'cli_main' or name == '_sign_allowlist' and (
+                        'NERA_SIGNING_KEY' not in os.environ or signing_error_case)
+                    if host_protocol:
+                        self.host_protocol_calls.append(dict(test=self.item.nodeid, entry=name))
+                    if not passive and not host_protocol:
                         self.fallbacks.append(name)
                         raise AssertionError('Original semantic function invoked: '+name)
             self.guard = guard
@@ -160,7 +167,7 @@ class Contract:
             pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None, source_mismatches=[],
             fullMigrationAcceptance=False, part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
             cases=self.cases, calls=self.calls, events=[], missingResults=missing,
-            semanticFallbacks=self.fallbacks, harnessFiles=self.harness,
+            semanticFallbacks=self.fallbacks, hostProtocolCalls=self.host_protocol_calls, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
                 ['scripts/lint_grammar_render_methods.py', 'scripts/tests/test_lint_grammar_render_methods.py']})
         if self.backend:

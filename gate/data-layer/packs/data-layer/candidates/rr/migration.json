@@ -1506,7 +1506,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-render-methods.rr",
-      "sha256": "cb27ef059e5e8fe9889e5fafc857e0a8e4598a3aaf5d32b675c5921a828e8b56",
+      "sha256": "be96e2d39962092f61c01b9dfe633a6d6bd974f867112b9c1ae100b38a7f8f91",
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_render_methods.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1826,7 +1826,7 @@
       "legacySha256": "a2b24d816be228ad74cfdb5e48ee6076720df931800803cd72f76d15e0c379c5",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-render-methods.rr",
-      "ruleSha256": "cb27ef059e5e8fe9889e5fafc857e0a8e4598a3aaf5d32b675c5921a828e8b56"
+      "ruleSha256": "be96e2d39962092f61c01b9dfe633a6d6bd974f867112b9c1ae100b38a7f8f91"
     },
     {
       "check": "grammar_str_params",

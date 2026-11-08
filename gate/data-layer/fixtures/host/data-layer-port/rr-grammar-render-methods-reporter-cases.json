@@ -1,0 +1,784 @@
+{
+  "cases": [
+    {
+      "id": "f-string",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"select {value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "f-dedupe",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x}\" + f\"{y}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "f-implicit",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"head\" f\"{x}\" \"tail\"\n"
+        }
+      ]
+    },
+    {
+      "id": "f-format-spec",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x:{width}.{precision}f}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "f-multiline-spec",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"\"\"{x:\n        {width}}\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-direct",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(f\"{x}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-nested",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(wrapper(f\"{x}\"))\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-one-attr",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise errors.GrammarException(f\"{x}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-deep-attr",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise pkg.errors.GrammarException(f\"{x}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-receiver-call",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise factory().GrammarException(f\"{x}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-format",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(f\"{x:{width}}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "exception-other-violation",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(SF.static(x), f\"{x}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "static-runtime",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SqlFragment.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-bare",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-deep-attr",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.SqlFragment.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-unrelated",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return other.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-receiver-call",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return factory().static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-many-args",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(first, second)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-leading-literal",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\"literal\", value)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-keyword",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value=payload)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-starred",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(*values)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-kwstar",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(**values)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-number",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(42)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-bytes",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(b\"literal\")\n"
+        }
+      ]
+    },
+    {
+      "id": "static-none",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(None)\n"
+        }
+      ]
+    },
+    {
+      "id": "static-constant",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\"a\" \"b\")\n"
+        }
+      ]
+    },
+    {
+      "id": "static-parentheses",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(((value)))\n"
+        }
+      ]
+    },
+    {
+      "id": "static-fstring",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(f\"{value}\")\n"
+        }
+      ]
+    },
+    {
+      "id": "static-unicode-source",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\u03b1.\u03b2 + '\u00e9')\n"
+        }
+      ]
+    },
+    {
+      "id": "static-multiline",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\n            (left +\n             right)\n        )\n"
+        }
+      ]
+    },
+    {
+      "id": "join-string",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \", \".join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-bytes",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return b\", \".join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-number",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (42).join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-negative",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (-42).join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-none",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return None.join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-ellipsis",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (...).join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-fstring",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x}\".join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "join-name",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return sep.join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "format-string",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"{}\".format(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "format-name",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return template.format(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "format-call",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return factory().format(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "template-bare",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return Template(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "t-bare",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return t(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "template-one-attr",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.Template(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "template-deep-attr",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.sub.Template(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-strings",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" + \"b\"\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-fstrings",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{a}\" + f\"{b}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-one-name",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" + value\n"
+        }
+      ]
+    },
+    {
+      "id": "multiply-strings",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" * \"b\"\n"
+        }
+      ]
+    },
+    {
+      "id": "concat-parenthesized",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (\"a\") + ((\"b\"))\n"
+        }
+      ]
+    },
+    {
+      "id": "same-line-types",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value), \"{}\".format(x), f\"{x}\", Template(y)\n"
+        }
+      ]
+    },
+    {
+      "id": "same-line-static-first",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        a = SF.static(first); b = SF.static(second)\n"
+        }
+      ]
+    },
+    {
+      "id": "helper-function",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        def helper():\n            return f\"{value}\"\n        return helper()\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return lambda: f\"{value}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-non-grammar",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        class Inner:\n            def method(self):\n                return f\"{value}\"\n        return Inner()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-grammar",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        class Inner(SqlRenderable):\n            def render(self):\n                return f\"{value}\"\n        return f\"{other}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-render-default",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        def render(self, value=f\"{x}\"):\n            return \"ok\"\n        return \"done\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-function-decorator",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        @decorator(f\"{x}\")\n        def helper():\n            return None\n        return \"ok\"\n"
+        }
+      ]
+    },
+    {
+      "id": "missing-trigger",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render (self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-ns.SqlRenderable",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(ns.SqlRenderable):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-SqlRenderable[T]",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable[T]):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-SqlContainer[int][str]",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlContainer[int][str]):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-NotSqlish",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(NotSqlish):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-NotRelated",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(NotRelated):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-sqlRenderable",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(sqlRenderable):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "base-(SqlRenderable)",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment((SqlRenderable)):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nonrender-method",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def execute(self):\n        return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "top-level-function",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "def render():\n    return f\"{x}\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-in-helper",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def helper(self):\n        def render():\n            return f\"{x}\"\n        return render()\n"
+        }
+      ]
+    },
+    {
+      "id": "async-render",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    async def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "decorated-class",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "@decorator\nclass Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "decorated-render",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    @decorator(f\"{x}\")\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-names",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class \uff26ragment(\uff33\uff51\uff4cRenderable):\n    def \uff52\uff45\uff4e\uff44\uff45\uff52(self):\n        return \uff33\uff26.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "splitlines-details",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        x = \"\"\"a\n        b\"\"\"\n        return \",\".join(values)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/outside.py",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/outside.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/tests/case.py",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/test/case.py",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/l2100_sql_grammar/test_case.py",
+      "check": "grammar_render_methods",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test_case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ]
+    }
+  ]
+}

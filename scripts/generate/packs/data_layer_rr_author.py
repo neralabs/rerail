@@ -162,6 +162,7 @@ def main():
     from data_layer_rr_render_raw_strings import render_raw_strings
     from data_layer_rr_regex_sql import regex_sql_parsing
     from data_layer_rr_grammar_escape import sql_grammar_escape_hatches
+    from data_layer_rr_grammar_render_methods import grammar_render_methods
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -198,6 +199,7 @@ def main():
                   ('render_raw_strings', lambda s, t: render_raw_strings(s, t, header)),
                   ('regex_sql_parsing', lambda s, t: regex_sql_parsing(s, t, header)),
                   ('sql_grammar_escape_hatches', lambda s, t: sql_grammar_escape_hatches(s, t, header)),
+                  ('grammar_render_methods', lambda s, t: grammar_render_methods(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]

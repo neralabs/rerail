@@ -1,0 +1,1338 @@
+{
+  "format": "rerail.rr-fresh-contract-cases/v1",
+  "cases": [
+    {
+      "id": "f-string",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"select {value}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "f-dedupe",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x}\" + f\"{y}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "f-implicit",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"head\" f\"{x}\" \"tail\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "f-format-spec",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x:{width}.{precision}f}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "f-multiline-spec",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"\"\"{x:\n        {width}}\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-direct",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(f\"{x}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-nested",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(wrapper(f\"{x}\"))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-one-attr",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise errors.GrammarException(f\"{x}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-deep-attr",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise pkg.errors.GrammarException(f\"{x}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-receiver-call",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise factory().GrammarException(f\"{x}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-format",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(f\"{x:{width}}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "exception-other-violation",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        raise GrammarException(SF.static(x), f\"{x}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-runtime",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SqlFragment.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-bare",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-deep-attr",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.SqlFragment.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-unrelated",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return other.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-receiver-call",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return factory().static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-many-args",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(first, second)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-leading-literal",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\"literal\", value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-keyword",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value=payload)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-starred",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(*values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-kwstar",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(**values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-number",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(42)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-bytes",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(b\"literal\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-none",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(None)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-constant",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\"a\" \"b\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-parentheses",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(((value)))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-fstring",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(f\"{value}\")\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-unicode-source",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\u03b1.\u03b2 + '\u00e9')\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "static-multiline",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(\n            (left +\n             right)\n        )\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-string",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \", \".join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-bytes",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return b\", \".join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-number",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (42).join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-negative",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (-42).join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-none",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return None.join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-ellipsis",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (...).join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-fstring",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{x}\".join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "join-name",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return sep.join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "format-string",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"{}\".format(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "format-name",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return template.format(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "format-call",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return factory().format(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "template-bare",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return Template(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "t-bare",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return t(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "template-one-attr",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.Template(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "template-deep-attr",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return pkg.sub.Template(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-strings",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" + \"b\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-fstrings",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return f\"{a}\" + f\"{b}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-one-name",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" + value\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "multiply-strings",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return \"a\" * \"b\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "concat-parenthesized",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return (\"a\") + ((\"b\"))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "same-line-types",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value), \"{}\".format(x), f\"{x}\", Template(y)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "same-line-static-first",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        a = SF.static(first); b = SF.static(second)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "helper-function",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        def helper():\n            return f\"{value}\"\n        return helper()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "lambda",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return lambda: f\"{value}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-non-grammar",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        class Inner:\n            def method(self):\n                return f\"{value}\"\n        return Inner()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-grammar",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        class Inner(SqlRenderable):\n            def render(self):\n                return f\"{value}\"\n        return f\"{other}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-render-default",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        def render(self, value=f\"{x}\"):\n            return \"ok\"\n        return \"done\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-function-decorator",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        @decorator(f\"{x}\")\n        def helper():\n            return None\n        return \"ok\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "missing-trigger",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render (self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-ns.SqlRenderable",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(ns.SqlRenderable):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-SqlRenderable[T]",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable[T]):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-SqlContainer[int][str]",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlContainer[int][str]):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-NotSqlish",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(NotSqlish):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-NotRelated",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(NotRelated):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-sqlRenderable",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(sqlRenderable):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "base-(SqlRenderable)",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment((SqlRenderable)):\n    def render(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nonrender-method",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def execute(self):\n        return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "top-level-function",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "def render():\n    return f\"{x}\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-in-helper",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def helper(self):\n        def render():\n            return f\"{x}\"\n        return render()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "async-render",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    async def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "decorated-class",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "@decorator\nclass Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "decorated-render",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    @decorator(f\"{x}\")\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "unicode-names",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class \uff26ragment(\uff33\uff51\uff4cRenderable):\n    def \uff52\uff45\uff4e\uff44\uff45\uff52(self):\n        return \uff33\uff26.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "splitlines-details",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        x = \"\"\"a\n        b\"\"\"\n        return \",\".join(values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "tests-folder",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/tests/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/tests/case.py"
+        }
+      }
+    },
+    {
+      "id": "test-folder",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/test/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/test/case.py"
+        }
+      }
+    },
+    {
+      "id": "test-filename",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/test_case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/test_case.py"
+        }
+      }
+    },
+    {
+      "id": "wrong-extension",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.pyi",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.pyi"
+        }
+      }
+    },
+    {
+      "id": "syntax-error",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Broken(\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "empty-source",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "unrelated-source",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "value = 42\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    },
+    {
+      "id": "scan-source-ignores-source-and-tree",
+      "check": "grammar_render_methods",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "class Fragment(SqlRenderable):\n    def render(self):\n        return SF.static(value)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        },
+        "source": "pass\n",
+        "tree": {
+          "pythonAst": "pass\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "unicode-read-failure",
+      "check": "grammar_render_methods",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "bytesHex": "ff"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/case.py"
+        }
+      }
+    }
+  ]
+}

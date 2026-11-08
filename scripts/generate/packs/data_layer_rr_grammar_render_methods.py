@@ -12,7 +12,7 @@ def grammar_render_methods(source,target,header):
     text+='grm_metadata("autofix",'+json.dumps('\nMechanical cleanup:\n  uv run python scripts/codemod_hoist_render_raw_strings.py impl/common/l2100_sql_grammar\n  uv run python scripts/fix_grammar_linter_violations.py --write\n  uv run python scripts/rollup_sql_fragments.py --write\n')+').\n'
     space=character_class(str.isspace)
     text+='\n.decl grm_trim(raw: symbol, text: symbol)\ngrm_trim(raw, @replace_all(raw, '+json.dumps('^'+space+'+|'+space+'+$')+', "")) :- option_item("sourceLines", _, raw).\n'
-    text+='grm_trim(raw, @replace_all(raw, '+json.dumps('^'+space+'+|'+space+'+$')+', "")) :- src_line(_, _, raw).\n'
+    text+='grm_trim(raw, @replace_all(raw, '+json.dumps('^'+space+'+|'+space+'+$')+', "")) :- split_line(_, _, raw).\n'
     return text+metadata()+helpers()+production()
 
 
@@ -68,11 +68,81 @@ GRMValue(@place("", 0), "") :- option("entryPoint", "RenderBodyAnalyzer._get_lin
 
 
 def production():
-    # The initial red test has no detector rows. Implement the source event semantics next.
-    return r'''
+    text = r'''
 .decl grm_result(path: symbol, line: number, cls: symbol, code: symbol, detail: symbol, ordinal: number)
+.decl grm_path(d: number, path: symbol)
+grm_path(d, original) :- doc(d, logical, _), doc_role(d, "primary"), option_item("documentPaths", i, logical), option_item("originalPaths", i, original).
+grm_path(d, path) :- doc(d, path, _), doc_role(d, "primary"), !option_item("documentPaths", _, path).
+.decl grm_test_path(d: number)
+grm_test_path(d) :- grm_path(d, path), match_all("(?:\\A|/)(?:test|tests)(?:/|\\z)", path, _, _, _).
+.decl grm_hidden(d: number)
+grm_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
+.decl grm_trigger(d: number)
+grm_trigger(d) :- source(d, sp), text(sp, source), (contains("render(", source) ; contains("SqlFragment.static", source) ; contains("SF.static", source) ; contains(".join(", source) ; contains(".format(", source) ; contains("Template", source)).
+.decl grm_selected(d: number)
+grm_selected(d) :- option("entryPoint", _), grm_path(d, path), suffix(".py", path), !grm_test_path(d), !syntax_error(d, _, _), grm_trigger(d).
+grm_selected(d) :- !option("entryPoint", _), grm_path(d, path), prefix("impl/common/l2100_sql_grammar/", path), suffix(".py", path), !grm_test_path(d), !grm_hidden(d), !syntax_error(d, _, _), grm_trigger(d).
+.decl grm_ancestor(n: node, a: node)
+grm_ancestor(n, a) :- ast_parent(n, a).
+grm_ancestor(n, a) :- ast_parent(n, p), grm_ancestor(p, a).
+.decl grm_source_base(n: node, name: symbol)
+grm_source_base(n, @nfkc(name)) :- kind(n, "identifier"), text(n, name).
+grm_source_base(n, @nfkc(name)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, name).
+grm_source_base(n, name) :- kind(n, "subscript"), field(n, "value", v), unparen(v, e), grm_source_base(e, name).
+grm_source_base(n, name) :- kind(n, "generic_type"), child(n, v, 0), grm_source_base(v, name).
+.decl grm_grammar(c: node, name: symbol)
+grm_grammar(c, @nfkc(name)) :- kind(c, "class_definition"), def_name(c, name), field(c, "superclasses", al), child(al, raw, _), unparen(raw, base), grm_source_base(base, b), contains("Sql", b), !option_item("legacyAllowlist", _, @nfkc(name)).
+.decl grm_current_class(f: node, c: node)
+grm_current_class(f, c) :- kind(f, "function_definition"), grm_ancestor(f, c), kind(c, "class_definition"), visit_index(c, i),
+ i = max j : { grm_ancestor(f, a), kind(a, "class_definition"), visit_index(a, j) }.
+.decl grm_render(f: node, cls: symbol)
+grm_render(f, cls) :- kind(f, "function_definition"), def_name(f, name), @nfkc(name) = "render", grm_current_class(f, c), grm_grammar(c, cls).
+.decl grm_context(n: node, cls: symbol)
+grm_context(n, cls) :- grm_ancestor(n, f), grm_render(f, cls), visit_index(f, i),
+ i = max j : { grm_ancestor(n, r), grm_render(r, _), visit_index(r, j) }.
+.decl grm_func(c: node, f: node)
+grm_func(c, f) :- kind(c, "call"), field(c, "function", raw), unparen(raw, f).
+.decl grm_call_name(c: node, name: symbol)
+grm_call_name(c, @nfkc(name)) :- grm_func(c, f), kind(f, "identifier"), text(f, name).
+grm_call_name(c, cat(@nfkc(base), ".", @nfkc(attr))) :- grm_func(c, f), kind(f, "attribute"), field(f, "attribute", a), text(a, attr), field(f, "object", raw), unparen(raw, v), kind(v, "identifier"), text(v, base).
+grm_call_name(c, @nfkc(attr)) :- grm_func(c, f), kind(f, "attribute"), field(f, "attribute", a), text(a, attr), field(f, "object", raw), unparen(raw, v), kind(v, "attribute").
+.decl grm_concat_piece(n: node)
+grm_concat_piece(n) :- child(p, n, _), kind(p, "concatenated_string").
+.decl grm_joined(n: node)
+grm_joined(n) :- fstring(n), !grm_concat_piece(n).
+grm_joined(n) :- kind(n, "format_specifier").
+.decl grm_exempt_fstring(n: node)
+grm_exempt_fstring(n) :- grm_joined(n), grm_ancestor(n, c), grm_call_name(c, "GrammarException").
+.decl grm_source_string_expr(n: node)
+grm_source_string_expr(n) :- str_const(n, _).
+grm_source_string_expr(n) :- grm_joined(n).
+.decl grm_call_arg(c: node, k: number, n: node)
+grm_call_arg(c, k, n) :- kind(c, "call"), field(c, "arguments", al), child(al, raw, k), !kind(raw, "keyword_argument"), !kind(raw, "dictionary_splat"), !kind(raw, "comment"), unparen(raw, n).
+.decl grm_line(d: number, l: number, text: symbol)
+grm_line(d, l, trimmed) :- split_line(d, l, raw), grm_trim(raw, trimmed).
+.decl grm_line_text(n: node, text: symbol)
+grm_line_text(n, text) :- docof(n, d), line(n, l), grm_line(d, l, text).
+grm_line_text(n, "") :- docof(n, d), line(n, l), !grm_line(d, l, _).
+.decl grm_hit(n: node, cls: symbol, code: symbol, detail: symbol, phase: number, argument: number)
+grm_hit(n, cls, "F_STRING", "f-strings forbidden in render() - use GrammarException(f'...') for errors", 0, 0) :- grm_joined(n), grm_context(n, cls), !grm_exempt_fstring(n).
+grm_hit(n, cls, "STATIC_RUNTIME_VALUE", cat("SqlFragment.static() with runtime value: ", source), 0, k) :- grm_context(n, cls), grm_call_name(n, name), (name = "SqlFragment.static" ; name = "SF.static" ; name = "static"), !option_item("staticAllowlist", _, cls), grm_call_arg(n, k, a), !str_const(a, _), text(a, source).
+grm_hit(n, cls, "STRING_JOIN", cat(".join() is forbidden in render(): ", text), 1, 0) :- grm_context(n, cls), grm_func(n, f), kind(f, "attribute"), field(f, "attribute", a), text(a, name), @nfkc(name) = "join", field(f, "object", raw), unparen(raw, v), ast_constant(v), grm_line_text(n, text).
+grm_hit(n, cls, "STRING_FORMAT", ".format() is forbidden in render()", 2, 0) :- grm_context(n, cls), grm_func(n, f), kind(f, "attribute"), field(f, "attribute", a), text(a, name), @nfkc(name) = "format".
+grm_hit(n, cls, "T_STRING", "t-strings/Template are forbidden in render() methods", 3, 0) :- grm_context(n, cls), grm_call_name(n, name), (name = "t" ; name = "Template").
+grm_hit(n, cls, "STRING_CONCAT", cat("String concatenation is forbidden: ", text), 0, 0) :- grm_context(n, cls), kind(n, "binary_operator"), op(n, "+"), field(n, "left", raw_left), field(n, "right", raw_right), unparen(raw_left, left), unparen(raw_right, right), grm_source_string_expr(left), grm_source_string_expr(right), grm_line_text(n, text).
+.decl grm_event(d: number, l: number, cls: symbol, code: symbol, detail: symbol, ordinal: number, phase: number, argument: number)
+grm_event(d, l, cls, code, detail, i, phase, argument) :- grm_hit(n, cls, code, detail, phase, argument), docof(n, d), grm_selected(d), line(n, l), visit_index(n, i).
+.decl grm_first_visit(d: number, l: number, cls: symbol, code: symbol, ordinal: number)
+grm_first_visit(d, l, cls, code, i) :- grm_event(d, l, cls, code, _, _, _, _), i = min k : { grm_event(d, l, cls, code, _, k, _, _) }.
+.decl grm_first_phase(d: number, l: number, cls: symbol, code: symbol, ordinal: number, phase: number)
+grm_first_phase(d, l, cls, code, i, phase) :- grm_first_visit(d, l, cls, code, i), phase = min p : { grm_event(d, l, cls, code, _, i, p, _) }.
+.decl grm_first_arg(d: number, l: number, cls: symbol, code: symbol, ordinal: number, phase: number, argument: number)
+grm_first_arg(d, l, cls, code, i, phase, arg) :- grm_first_phase(d, l, cls, code, i, phase), arg = min k : { grm_event(d, l, cls, code, _, i, phase, k) }.
+grm_result(path, l, cls, code, detail, i) :- grm_first_arg(d, l, cls, code, i, phase, arg), grm_event(d, l, cls, code, detail, i, phase, arg), grm_path(d, path).
 .violation GRMFact(at: span, class_name: symbol, method_name: symbol, violation_type: symbol, detail: symbol, ordinal: number) code "GRM_FACT" "{detail}"
 GRMFact(@place(path, line), cls, "render", code, detail, ordinal) :- option("entryPoint", _), grm_result(path, line, cls, code, detail, ordinal).
-.violation GrammarRenderMethod(at: span, cls: symbol, code: symbol, detail: symbol, ordinal: number) code "{code}" "{cls}.render(): {detail}"
-GrammarRenderMethod(@place(path, line), cls, code, detail, ordinal) :- !option("entryPoint", _), grm_result(path, line, cls, code, detail, ordinal).
 '''
+    for name,code in [('GRMFString','F_STRING'),('GRMStatic','STATIC_RUNTIME_VALUE'),('GRMJoin','STRING_JOIN'),('GRMFormat','STRING_FORMAT'),('GRMTemplate','T_STRING'),('GRMConcat','STRING_CONCAT')]:
+        text += f'.severity {name} error\n.violation {name}(at: span, cls: symbol, detail: symbol, ordinal: number) code {json.dumps(code)} \"{{cls}}.render(): {{detail}}\"\n'
+        text += f'{name}(@place(path, line), cls, detail, ordinal) :- !option(\"entryPoint\", _), grm_result(path, line, cls, {json.dumps(code)}, detail, ordinal).\n'
+    return text
