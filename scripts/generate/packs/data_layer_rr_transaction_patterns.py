@@ -78,11 +78,13 @@ tp_annotation(n, name) :- tp_attribute(n, _, name).
 tp_annotation(n, value) :- !tp_graph(), plain_str(n, value).
 tp_annotation(n, cat("b'", value, "'")) :- !tp_graph(), string_form(n, "bytes"), value(n, value).
 tp_annotation(n, value) :- tp_gkind(n, "Constant"), option_item("astLiteralText", n, value).
+tp_annotation(n, "") :- tp_gkind(n, k), k != "Name", k != "Attribute", k != "Constant", k != "Subscript", k != "BinOp".
+tp_annotation(n, "") :- !tp_graph(), kind(n, k), k != "identifier", k != "attribute", k != "string", k != "concatenated_string",
+    k != "type", k != "parenthesized_expression", k != "subscript", k != "generic_type", k != "union_type", k != "binary_operator".
 tp_annotation(n, value) :- tp_annotation_edge(n, c), tp_annotation(c, value).
 tp_annotation(n, value) :- tp_binary(n, l, _), tp_annotation(l, value), contains("Connection", value).
-tp_annotation(n, value) :- tp_binary(n, l, r), !tp_annotation_has_connection(l), tp_annotation(r, value), contains("Connection", value).
-.decl tp_annotation_has_connection(n: node)
-tp_annotation_has_connection(n) :- tp_annotation(n, value), contains("Connection", value).
+tp_annotation(n, value) :- tp_binary(n, l, r), tp_annotation(l, left), !contains("Connection", left), tp_annotation(r, value), contains("Connection", value).
+tp_annotation(n, "") :- tp_binary(n, l, r), tp_annotation(l, left), !contains("Connection", left), tp_annotation(r, right), !contains("Connection", right).
 .decl tp_connection_annotation(n: node)
 tp_connection_annotation(n) :- tp_annotation(n, name), name != "ConnectionId", (name = "conn" ; contains("Connection", name)).
 .decl tp_parameter(f: node, name: symbol, annotation: node, i: number)
