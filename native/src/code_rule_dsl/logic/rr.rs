@@ -136,6 +136,20 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
     Ok(program)
 }
 
+/// The library files a program's text reads, includes resolved (`core.rr` first unless the text is in T's shape):
+/// what a record of the run must check besides the text (phase 0, t23). Empty for a text that includes nothing.
+pub(in crate::code_rule_dsl) fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
+    let statements = from_tape::statements(src, &tape(src))?;
+    let mut paths: Vec<PathBuf> = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
+        resolve(statements)?.0.into_iter().map(|(p, _)| p).collect()
+    } else {
+        Vec::new()
+    };
+    // The engine's own library programs, which the runner adds to a run (decision 0076's components).
+    paths.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+    Ok(paths)
+}
+
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
 /// shape, each once, includes first) and the statements without the includes.
 fn resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {

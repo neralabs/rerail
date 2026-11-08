@@ -217,7 +217,8 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS observed(path TEXT PRIMARY KEY, kind INTEGER NOT NULL, dev INTEGER, ino INTEGER, size INTEGER,
   mtime_ns INTEGER, ctime_ns INTEGER, digest BLOB, listing BLOB, recorded_ns INTEGER) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS git_alias(blob BLOB PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS observer_meta(key TEXT PRIMARY KEY, value INTEGER) WITHOUT ROWID;";
+CREATE TABLE IF NOT EXISTS observer_meta(key TEXT PRIMARY KEY, value INTEGER) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_record(key TEXT PRIMARY KEY, consulted TEXT NOT NULL, outputs BLOB NOT NULL) WITHOUT ROWID;";
 
 impl Observer {
     /// An observer over the store at `path` (`<path>` is the P0 store itself), or over none.
@@ -476,6 +477,18 @@ impl Observer {
     pub(crate) fn record_alias(&mut self, blob: &[u8], digest: [u8; 32]) {
         if self.aliases.insert(blob.to_owned(), digest) != Some(digest) {
             self.new_aliases.push((blob.to_owned(), digest));
+        }
+    }
+
+    /// The record of the last run under `key`: what it consulted, and its outputs (`corpus::reuse`).
+    pub(crate) fn run_record(&self, key: &str) -> Option<(String, Vec<u8>)> {
+        self.db.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key=?1").ok()?.query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok()?
+    }
+
+    /// Keeps a run's record under `key`, replacing the last.
+    pub(crate) fn put_run_record(&self, key: &str, consulted: &str, outputs: &[u8]) {
+        if let Some(db) = self.db.as_ref() {
+            let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
         }
     }
 

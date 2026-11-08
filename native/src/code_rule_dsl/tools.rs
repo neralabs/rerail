@@ -241,7 +241,7 @@ pub fn run_rr(
         Binding::Cpu,
         1 << 18,
         &Default::default(),
-        options,
+        &with_reuse(options),
     )
     .map_err(|e| e.to_string())?;
     let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
@@ -392,6 +392,15 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
     format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
 }
 
+/// The command line's runs keep their outputs for phase 0's cutoff (`corpus::reuse`), unless the caller said.
+fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
+    let mut options = options.clone();
+    if let Some(map) = options.as_object_mut() {
+        map.entry("reuse").or_insert(serde_json::Value::Bool(true));
+    }
+    options
+}
+
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
 /// and `core.rr` resolved, as one program's text.
 pub fn flatten(path: &std::path::Path) -> Result<String, String> {
@@ -410,7 +419,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     if programs.len() > 1 && t_facts.is_some() {
         return Err("T facts reproduce one program's run, not several".into());
     }
-    let options = serde_json::json!({ "env": settings });
+    let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
     let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
         .map_err(|error| error.to_string())?;

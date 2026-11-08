@@ -38,6 +38,7 @@ pub(crate) mod phases;
 mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
+mod reuse;
 mod cross_memo;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
@@ -914,7 +915,19 @@ pub(crate) fn run_with_options(
         o.begin();
         o.counts
     });
-    let report = run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
+    // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
+    let reuse = reuse::wanted(options, typing, t_facts);
+    let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
+    let report = match kept {
+        Ok(Some(report)) => Ok(report),
+        Err(e) => Err(e),
+        Ok(None) => run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+            if reuse {
+                reuse::record(programs, root, out, modes, typing, options, &report)?;
+            }
+            Ok(report)
+        }),
+    };
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = observe(|o| {
         o.flush();
