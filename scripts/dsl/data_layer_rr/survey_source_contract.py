@@ -1,4 +1,4 @@
-"""Compare native survey inventory with the pinned Python scanner, offline only.
+"""Compare native survey producer fields with the pinned Python builder, offline only.
 
 This is a producer-field contract, not full dead-code migration acceptance.
 The native command reads a prior recording and never imports the source scanner.
@@ -64,6 +64,12 @@ CASES = [
     ('graph-bases-no-reexports', {'a.py': 'class Base: pass\n', 'b.py': 'class Base: pass\n', 'bridge.py': 'from a import Base as Public\n', 'entry.py': 'from bridge import Public\nclass C(Public): pass\n'}),
     ('graph-generic-spelling', {'a.py': 'class Base: pass\nclass C(Base[int], pkg.Base[Other], factory(Base)): pass\n'}),
     ('graph-reexport-cycles', {'a.py': 'from b import Alias\nfrom c import concrete as Reexport\ndef direct(): pass\n', 'b.py': 'from a import Alias\n', 'c.py': 'from missing import concrete\ndef concrete(): pass\n'}),
+    ('name-call-own-priority', {'a.py': 'def target(): pass\nclass C:\n def run(self): target()\n def target(self): pass\n'}),
+    ('name-call-method-before-class', {'a.py': 'class target: pass\nclass One:\n def target(self): pass\nclass Two:\n def target(self): pass\ndef run(): target()\n'}),
+    ('name-call-imports-and-reexports', {'a.py': 'def target(): pass\nclass C: pass\n', 'bridge.py': 'from a import target as Alias\n', 'entry.py': 'from bridge import Alias\nfrom a import C\ndef run():\n Alias()\n C()\n missing()\n'}),
+    ('name-call-local-plain-import', {'a.py': 'def target(): pass\n', 'entry.py': 'def run():\n import a.target as callback\n callback()\n'}),
+    ('name-call-unresolved-import-blocks-local', {'a.py': 'def target(): pass\n', 'entry.py': 'from missing import callback\ndef run():\n import a.target as callback\n callback()\n'}),
+    ('name-call-bound-parameter', {'a.py': 'def target(): pass\ndef len(): pass\ndef run(target):\n target()\n len([])\n'}),
 ]
 
 
@@ -120,6 +126,14 @@ def source_rows(source, files):
         queries.update(name+'.'+local for local in info.imported_symbols)
     rows.extend(dict(kind='graph_resolution',name=name,sid=sid) for name in sorted(queries)
                 if (sid:=graph._resolve_fqname_through_reexports(name)) is not None)
+    for sid,symbol in graph.symbols.items():
+        if not symbol.is_function:continue
+        for i,ref in enumerate(symbol.raw_refs):
+            if ref.kind!='name_call':continue
+            target=graph._resolve_name_call(symbol,graph.modules[symbol.module],ref.attr)
+            rows.append(dict(kind='graph_name_call',owner=sid,ordinal=i,name=ref.attr,
+                             has_target=int(target is not None),target=target or '',
+                             target_kind=graph.symbols[target].kind if target is not None else ''))
     return ordered(rows)
 
 
