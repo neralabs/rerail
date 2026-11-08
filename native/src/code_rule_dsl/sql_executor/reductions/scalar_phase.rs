@@ -39,6 +39,7 @@ pub(super) fn apply(
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
 ) -> Result<(Delta, u64, u64)> {
+    let _context = w.profile_scope(|| json!({"logicalAnalysis":state.explain()}));
     let mut groups = 0;
     let mut extra = BTreeMap::new();
     for rule in &state.rules {
