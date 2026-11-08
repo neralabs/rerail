@@ -58,7 +58,14 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr",
-      "sha256": "123005d47faaa0f8066ad856fcf241fe232108334e3e501f54644df470feea9e"
+      "sha256": "af91102a0062a4f1c35ecc3356631dc328d1dc96f10d1f76576497219e456592",
+      "repairs": [
+        {
+          "before": "123005d47faaa0f8066ad856fcf241fe232108334e3e501f54644df470feea9e",
+          "after": "af91102a0062a4f1c35ecc3356631dc328d1dc96f10d1f76576497219e456592",
+          "reason": "Adopt Final shape 4e409af94 resolutions for Python-only line rules, decorator walks and text captures (O117); candidate remains draft pending full acceptance."
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr",
@@ -2525,7 +2532,7 @@
       "legacySha256": "832ec357249713c1c095548abd456e2485ce6bc6fa9a40c236cc2c8e7d74ec95",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr",
-      "ruleSha256": "123005d47faaa0f8066ad856fcf241fe232108334e3e501f54644df470feea9e"
+      "ruleSha256": "af91102a0062a4f1c35ecc3356631dc328d1dc96f10d1f76576497219e456592"
     },
     {
       "check": "graphql_plan_ownership",
@@ -2705,8 +2712,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "ead5f57c5bf54e90ccd1545b8a0f3c2bee007849",
-    "status": "Root Final shape through ead5f57c5 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "upstreamCommit": "4e409af94823bd34508254c399fffaab9be9756a",
+    "status": "Root Final shape through 4e409af94 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2742,7 +2749,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "19283066fef1e8cf7cacfc0eff76ab34cd760bd205ae918f895f09f06ca60310"
+        "sha256": "e0e67b673ee2371e78a32656b895a4113e392846f7c8644a6dc12ddb623fabd3"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -2782,7 +2789,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "5d227473c7dc20a654278d7a8c774d2df0baa87ebad4e3f8e93527872e547cb3"
+        "sha256": "4d2be1eb9b5ca2ff0760b0df7c486c7c60360bff4b2b7cb89e05639207c5bb99"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
@@ -2794,7 +2801,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "f80673a737fe8845090853d9de61b3de71bdc5b4b78c2978d65143e23f63b325"
+        "sha256": "4c1b1569a53dbeeac7787afbe9417037d33bc037faae16f787392359bc82afa8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2802,11 +2809,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "89b1995ca02807212656777008a435fbcfd4e90c47d7a70f16f5cfc556f58859"
+        "sha256": "f583e71f0b111c41e4c6c27d4b54f79a841798f5bdce4ad0b631594c4dc2e061"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "4a36fa9b184445a8792f3a62b0db889f817587236a037607ce9bb6ef32c563e1"
+        "sha256": "9d27fb896b7aa441940bc9647bd892c8644d37f10b3d33468c63eb4cf2f19f36"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -2814,7 +2821,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "5bf6b73fa0a77a317dccda01fe0d1886e8001ab69692883180d8d6fd4df90a58"
+        "sha256": "d7631ebf173a80aabd3d34f1199903d70d657d5be31a56b1030733ae8ed42f95"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2838,6 +2845,6 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "61aca07d46e5089c509e15df615530097009b5eb"
+    "upstreamMerge": "d64ff82f222c7bd1e630471fc293901c1605ae98"
   }
 }
