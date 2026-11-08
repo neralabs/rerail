@@ -73,6 +73,10 @@ def main():
     add('no-grammar','class Ordinary:\n    value: SqlFragment\n')
     add('nested-class-in-function','def outside():\n    class SqlInner:\n        value: SqlFragment\n        def __init__(self, arg: SqlFragment): pass\n')
     add('nested-init-definition','class SqlX:\n    def method(self):\n        def __init__(value: SqlFragment): pass\n')
+    add('unicode-build-method',grammar("'SQL'.ｌｏｗｅｒ()"))
+    add('same-line-parameter-order',grammar(signature='self, z: SqlFragment, a: SqlFragment',init='pass',returned='1'))
+    add('unicode-fragment-alias','from p import SqlFragment as 片段\nclass SqlX:\n    value: "list[片段]"\n')
+    add('string-word-boundary-delimiter',"class SqlX:\n    value: 'x SqlFragment x'\n")
     api=[dict(id=name,check=CHECK,entry='check_file',files=files,arguments=dict(file_path=dict(path='case.py'))) for name,files in scenarios]
     reporters=[dict(id=name,check=CHECK,files=[dict(f,path='impl/common/l2070_server_plan/'+f['path']) for f in files]) for name,files in scenarios]
     for path in ['impl/case.py','api/case.py','data_layer/case.py','_internal/case.py','l1x/case.py','l42/case.py','other/case.py','impl/tests/case.py','impl/test/case.py','impl/tmp/case.py','impl/.venv/case.py','impl/__pycache__/case.py']:

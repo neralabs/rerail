@@ -1561,6 +1561,46 @@
       ]
     },
     {
+      "id": "unicode-build-method",
+      "check": "grammar_fragment_usage",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.\uff4c\uff4f\uff57\uff45\uff52()\n    def render(self):\n        return self.sql\n"
+        }
+      ]
+    },
+    {
+      "id": "same-line-parameter-order",
+      "check": "grammar_fragment_usage",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/case.py",
+          "source": "class SqlCapture:\n    def __init__(self, z: SqlFragment, a: SqlFragment):\n        pass\n    def render(self):\n        return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-fragment-alias",
+      "check": "grammar_fragment_usage",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/case.py",
+          "source": "from p import SqlFragment as \u7247\u6bb5\nclass SqlX:\n    value: \"list[\u7247\u6bb5]\"\n"
+        }
+      ]
+    },
+    {
+      "id": "string-word-boundary-delimiter",
+      "check": "grammar_fragment_usage",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/case.py",
+          "source": "class SqlX:\n    value: 'x SqlFragment x'\n"
+        }
+      ]
+    },
+    {
       "id": "scope-impl/case.py",
       "check": "grammar_fragment_usage",
       "files": [

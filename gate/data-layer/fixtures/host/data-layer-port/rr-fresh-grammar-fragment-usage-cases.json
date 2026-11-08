@@ -2497,6 +2497,70 @@
       }
     },
     {
+      "id": "unicode-build-method",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.\uff4c\uff4f\uff57\uff45\uff52()\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "same-line-parameter-order",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, z: SqlFragment, a: SqlFragment):\n        pass\n    def render(self):\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "unicode-fragment-alias",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import SqlFragment as \u7247\u6bb5\nclass SqlX:\n    value: \"list[\u7247\u6bb5]\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "string-word-boundary-delimiter",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlX:\n    value: 'x SqlFragment x'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
       "id": "explicit-tests/case.py",
       "check": "grammar_fragment_usage",
       "entry": "check_file",
