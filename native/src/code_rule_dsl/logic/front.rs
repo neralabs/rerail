@@ -369,6 +369,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
+    /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
+    /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
+    Components { edge: String, own: String },
 }
 
 impl Native {
@@ -381,6 +384,10 @@ impl Native {
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
             Native::MatchAll { input, .. } => *input = rename(input),
+            Native::Components { edge, own } => {
+                *edge = rename(edge);
+                *own = rename(own);
+            }
         }
     }
     /// The relations it reads.
@@ -388,6 +395,7 @@ impl Native {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
         }
     }
 }

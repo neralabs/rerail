@@ -676,6 +676,12 @@ impl Drop for Atoms {
 impl super::ContentStore {
     /// The atom of each of `values`, giving out new ones. They are written with the next write
     /// transaction on the store, or in one of their own when a flush is due (decision 0049 §4).
+    /// This process's atoms of the store, for a reader that interns away from the store handle (a lazily
+    /// decoded source). Pending atoms are appended by the store's next flush.
+    pub(crate) fn atoms_handle(&self) -> std::sync::Arc<Atoms> {
+        std::sync::Arc::clone(&self.atoms)
+    }
+
     pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         let ids = self.atoms.intern_all(values)?;
         if self.atoms.due() {
