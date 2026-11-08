@@ -13,6 +13,11 @@ import sys
 from migration import PIN, ROOT, git, sha, write_json
 
 
+def deep_inheritance(depth):
+    return 'class B0:\n def method(self): pass\n def __init__(self): pass\n'+''.join(
+        f'class B{i}(B{i-1}): pass\n' for i in range(1,depth+1))
+
+
 CASES = [
     ('empty', {'empty.py': ''}),
     ('definitions', {'impl/a.py': 'def one(): pass\nasync def two(): pass\nclass C:\n def method(self): pass\n async def amethod(self): pass\n'}),
@@ -75,6 +80,14 @@ CASES = [
     ('name-call-local-before-import', {'a.py': 'def target(): pass\n', 'entry.py': 'def target(): pass\nfrom a import target\ndef run(): target()\n'}),
     ('name-call-hoisted-import', {'a.py': 'def first(): pass\n', 'b.py': 'def target(): pass\n', 'entry.py': 'def run():\n from a import first as callback\n callback()\ndef later():\n from b import target as callback\n'}),
     ('name-call-reexport-cycle', {'a.py': 'from b import Alias\n', 'b.py': 'from a import Alias\n', 'entry.py': 'from a import Alias\ndef run(): Alias()\n'}),
+    ('walk-diamond', {'a.py': 'class A:\n def method(self): pass\nclass Left(A): pass\nclass Right(A):\n def method(self): pass\nclass Leaf(Left, Right):\n def run(self):\n  self.method()\n  super().method()\n'}),
+    ('walk-reversed-diamond', {'a.py': 'class A:\n def method(self): pass\nclass Left(A):\n def method(self): pass\nclass Right(A):\n def method(self): pass\nclass Leaf(Right, Left): pass\n'}),
+    ('walk-public-eligibility', {'a.py': 'class Base:\n def method(self): pass\n def alpha(self): pass\n def __init__(self): pass\nclass C(Base):\n @property\n def method(self): pass\n def zebra(self): pass\n def _private(self): pass\n def authorize_internal_access(self): pass\n'}),
+    ('walk-dunder-order', {'a.py': 'class Base:\n def __post_init__(self): pass\n def __init__(self): pass\n def __exit__(self): pass\nclass C(Base):\n def __new__(cls): pass\n def __init__(self): pass\n'}),
+    ('walk-cycle', {'a.py': 'class A(B):\n def method(self): pass\n def __init__(self): pass\nclass B(A):\n def other(self): pass\n def __init__(self): pass\n'}),
+    ('walk-self-cycle', {'a.py': 'class C(C):\n def method(self): pass\n def __init__(self): pass\n'}),
+    ('walk-function-base', {'a.py': 'class Factory:\n def method(self): pass\ndef Factory(): pass\n', 'entry.py': 'from a import Factory as Alias\nclass C(Alias): pass\n'}),
+    ('walk-deeper-than-64', {'a.py': deep_inheritance(70)}),
 ]
 
 
@@ -148,6 +161,12 @@ def source_rows(source, files):
     rows.extend(dict(kind='graph_base',owner=owner,ordinal=i,sid=sid)
                 for owner,bases in graph.class_bases.items() for i,sid in enumerate(bases))
     rows.extend(dict(kind='graph_subclass',owner=owner,sid=sid) for owner,subs in graph.class_subclasses.items() for sid in subs)
+    for owner in sorted(set(graph.class_bases)|set(graph.class_methods)):
+        rows.append(dict(kind='graph_accessor',owner=owner))
+        for kind,values in [('graph_walk',graph.walk_base_classes(owner)),
+                            ('graph_public',graph.public_methods_of_class(owner)),
+                            ('graph_dunder',graph._class_dunder_methods(owner))]:
+            rows.extend(dict(kind=kind,owner=owner,ordinal=i,sid=sid) for i,sid in enumerate(values))
     queries=set(graph.symbol_by_fqname)
     for name,info in graph.modules.items():
         queries.update(info.imported_symbols.values())
