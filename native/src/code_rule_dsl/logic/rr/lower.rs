@@ -1336,7 +1336,7 @@ impl Lowerer {
     ///
     /// - Over a `source` or `src_line` span (a sibling binds s so), the captures are spans: the batch runs the regex
     ///   over each such span and makes `rx_span(p, c, j, g, m)`, group g of match j of pattern p in span c, as span m
-    ///   (`facts::vtab::syntax::core_rr`). `match` is the pattern anchored at both ends, so at most one match.
+    ///   (`facts::vtab::syntax`'s `Extra`). `match` is the pattern anchored at both ends, so at most one match.
     /// - Over a symbol, `match`'s groups are `@rx_group` (`captures`); `match_all`'s rows are made natively from the
     ///   texts the rule asks about, a context relation of its other literals (`front::Native::MatchAll`). Without
     ///   groups, `match_all` is a search.
@@ -1475,7 +1475,7 @@ impl Lowerer {
         Ok(vec![vec![text, test]])
     }
 
-    /// `rx_span` as an input of the program (`core_rr::CoreRows::matches` makes it).
+    /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
     fn rx_span_input(&mut self) {
         if !self.prog.inputs.iter().any(|i| i == "rx_span") {
             self.prog.inputs.push("rx_span".to_owned());

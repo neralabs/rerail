@@ -1449,9 +1449,10 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 }
 
 /// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
-/// ones included, and `parsed(s, "annotation", root)` its tree, a document of its own: an `expression_statement` over
-/// the string's value, its identifiers `text` rows as a file's are. A string Ruff's parser refuses has no tree; a
-/// `Literal` argument is no type definition.
+/// ones included, and `parsed(s, "annotation", root)` its tree, decision 0055's guest asked for by `string_annotation`:
+/// the value parsed as `( … )`, in T's shape (this program declares its base relations) the guest's whole tree, its
+/// identifiers `text` rows as a file's are; a nested string's guest is made in the next round. T's shape keeps every
+/// document, so a guest that does not parse keeps its partial tree. A `Literal` argument is no type definition.
 #[test]
 fn string_annotations_are_ruffs_with_their_trees() {
     let source = "from typing import List, Literal, Optional\nimport typing\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\", b: 'typing.Dict[str, \"Bar\"]') -> \"Baz\":\n    pass\n\ny: \"not valid ((\" = 1\nz: Literal[\"notatype\"] = 1\n";
@@ -1463,9 +1464,9 @@ fn string_annotations_are_ruffs_with_their_trees() {
 .decl annotated(t: symbol)
 annotated(t) :- string_annotation(n), node_text(n, t).
 .decl names(t: symbol, x: symbol)
-names(t, x) :- parsed(n, "annotation", r), node_text(n, t), inside(m, r, "expression_statement"), node(_, m, "identifier", _, _), text(m, x).
+names(t, x) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), within(m, r), node(_, m, "identifier", _, _), text(m, x).
 .decl roots(t: symbol, k: symbol, s: number, e: number)
-roots(t, k, s, e) :- parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e).
+roots(t, k, s, e) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e).
 .decl files(p: symbol)
 files(p) :- doc(_, p, _).
 .output annotated, names, roots, files
@@ -1489,17 +1490,19 @@ files(p) :- doc(_, p, _).
             "'typing.Dict[str, \"Bar\"]'\tstr",
             "\"Bar\"\tBar",
             "\"Baz\"\tBaz",
+            "\"not valid ((\"\tvalid",
         ])
     );
-    // Each root spans its string's whole value.
+    // Each root is its guest's module, over the string's value in `( … )`.
     assert_eq!(
         set(&got[2]),
         want(&[
-            "\"List[int]\"\texpression_statement\t0\t9",
-            "\"Optional[Foo]\"\texpression_statement\t0\t13",
-            "'typing.Dict[str, \"Bar\"]'\texpression_statement\t0\t23",
-            "\"Bar\"\texpression_statement\t0\t3",
-            "\"Baz\"\texpression_statement\t0\t3",
+            "\"List[int]\"\tmodule\t0\t11",
+            "\"Optional[Foo]\"\tmodule\t0\t15",
+            "'typing.Dict[str, \"Bar\"]'\tmodule\t0\t25",
+            "\"Bar\"\tmodule\t0\t5",
+            "\"Baz\"\tmodule\t0\t5",
+            "\"not valid ((\"\tmodule\t0\t14",
         ])
     );
     // The trees are no files.

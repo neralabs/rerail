@@ -365,14 +365,14 @@ pub(crate) fn comment_body(text: &str) -> &str {
     body.trim()
 }
 
-/// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
-/// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `shape` numbers them (`node` ids are `key << 32 | local`): each local id's core id and kind name.
+/// For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Vec<(u32, &'static str)>> {
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
-    // A guest's nodes are its root's subtree.
-    let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
-    let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), Shape::Core, false, guest);
+    // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
+    let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
+    let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), shape, false, guest);
     Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
 }
 
@@ -455,10 +455,16 @@ struct Dialect {
     operators: Option<u16>,
     canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
+    /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
+    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
+    values: bool,
 }
 impl Dialect {
     fn new(tag: u8) -> StoreResult<Self> {
-        let catalog = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?.kinds();
+        use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+        let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
+        let catalog = dialect.kinds();
+        let values = with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Value as ValueRules>::SUPPORTED);
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
@@ -471,7 +477,7 @@ impl Dialect {
             codes.entry(c).or_default().push(k as u16);
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
-        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
+        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values })
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     fn code(&self, f: &Facts, id: u32) -> u16 {
@@ -548,8 +554,6 @@ struct Locs {
     lines: Arc<core_rr::Lines>,
     spans: Vec<[u32; 2]>,
     tokens: u32,
-    /// Where `rx_span`'s spans start in `spans` (after the lines); `spans.len()` when there are none.
-    matched: u32,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
     /// spans of its own (`source`, `src_line`): those are its file's.
     host: Option<(Arc<core_rr::Lines>, Placement)>,
@@ -651,9 +655,8 @@ impl Projected {
                 spans.push([0, f.source.len() as u32]);
                 spans.extend((1..=lines.count()).map(|l| lines.span(l)));
             }
-            let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
-            p.extra = Some(Box::new(Locs { lines, spans, tokens, matched, host }));
+            p.extra = Some(Box::new(Locs { lines, spans, tokens, host }));
         }
         p
     }
@@ -826,6 +829,12 @@ enum Place {
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
 /// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
 /// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
+///
+/// And in `core.rr`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
+/// group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` span, one of its `src_line` spans
+/// or a comment node, is span `m` (`MATCH`, numbered with `match_all`'s), placed as `match_all`'s. Group "" is the
+/// whole match; a group that takes no part in a match has no row. The spans are those `source` and `src_line` give
+/// here, so the two join.
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -865,6 +874,8 @@ struct Extra {
     comments: Vec<[i64; 2]>,
     /// The regexes of the `match_all` and `match_group` relations read (`Found`).
     matches: Vec<Found>,
+    rx_span: bool,
+    rx_spans: Vec<[i64; 5]>,
 }
 
 /// Regex `k`'s rows: its matches (`matchall_<k>(sp, m)`, when read) and their named groups' spans
@@ -903,6 +914,7 @@ impl Extra {
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
+            rx_span: shape == Shape::Core && read("rx_span"),
             matches: matches
                 .iter()
                 .enumerate()
@@ -920,8 +932,9 @@ impl Extra {
         }
     }
 
+    /// Whether spans are made (their matches' too), with places in `line`, `end_line` and `col`.
     fn spans(&self) -> bool {
-        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment
+        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment || self.rx_span
     }
 
     /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
@@ -1006,14 +1019,32 @@ impl Extra {
         }
     }
 
+    /// `core_rr`'s literal values (n, v, v's type), of documents W reads no values of (`Dialect::values`), in the
+    /// value relations made here: `value` and `static_value` (no names to follow), and `value_type`.
+    fn literal_values(&mut self, rows: impl Iterator<Item = [i64; 3]>) {
+        for [n, v, t] in rows {
+            if self.value {
+                self.values.push([n, v]);
+            }
+            if self.static_value {
+                self.static_values.push([n, v]);
+            }
+            if self.value_type {
+                self.value_types.insert([v, t]);
+            }
+        }
+    }
+
     /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
-    /// `splitlines`: its lines split as Python's `str.splitlines()` does.
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, and the spans
+    /// each runs over.
     #[allow(clippy::too_many_arguments)]
-    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
-        // A text-only document has no node, so no value.
-        if (plain || self.static_value) && dialect.is_some() {
+        // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
+        // (`literal_values`).
+        if (plain || self.static_value) && dialect.is_some_and(|d| d.values) {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
@@ -1086,20 +1117,25 @@ impl Extra {
             self.line_counts.push([key, physical.len() as i64]);
         }
         let mut made: Vec<MadeSpan> = Vec::new();
+        // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
+        let (mut source_at, mut lines_at) = (None, 0..0);
         if self.source {
             let sp = span(0);
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
             self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, self.source_text, text, string);
+            source_at = Some(made.len());
             made.push((sp, 0..source.len(), None));
         }
         if self.src_line {
+            lines_at.start = made.len();
             for (i, r) in physical.iter().enumerate() {
                 let (l, sp) = (i + 1, span(i as u32 + 1));
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], self.line_text, text, string);
                 made.push((sp, r.clone(), Some(l)));
             }
+            lines_at.end = made.len();
         }
         if self.src_line_lf {
             for (i, r) in physical_lines(source, false).into_iter().enumerate() {
@@ -1160,6 +1196,41 @@ impl Extra {
                 }
             }
         }
+        // `rx_span`: each pattern over its spans, `j` each match in one.
+        for (within, pattern, re) in if self.rx_span { rx } else { &[] } {
+            use crate::code_rule_dsl::logic::front::SpanIn;
+            let containers: Vec<MadeSpan> = match within {
+                SpanIn::Source => source_at.map(|i| made[i].clone()).into_iter().collect(),
+                SpanIn::Line => made[lines_at.clone()].to_vec(),
+                SpanIn::Comment => match dialect {
+                    Some(dialect) => (0..p.len())
+                        .filter(|&l| core_rr::is_comment(dialect.name(f, p.core[l as usize])))
+                        .map(|l| {
+                            let [a, b] = p.span(l);
+                            (p.global(l), a as usize..b as usize, None)
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                },
+            };
+            let pat = string(pattern) as i64;
+            for (c, r, line) in &containers {
+                for (j, captures) in re.captures_iter(&source[r.clone()]).enumerate() {
+                    for (g, name) in re.capture_names().enumerate() {
+                        let name = match (g, name) {
+                            (0, _) => "",
+                            (_, Some(name)) => name,
+                            (_, None) => continue,
+                        };
+                        let Some(group) = captures.get(g) else { continue };
+                        let m = id(p)?;
+                        self.rx_spans.push([pat, *c, j as i64, string(name) as i64, m]);
+                        let (first, last, col) = place(r, line, group.range());
+                        self.span(m, first, last, col, group.as_str(), true, text, string);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1216,6 +1287,9 @@ impl Extra {
         }
         if self.comment {
             out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
+        }
+        if self.rx_span {
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m]))));
         }
         let mut matched = Vec::new();
         for found in self.matches {
@@ -1398,6 +1472,8 @@ impl Batch {
             k
         };
         let mut withheld_at = Vec::with_capacity(documents.len());
+        // The documents W reads no values of (`Dialect::values`).
+        let mut unvalued: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for d in &documents {
             // The document's own dialect (`Facts::tag`): a text-only document has none, and no node.
             let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
@@ -1420,18 +1496,14 @@ impl Batch {
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, python_lines)))));
-            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if let Some(dialect) = dialect
-                && !rx_spans.is_empty()
-                && guest.is_none()
-                && !withheld
-            {
-                c.matches(&mut p, dialect, &rx_spans, &mut string);
-            }
+            let p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));
             }
             withheld_at.push(withheld);
+            if dialect.is_some_and(|d| !d.values) {
+                unvalued.insert(d.key);
+            }
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
@@ -1487,8 +1559,10 @@ impl Batch {
                 }
             }
             if d.guest.is_none() {
-                // A text document's lines split as W's `lines` regexes split any file's.
-                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut rows.text, &mut string)?;
+                // A text document's lines split as W's `lines` regexes split any file's. A withheld document has no
+                // `rx_span` matches.
+                let rx = if withheld { &[][..] } else { &rx_spans[..] };
+                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &mut rows.text, &mut string)?;
                 tree.document(&p, dialect, python == Some(tag), &mut string);
                 fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
                 cpython.document(&p, dialect, python == Some(tag), &mut string);
@@ -1536,6 +1610,9 @@ impl Batch {
             ("op_t", pairs(&["n", "s"], &rows.op, [false, true])),
         ];
         relations.extend(g.relations(&atom));
+        if core {
+            extra.literal_values(c.values_of(&unvalued));
+        }
         let (mut read, matched) = extra.relations(&atom);
         read.extend(tree.relations(&atom));
         read.extend(fstrings.relations(&atom));

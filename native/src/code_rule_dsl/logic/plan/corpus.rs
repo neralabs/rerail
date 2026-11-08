@@ -1492,7 +1492,7 @@ pub(crate) fn run_with_options(
         let sources = match &slice {
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
-                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label));
+                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label, projection.shape));
                 // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
                 // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
                 let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
