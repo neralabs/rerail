@@ -770,7 +770,9 @@ impl Batch {
         let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
-        let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
+        let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
+        let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
+        let wants_digests = wants_trees || wants_units;
         // `rx_span`'s regexes, compiled once for the batch.
         // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
         // end after, chunk at a time, so the regex runs only where one can.
@@ -989,7 +991,7 @@ impl Batch {
             if core && (!withheld || guest.is_none()) {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
                 if wants_digests && !withheld {
-                    c.digests(&p, dialect, &mut string);
+                    c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
             docs.push(p);
