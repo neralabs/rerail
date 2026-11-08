@@ -118,7 +118,7 @@ fn doc(v: &str) -> Term {
 
 /// The variables of `body` that its positive atoms of `same_doc` relations join to `v` through their same-document
 /// columns (`file_local::Programs::same_doc`): all of `v`'s document.
-fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<usize>>, v: &str) -> BTreeSet<String> {
+pub(crate) fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<usize>>, v: &str) -> BTreeSet<String> {
     let groups: Vec<BTreeSet<&str>> = body
         .iter()
         .filter_map(|l| match l {

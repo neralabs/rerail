@@ -106,7 +106,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -724,7 +724,7 @@ impl Batch {
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
     #[allow(clippy::type_complexity)]
-    fn build(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
+    fn build(store: &ContentStore, documents: Vec<Document>, projection: &Projection, metal: bool) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
         let shape = projection.shape;
         let core = shape == Shape::Core;
         let mut documents = documents;
@@ -772,17 +772,55 @@ impl Batch {
         // Only a program that reads it: every node's hash is a symbol.
         let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         // `rx_span`'s regexes, compiled once for the batch.
-        let rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)> = if core {
+        // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
+        // end after, chunk at a time, so the regex runs only where one can.
+        let rx_spans: Vec<core_rr::SpanPattern> = if core {
             projection
                 .rx_spans
                 .iter()
-                .map(|(within, re)| regex::Regex::new(re).map(|r| (*within, re.as_str(), r)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}"))))
+                .map(|(within, re)| {
+                    use crate::code_rule_dsl::logic::front::SpanIn;
+                    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+                    let prefilter = match within {
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line),
+                        _ => None,
+                    };
+                    regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+                })
                 .collect::<StoreResult<_>>()?
         } else {
             Vec::new()
         };
         // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
         let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
+        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): on Metal
+        // under the device binding, the CPU interpreter otherwise. `span_ends[doc][pattern]`.
+        let span_ends: Vec<Vec<Option<Vec<u64>>>> = {
+            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_batch};
+            let filters: Vec<(usize, &SpanPrefilter)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
+            let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
+            if !filters.is_empty() {
+                let mut at = Vec::new();
+                let mut files: Vec<(&[u8], usize)> = Vec::new();
+                for (j, d) in documents.iter().enumerate().filter(|(_, d)| d.guest.is_none()) {
+                    for (f, _) in filters.iter().enumerate() {
+                        at.push((j, filters[f].0));
+                        files.push((d.facts.source.as_bytes(), f));
+                    }
+                }
+                let _span = crate::code_rule_dsl::logic::profile::span(|| "span prefilter".into());
+                let programs: Vec<&SpanPrefilter> = filters.iter().map(|(_, f)| *f).collect();
+                let (ends, ran) = ends_batch(&programs, &files, metal);
+                crate::code_rule_dsl::logic::profile::decision("span prefilter", || match ran {
+                    RanOn::Metal => "metal".into(),
+                    RanOn::Cpu => "cpu".into(),
+                });
+                for ((j, i), e) in at.into_iter().zip(ends) {
+                    out[j][i] = Some(e);
+                }
+            }
+            out
+        };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
@@ -806,7 +844,7 @@ impl Batch {
         let batch_tag = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).find(|&t| t != 0)
             .or_else(|| crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python))
             .unwrap_or(0);
-        for d in &documents {
+        for (j, d) in documents.iter().enumerate() {
             let tag = match crate::code_rule_dsl::facts::core::facts_tag(&d.facts) {
                 0 if d.facts.len() == 0 => batch_tag,
                 t => t,
@@ -824,7 +862,7 @@ impl Batch {
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
-                c.matches(&mut p, dialect, &rx_spans, &mut string);
+                c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
             }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
@@ -1316,7 +1354,7 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
 
 /// The base relations over `documents` in `projection`'s shape, and the `py.*` families, by table name.
 pub(crate) fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations, _) = Batch::build(store, documents, projection)?;
+    let (batch, relations, _) = Batch::build(store, documents, projection, false)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
     out.extend(views(&batch));
@@ -1457,7 +1495,8 @@ pub(crate) fn with_nearest(
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let (batch, relations, (strings, symbols)) = Batch::build(store, documents, projection)?;
+    let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
+    let (batch, relations, (strings, symbols)) = Batch::build(store, documents, projection, metal)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
@@ -1477,7 +1516,6 @@ pub(crate) fn with_nearest(
     // no join binds, cost nothing. Their statistics come from the tree.
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
-    let _ = binding;
     for (name, members) in sets {
         let axis = if name.starts_with(DESCENDANTS) {
             within::Axis::Has

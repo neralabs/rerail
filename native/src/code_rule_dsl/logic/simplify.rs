@@ -512,7 +512,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
         || prog.gates.iter().any(|(g, _)| g == rel)
 }
 
-/// The variables of decision 0089's scope guards (`corpus::scoping`): a node's document, `rr_sd0 = @doc($n)`.
+/// The variables of decision 0091's scope guards (`corpus::scoping`): a node's document, `rr_sd0 = @doc($n)`.
 pub(in crate::code_rule_dsl) const GUARD_VAR: &str = "rr_sd";
 
 /// Inlines each one-rule test of one node read only positively (the module's list); returns the relations inlined.
@@ -526,7 +526,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         let one_node = match rule.head.args.as_slice() {
             [Term::Var(h)] => {
                 let tests_node = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.get(1) == Some(&Term::Var(h.clone()))));
-                // A scope guard's document (`rr_sd0 = @doc($h)`, decision 0089) is a function of the node.
+                // A scope guard's document (`rr_sd0 = @doc($h)`, decision 0091) is a function of the node.
                 let alone = rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }) && l.vars().iter().all(|v| v == h || v.starts_with(GUARD_VAR)));
                 let recursive = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == *rel));
                 (tests_node && alone && !recursive).then(|| rule.body.iter().map(|l| rename_var(l, h, "$h")).collect::<Vec<_>>())
@@ -696,7 +696,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                     Literal::Atom(a) if a.rel != rule.head.rel && test(a, &bound) => true,
                     Literal::Atom(a) if !a.neg => functional(a, &bound),
                     Literal::Atom(a) => base_lookup(&a.rel) && l.vars().is_subset(&bound),
-                    // `g = @doc(n)` (decision 0089's scope guards) is a function of a bound node: a lookup.
+                    // `g = @doc(n)` (decision 0091's scope guards) is a function of a bound node: a lookup.
                     Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Call(f, xs) } if f == "doc" => xs.iter().all(|x| matches!(x, Term::Var(v) if bound.contains(v))),
                     Literal::Cmp { .. } => l.vars().is_subset(&bound),
                     _ => false,

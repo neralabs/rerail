@@ -1,0 +1,17 @@
+# corpus: mix: seed 58
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = next(digit, 9)
+mask m1 = toggle(quote)
+mask m2 = lasts(high)
+mask m3 = starts(x)
+mask m4 = digit

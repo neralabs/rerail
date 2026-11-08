@@ -47,6 +47,13 @@ fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
 
+/// The plans the program `key` names is stored under: the pointer's and its document facts'. The run's manifest names
+/// them (`record_corpus_run_naming`), so collection keeps their rows while it keeps the run, and takes those of an
+/// earlier engine build or grammar once no kept run names them (the program's text, their source, may live on).
+pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
+    vec![pointer_plan(key).plans[0], facts_plan().plans[0]]
+}
+
 /// The document facts' plan: they are a function of the document and the `rr` grammar that reads it.
 fn facts_plan() -> FactsPlanSet {
     let mut hash = Sha256::new();

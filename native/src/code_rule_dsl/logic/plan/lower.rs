@@ -318,55 +318,68 @@ pub(in crate::code_rule_dsl) fn lower(
     // Every column's domain as `rule_vars` reads it, made once: made per rule, it was rules × relations (O111).
     let cols: BTreeMap<String, Vec<Option<Domain>>> = domains.iter().map(|(r, ds)| (r.clone(), ds.iter().copied().map(Some).collect())).collect();
     for i in 0..out.rules.len() {
-        let vars = rule_vars(prog, &cols, i)?;
-        let rule = &mut out.rules[i];
-        let col = |rel: &str, c: usize| domains.get(rel).and_then(|ds| ds.get(c)).copied();
-        for (c, t) in rule.head.args.iter_mut().enumerate() {
-            k.term(t, col(&rule.head.rel, c))?;
-        }
-        for l in &mut rule.body {
-            match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    for (c, t) in a.args.iter_mut().enumerate() {
-                        k.term(t, col(&a.rel, c))?;
-                    }
-                }
-                Literal::Cmp { l, op, r } => {
-                    let of = |t: &Term| if let Term::Var(v) = t { vars.get(v).copied() } else { None };
-                    // Symbols are ordered by their text, not their atoms: `$t > $s` is `@str_cmp($t, $s) > 0`.
-                    if matches!(*op, "<" | "<=" | ">" | ">=") && (of(l) == Some(Domain::Name) || of(r) == Some(Domain::Name)) {
-                        let mut pair = [std::mem::replace(l, Term::Int(0)), std::mem::replace(r, Term::Int(0))];
-                        pair.iter_mut().try_for_each(|t| k.term(t, Some(Domain::Name)))?;
-                        *l = Term::Call("str_cmp".to_owned(), pair.into());
-                        continue;
-                    }
-                    // Membership of a kind or field, `@equals($k, {"a", "b"})`: `@in` of their atoms.
-                    if let Term::Call(f, args) = l
-                        && f == "equals"
-                        && let [x, set] = args.as_mut_slice()
-                        && let Some(d @ (Domain::Kind | Domain::Field)) = of(x)
-                    {
-                        match set {
-                            Term::Call(g, items) if g == crate::code_rule_dsl::logic::strings::SET => items.iter_mut().try_for_each(|i| k.term(i, Some(d)))?,
-                            one => k.term(one, Some(d))?,
-                        }
-                        *f = "in".to_owned();
-                        continue;
-                    }
-                    let (dl, dr) = (of(r), of(l));
-                    k.term(l, dl)?;
-                    k.term(r, dr)?;
-                }
-                _ => {}
+        // A constant that does not fit its column names its rule (`the string "" stands where an integer goes`).
+        let head = out.rules[i].head.to_string();
+        (|| -> Result<()> {
+            let vars = rule_vars(prog, &cols, i)?;
+            let rule = &mut out.rules[i];
+            let col = |rel: &str, c: usize| domains.get(rel).and_then(|ds| ds.get(c)).copied();
+            for (c, t) in rule.head.args.iter_mut().enumerate() {
+                k.term(t, col(&rule.head.rel, c))?;
             }
-        }
+            for l in &mut rule.body {
+                match l {
+                    Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                        for (c, t) in a.args.iter_mut().enumerate() {
+                            k.term(t, col(&a.rel, c))?;
+                        }
+                    }
+                    Literal::Cmp { l, op, r } => {
+                        let of = |t: &Term| if let Term::Var(v) = t { vars.get(v).copied() } else { None };
+                        // Symbols are ordered by their text, not their atoms: `$t > $s` is `@str_cmp($t, $s) > 0`.
+                        if matches!(*op, "<" | "<=" | ">" | ">=") && (of(l) == Some(Domain::Name) || of(r) == Some(Domain::Name)) {
+                            let mut pair = [std::mem::replace(l, Term::Int(0)), std::mem::replace(r, Term::Int(0))];
+                            pair.iter_mut().try_for_each(|t| k.term(t, Some(Domain::Name)))?;
+                            *l = Term::Call("str_cmp".to_owned(), pair.into());
+                            continue;
+                        }
+                        // Membership of a kind or field, `@equals($k, {"a", "b"})`: `@in` of their atoms.
+                        if let Term::Call(f, args) = l
+                            && f == "equals"
+                            && let [x, set] = args.as_mut_slice()
+                            && let Some(d @ (Domain::Kind | Domain::Field)) = of(x)
+                        {
+                            match set {
+                                Term::Call(g, items) if g == crate::code_rule_dsl::logic::strings::SET => items.iter_mut().try_for_each(|i| k.term(i, Some(d)))?,
+                                one => k.term(one, Some(d))?,
+                            }
+                            *f = "in".to_owned();
+                            continue;
+                        }
+                        let (dl, dr) = (of(r), of(l));
+                        k.term(l, dl)?;
+                        k.term(r, dr)?;
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(())
+        })()
+        .map_err(|e| match e {
+            Error::Plan(m) => Error::Plan(format!("rule for {head}: {m}")),
+            e => e,
+        })?;
     }
     for (rel, rows) in &mut out.facts {
         for row in rows {
             for (c, v) in row.iter_mut().enumerate() {
                 if let Value::Str(s) = v {
                     let d = domains.get(rel.as_str()).and_then(|ds| ds.get(c)).copied().unwrap_or(Domain::Name);
-                    *v = Value::Int(k.of(s, d)?);
+                    *v = Value::Int(k.of(s, d).map_err(|e| match e {
+                        Error::Plan(m) => Error::Plan(format!("fact of {rel}, column {c}: {m}")),
+                        e => e,
+                    })?);
                 }
             }
         }

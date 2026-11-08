@@ -69,6 +69,9 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
+            // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
+            // must be all of a document's, not those a reader outside the closure asked for.
+            || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {
@@ -263,8 +266,17 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
         };
         let pre = format!("pre_{ri}");
-        out.decls.insert(pre.clone(), vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect());
-        let pre_atom = Atom { rel: pre, args: vars.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
+        let mut cols: Vec<(String, String)> = vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect();
+        let mut args: Vec<Term> = vars.iter().map(|v| Term::Var(v.clone())).collect();
+        // A split sharing no variable with its reads is a flag, encoded as every nullary relation is: one unit column
+        // (`rr::lower::lower_boolean_relations`).
+        if vars.is_empty() {
+            out.nullary.insert(pre.clone());
+            cols.push(("rr_unit".to_owned(), "int".to_owned()));
+            args.push(Term::Int(1));
+        }
+        out.decls.insert(pre.clone(), cols);
+        let pre_atom = Atom { rel: pre, args, neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
         let mut body = vec![Literal::Atom(pre_atom.clone())];
         for l in cut {

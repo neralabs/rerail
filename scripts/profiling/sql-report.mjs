@@ -1,11 +1,27 @@
 // Build the imported SQL reports from the bounded data-layer profiler's capture.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildReport } from "../../benchmark/sql-profile/report.mjs";
 import { summaryMarkdown } from "../../benchmark/sql-profile/summary.mjs";
 import { requireExecutionBudget } from "../../benchmark/sql-profile/execution-budget.mjs";
+import { sessionWorkload } from "../../benchmark/sql-profile/session-parity.mjs";
 
-if (process.argv.length !== 3) throw new Error("Usage: node scripts/profiling/sql-report.mjs PROFILE_DIRECTORY");
+if (process.argv[2] === "--sql-session") {
+  const parity = process.argv.length === 7 && process.argv[5] === "--parity";
+  if (process.argv.length !== 5 && !parity) throw new Error("Usage: node scripts/profiling/sql-report.mjs --sql-session RAW_DIRECTORY OUTPUT_DIRECTORY [--parity BUNDLE_DIRECTORY]");
+  const output = resolve(process.argv[4]);
+  mkdirSync(output, { recursive: true });
+  const workload = parity ? sessionWorkload(resolve(process.argv[3]), resolve(process.argv[6])) : {
+    executor: "sql-extension", results: { oracle: "Not supplied. This report provides diagnostics without output-parity acceptance." },
+  };
+  const report = await buildReport(resolve(process.argv[3]), output, workload);
+  console.log(summaryMarkdown(report));
+  // Report generation is distinct from acceptance. The report retains the fixed
+  // execution allowance and missing-parity problems; this mode grants no acceptance.
+  if (parity) requireExecutionBudget(report);
+  process.exit(0);
+}
+if (process.argv.length !== 3) throw new Error("Usage: node scripts/profiling/sql-report.mjs PROFILE_DIRECTORY | --sql-session RAW_DIRECTORY OUTPUT_DIRECTORY");
 const directory = resolve(process.argv[2]);
 const profile = JSON.parse(readFileSync(join(directory, "profile.json"), "utf8"));
 const parity = profile.parity;

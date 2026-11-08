@@ -66,7 +66,11 @@ rr_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
 fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) -> BTreeMap<(String, usize, usize), Answer> {
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score");
-    let src = format!("{program}\n{SPANS}");
+    let mut src = format!("{program}\n{SPANS}");
+    // `RERAIL_PYTHON_CROSS_MEMO`, as the corpus benchmark reads it.
+    if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
+        src.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
+    }
     let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     println!("cross-file rounds {:?}", report.rounds);
     assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
@@ -147,6 +151,12 @@ pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>
     (agree, departures, never_ran)
 }
 
+/// `RERAIL_PYTHON_PROGRAM`: the calls program the oracle tests score, `calls` unless it names another (`calls_cx`,
+/// the closure-local version; O114).
+fn calls_name() -> String {
+    std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls".to_owned())
+}
+
 fn program(name: &str) -> String {
     crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
@@ -171,7 +181,7 @@ const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
 /// (`calls::python_tests::python_calls_agree_with_the_runtime`) holds the same oracle to its own list.
 #[test]
 fn python_calls_program_agrees_with_the_runtime() {
-    let (agree, departures, never_ran) = score_python(&program("calls"));
+    let (agree, departures, never_ran) = score_python(&program(&calls_name()));
     println!("calls.rr: {agree} agree, {} depart", departures.len());
     assert!(never_ran.is_empty(), "{never_ran:#?}");
     let listed: BTreeMap<String, Departure> = PYTHON_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
@@ -883,14 +893,17 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
-/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`.
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
+/// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
+/// callers, which a run memoising per import component (decision 0076) needs.
 const JEDI_SPANS: &str = "
 .decl rr_jedi_cls(c: node, k: node)
 rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
 .decl rr_jedi_at(n: node, s: number, e: number)
 rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
-rr_jedi_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
-rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"function_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"class_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
 .output rr_jedi_cls, rr_jedi_at
 ";
 
@@ -904,16 +917,22 @@ rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
 fn benchmark_python_calls_program_corpus() {
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
+    // `RERAIL_PYTHON_CALLS_OUT`: write the outputs there and keep them (the program's other `.output`s too, for counting).
+    let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi"));
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let mut text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let mut text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
     // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
     if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
         text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
     }
+    // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0076), as `.pragma "cross-memo"`.
+    if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
+        text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
+    }
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
@@ -944,7 +963,9 @@ fn benchmark_python_calls_program_corpus() {
         let t = target(&r[1]);
         classes.entry(key(&r[0])).or_default().insert(t);
     }
-    let _ = std::fs::remove_dir_all(&out);
+    if std::env::var_os("RERAIL_PYTHON_CALLS_OUT").is_none() {
+        let _ = std::fs::remove_dir_all(&out);
+    }
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     // `RERAIL_PYTHON_CALLS_DUMP`: each call's category, `path:line<TAB>category<TAB>jedi`, to compare two runs.
@@ -1013,4 +1034,76 @@ fn benchmark_python_calls_program_corpus() {
             println!("    {e}");
         }
     }
+}
+
+/// O125 (decision 0083, spike 1): delete-and-rederive on calls.rr's cross-file fixpoint. A session (0077) keeps the
+/// cross-file part; each edit (`RERAIL_SPIKE_EDITS`: E1 append to exceptions.py, E2 a comment at its top, E3 a
+/// statement in an early body of lazy_reads.py) is run through the session, then without it, and the outputs are
+/// compared. `RERAIL_SPIKE_DELTA` prints the rows overdeleted and put back per relation.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_o125_a_session_maintains_calls_rr() {
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("o125");
+    let out = base.join("out");
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let dump = || -> BTreeMap<String, Vec<String>> {
+        let mut all = BTreeMap::new();
+        for e in std::fs::read_dir(&out).unwrap().flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "csv") {
+                let mut lines: Vec<String> = std::fs::read_to_string(&p).unwrap().lines().map(str::to_owned).collect();
+                lines.sort();
+                all.insert(p.file_name().unwrap().to_string_lossy().into_owned(), lines);
+            }
+        }
+        all
+    };
+    let cpu = |r: &corpus::Report, phase: Option<&str>| -> f64 { r.phases.iter().filter(|p| phase.is_none_or(|n| p.0 == n)).map(|p| p.1 + p.2).sum() };
+    let rss = |r: &corpus::Report| r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+    let show = |what: &str, r: &corpus::Report| {
+        println!("O125 {what}: {:.1} s CPU (main thread), cross {:.1} s, peak RSS {:.0} MB; strata {:?}, maintained {:?}", cpu(r, None), cpu(r, Some("cross")), rss(r), r.cross_strata, r.cross_maintained);
+    };
+    session::start(&base.join("session")).unwrap();
+    let primed = run();
+    show("prime (session, cold cross part)", &primed);
+    let again = run();
+    show("unchanged (session)", &again);
+    let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
+    for edit in edits.split(',') {
+        let (file, change): (&str, fn(&str) -> String) = match edit {
+            "E1" => ("l1100_exceptions/exceptions.py", |s| format!("{s}\n\ndef _o125_probe() -> None:\n    pass\n")),
+            "E2" => ("l1100_exceptions/exceptions.py", |s| format!("# o125\n{s}")),
+            "E3" => ("l2055_lazy_result/lazy_reads.py", |s| {
+                let mut lines: Vec<&str> = s.lines().collect();
+                let at = lines.iter().position(|l| l.starts_with("def _lazy_result_to_seq")).unwrap();
+                lines.insert(at + 1, "    _o125 = 1");
+                lines.join("\n") + "\n"
+            }),
+            other => panic!("unknown edit {other}"),
+        };
+        let path = root.join(file);
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, change(&before)).unwrap();
+        let maintained = run();
+        show(&format!("{edit} (session, maintained)"), &maintained);
+        let kept = dump();
+        let full = session::full(run);
+        show(&format!("{edit} (no session, cross part derived)"), &full);
+        let derived = dump();
+        let differ: Vec<&String> = derived.keys().filter(|k| kept.get(*k) != derived.get(*k)).collect();
+        println!("O125 {edit}: outputs {}", if differ.is_empty() { "equal".to_owned() } else { format!("DIFFER in {differ:?}") });
+        for k in &differ {
+            let a: BTreeSet<&String> = kept.get(*k).into_iter().flatten().collect();
+            let b: BTreeSet<&String> = derived.get(*k).into_iter().flatten().collect();
+            let only_kept: Vec<&&String> = a.difference(&b).collect();
+            let only_derived: Vec<&&String> = b.difference(&a).collect();
+            println!("O125 {edit} {k}: {} rows, {} only maintained, {} only derived; e.g. {:?} / {:?}", b.len(), only_kept.len(), only_derived.len(), only_kept.iter().take(3).collect::<Vec<_>>(), only_derived.iter().take(3).collect::<Vec<_>>());
+        }
+    }
+    session::stop();
+    let _ = std::fs::remove_dir_all(&base);
 }

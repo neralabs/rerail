@@ -270,7 +270,7 @@ test("execution inventory retains event attribution when identical SQL crosses p
     assert.equal(report.executionInventory.selfCpuNs, 60);
     assert.deepEqual(report.executionInventory.phases, {
       connectionSetup: 1, catalogPublication: 0, filePublication: 1, candidatePreparation: 1,
-      relationalEvaluation: 1, cleanup: 1, unknown: 1,
+      relationalEvaluation: 1, verification: 0, cleanup: 1, unknown: 1,
     });
     assert.equal(report.executionInventory.entries.length, 6);
     assert.ok(report.executionInventory.entries.every(e => !("sql" in e)), "inventory refers to the shared query catalogue without duplicating SQL");

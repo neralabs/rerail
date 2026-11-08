@@ -49,6 +49,8 @@ pub(super) fn lookup(store: &ContentStore, scope: &str, rules: &[u8; 32], docume
     let set = plan(rules, &document.path);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: &document.path })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
+    // A wave that reads its rows uses the plan as much as one that writes them.
+    hold(store, set.plans[0])?;
     let (core, rows) = decode(&result.entry)?;
     Ok((core == document.digest).then_some(rows))
 }
@@ -65,9 +67,29 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, scope: &str, rul
             spans: spans.query_map([key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect::<rusqlite::Result<_>>()?,
         };
         let set = plan(rules, &document.path);
+        hold(store, set.plans[0])?;
         let result = FactsResult { plan: set.plans[0], path_dependent: false, entry: encode(&document.digest, &rows) };
         store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: &document.path }, &set, &[result], &[])?;
     }
+    Ok(())
+}
+
+/// How long a plan stays live after the last wave that wrote under it (`hold`).
+const HOLD_SECS: i64 = 86_400;
+
+/// Holds `plan` live for `HOLD_SECS` (`ContentStore::hold_corpus_plan`), renewed at most hourly per process. The
+/// rows of a plan no wave has written under for that long (rules since changed) are collected by the store's
+/// corpus pass (decision 0053), as a corpus run's dead plans are; their sources may live on in later snapshots.
+fn hold(store: &ContentStore, plan: [u8; 32]) -> StoreResult<()> {
+    static HELD: std::sync::Mutex<Option<std::collections::HashMap<[u8; 32], i64>>> = std::sync::Mutex::new(None);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let mut held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held = held.get_or_insert_with(Default::default);
+    if held.get(&plan).is_some_and(|&at| now - at < 3_600) {
+        return Ok(());
+    }
+    store.hold_corpus_plan(plan, "slice-memo", now + HOLD_SECS)?;
+    held.insert(plan, now);
     Ok(())
 }
 

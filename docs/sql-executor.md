@@ -191,6 +191,15 @@ A candidate support crossing zero changes only a logarithmic number of tree node
 The registered merge must obey the lattice laws: associativity, commutativity, idempotence, and an absorbing top.
 The declared aggregate and merge must compute the same join.
 
+Native builtin joins and SQL planning share a reduction descriptor and grouping compatibility rules.
+The descriptor identifies flat, min, max, or opaque operations. Flat descriptors include their top value.
+SQL wave folds reuse a single operator's grouped result when its reduction and prefix keys match.
+Multiple operators still need a fold. Builtin folds accept duplicate inputs, so their candidate unions use `UNION ALL`.
+Flat reductions detect conflicting values with min/max, without a separate distinct-value count.
+These changes preserve support multiplicities, empty groups, previous-wave merges, and widening order.
+External SQL callbacks remain opaque. JSON registration cannot supply the planner's builtin proof.
+Support counts group complete candidate tuples; lattice results group their key prefix. These groups still require separate work.
+
 Nonrecursive rules with generated tree walks retain their seed, walk, and result relations.
 Their fact changes use overdelete/rederive through indexed SQL relations. AST matching remains native.
 Walk seeds and outputs can contain supported scalar subqueries and negation.
@@ -355,11 +364,52 @@ Additional producers can bind integer facts without changing the SQL compiler.
 Rust extensions can register SQL functions or virtual tables through `session.connection()`.
 The connection belongs to the session, so Rust statements and cursors borrow that session.
 
+## Catalog and typed views
+
+After every run, removal and reset, the session rebuilds a catalog of its retained programs as temporary tables:
+- `rr_relation`, `rr_column`, `rr_rule`, `rr_atom` and `rr_plan` (`sql_executor/catalog.rs`);
+- for each relation, the typed view `rr_rel_<name>`, whose columns are the `.decl`'s names.
+
+For example, `SELECT src, dst FROM rr_rel_reach` reads `reach`, whose own columns are `c0, c1`. The `rr_` prefix is reserved.
+Design: `docs/sql-access/01-design.md`.
+
+### A corpus run's rows
+
+`bindCorpus(root, relations?)` binds the relations that the newest corpus run of `root` memoised per file:
+- each export, from the rows the run wrote, under its declared columns;
+- each file-local output, from the text lines the run wrote. Number and node columns are parsed;
+  other columns are interned as symbols;
+- `corpus_document(doc, path)`, which maps each document key to its file. A node's document is
+  `n >> 32`.
+
+Nothing is evaluated: SQL and rules read the bound relations as read-only inputs. `applyChanges`
+does not change them.
+
+Frames are read lazily:
+- binding reads only each frame's document key, from its first eight decompressed bytes;
+- a lookup on a node or location column decodes the one document it names;
+- a scan, or a lookup on another column, decodes every document once.
+
+The result names each relation's form: `{"files": 2, "relations": {"def": "rows", "named": "lines"}}`.
+
+### SQL producers
+
+A relation can take its rows from a SQL query:
+- `.input r(IO=sql, query="SELECT …")`.
+- The query may read session tables and the program's own relations, by name or through `rr_rel_<name>`.
+- The relation's step runs once every relation the query reads is complete. Rules that read `r` run after it; strata are renumbered so their numbers follow this order.
+- Recursion through a producer is refused.
+- `symbol` columns are interned.
+- `applyChanges` recomputes a producer when a relation or session input its query reads changes, and maintains its readers from the difference.
+- A change made by plain SQL to another table is not seen: run the program again.
+
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.
-SQL selects each wave's pending frontier from `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
-The scheduler folds new rows into completed relations and records their deltas in `wave_delta`.
+The cold kernel selects pending steps through `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
+Retained execution preserves those dependency gates across immutable wave versions.
+SQL evaluates rule expressions and folds candidate rows into completed relations.
+Both paths record initial wave deltas in `wave_delta`.
 Negation and aggregation wait for their input strata to finish.
 Derived columns use positional names: `c0`, `c1`, and so on.
 
@@ -403,14 +453,114 @@ An AST matcher atom must become native match facts before the rule enters this e
 The standalone session does not publish derivation records or replace the product audit path.
 The product path continues to use the same SQL scheduler with its provenance and incremental storage.
 
-## Recursive maintenance work in progress
+## Retained recursive iterations
 
-Recursive lattice and aggregate components can rederive independent partitions when checked queries prove an invariant partition key.
-Components without that proof still refresh their affected stratum.
-General incremental recursion needs retained iteration state so unsupported cycles cannot preserve their own results.
+Supported recursive lattice and aggregate components now use retained iteration state, including components with proven partition keys.
+Each frame reads preceding-wave versions, so cycles cannot preserve their own initial support.
+Edits propagate through cached operators and publish changed rows without whole-stratum or whole-partition rederivation.
 
-An internal backend now provides versioned integer relations through writable temporary virtual tables.
-It can fork retained reducer state by sharing persistent indexes, then apply sparse SQL updates to each fork independently.
-This backend has storage and operator tests. The public session does not yet use it for recursive execution.
-Its native writes require an explicit rollback guard; SQL rollback alone is insufficient.
-See the [implementation plan](sql-unification-and-updates-plan.md#versioned-storage-for-iteration-state) for results, limitations, and remaining integration work.
+The internal backend provides versioned integer relations through writable temporary virtual tables.
+Frames share fixed SQL slots. Forking a frame shares persistent indexes without copying support rows or creating another schema.
+The session restores native roots alongside SQL savepoints after failure.
+Cached improvements preserve the cold scheduler's pending gates, constant-seed timing, and widening counters.
+A closing frame retains the empty final frontier. Clearing its positive contexts preserves scalar input indexes.
+Sum indexes retain exact 128-bit totals in two integer columns. A rule lookup checks the public 64-bit range, so unused groups do not raise overflow errors.
+
+The update report includes `recursive_frames` per program and `version_nodes` for the batch.
+The latter counts native version-diff traversal, which SQLite instruction counts do not include.
+
+Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
+Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
+Acyclic positive CTEs can use arbitrary names when the final SELECT uses DISTINCT.
+Their arms can use UNION or UNION ALL. The final DISTINCT makes duplicate derivations safe to retain as sets.
+This path currently excludes function calls, scalar subqueries, and aggregate consumers.
+Bag-sensitive CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
+Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
+The schedule preserves dependency gates across components, constant seeds, frontiers, and widening counters.
+Preparation reports `initial_execution: "retained"` for this path and `"cold"` for the established fallback.
+Unsupported mixed programs can still use the cold kernel and separate retained preparation.
+
+Initial loads bulk-build complete-row, primary-key, row-id, and required secondary roots.
+Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep their delta path.
+Frozen lookups share an immutable version. Contiguous scans stream through that version without repeated rank lookups.
+Scratch deltas share roots and prepare secondary indexes only when a lookup needs them.
+Bulk loads preserve the integer checks of the writable virtual tables.
+
+Positive, call-free caches can combine contexts, contributions, support counts, improvements, and folds into one statement per wave.
+Materialized CTEs evaluate the expressions. A tagged result stream returns the affected rows and keys.
+Native code validates every replacement before publication and maintains persistent storage roots.
+Complete cache rebuilds use inline views for pure projections and set operations.
+They replace the full improvement relation and omit old rows that the rebuild already covers.
+Checked expressions and native functions retain materialization fences, so shared consumers do not repeat their evaluation.
+Sparse updates retain their existing materialization and prepared query shapes.
+Scalar reducers, registered lattice joins, and other checked shapes retain their existing SQL paths.
+Merge and widening functions still execute through SQLite.
+
+Private phase outputs and fact deltas use read-only native bindings, which avoid CREATE and DROP statements.
+Initial execution creates public results and wave diagnostics first. The cold fallback declares its remaining control tables when needed.
+Widening counters retain their `__sql_changes_RELATION` names and `changes` columns as read-only diagnostics.
+These diagnostics share retained roots. Additional indexes requested by extensions survive sparse publication and rollback.
+
+An earlier frame can become active when an edit shortens an upstream dependency gate.
+Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.
+Native savepoints restore roots, bindings, and schemas if initial execution fails.
+See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.
+
+## Explain and profiling
+
+SQL sessions use the shared query profiler, including the standalone headless engine.
+Set `RERAIL_SQL_PROFILE_DIR` before the process opens a session:
+
+```sh
+RERAIL_SQL_PROFILE_DIR=/tmp/sql-profile/raw rerail-engine sql store.sqlite request.json
+node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-profile/raw /tmp/sql-profile/report
+```
+
+The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions, and native table counters.
+Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
+Native version differences have separate operator records. Failed operations and rollback remain in the trace.
+Retained support initialization records its native CPU separately from child SQL.
+Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
+The benchmark probe reuses this profiler when capture is active, preserving SQLite's single callback.
+
+The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
+The existing complete-job execution allowance and missing-parity checks remain visible in the report.
+
+The headless verifier supplies complete-state parity for explicit fact requests:
+
+```sh
+cargo build --profile profiling --no-default-features --features headless,lang-python,lang-rr --example sql-session-verify
+python3 benchmark/sql-executor.py --session-request 1000 /tmp/request.json
+node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/request.json /tmp/sql-session-1000
+```
+
+The output directory must be fresh. The command writes the report before it enforces acceptance.
+It exits unsuccessfully when parity, capture coverage, or the fixed 100-execution allowance fails.
+The independent cold kernel runs in a separate process without SQL capture.
+Every checkpoint includes all explicit facts, derived relations, and widening counters.
+The adapter also compares output deltas, failed-operation rollback, recovery, and final queries.
+Integer cells use decimal strings, so JavaScript does not round them.
+Snapshot and file publication need separate replay support. The verifier rejects those requests.
+
+`steps` supplies changes, optional limits, and an optional expected error class.
+The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.
+The report records verification reads in their own phase. Those reads still count against the complete-job allowance.
+The parity bundle pins the request, runner, observations, and SQL receipts through SHA-256 digests.
+
+An existing bundle can reproduce acceptance with this command:
+
+```sh
+node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-session-1000/raw /tmp/sql-session-report --parity /tmp/sql-session-1000/parity
+```
+
+
+`RERAIL_PROFILE=/tmp/logic-profile` also records compiler search, CPU spans, and the logical rule plans.
+The SQL request tool writes the standard logic reports and places shared SQL traces in the `sql` subdirectory.
+SQL EXPLAIN runs outside callbacks. Temporary old-input views receive plans before cleanup releases them.
+
+Retained operator tables now keep the secondary indexes required by their checked queries.
+Leading prefixes use the complete-row tree. Required secondary indexes use bulk construction during preparation.
+Compound-key `IN` filters descend through existing prefixes without constructing the lists' Cartesian product.
+SQLite rechecks tuple correlation, affinity, and remaining predicates.
+Frozen cursors and transaction rollback preserve the previous rows and index configuration.
+This reduces initial CPU and memory. Supported recursive programs use the single retained schedule described above.

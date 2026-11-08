@@ -6,11 +6,17 @@ pub(super) struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,
+    /// The program as declared (pruned, before lowering), for the catalog.
+    pub program: Arc<front::Program>,
+    /// Relations made by SQL producers, each with the session inputs its query reads. Tuple
+    /// maintenance recomputes a producer's stratum when what it reads changes.
+    pub producers: BTreeMap<String, Vec<String>>,
     pub counts: BTreeMap<String, u64>,
     pub outputs: Vec<String>,
     pub max_waves: u32,
     pub reductions: Option<BTreeMap<String, reductions::Retained>>,
     pub recursive: BTreeMap<u32, recursive::Partitioned>,
+    pub temporal: BTreeMap<u32, temporal::Trace>,
 }
 
 impl CodeRuleSqlExecutor {
@@ -52,6 +58,10 @@ impl CodeRuleSqlExecutor {
             .collect();
         for table in [false, true] {
             for (name, is_table) in objects.iter().filter(|(_, is_table)| *is_table == table) {
+                if self.versions.owns(name) {
+                    self.versions.remove_all(&self.db, name)?;
+                    continue;
+                }
                 self.db
                     .execute_batch(&format!(
                         "DROP {} IF EXISTS temp.{}",
@@ -70,7 +80,7 @@ impl CodeRuleSqlExecutor {
         self.generated.retain(|object| !objects.contains(object));
         self.clear_control()?;
         self.db.reset_execution();
-        Ok(())
+        self.refresh_catalog()
     }
 
     pub(super) fn result_index(&self, relation: &str, columns: &[u32]) -> Result<()> {
@@ -82,6 +92,86 @@ impl CodeRuleSqlExecutor {
             return Err(error("indexes require a session-owned result table"));
         }
         index(&self.db, relation, columns).map_err(error)
+    }
+    pub(super) fn output_objects(
+        &self,
+        emitted: &plan::emit::Emitted,
+    ) -> Result<Vec<(String, bool)>> {
+        let mut objects: Vec<(String, bool)> = emitted
+            .views
+            .iter()
+            .map(|(name, _)| (name.clone(), false))
+            .collect();
+        for (name, arity) in &emitted.program.relations {
+            if name.starts_with("__") || reserved(name) {
+                return Err(error(format!("{name}: reserved SQL wave relation")));
+            }
+            if *arity == 0 {
+                return Err(error("SQL wave relations need at least one column"));
+            }
+            objects.extend([
+                (name.clone(), true),
+                (format!("new_{name}"), true),
+                (format!("delta_{name}"), true),
+            ]);
+            if emitted
+                .program
+                .lattice_operations
+                .get(name)
+                .is_some_and(|ops| ops.after.is_some())
+            {
+                objects.push((format!("__sql_changes_{name}"), true));
+            }
+        }
+        let existing = self.db.prepare("SELECT lower(name) FROM sqlite_schema UNION SELECT lower(name) FROM temp.sqlite_schema")
+            .map_err(error)?.query_map([], |r| r.get::<_, String>(0)).map_err(error)?
+            .collect::<rusqlite::Result<BTreeSet<_>>>().map_err(error)?;
+        let mut unique = BTreeSet::new();
+        let owned: BTreeSet<_> = self
+            .generated
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        for (name, _) in &objects {
+            if !identifier(name)
+                || name.to_ascii_lowercase().starts_with("wave_")
+                || name.to_ascii_lowercase().starts_with("rdl_")
+                || name.eq_ignore_ascii_case("atoms")
+                || !unique.insert(name.to_ascii_lowercase())
+            {
+                return Err(error(format!(
+                    "invalid or overlapping wave relation: {name}"
+                )));
+            }
+            let exists = existing.contains(&name.to_ascii_lowercase());
+            if (exists && !owned.contains(name.as_str()))
+                || self
+                    .inputs
+                    .keys()
+                    .any(|input| input.eq_ignore_ascii_case(name))
+            {
+                return Err(error(format!(
+                    "{name}: SQL output already exists; rebind inputs to clear derived results"
+                )));
+            }
+        }
+        Ok(objects)
+    }
+    pub(super) fn clear_control(&self) -> Result<()> {
+        self.stats_ready.set(false);
+        if !self.control_ready.get() {
+            return Ok(());
+        }
+        let names = self.db.prepare("SELECT name FROM temp.sqlite_schema WHERE type='table' AND name IN('wave_step','wave_read','wave_delta','wave_pending','wave_after','wave_document','wave_stats')")
+            .map_err(error)?.query_map([], |r| r.get::<_, String>(0)).map_err(error)?
+            .collect::<rusqlite::Result<Vec<_>>>().map_err(error)?;
+        for name in names {
+            self.db
+                .execute_batch(&format!("DROP TABLE temp.{}", quote(&name)))
+                .map_err(error)?;
+        }
+        self.control_ready.set(false);
+        Ok(())
     }
 }
 
@@ -101,7 +191,8 @@ pub(super) fn index(
             "index columns must be distinct valid positions".into(),
         ));
     }
-    if super::super::facts::vtab::bound_source(db, relation).is_some_and(|s| s.writable()) {
+    if let Some(source) = super::super::facts::vtab::bound_source(db, relation) {
+        source.prepare_index(&columns.iter().map(|c| *c as usize).collect::<Vec<_>>());
         return Ok(());
     }
     let suffix = columns
@@ -120,4 +211,14 @@ pub(super) fn index(
         quote(&name),
         quote(relation)
     ))
+}
+
+impl Drop for CodeRuleSqlExecutor {
+    fn drop(&mut self) {
+        let _scope = profiling::scope(&self.db, "reset");
+        self.db.profile_checkpoint();
+        let _ = self.db.remove_bindings();
+        let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        self.db.profile_checkpoint();
+    }
 }

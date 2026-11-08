@@ -1,0 +1,80 @@
+// components: each document's import component and its key (decision 0076). The engine adds this program to a
+// corpus run whose program declares `.pragma "cross-memo" "…"`; a rule does not include it.
+//
+// The file-local rules make three exports per document, which the per-file memo keeps (decision 0052): the modules
+// it imports, the module it is, and its own digest (its path and tape: its content and grammar). They hold no node,
+// so an edit inside a body leaves them as they were. The cross-file part joins them into edges, and
+// `components` names each document's strongly connected component and its Merkle key over the closure.
+//
+// An import names its module and every package above it (importing `a.b.c` runs `a` and `a.b`); `from m import x`
+// names m.x too, which may be a submodule. A missing edge would make a key too small, so the rules over-approximate.
+#include "core.rr"
+
+.decl rr_cx_imports(d: number, q: symbol)
+rr_cx_imports(d, q) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, q), docof(i, d).
+rr_cx_imports(d, q) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n),
+    text(n, q), docof(i, d).
+rr_cx_imports(d, q) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, q),
+    docof(i, d).
+// Relative imports: from the document's package, one level up per dot after the first.
+rr_cx_imports(d, p) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), rr_cx_updots(t, k), !child(n, _, 1), docof(i, d), pkg(d, p0), p = @pkg_up(p0, k),
+    p != "".
+rr_cx_imports(d, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), rr_cx_updots(t, k), child(n, dn, 1), text(dn, m), docof(i, d), pkg(d, p0),
+    p = @pkg_up(p0, k).
+// `from m import x`: m.x, which may be a submodule (`from os import path`, `from . import sibling`).
+rr_cx_imports(d, @dot(m, x)) :- rr_cx_from(i, m), rr_cx_from_name(i, x), docof(i, d).
+// The packages above each module named.
+rr_cx_imports(d, p) :- rr_cx_imports(d, q), p = @pkg_up(q, 1), p != "".
+// Every module reads `builtins` without importing it.
+rr_cx_imports(d, "builtins") :- rr_cx_own(d, _).
+
+.decl rr_cx_updots(t: symbol, k: number)
+rr_cx_updots(".", 0). rr_cx_updots("..", 1). rr_cx_updots("...", 2). rr_cx_updots("....", 3).
+// The module an import-from statement names, absolute or placed from its package.
+.decl rr_cx_from(i: node, m: symbol)
+rr_cx_from(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, m).
+rr_cx_from(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), rr_cx_updots(t, k), !child(n, _, 1), docof(i, d), pkg(d, p0), p = @pkg_up(p0, k).
+rr_cx_from(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, pre, 0), text(pre, t), rr_cx_updots(t, k), child(n, dn, 1), text(dn, m), docof(i, d), pkg(d, p0),
+    p = @pkg_up(p0, k).
+.decl rr_cx_from_name(i: node, x: symbol)
+rr_cx_from_name(i, x) :- kind(i, "import_from_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, x).
+rr_cx_from_name(i, x) :- kind(i, "import_from_statement"), field(i, "name", a), kind(a, "aliased_import"),
+    field(a, "name", n), text(n, x).
+
+// The module a document is.
+.decl rr_cx_module(d: number, q: symbol)
+rr_cx_module(d, q) :- doc(d, _, q), q != "".
+
+// What a document's cross-file rows are a function of in the document itself.
+.decl rr_cx_own(d: number, h: symbol)
+rr_cx_own(d, h) :- doc(d, p, _), tape_of(d, t), h = @sha256(cat(p, "\t", t)).
+
+// Guest document g (a string's code, decision 0055) stands in host document h. Its tree is made from the host's bytes,
+// so the host's digest covers it, and rows about either name the other's nodes: they share a component.
+.decl rr_cx_guest(g: number, h: number)
+rr_cx_guest(g, h) :- guest(g, h, _, _).
+// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows.
+rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
+
+// d depends on e.
+.decl rr_cx_edge(d: number, e: number)
+rr_cx_edge(d, e) :- rr_cx_imports(d, q), rr_cx_module(e, q), d != e.
+rr_cx_edge(g, h) :- rr_cx_guest(g, h).
+rr_cx_edge(h, g) :- rr_cx_guest(g, h).
+
+// d's closure: d and every document it depends on. A memoised rule that looks a name up joins it, so that what it
+// finds is in the closure (decision 0076).
+.decl rr_cx_reach(d: number, e: number)
+rr_cx_reach(d, d) :- rr_cx_own(d, _).
+rr_cx_reach(d, f) :- rr_cx_reach(d, e), rr_cx_edge(e, f).
+// The modules d's closure holds: "is q a module", asked of what d can see.
+.decl rr_cx_sees(d: number, q: symbol)
+rr_cx_sees(d, q) :- rr_cx_reach(d, e), rr_cx_module(e, q).
+
+.decl rr_cx_component(d: number, c: number, k: symbol)
+rr_cx_component(d, c, k) :- components(d, c, k, rr_cx_edge, rr_cx_own).
+.output rr_cx_component

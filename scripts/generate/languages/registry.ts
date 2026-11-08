@@ -44,6 +44,8 @@ export const languageEntrySchema = z
     capabilities: z.record(z.string(), support),
     suppressions: z.array(name),
     embeds: z.array(z.object({ language: name, via: name }).strict()).optional(),
+    /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
+    fragments: z.array(z.object({ name, dialect: name, start: z.enum(["expression"]) }).strict()).optional(),
   })
   .strict()
   .superRefine((entry, context) => {

@@ -1,4 +1,4 @@
-//! A combined run's fact spaces (decision 0089): the library's relations are canonical, made once over every
+//! A combined run's fact spaces (decision 0091): the library's relations are canonical, made once over every
 //! document the run reads, and each policy's own rules see only the documents of its scope.
 //!
 //! `combine` names each policy's relations `p<i>_…`, an included library's among them. Here:

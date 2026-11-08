@@ -129,7 +129,7 @@ pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program,
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
-            // A scope's documents (decision 0089's guards): a row per document, never worth a demand.
+            // A scope's documents (decision 0091's guards): a row per document, never worth a demand.
             || rel.contains("rr_scope_")
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();

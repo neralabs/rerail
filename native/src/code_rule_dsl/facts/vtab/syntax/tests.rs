@@ -415,7 +415,7 @@ fn within_holds_exactly_the_contained_pairs() {
         let facts = facts(&path, source);
         docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None });
     }
-    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size, depth, start, end) of node row r.
@@ -468,7 +468,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
-    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size) and kind atom of node row r.

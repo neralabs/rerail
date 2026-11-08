@@ -7,7 +7,18 @@ use super::super::logic::sql::{
 use super::*;
 use maintenance::Work;
 mod nullable;
+mod targets;
 use nullable::Layout;
+
+pub(super) fn optimize(e: &mut plan::emit::Emitted) {
+    for (s, q) in e.program.steps.iter_mut().zip(&mut e.queries) {
+        if let Some(q) = q
+            && targets::optimize(q)
+        {
+            s.sql = format!("INSERT OR IGNORE INTO new_{} {}", s.output, q.render());
+        }
+    }
+}
 
 fn plain(block: &Select) -> bool {
     let mut plain = true;
@@ -28,6 +39,51 @@ fn plain(block: &Select) -> bool {
         });
     }
     plain
+}
+
+/// Acyclic positive CTEs can use set relations when their consumer is DISTINCT.
+/// Scalar/aggregate consumers can observe bag multiplicity, so they keep the fallback.
+fn positive_ctes(query: &Query) -> bool {
+    fn positive(block: &Select) -> bool {
+        if !plain(block) {
+            return false;
+        }
+        let mut calls = false;
+        for expression in block
+            .columns
+            .iter()
+            .map(|(e, _)| e)
+            .chain(&block.predicates)
+            .chain(block.from.iter().flat_map(|i| match &i.join {
+                Join::On(on) => on.iter(),
+                Join::Cross => [].iter(),
+            }))
+        {
+            expression.visit(&mut |e| calls |= matches!(e, E::Call { .. } | E::Function { .. }));
+        }
+        !calls
+    }
+    if !query.body.distinct || !positive(&query.body) {
+        return false;
+    }
+    let mut preceding = BTreeSet::new();
+    for cte in &query.ctes {
+        if cte.arms.is_empty()
+            || cte.arms.iter().any(|arm| {
+                !positive(arm)
+                    || arm
+                        .from
+                        .iter()
+                        .any(|i| matches!(&i.relation,Rel::Cte(name) if !preceding.contains(name)))
+            })
+        {
+            return false;
+        }
+        if !preceding.insert(cte.name.clone()) {
+            return false;
+        }
+    }
+    true
 }
 
 fn rewrite(block: &mut Select, names: &BTreeMap<String, (String, Layout)>) {
@@ -147,18 +203,19 @@ pub(super) fn prepare(
             || q.reads()
                 .iter()
                 .any(|r| r.program_relation() == Some(step.output.as_str()))
-            || q.ctes.iter().any(|c| {
-                !["seed", "walk", "near"].iter().any(|p| {
-                    c.name
-                        .strip_prefix(p)
-                        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-                }) || c.arms.iter().any(|a| {
-                    !plain(a)
-                        && a.from
-                            .iter()
-                            .any(|i| i.relation == Rel::Cte(c.name.clone()))
+            || !positive_ctes(q)
+                && q.ctes.iter().any(|c| {
+                    !["seed", "walk", "near"].iter().any(|p| {
+                        c.name
+                            .strip_prefix(p)
+                            .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+                    }) || c.arms.iter().any(|a| {
+                        !plain(a)
+                            && a.from
+                                .iter()
+                                .any(|i| i.relation == Rel::Cte(c.name.clone()))
+                    })
                 })
-            })
         {
             continue;
         }
@@ -327,6 +384,10 @@ fn order_dependencies(e: &mut plan::emit::Emitted) {
         }
     }
     for step in &mut e.program.steps {
-        step.stratum = positions[ids[&step.output]];
+        // Constant seeds precede their recursive component in the cold kernel. Moving
+        // them into its stratum changes which improvements count before widening.
+        if step.stratum != 0 {
+            step.stratum = positions[ids[&step.output]];
+        }
     }
 }

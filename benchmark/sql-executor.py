@@ -8,6 +8,7 @@ from pathlib import Path
 import resource
 import re
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,14 +19,57 @@ reach(a, b) :- edge(a, b).
 reach(a, c) :- reach(a, b), edge(b, c).
 .output reach
 """
+SHORTEST = """.decl edge(a:number,b:number,w:number)
+.decl root(n:number)
+.input edge,root
+.decl distance(n:number,d:min<>) widen 3
+distance(n,0) :- root(n).
+distance(b,d+w) :- distance(a,d), edge(a,b,w).
+.output distance
+"""
 
 
 def relation(name, columns, rows):
     return {"name": name, "columns": columns, "rows": rows}
 
 
+def recursive_lattice(groups):
+    if groups < 1:
+        raise ValueError("regions must be positive")
+    edges = [[g*10+a, g*10+b, w] for g in range(groups)
+             for a,b,w in [(0,1,5),(0,2,1),(2,1,1),(1,3,2),(3,2,1)]]
+    request = {
+        "relations": [relation("edge", ["a","b","w"], edges),
+                      relation("root", ["n"], [[g*10] for g in range(groups)])],
+        "program": SHORTEST,
+        "after_run_sql": [
+            "CREATE TEMP TRIGGER recursive_delete_guard BEFORE DELETE ON distance WHEN OLD.c0<170 OR OLD.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive delete'); END",
+            "CREATE TEMP TRIGGER recursive_insert_guard BEFORE INSERT ON distance WHEN NEW.c0<170 OR NEW.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive insert'); END"],
+        "changes": [[{"name":"edge","delete":[[172,171,1]]}],
+                    [{"name":"root","delete":[[170]]}],
+                    [{"name":"root","insert":[[170]]},
+                     {"name":"edge","insert":[[172,171,1]]}]],
+        "queries": ["SELECT * FROM distance WHERE c0>=170 AND c0<180 ORDER BY c0",
+                    "SELECT count(*) FROM distance"],
+    }
+    request["changes"] *= 2
+    return request
+
+
+def session_request(groups):
+    request = recursive_lattice(groups)
+    changes = request["changes"]
+    steps = [
+        {"changes": changes[0], "limits": {"max_steps": 1}, "expected_error": "execution-limit"},
+        {"changes": changes[0], "max_waves": 1, "expected_error": "wave-limit"},
+    ] + [{"changes": change} for change in changes]
+    # Complete-state observations replace the sampled queries and publication guards.
+    return {"program": request["program"], "relations": request["relations"], "steps": steps,
+            "queries": ["SELECT count(*) FROM distance"]}
+
+
 def cases(corpus):
-    result = []
+    result = [(f"update-recursive-lattice-{groups}", recursive_lattice(groups)) for groups in [1000, 10000]]
     for n in [64, 128, 256, 512, 1024]:
         result.append((f"closure-{n}", {
             "relations": [relation("edge", ["src", "dst"], [[i, i+1] for i in range(n-1)])],
@@ -211,6 +255,22 @@ def validate(name, request, result):
     queries = result["result"]["queries"]
     assert all(not q["truncated"] for q in queries), "truncated result"
     rows = [q["rows"] for q in queries]
+    if name.startswith("update-recursive-lattice-"):
+        groups = int(name.split("-")[-1])
+        assert rows == [[[170,0],[171,2],[172,1],[173,4]], [[groups*4]]], rows
+        for index, (update, expected) in enumerate(zip(result["result"]["updates"], [(2,2),(0,4),(4,0)]*2, strict=True)):
+            assert not update["initializations"], update
+            assert not update["migrated_inputs"], update
+            if index >= 3:
+                assert update["scratch_tables_created"] == 0, update
+            report = update["programs"][0]
+            assert not report["refreshed_strata"], report
+            assert report["recursive_frames"] > 0, report
+            assert report["outputs"]["distance"] == dict(zip(["inserted","deleted"],expected)), report
+        for phase in result["phases"]:
+            if phase["phase"].startswith("update-"):
+                assert phase["vm_steps"] < 50000, phase["vm_steps"]
+        return "passed"
     if name.startswith("update-native-"):
         n = int(name.split("-")[-1])
         assert rows == [[[n*3]], [[n*3]]], rows
@@ -227,8 +287,8 @@ def validate(name, request, result):
     if name.startswith("update-reducers-"):
         n=int(name.split("-")[-1]);total=[n-1,sum(i%31 for i in range(n)),0,30]
         assert rows==[[total],[[1,*total]],[[n-1,n*(n-1)//2-1]]],rows
-        for i,update in enumerate(result["result"]["updates"]):
-            assert bool(update["initializations"]) == (i==0),update
+        for update in result["result"]["updates"]:
+            assert not update["initializations"],update
             report=update["programs"][0]
             assert not report["refreshed_strata"],report
             assert report["context_rows"]<=5,report
@@ -267,8 +327,8 @@ def validate(name, request, result):
         for i in range(n): totals[i%1000][1] += 1; totals[i%1000][2] += i%31
         assert rows[0] == rows[1] == [r for r in totals if r[0]%5], rows
         if name.startswith("update-"):
-            for i,update in enumerate(result["result"]["updates"]):
-                assert bool(update["initializations"]) == (i==0),update
+            for update in result["result"]["updates"]:
+                assert not update["initializations"],update
                 assert not update["programs"][0]["refreshed_strata"],update
                 assert update["programs"][0]["context_rows"]==1,update
     elif name.startswith("secondary-join-"):
@@ -362,4 +422,12 @@ def main():
     if failures: raise SystemExit(json.dumps(failures,indent=2))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--session-request"]:
+        parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
+        parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        args.output.write_text(json.dumps(session_request(args.session_request)))
+    else:
+        main()

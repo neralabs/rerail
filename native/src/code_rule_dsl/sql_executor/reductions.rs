@@ -6,11 +6,14 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
+mod compose;
+mod fused;
 mod join_tree;
 mod lattice;
 mod maintain;
 mod plan;
 mod reducer;
+mod sums;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
 
@@ -22,6 +25,54 @@ pub(super) struct Retained {
     rules: Vec<Rule>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
+}
+
+impl Retained {
+    pub(super) fn initial_result(&self) -> String {
+        self.initial_result_from(&quote(&self.heads), "n")
+    }
+    fn initial_result_from(&self, heads: &str, count: &str) -> String {
+        let cols = names("", self.width);
+        match &self.lattice {
+            None => format!("SELECT {cols} FROM {heads} WHERE {count}>0"),
+            Some(lattice) => {
+                let key = names("", lattice.keys);
+                let v = format!("c{}", self.width - 1);
+                let folded = match &lattice.aggregate {
+                    Some(aggregate) => format!("{aggregate}({v})"),
+                    None => {
+                        crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(&v, lattice.top)
+                    }
+                };
+                format!("SELECT {key},{folded} FROM {heads} WHERE {count}>0 GROUP BY {key}")
+            }
+        }
+    }
+    pub(super) fn reducer_inputs(&self) -> impl Iterator<Item = &str> {
+        self.rules
+            .iter()
+            .flat_map(|r| &r.reducers)
+            .map(|r| r.relation.as_str())
+    }
+
+    /// Drop support for an empty positive body, retaining global scalar input indexes.
+    pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
+        let mut objects = vec![self.heads.clone()];
+        for rule in &self.rules {
+            objects.extend([rule.contexts.clone(), rule.contributions.clone()]);
+            objects.extend(rule.reducers.iter().filter_map(Reducer::dependency_object));
+        }
+        if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
+            objects.extend([tree.nodes.clone(), tree.roots.clone()]);
+        }
+        for name in objects {
+            let version = store.version(&name);
+            if version.len() > 0 {
+                store.replace(&name, version.empty_like())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Sum signed deltas with a wider intermediate; fail atomically instead of storing SQLite REALs.
@@ -41,13 +92,30 @@ pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
                 .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
         }
     }
+    db.create_scalar_function(
+        c"rr_nonnegative_count",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let count = ctx.get::<i64>(0)?;
+            if count < 0 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_CHECK),
+                    Some("negative retained support count".into()),
+                ));
+            }
+            Ok(count)
+        },
+    )
+    .map_err(error)?;
     db.create_aggregate_function(
         c"rr_update_sum",
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         SignedSum,
     )
-    .map_err(error)
+    .map_err(error)?;
+    sums::register(db)
 }
 
 fn owned(
@@ -58,7 +126,8 @@ fn owned(
     storage: Option<&versions::Store>,
 ) -> Result<()> {
     if let Some(storage) = storage {
-        storage.create(db, name, versions::Schema::generated(definition)?)?;
+        storage.declare_empty(db, name, versions::Schema::generated(definition)?)?;
+        storage.restrict_indexes(name, &[])?;
     } else {
         db.execute_batch(&format!(
             "CREATE TEMP TABLE {}({definition}) WITHOUT ROWID",
@@ -68,6 +137,37 @@ fn owned(
     }
     objects.push((name.into(), true));
     Ok(())
+}
+fn owned_phase(
+    db: &rusqlite::Connection,
+    objects: &mut Vec<(String, bool)>,
+    name: &str,
+    definition: &str,
+    storage: Option<&versions::Store>,
+    readonly: bool,
+) -> Result<()> {
+    if readonly {
+        let storage = storage.unwrap();
+        storage.declare_readonly_empty(db, name, versions::Schema::generated(definition)?)?;
+        storage.restrict_indexes(name, &[])?;
+        objects.push((name.into(), true));
+        Ok(())
+    } else {
+        owned(db, objects, name, definition, storage)
+    }
+}
+fn insert(
+    db: &rusqlite::Connection,
+    table: &str,
+    query: &str,
+    storage: Option<&versions::Store>,
+) -> Result<usize> {
+    if let Some(store) = storage.filter(|s| s.contains(table) && s.version(table).len() == 0) {
+        store.load_select(db, table, query, false)
+    } else {
+        db.execute(&format!("INSERT INTO {} {query}", quote(table)), [])
+            .map_err(error)
+    }
 }
 fn schema(width: usize) -> String {
     (0..width)
@@ -124,14 +224,29 @@ pub(super) fn prepare(
     let mut initialized = Vec::new();
     for state in run.reductions.as_mut().unwrap().values_mut() {
         if !state.ready && potential.contains(&state.output) {
+            let _context = w.profile_scope(
+                || json!({"stage":"initialize retained support","relation":state.output}),
+            );
+            let _cpu = super::super::logic::profile::span(|| "initialize retained support".into());
+            let operation = w.profiler.map(|p| {
+                p.operation(
+                    "initialize retained support",
+                    ("sql-extension", 0),
+                    0,
+                    vec![],
+                )
+            });
             state.initialize(w.db, &mut run.objects, storage)?;
+            if let Some(operation) = operation {
+                operation.finish_unobserved();
+            }
             state.ready = true;
             initialized.push(state.output.clone());
         }
     }
     Ok(initialized)
 }
-fn planned(
+pub(super) fn planned(
     db: &rusqlite::Connection,
     run: &session::Execution,
     native: bool,
@@ -212,7 +327,7 @@ fn planned(
                 }
             }
         }
-        if !eligible || !nonmonotone {
+        if !eligible || (!nonmonotone && !native) {
             continue;
         }
         let state = Retained {
@@ -239,13 +354,18 @@ pub(super) fn fork_plan(db: &rusqlite::Connection, run: &mut session::Execution)
 }
 
 impl Retained {
+    pub(super) fn rebuildable(&self) -> bool {
+        self.rules.iter().all(|r| r.reducers.is_empty())
+            && self.lattice.as_ref().is_none_or(|l| l.tree.is_none())
+    }
     fn initialize(
         &self,
         db: &rusqlite::Connection,
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
     ) -> Result<()> {
-        owned(
+        let fused = self.can_fuse() && storage.is_some_and(|s| s.contains(&self.output));
+        owned_phase(
             db,
             objects,
             &self.heads,
@@ -255,12 +375,13 @@ impl Retained {
                 names("", self.width)
             ),
             storage,
+            fused,
         )?;
         for rule in &self.rules {
             for reducer in &rule.reducers {
                 reducer.initialize(db, objects, storage)?;
             }
-            owned(
+            owned_phase(
                 db,
                 objects,
                 &rule.contexts,
@@ -270,20 +391,14 @@ impl Retained {
                     names("", rule.width)
                 ),
                 storage,
+                fused,
             )?;
-            execute(
-                db,
-                &format!(
-                    "INSERT INTO {} {}",
-                    rule.contexts,
-                    rule.context_query.render()
-                ),
-            )?;
+            insert(db, &rule.contexts, &rule.context_query.render(), storage)?;
             let hcols = (0..self.width)
                 .map(|i| format!("h{i} INTEGER NOT NULL"))
                 .collect::<Vec<_>>()
                 .join(",");
-            owned(
+            owned_phase(
                 db,
                 objects,
                 &rule.contributions,
@@ -293,14 +408,13 @@ impl Retained {
                     names("", rule.width)
                 ),
                 storage,
+                fused,
             )?;
-            execute(
+            insert(
                 db,
-                &format!(
-                    "INSERT INTO {} {}",
-                    rule.contributions,
-                    rule.evaluation(&rule.contexts).render()
-                ),
+                &rule.contributions,
+                &rule.evaluation(&rule.contexts).render(),
+                storage,
             )?;
             let heads = (0..self.width)
                 .map(|i| format!("h{i}"))
@@ -313,6 +427,10 @@ impl Retained {
                     quote(&rule.contributions)
                 ))
                 .map_err(error)?;
+            } else if let Some(source) =
+                super::super::facts::vtab::bound_source(db, &rule.contributions)
+            {
+                source.prepare_index(&(rule.width..rule.width + self.width).collect::<Vec<_>>());
             }
             for atom in &rule.atoms {
                 rule.index(
@@ -326,18 +444,33 @@ impl Retained {
                     objects.push((table, true));
                 }
             }
+            if fused {
+                continue;
+            }
             if storage.is_some() {
                 let hjoin = (0..self.width)
                     .map(|i| format!("h.c{i}=d.h{i}"))
                     .collect::<Vec<_>>()
                     .join(" AND ");
-                execute(
-                    db,
-                    &format!(
-                        "INSERT OR REPLACE INTO {} SELECT {heads},count(*)+coalesce((SELECT h.n FROM {} h WHERE {hjoin}),0) FROM {} d GROUP BY {heads}",
-                        self.heads, self.heads, rule.contributions
-                    ),
-                )?;
+                if storage.is_some_and(|s| s.version(&self.heads).len() == 0) {
+                    insert(
+                        db,
+                        &self.heads,
+                        &format!(
+                            "SELECT {heads},count(*) FROM {} GROUP BY {heads}",
+                            rule.contributions
+                        ),
+                        storage,
+                    )?;
+                } else {
+                    execute(
+                        db,
+                        &format!(
+                            "INSERT OR REPLACE INTO {} SELECT {heads},count(*)+coalesce((SELECT h.n FROM {} h WHERE {hjoin}),0) FROM {} d GROUP BY {heads}",
+                            self.heads, self.heads, rule.contributions
+                        ),
+                    )?;
+                }
             } else {
                 execute(
                     db,
@@ -350,6 +483,27 @@ impl Retained {
                 )?;
             }
         }
+        if fused && !self.rules.is_empty() {
+            let queries = self
+                .rules
+                .iter()
+                .map(|rule| {
+                    let columns = (0..self.width)
+                        .map(|i| format!("h{i} AS c{i}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("SELECT {columns} FROM {}", quote(&rule.contributions))
+                })
+                .collect::<Vec<_>>()
+                .join(" UNION ALL ");
+            let cols = names("", self.width);
+            insert(
+                db,
+                &self.heads,
+                &format!("SELECT {cols},count(*) FROM ({queries}) GROUP BY {cols}"),
+                storage,
+            )?;
+        }
         if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
             tree.initialize(db, &self.heads, objects, storage)?;
         }
@@ -360,6 +514,14 @@ impl Retained {
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
     ) -> Result<(Delta, u64, u64)> {
-        maintain::apply(self, w, changes)
+        if self.can_fuse()
+            && w.versions.is_some_and(|s| {
+                s.available(&self.output).is_some() && s.available(&self.heads).is_some()
+            })
+        {
+            fused::apply(self, w, changes)
+        } else {
+            maintain::apply(self, w, changes)
+        }
     }
 }

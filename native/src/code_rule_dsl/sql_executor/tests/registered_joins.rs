@@ -151,7 +151,7 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
     );
 }
 
-fn register_bits(e: &mut CodeRuleSqlExecutor) -> Arc<AtomicUsize> {
+pub(super) fn register_bits(e: &mut CodeRuleSqlExecutor) -> Arc<AtomicUsize> {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
