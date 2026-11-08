@@ -885,9 +885,13 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
+        // An extract's running count is carried as where its next position goes: every store of
+        // the flattening is then `[pointer, #offset]`, with no index to add.
         let first: Vec<BlockArg> = [zero.into(), bytes.into(), out.into()]
             .into_iter()
-            .chain(std::iter::repeat_n(zero.into(), params - 3))
+            .chain(std::iter::repeat_n(zero.into(), carried))
+            .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
+            .chain(std::iter::repeat_n(zero.into(), delayed.len()))
             .collect();
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
@@ -970,23 +974,18 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let mut counts_out = Vec::with_capacity(counted.len());
             for (c, &k) in counted.iter().enumerate() {
                 let n = counts_in[c];
-                let cnt = match (c < native.extracts.len()).then_some(c) {
-                    Some(e) => {
-                        let start = f.ins().ishl_imm(i, 6);
-                        let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));
-                        let offset = f.ins().ishl_imm(n, 2);
-                        let ptr = f.ins().iadd(extract_base[e], offset);
-                        let (cnt, more) = flatten(&mut f, words[k], at, ptr);
-                        heads.push((more, Step::Bits));
-                        cnt
-                    }
+                if c < native.extracts.len() {
+                    // `n` is where the next position goes.
+                    let start = f.ins().ishl_imm(i, 6);
+                    let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));
+                    let (cnt, more) = flatten(&mut f, words[k], at, n);
+                    heads.push((more, Step::Bits));
+                    let bytes = f.ins().ishl_imm(cnt, 2);
+                    counts_out.push(f.ins().iadd(n, bytes));
+                } else {
                     // A total only tests for a bit (`BlockProgram::totals`): its words OR-ed.
-                    None => {
-                        counts_out.push(f.ins().bor(n, words[k]));
-                        continue;
-                    }
-                };
-                counts_out.push(f.ins().iadd(n, cnt));
+                    counts_out.push(f.ins().bor(n, words[k]));
+                }
             }
             let next = f.ins().iadd_imm(i, 1);
             let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, stride));
@@ -1015,7 +1014,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         }
         for c in 0..counted.len() {
             let mut v = p[3 + carried + c];
-            if c >= native.extracts.len() {
+            if let Some(&base) = extract_base.get(c) {
+                let written = f.ins().isub(v, base);
+                v = f.ins().ushr_imm(written, 2);
+            } else {
                 let any = f.ins().icmp_imm(IntCC::NotEqual, v, 0);
                 v = f.ins().uextend(types::I64, any);
             }
