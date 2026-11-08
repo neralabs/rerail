@@ -45,6 +45,10 @@ class SurveySourceContractTests(unittest.TestCase):
         by_id={case['id']:case for case in value['cases']}
         for label,owner,name,target,kind,has in contract.TARGET_CONTRACTS:
             by_id[label]['expected'].append(dict(kind='graph_name_call',owner=owner,name=name,target=target,target_kind=kind,has_target=has))
+        for label,owner,ref_kind,base,attr,target,kind,has in contract.MEMBER_CONTRACTS:
+            by_id[label]['expected'].append(dict(kind='graph_ref',owner=owner,ref_kind=ref_kind,base=base,attr=attr,target=target,target_kind=kind,has_target=has))
+        for label,kind,owner,sid in contract.EDGE_CONTRACTS:
+            by_id[label]['expected'].append(dict(kind=kind,owner=owner,sid=sid))
         return value
 
     def test_source_fixture_cannot_silently_lose_its_positive_branch(self):
@@ -56,11 +60,20 @@ class SurveySourceContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'method-before-class'):
             contract.check_target_contracts(value['cases'])
 
-    def run_native(self, root, value, actual):
+    def test_member_and_edge_positive_guards_refuse_missing_observations(self):
+        for label in {c[0] for c in contract.MEMBER_CONTRACTS+contract.EDGE_CONTRACTS}:
+            with self.subTest(case=label):
+                value=self.recording()
+                case=next(c for c in value['cases'] if c['id']==label)
+                case['expected']=[r for r in case['expected'] if r['kind']=='module']
+                with self.assertRaisesRegex(ValueError,label):
+                    contract.check_target_contracts(value['cases'])
+
+    def run_native(self, root, value, actual, extra=()):
         baseline=root/'source.json'; baseline.write_text(json.dumps(value))
         engine=root/'engine'; engine.write_text('engine identity')
         output=root/'result.json'
-        command=['contract','native','--baseline',str(baseline),'--engine',str(engine),'--output',str(output)]
+        command=['contract','native','--baseline',str(baseline),'--engine',str(engine),'--output',str(output),*extra]
         with patch.object(sys,'argv',command), patch.object(replay,'execute_native',side_effect=actual), \
              patch.object(contract,'source_rows',side_effect=AssertionError('Python fallback')), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -86,3 +99,17 @@ class SurveySourceContractTests(unittest.TestCase):
                 else:value['cases'][0]['expected']=[]
                 with self.assertRaises(SystemExit):
                     self.run_native(Path(directory),value,lambda *args:self.fail('Native must not start'))
+
+    def test_shards_partition_full_validated_corpus_without_dropping_or_repeating_cases(self):
+        seen=[]
+        for part in range(3):
+            with tempfile.TemporaryDirectory() as directory:
+                value=self.recording()
+                def native(engine,rule,files,options):
+                    return dict(diagnostics=[],programInputs=[])
+                status,result=self.run_native(Path(directory),value,native,['--part',str(part),'--parts','3'])
+                self.assertEqual(status,1)
+                self.assertEqual(result['caseSelection'],dict(part=part,parts=3,total=len(contract.CASES)))
+                self.assertEqual([c['id'] for c in result['cases']], [c['id'] for c in value['cases'][part::3]])
+                seen.extend(c['id'] for c in result['cases'])
+        self.assertCountEqual(seen,[name for name,_ in contract.CASES])

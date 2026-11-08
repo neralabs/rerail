@@ -101,6 +101,16 @@ CASES = [
     ('member-annotation-fallbacks', {'a.py': 'class Worker:\n def method(self): pass\nclass Other:\n def method(self): pass\nclass Base:\n worker: Worker\nclass C(Base):\n _worker: Other\n def __init__(self, worker: Worker, _worker): pass\n def run(self):\n  self._worker.method()\n  self.worker.method()\n'}),
     ('member-last-class-first-parameter', {'a.py': 'class First:\n def method(self): pass\nclass Second:\n def method(self): pass\nclass C:\n worker: First\n worker: Second\n def run(self): self.worker.method()\ndef run(obj: First, obj: Second): obj.method()\n'}),
     ('member-local-import-after-module-replacement', {'a.py': 'def run(obj):\n from impl import C as obj\n obj.method()\n', 'a/__init__.py': '', 'impl.py': 'class C:\n def method(self): pass\n'}),
+    ('member-inherited-hint-caller-module', {'base.py': 'class Worker:\n def method(self): pass\nclass Base:\n worker: Worker\n', 'entry.py': 'from base import Base\nclass Worker:\n def method(self): pass\nclass C(Base):\n def run(self): self.worker.method()\n'}),
+    ('member-unannotated-exact-inherited-hint', {'a.py': 'class Worker:\n def method(self): pass\nclass Other:\n def method(self): pass\nclass Base:\n _worker: Other\nclass C(Base):\n def __init__(self, worker: Worker, _worker): pass\n def run(self): self._worker.method()\n'}),
+    ('member-imported-nonclass-stale-method', {'a.py': 'class Factory:\n def method(self): pass\ndef Factory(): pass\n', 'entry.py': 'from a import Factory as obj\ndef run(): obj.method()\n'}),
+    ('member-missing-param-method-local-import', {'a.py': 'def run(obj: Other):\n from impl import C as obj\n obj.method()\n', 'a/__init__.py': 'class Other: pass\n', 'impl.py': 'class C:\n def method(self): pass\n'}),
+    ('member-first-unannotated-duplicate-parameter', {'a.py': 'class C:\n def method(self): pass\ndef run(obj, obj: C): obj.method()\n'}),
+    ('edges-function-class-dedup', {'a.py': 'class C: pass\ndef helper(): pass\ndef run():\n helper()\n helper()\n consume(helper, helper)\n C()\n consume(C)\n'}),
+    ('edges-legacy-sync-async', {'a.py': 'class C:\n @legacy_sync\n def run(self): pass\n def run_lazy(self): pass\n @pkg.direct_legacy_module_async\n async def fetch_async(self): pass\n def fetch_lazy(self): pass\n @legacy_async\n def other(self): pass\n def other_lazy(self): pass\n'}),
+    ('edges-legacy-sync-wins', {'a.py': 'class C:\n @legacy_sync\n @legacy_async\n def run_async(self): pass\n def run_async_lazy(self): pass\n def run_lazy(self): pass\n'}),
+    ('edges-legacy-inherited-first', {'a.py': 'class Far:\n def run_lazy(self): pass\nclass Left(Far): pass\nclass Right:\n def run_lazy(self): pass\nclass C(Left, Right):\n @legacy_module_sync\n def run(self): pass\n'}),
+    ('edges-legacy-property-missing-free', {'a.py': '@legacy_sync\ndef run(): pass\ndef run_lazy(): pass\nclass C:\n @legacy_sync\n def missing(self): pass\n @legacy_sync\n def value(self): pass\n @property\n def value_lazy(self): pass\n'}),
 ]
 
 
@@ -116,6 +126,31 @@ TARGET_CONTRACTS = [
     ('name-call-unresolved-import-blocks-local','entry::run','callback','','',0),
 ]
 
+MEMBER_CONTRACTS = [
+    ('member-mixin-single','a::Base.run','self_attr','self','_hook','a::Mixin._hook','method',1),
+    ('member-cobase-order','a::Base.run','self_attr','self','_hook','a::First._hook','method',1),
+    ('member-import-module-blocks-parameter','a::run','module_attr','obj','method','','',0),
+    ('member-import-class-blocks-local','entry::run','module_attr','Alias','method','','',0),
+    ('member-local-class-blocks-parameter','a::run','module_attr','obj','method','','',0),
+    ('member-inherited-hint-caller-module','entry::C.run','chained_self_attr','worker','method','entry::Worker.method','method',1),
+    ('member-unannotated-exact-inherited-hint','a::C.run','chained_self_attr','_worker','method','a::Other.method','method',1),
+    ('member-imported-nonclass-stale-method','entry::run','module_attr','obj','method','a::Factory.method','method',1),
+    ('member-missing-param-method-local-import','a::run','module_attr','obj','method','impl::C.method','method',1),
+    ('member-first-unannotated-duplicate-parameter','a::run','module_attr','obj','method','','',0),
+]
+
+EDGE_CONTRACTS = [
+    ('edges-function-class-dedup','graph_call','a::run','a::helper'),
+    ('edges-function-class-dedup','graph_class_use','a::run','a::C'),
+    ('edges-function-class-dedup','graph_caller','a::helper','a::run'),
+    ('edges-legacy-sync-async','graph_call','a::C.run','a::C.run_lazy'),
+    ('edges-legacy-sync-async','graph_call','a::C.fetch_async','a::C.fetch_lazy'),
+    ('edges-legacy-sync-async','graph_call','a::C.other','a::C.other_lazy'),
+    ('edges-legacy-sync-wins','graph_call','a::C.run_async','a::C.run_async_lazy'),
+    ('edges-legacy-inherited-first','graph_call','a::C.run','a::Right.run_lazy'),
+    ('edges-legacy-property-missing-free','graph_call','a::C.value','a::C.value_lazy'),
+]
+
 
 def check_target_contracts(cases):
     by_id={case['id']:case for case in cases}
@@ -125,6 +160,14 @@ def check_target_contracts(cases):
                    (row['owner'],row['name'],row['target'],row['target_kind'],row['has_target']) == (owner,name,target,kind,has)
                    for row in rows):
             raise ValueError(f'The source fixture no longer covers {label}: {owner}/{name}')
+    for label,owner,ref_kind,base,attr,target,kind,has in MEMBER_CONTRACTS:
+        expected=dict(owner=owner,ref_kind=ref_kind,base=base,attr=attr,target=target,target_kind=kind,has_target=has)
+        if not any(row['kind']=='graph_ref' and all(row.get(k)==v for k,v in expected.items())
+                   for row in by_id[label]['expected']):
+            raise ValueError(f'The source fixture no longer covers {label}: {expected}')
+    for label,kind,owner,sid in EDGE_CONTRACTS:
+        if dict(kind=kind,owner=owner,sid=sid) not in by_id[label]['expected']:
+            raise ValueError(f'The source fixture no longer covers {label}: {owner} -> {sid}')
 
 
 def source_rows(source, files):
@@ -200,6 +243,13 @@ def source_rows(source, files):
             rows.append(dict(kind='graph_name_call',owner=sid,ordinal=i,name=ref.attr,
                              has_target=int(target is not None),target=target or '',
                              target_kind=graph.symbols[target].kind if target is not None else ''))
+    graph._resolve_edges()
+    graph._add_legacy_decorator_edges()
+    for sid,symbol in graph.symbols.items():
+        rows.extend(dict(kind='graph_call',owner=sid,sid=target) for target in symbol.calls)
+        rows.extend(dict(kind='graph_class_use',owner=sid,sid=target) for target in symbol.class_uses)
+    rows.extend(dict(kind='graph_caller',owner=target,sid=caller)
+                for target,callers in graph.callers.items() for caller in callers)
     return ordered(rows)
 
 
@@ -232,7 +282,11 @@ def main():
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--rule', type=Path, default=ROOT/'test/fixtures/rr/survey-source.rr')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--part', type=int, default=0)
+    parser.add_argument('--parts', type=int, default=1)
     args = parser.parse_args()
+    if args.parts < 1 or not 0 <= args.part < args.parts:
+        parser.error('Require parts >= 1 and 0 <= part < parts')
     evidence = dict(format='rerail.survey-source-inventory/v1', sourcePin=PIN,
                     fullMigrationAcceptance=False, cases=[])
     if args.command == 'source':
@@ -253,9 +307,10 @@ def main():
         if recorded != required or any(not case['expected'] for case in baseline['cases']):
             parser.error('The complete source fixture recording is required')
         check_target_contracts(baseline['cases'])
+        evidence['caseSelection']=dict(part=args.part,parts=args.parts,total=len(baseline['cases']))
         evidence['baselineSha256'] = sha(args.baseline.read_bytes())
         evidence['engineSha256'] = sha(args.engine.read_bytes())
-        for case in baseline['cases']:
+        for case in baseline['cases'][args.part::args.parts]:
             native = execute_native(args.engine, args.rule, case['files'], {})
             rows = native_rows(native['diagnostics'])
             evidence['cases'].append(dict(id=case['id'], expected=case['expected'], actual=rows,
