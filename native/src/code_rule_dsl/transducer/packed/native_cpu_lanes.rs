@@ -59,6 +59,11 @@ pub(super) struct Plan {
 #[derive(Debug)]
 pub(super) struct Region {
     pub(super) gate: usize,
+    /// A test before the gate's: the gate's other operand, when the gate's byte class is made a
+    /// mask for the gate alone. A block where it has no bit skips the class's mask too, and one
+    /// where it has bits makes the class and tests the gate (the class and the gate are then
+    /// members). An escape's `u`, say: most blocks have no escape.
+    pub(super) pre: Option<usize>,
     /// The values provably zero with the gate (the gate itself not among them).
     pub(super) zero: Vec<usize>,
     /// Every value the region computes, in order: `zero`, and values only the region reads.
@@ -351,12 +356,27 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let best = best.cloned();
         let Some((g, _, z, only)) = best else { break };
         let r = out.len();
-        let members: Vec<usize> = (0..n).filter(|&x| z[x] || only[x]).collect();
+        // The gate's class, made a mask only for the gate, and carried by no field.
+        let pre = match native.insts[g] {
+            BlockInst::And(a, b) | BlockInst::AndNot(a, b) => {
+                let (a, b) = (usize::from(a), usize::from(b));
+                let (word, class) = if lanes[a] { (b, a) } else { (a, b) };
+                let alone = lanes[class] && !lanes[word] && !output[class] && !field[class] && region_of[class].is_none() && users[class].iter().all(|&u| lanes[u] || u == g);
+                alone.then_some((word, class))
+            }
+            _ => None,
+        };
+        let mut members: Vec<usize> = (0..n).filter(|&x| z[x] || only[x]).collect();
+        if let Some((_, class)) = pre {
+            members.extend([class, g]);
+            members.sort_unstable();
+        }
+        let pre = pre.map(|(word, _)| word);
         for &x in &members {
             region_of[x] = Some(r);
         }
         gates[g] = true;
-        out.push(Region { gate: g, zero: (0..n).filter(|&x| z[x]).collect(), members });
+        out.push(Region { gate: g, pre, zero: (0..n).filter(|&x| z[x]).collect(), members });
     }
     (out, region_of)
 }

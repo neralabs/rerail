@@ -419,12 +419,24 @@ fn json_shapes() {
             })
             .collect();
         eprintln!("  hot loop blocks: {}; carried words {}", blocks.join(", "), super::block_tests::carried_params(&c.parser.tier1.clif) - super::block_tests::sink_params(&c.native.block_programs[0]));
-        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        let state = super::native_cpu_block::State::of(&c.native.block_programs[0]);
+        let insts = &c.native.block_programs[0].insts;
+        let fields: Vec<String> = state
+            .fields()
+            .iter()
+            .map(|&(at, bits, word)| {
+                let kind = if state.plan.lanes[at] { "lane" } else if state.plan.region_of[at].is_some() { "region" } else { "word" };
+                format!("w{word}:%{at}={:?}/{bits}/{kind}", insts[at])
+            })
+            .collect();
+        eprintln!("  carried state: {} words; {}", state.words, fields.join(" "));
+        let plan = state.plan;
         for r in &plan.regions {
             let insts = &c.native.block_programs[0].insts;
             let gate = insts[r.gate];
             let of: Vec<String> = gate.operands().iter().map(|&o| format!("%{o} = {:?}", insts[o])).collect();
-            eprintln!("  gated region: gate %{} = {gate:?} ({}), {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
+            let pre = r.pre.map_or(String::new(), |p| format!(", tested first on %{p}"));
+            eprintln!("  gated region: gate %{} = {gate:?} ({}){pre}, {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
         }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
@@ -500,9 +512,11 @@ fn json_gated_regions_equal_the_interpreter() {
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
         // Each region behind its branch in both full bodies, none computed in place.
-        let regions = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan.regions.len();
-        assert!(regions > 0, "{name}: no gated region");
-        assert_eq!(c.parser.tier1.gate_branches, regions * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        // A region with a test before its gate's has two branches.
+        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        assert!(!plan.regions.is_empty(), "{name}: no gated region");
+        let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
+        assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
         let block = &c.program.block_programs()[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
