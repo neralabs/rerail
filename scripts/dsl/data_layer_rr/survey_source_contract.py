@@ -37,6 +37,20 @@ CASES = [
     ('decorator-spelling', {'a.py': '@pkg.decorate(1)\n@((factory()))\nclass C:\n @pkg.abstractmethod\n @wrap(value="(")\n def f(self): pass\n @property\n def g(self): pass\n'}),
     ('complex-decorators-and-bases', {'a.py': '@(lambda f: f)\n@(registry["key"])\nclass C(*bases, **keywords):\n @((make_decorator())(1))\n async def method(self): pass\nclass D(factory("ABC"), x if flag else y): pass\n'}),
     ('multiple-definition-files', {'impl/a.py': '@first\nclass A(ABC):\n x: int\n def method(self, x: int): pass\n', 'impl/b.py': '@second(1)\nclass B(pkg.Base):\n y: str\n def method(self, y: str): pass\n'}),
+    ('body-call-shapes', {'a.py': 'def f():\n direct()\n pkg.method()\n self.method()\n cls.method()\n super().method()\n self.field.method()\n cls.field.method()\n factory().method()\n pkg.field.method()\n'}),
+    ('body-argument-duplicates', {'a.py': 'def f():\n register(callback, self.method, pkg.method, key=other, **options)\n register(*spread, **keywords)\n register((callback), x=(self.method), y=(pkg.method))\n'}),
+    ('body-local-order', {'a.py': 'def f(param, /, *args, keyword, **kwargs):\n unknown\n param\n args\n keyword\n kwargs\n unknown = source\n unknown\n del later\n later\n bound = bound\n bound()\n'}),
+    ('body-argument-before-traversal', {'a.py': 'def f():\n consume((name := value), name)\n ((callee := factory))(callee)\n consume(inner(name), name)\n'}),
+    ('body-attributes', {'a.py': 'def f():\n pkg.method\n self.method\n cls.method\n self.field.method\n super().method\n pkg.method = target\n del self.field\n registry = {"x": self.method}\n'}),
+    ('body-builtins', {'a.py': 'def f():\n len(values)\n register(len, self, cls, super, range, missing)\n len\n frozenset\n pow\n len.method\n'}),
+    ('body-nested-definitions', {'a.py': 'def outer():\n @decorate(callback)\n def inner(x: Annotation = Default) -> Return:\n  consume(x, callback)\n  saved = value\n saved\n inner\n class Nested(Base):\n  field: Type = factory()\n  def method(self, param=Default):\n   consume(param)\n'}),
+    ('body-imports', {'pkg/a.py': 'def f():\n imported\n from .first import thing as imported\n imported\n imported()\n import pkg.module as imported\n imported\n from other import last as imported\n def nested():\n  import nested.module\n module\n'}),
+    ('body-import-duplicates', {'a.py': 'def f():\n import first as alias, second as alias\n from pkg import a as same, b as same\n import final as same\n from ignored import *\n'}),
+    ('body-execution-hits', {'a.py': 'def f(execute):\n execute()\n obj.execute_async()\n execute_grammar_custom()\n obj.grammar_fetch_extra()\n raw_execute()\n fetchall\n fetchone()\n unrelated()\n'}),
+    ('body-comprehension-lambda', {'a.py': 'def f():\n values = [transform(item) for item in source if predicate(item)]\n callback = lambda arg: consume(arg)\n mapping = {(key := source): target(key), other: value}\n consume(key)\n'}),
+    ('body-except-and-patterns', {'a.py': 'def f():\n global external\n try:\n  action()\n except Error as error:\n  consume(error)\n match subject:\n  case pkg.C(value) if predicate(value):\n   consume(value)\n'}),
+    ('body-conditional-visit-order', {'a.py': 'def f():\n result = consume(name) if (name := condition) else other(name)\n consume({(key := source): value, other: consume(key)})\n'}),
+    ('body-relative-imports', {'__init__.py': 'def f():\n from . import skip\n from ..base import X\n', 'pkg/__init__.py': 'def f():\n from . import A\n from ..base import B\n'}),
 ]
 
 
@@ -60,6 +74,12 @@ def source_rows(source, files):
                 for j, (name, ann) in enumerate(zip(s.param_names, s.param_annotations)):
                     rows.append(dict(kind='parameter', path=path, symbol_ordinal=i, ordinal=j, name=name,
                                      has_annotation=int(ann is not None), text=ann or ''))
+                rows.extend(dict(kind='raw_ref', path=path, symbol_ordinal=i, ordinal=j,
+                                 ref_kind=ref.kind, base=ref.base or '', has_base=int(ref.base is not None), attr=ref.attr)
+                            for j,ref in enumerate(s.raw_refs))
+                rows.extend(dict(kind='execution_hit',path=path,symbol_ordinal=i,name=name) for name in s.execution_hits)
+                rows.extend(dict(kind='local_import',path=path,symbol_ordinal=i,name=name,target=target)
+                            for name,target in s.local_imports.items())
         for name, ids in info.defined_names.items():
             for i, sid in enumerate(ids):
                 rows.append(dict(kind='defined', path=path, module=module, name=name, sid=sid, ordinal=i))
