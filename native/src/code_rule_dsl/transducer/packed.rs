@@ -247,6 +247,8 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
+mod native_cpu_shape;
+mod native_cpu_stream;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -1006,6 +1008,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// pools do not.
     WalkFrames,
     BackendFailure,
+    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
+    RefusedShape(String),
 }
 
 #[derive(Clone, Copy)]

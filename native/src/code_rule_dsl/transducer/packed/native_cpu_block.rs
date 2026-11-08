@@ -24,6 +24,7 @@
 
 use super::Error;
 use super::block::{BatchFile, BlockRun, padded_by};
+use super::native_cpu_shape::Step;
 use super::native_ir::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, BlockArg, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -315,6 +316,9 @@ pub(super) struct At<'a> {
     pub(super) packed_in: &'a [Value],
     pub(super) full: bool,
     pub(super) zero_before: bool,
+    /// The buffer holds other bytes past the stream (a token's, for `CHECK`): the block's bytes
+    /// at and past `len` are read as 0x00, as past a file's end.
+    pub(super) cut: bool,
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
@@ -355,7 +359,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let mut values: Vec<Option<Value>> = Vec::with_capacity(native.insts.len());
     // The block's 64 bytes, loaded once for every compare and class.
     let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
-    let chunks: Vec<Value> = if reads {
+    let mut chunks: Vec<Value> = if reads {
         (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
     } else {
         vec![]
@@ -368,6 +372,34 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     } else {
         vec![]
     };
+    // A stream inside a larger buffer: its bytes past the end read as 0x00. Each 16-byte chunk
+    // keeps the lanes below the bytes left (`0..=16`); the bytes one back keep one more.
+    if at.cut {
+        let iota = {
+            let lanes: Vec<u8> = (0..16).collect();
+            let handle = f.func.dfg.constants.insert(ConstantData::from(&lanes[..]));
+            f.ins().vconst(types::I8X16, handle)
+        };
+        let start = f.ins().ishl_imm(i, 6);
+        let left = f.ins().isub(len, start);
+        let keep = |f: &mut FunctionBuilder<'_>, from: i64| {
+            let r = f.ins().iadd_imm(left, from);
+            let (zero, sixteen) = (f.ins().iconst(types::I64, 0), f.ins().iconst(types::I64, 16));
+            let r = f.ins().smax(r, zero);
+            let r = f.ins().smin(r, sixteen);
+            let r = f.ins().ireduce(types::I8, r);
+            let r = f.ins().splat(types::I8X16, r);
+            f.ins().icmp(IntCC::UnsignedLessThan, iota, r)
+        };
+        for (part, chunk) in chunks.iter_mut().enumerate() {
+            let k = keep(&mut *f, -16 * part as i64);
+            *chunk = f.ins().band(*chunk, k);
+        }
+        for (part, chunk) in befores.iter_mut().enumerate() {
+            let k = keep(&mut *f, 1 - 16 * part as i64);
+            *chunk = f.ins().band(*chunk, k);
+        }
+    }
     // A stream inside a larger buffer (a token's, for `CHECK`): the byte before its first block
     // is 0x00, as before a file, not the buffer's byte there.
     if at.zero_before && back {
@@ -610,9 +642,9 @@ pub(super) fn within_word(f: &mut FunctionBuilder<'_>, i: Value, len: Value, d: 
 
 /// simdjson's flattening (`bit_indexer::write`): `m`'s set bits as positions `at + bit`, stored as
 /// `u32`s from `ptr`. Eight are written whatever the count (the ones past it are slack the next
-/// write covers), then eight at a time while more are left. Gives the count. The builder is left
-/// in the block after.
-pub(super) fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> Value {
+/// write covers), then eight at a time while more are left. Gives the count, and the loop's block
+/// (a `Bits` progress point, `native_cpu_shape`). The builder is left in the block after.
+pub(super) fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> (Value, cranelift_codegen::ir::Block) {
     let flags = MemFlags::new().with_notrap();
     let cnt = f.ins().popcnt(m);
     let eight = |f: &mut FunctionBuilder<'_>, mut w: Value, ptr: Value| {
@@ -642,7 +674,7 @@ pub(super) fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Val
     let again = f.ins().icmp(IntCC::UnsignedLessThan, written, cnt);
     f.ins().brif(again, more, &[w.into(), written.into()], after, &[]);
     f.switch_to_block(after);
-    cnt
+    (cnt, more)
 }
 
 /// Compile a block program's native IR.
@@ -671,6 +703,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let counted = counted(native);
     // The outputs with a delay: each carries its word shifted down, for the store of the next.
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
+    let shape;
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
@@ -765,6 +798,8 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
 
         let stride = 8 * native.outputs.len() as i64;
         let stores = MemFlags::new().with_notrap();
+        // The loops' progress points: the files, the blocks, and each flattening's set bits.
+        let mut heads = vec![(row, Step::File), (head, Step::Block), (body_block, Step::Block)];
         for (b, full) in [(body_block, true), (general, false)] {
             f.switch_to_block(b);
             let p = f.block_params(b).to_vec();
@@ -772,7 +807,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let packed_in = &p[3..3 + carried];
             let counts_in = &p[3 + carried..3 + carried + counted.len()];
             let held_in = &p[3 + carried + counted.len()..];
-            let (values, packed_out) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, zero_before: false });
+            let (values, packed_out) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, zero_before: false, cut: false });
             // Each output cut to the stream outside full blocks: the bits `d <= 64 i + j < len + d`.
             let words: Vec<Value> = values
                 .iter()
@@ -806,7 +841,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                         let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));
                         let offset = f.ins().ishl_imm(n, 2);
                         let ptr = f.ins().iadd(extract_base[e], offset);
-                        flatten(&mut f, words[k], at, ptr)
+                        let (cnt, more) = flatten(&mut f, words[k], at, ptr);
+                        heads.push((more, Step::Bits));
+                        cnt
                     }
                     None => f.ins().popcnt(words[k]),
                 };
@@ -851,7 +888,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.ins().return_(&[]);
         f.seal_all_blocks();
         f.finalize();
+        shape = super::native_cpu_shape::check(&context.func, &heads);
     }
+    shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     let clif = context.func.display().to_string();
     super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
     let disassembly = context

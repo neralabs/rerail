@@ -853,6 +853,41 @@ fn corpus_trees_equal_the_evaluator() {
     assert!(parsed > 10 * compiled && fell > 10 * compiled, "{parsed} parsed, {fell} to tree-sitter, {compiled} files");
 }
 
+/// Every tree file of the corpus on the compiled path: tier 1 and tier 2 both Cranelift, tier 2
+/// reading tier 1's run as the function wrote it. Each run equals the interpreters': the same
+/// stream, the same nodes, and a refusal at the same word.
+#[test]
+fn corpus_trees_compiled_equal_the_interpreters() {
+    let params = tree_params();
+    let files: Vec<(String, String)> = on_disk().into_iter().filter(|(n, _)| n.contains("-tree-")).collect();
+    let (mut docs, mut differ) = (0usize, Vec::new());
+    for (k, ((name, source), p)) in files.iter().zip(&params).enumerate() {
+        let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
+        let ids = Ids::default();
+        let kind = |n: &str| Some(ids.of(n));
+        let field = |n: &str| Some(ids.of(&format!("field {n}")));
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+        let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let program = rir::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}"));
+        let native = native_ir::lower(&program).expect("lowers");
+        let tier1 = native_cpu_block::compile(&native.block_programs[0]).unwrap_or_else(|e| panic!("{name}: tier 1: {e:?}"));
+        let tier2 = native_cpu_stream::compile(&native).unwrap_or_else(|e| panic!("{name}: tier 2: {e:?}"));
+        for bytes in tree_inputs(p, k as u64) {
+            let want1 = program.block_programs()[0].run_files(&[&bytes]).remove(0);
+            let got1 = tier1.extract(&bytes);
+            let want = stream::run(&program, &bytes, &want1).map_err(|r| r.pc);
+            let got = tier2.run(&bytes, &got1).map_err(|r| r.pc);
+            if got1 != want1 || got != want {
+                differ.push(format!("{name}: {:?}: tier 1 same {}, tier 2 {got:?}, the interpreter {want:?}", String::from_utf8_lossy(&bytes), got1 == want1));
+                break;
+            }
+            docs += 1;
+        }
+    }
+    eprintln!("{} tree files, {docs} documents, compiled and interpreted", files.len());
+    assert!(differ.is_empty(), "{} tree files differ:\n{}", differ.len(), differ.join("\n"));
+}
+
 /// For a difference found above: one Bitlex source (`RERAIL_BITLEX`, a path) on one input
 /// (`RERAIL_INPUT`, a path), each mask on the interpreter and generated MSL at every width.
 #[test]

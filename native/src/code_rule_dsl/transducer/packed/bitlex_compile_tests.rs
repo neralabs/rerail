@@ -984,8 +984,7 @@ fn json_tier2_is_transducer_words() {
 /// tree-sitter where it does: the test cases, nesting, every token kind, long numbers.
 #[test]
 fn json_tier2_nodes_equal_the_reference() {
-    let (p, compiled) = json_compiled();
-    let fallbacks = compiled.fallbacks;
+    let (p, _) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let files = json_tier2_files();
     let mut parsed = 0;
@@ -996,4 +995,23 @@ fn json_tier2_nodes_equal_the_reference() {
         parsed += usize::from(want.is_some());
     }
     assert!(parsed > files.len() / 2, "{parsed} of {} parsed", files.len());
+}
+
+/// JSON on the compiled path: tier 1 and tier 2 both Cranelift (the number check inlined in
+/// tier 2), each run equal to the interpreters'.
+#[test]
+fn json_compiled_path_equals_the_interpreters() {
+    let (p, _) = json_compiled();
+    let native = native_ir::lower(&p).expect("lowers");
+    let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
+    let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
+    let files = json_tier2_files();
+    for f in &files {
+        let want1 = p.block_programs()[0].run_files(&[f]).remove(0);
+        let got1 = tier1.extract(f);
+        assert_eq!(got1, want1, "tier 1: {}", String::from_utf8_lossy(f));
+        let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
+        let got = tier2.run(f, &got1).map_err(|r| r.pc);
+        assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));
+    }
 }
