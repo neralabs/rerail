@@ -324,7 +324,7 @@ fn check_lowering(name: &str, p: &Program) {
 /// unfinished, and the full group's body.
 const CONTROL: [&str; 5] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (simd_any(", "if (g > 0u && (g + 1u) * "];
 
-/// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
+/// The generated MSL's lane code: every function (the carry helpers, `load16`,
 /// and each `program_P`). The look-backs and exchanges, which loop over predecessor groups, and
 /// the workers' kernel, which loops over groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
