@@ -29,9 +29,197 @@ GFUHint(@place("", 0), "\nMechanical cleanup:\n  uv run python scripts/fix_gramm
 
 
 def detector():
+    return structure()+aliases()+annotations()+captures()+returns()
+
+
+def structure():
     return r'''
 .decl gfu_result(d: number, line: number, cls: symbol, detail: symbol, origin: node, tag: symbol)
-gfu_result(d, 0, "", "", n, "") :- gfu_file(d), kind(n, "module"), docof(n, d), option("unimplemented-empty-detector", "true").
+.decl gfu_ancestor(n: node, a: node)
+gfu_ancestor(n, a) :- ast_parent(n, a).
+gfu_ancestor(n, a) :- ast_parent(n, p), gfu_ancestor(p, a).
+.decl gfu_class(c: node, d: number, name: symbol, t: number)
+gfu_class(c, d, @nfkc(name), t) :- gfu_file(d), kind(c, "class_definition"), docof(c, d), def_name(c, name), visit_index(c, t).
+.decl gfu_forbidden(name: symbol)
+gfu_forbidden("SqlDeferredRenderable"). gfu_forbidden("SqlPreRenderedFragment").
+.decl gfu_method(c: node, f: node, name: symbol, i: number)
+gfu_method(c, f, @nfkc(name), i) :- gfu_class(c, _, _, _), field(c, "body", body), body_stmt(body, stmt, i), defstmt(f, stmt), kind(f, "function_definition"), def_name(f, name).
+.decl gfu_first(c: node, name: symbol, f: node)
+gfu_first(c, "render", f) :- gfu_method(c, f, "render", i), i = min j : { gfu_method(c, _, "render", j) }.
+gfu_first(c, "__init__", f) :- gfu_method(c, f, "__init__", i), !is_async(f), i = min j : { gfu_method(c, other, "__init__", j), !is_async(other) }.
+.decl gfu_name(n: node, name: symbol)
+gfu_name(n, @nfkc(name)) :- kind(n, "identifier"), text(n, name).
+gfu_name(n, @nfkc(name)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, name).
+gfu_name(n, name) :- kind(n, "type"), child(n, raw, 0), unparen(raw, c), gfu_name(c, name).
+.decl gfu_class_owner(n: node, c: node)
+gfu_class_owner(n, c) :- gfu_ancestor(n, c), gfu_class(c, _, _, t), t = max i : { gfu_ancestor(n, other), gfu_class(other, _, _, i) }.
+.decl gfu_module_assignment(a: node, d: number, t: number)
+gfu_module_assignment(a, d, t) :- gfu_file(d), asgstmt(a, _), docof(a, d), visit_index(a, t), !gfu_class_owner(a, _).
+.decl gfu_base(c: node, name: symbol)
+gfu_base(c, name) :- gfu_class(c, _, _, _), field(c, "superclasses", args), child(args, raw, _), unparen(raw, b), gfu_name(b, name).
+.decl gfu_annotation_use(n: node, a: node, t: number)
+gfu_annotation_use(f, a, t) :- kind(f, "function_definition"), !is_async(f), def_name(f, name), @nfkc(name) = "__init__", gfu_class_owner(f, _), sig_param(f, _, nm, _, _, a, _), !unset(a), text(nm, pname), @nfkc(pname) != "self", visit_index(f, t).
+gfu_annotation_use(n, a, t) :- assign_ann(n, a), gfu_class_owner(n, _), visit_index(n, t), !gfu_in_function(n).
+// Class attribute checks reject every enclosing def, including a def outside the class.
+.decl gfu_in_function(n: node)
+gfu_in_function(n) :- gfu_ancestor(n, f), kind(f, "function_definition").
+'''
+
+
+def aliases():
+    return r'''
+// Imports reset a local alias. Assignments write only an already qualifying grammar value.
+// Grammar eligibility is monotone between those syntax-defined import barriers.
+.decl gfu_import(d: number, name: symbol, canonical: symbol, t: number)
+gfu_import(d, @nfkc(local), @nfkc(canonical), t) :- gfu_file(d), from_module_raw(stmt, _), docof(stmt, d), field(stmt, "name", part), kind(part, "aliased_import"), field(part, "name", nm), text(nm, canonical), field(part, "alias", alias), text(alias, local), visit_index(part, t).
+gfu_import(d, @nfkc(name), @nfkc(name), t) :- gfu_file(d), from_module_raw(stmt, _), docof(stmt, d), field(stmt, "name", part), kind(part, "dotted_name"), text(part, name), visit_index(part, t).
+.decl gfu_alias_candidate(a: node, d: number, target: symbol, src: symbol, t: number)
+gfu_alias_candidate(a, d, @nfkc(target), @nfkc(src), t) :- gfu_module_assignment(a, d, t), !assign_ann(a, _), assign_value(a, raw), unparen(raw, value), kind(value, "identifier"), text(value, src), assign_target(a, traw), unparen(traw, n), kind(n, "identifier"), text(n, target).
+.decl gfu_need(d: number, name: symbol, t: number)
+gfu_need(d, name, t) :- gfu_class(c, d, _, t), gfu_base(c, name).
+gfu_need(d, name, t) :- gfu_alias_candidate(_, d, _, name, t).
+.decl gfu_import_at(d: number, name: symbol, t: number, imported: number)
+gfu_import_at(d, name, t, last) :- gfu_need(d, name, t), last = max i : { gfu_import(d, name, _, i), i < t }.
+.decl gfu_raw_grammar(d: number, name: symbol, t: number)
+gfu_raw_grammar(d, name, t) :- gfu_need(d, name, t), (prefix("Sql", name) ; prefix("_Sql", name)).
+gfu_raw_grammar(d, name, t) :- gfu_import_at(d, _, t, i), gfu_import(d, _, name, i), (prefix("Sql", name) ; prefix("_Sql", name)).
+gfu_raw_grammar(d, name, t) :- gfu_need(d, name, t), gfu_grammar(c), gfu_class(c, d, name, before), before < t.
+gfu_raw_grammar(d, name, t) :- gfu_import_at(d, _, t, i), gfu_import(d, _, name, i), gfu_grammar(c), gfu_class(c, d, name, before), before < t.
+.decl gfu_eligible(d: number, name: symbol, t: number)
+gfu_eligible(d, name, t) :- gfu_need(d, name, t), !gfu_import_at(d, name, t, _), gfu_raw_grammar(d, name, t).
+gfu_eligible(d, name, t) :- gfu_import_at(d, name, t, i), gfu_import(d, name, canonical, i), gfu_raw_grammar(d, canonical, t).
+gfu_eligible(d, name, t) :- gfu_need(d, name, t), !gfu_import_at(d, name, t, _), gfu_qualified(_, d, name, _, before), before < t.
+gfu_eligible(d, name, t) :- gfu_import_at(d, name, t, reset), gfu_qualified(_, d, name, _, before), reset < before, before < t.
+.decl gfu_qualified(a: node, d: number, target: symbol, src: symbol, t: number)
+gfu_qualified(a, d, target, src, t) :- gfu_alias_candidate(a, d, target, src, t), gfu_eligible(d, src, t).
+.decl gfu_grammar(c: node)
+gfu_grammar(c) :- gfu_class(c, _, name, _), (prefix("Sql", name) ; prefix("_Sql", name)).
+gfu_grammar(c) :- gfu_method(c, _, "render", _).
+gfu_grammar(c) :- gfu_class(c, d, _, t), gfu_base(c, name), gfu_eligible(d, name, t).
+// All actual alias write events are now fixed. Fragment identity copies along their
+// strictly earlier edges; no recursive aggregate or alternate execution model is needed.
+.decl gfu_write(d: number, name: symbol, t: number)
+gfu_write(d, name, t) :- gfu_import(d, name, _, t).
+gfu_write(d, name, t) :- gfu_qualified(_, d, name, _, t).
+.decl gfu_fragment_query(d: number, name: symbol, t: number)
+gfu_fragment_query(d, name, t) :- gfu_annotation_use(n, _, t), docof(n, d), gfu_write(d, name, _).
+gfu_fragment_query(d, src, t) :- gfu_qualified(_, d, _, src, t).
+.decl gfu_write_at(d: number, name: symbol, t: number, before: number)
+gfu_write_at(d, name, t, before) :- gfu_fragment_query(d, name, t), before = max i : { gfu_write(d, name, i), i < t }.
+.decl gfu_fragment_write(d: number, name: symbol, t: number)
+gfu_fragment_write(d, name, t) :- gfu_import(d, name, "SqlFragment", t).
+gfu_fragment_write(d, name, t) :- gfu_qualified(_, d, name, "SqlFragment", t), !gfu_write_at(d, "SqlFragment", t, _).
+gfu_fragment_write(d, name, t) :- gfu_qualified(_, d, name, src, t), gfu_write_at(d, src, t, before), gfu_fragment_write(d, src, before).
+.decl gfu_fragment_at(n: node, name: symbol)
+gfu_fragment_at(n, "SqlFragment") :- gfu_annotation_use(n, _, _).
+gfu_fragment_at(n, name) :- gfu_annotation_use(n, _, t), docof(n, d), gfu_write_at(d, name, t, before), gfu_fragment_write(d, name, before).
+'''
+
+
+def annotations():
+    return r'''
+.decl gfu_ann_edge(n: node, c: node)
+gfu_ann_edge(n, c) :- kind(n, k), (k = "type" ; k = "type_parameter" ; k = "generic_type" ; k = "union_type" ; k = "list" ; k = "tuple"), child(n, raw, _), !kind(raw, "comment"), unparen(raw, c).
+gfu_ann_edge(n, c) :- kind(n, "binary_operator"), (field(n, "left", raw) ; field(n, "right", raw)), unparen(raw, c).
+gfu_ann_edge(n, c) :- kind(n, "subscript"), (field(n, "value", raw) ; field(n, "subscript", raw)), unparen(raw, c).
+.decl gfu_ann_walk(root: node, n: node)
+gfu_ann_walk(a, a) :- gfu_annotation_use(_, a, _).
+gfu_ann_walk(root, c) :- gfu_ann_walk(root, n), gfu_ann_edge(n, c).
+.decl gfu_ann_fragment(event: node, a: node)
+gfu_ann_fragment(event, a) :- gfu_annotation_use(event, a, _), gfu_ann_walk(a, n), kind(n, "identifier"), text(n, raw), gfu_fragment_at(event, @nfkc(raw)).
+gfu_ann_fragment(event, a) :- gfu_annotation_use(event, a, _), gfu_ann_walk(a, n), kind(n, "attribute"), field(n, "attribute", attr), text(attr, name), @nfkc(name) = "SqlFragment".
+gfu_ann_fragment(event, a) :- gfu_annotation_use(event, a, _), gfu_ann_walk(a, n), str_const(n, value), gfu_fragment_at(event, name), contains(name, value), match_all("", value, _, start, _), end = start + strlen(name), @slice(value, start, end) = name, before = @slice(value, max(0, start - 1), start), after = @slice(value, end, end + 1), !match_all("[A-Za-z0-9_]", before), !match_all("[A-Za-z0-9_]", after).
+.decl gfu_active_class(c: node)
+gfu_active_class(c) :- gfu_grammar(c), gfu_class(c, _, name, _), !gfu_forbidden(name), name != "SqlFragment".
+gfu_result(d, l, name, "Forbidden rendered-SQL wrapper class", c, "") :- gfu_class(c, d, name, _), gfu_forbidden(name), line(c, l).
+gfu_result(d, l, cls, cat("__init__ takes SqlFragment parameter '", @nfkc(name), "'"), nm, "parameter") :- gfu_class(c, d, cls, _), gfu_active_class(c), gfu_class_owner(f, c), kind(f, "function_definition"), !is_async(f), def_name(f, fname), @nfkc(fname) = "__init__", sig_param(f, _, nm, _, _, a, _), !unset(a), text(nm, name), @nfkc(name) != "self", gfu_ann_fragment(f, a), line(f, l).
+gfu_result(d, l, cls, "Class attribute has SqlFragment type annotation", n, "attribute") :- gfu_class(c, d, cls, _), gfu_active_class(c), gfu_class_owner(n, c), assign_ann(n, a), !gfu_in_function(n), gfu_ann_fragment(n, a), line(n, l).
+'''
+
+
+def captures():
+    return r'''
+.decl gfu_capture_class(c: node)
+gfu_capture_class(c) :- gfu_first(c, "render", _), gfu_class(c, _, name, _), !gfu_forbidden(name).
+.decl gfu_module(d: number, m: node)
+gfu_module(d, m) :- gfu_file(d), kind(m, "module"), docof(m, d).
+.decl gfu_init_assignment(c: node, a: node, depth: number, t: number)
+gfu_init_assignment(c, a, depth, t) :- gfu_capture_class(c), gfu_first(c, "__init__", f), asgstmt(a, _), gfu_ancestor(a, f), ast_depth(a, depth), visit_index(a, t).
+.decl gfu_class_assignment(c: node, a: node)
+gfu_class_assignment(c, a) :- gfu_capture_class(c), field(c, "body", body), body_stmt(body, stmt, _), asgstmt(a, stmt).
+.decl gfu_eval(ctx: node, event: node, depth: number, t: number, expr: node)
+gfu_eval(m, a, 0, t, value) :- gfu_module_assignment(a, d, t), gfu_module(d, m), assign_value(a, raw), unparen(raw, value).
+gfu_eval(m, a, 0, t, value) :- gfu_class_assignment(c, a), gfu_class(c, d, _, t), gfu_module(d, m), assign_value(a, raw), unparen(raw, value).
+gfu_eval(c, a, depth, t, value) :- gfu_init_assignment(c, a, depth, t), assign_value(a, raw), unparen(raw, value).
+.decl gfu_build_edge(n: node, c: node)
+gfu_build_edge(n, c) :- kind(n, k), (k = "tuple" ; k = "list" ; k = "set" ; k = "expression_list"), child(n, raw, _), !kind(raw, "comment"), unparen(raw, c).
+gfu_build_edge(n, c) :- kind(n, "dictionary"), child(n, pair, _), kind(pair, "pair"), field(pair, "value", raw), unparen(raw, c).
+gfu_build_edge(n, c) :- kind(n, "dictionary"), child(n, splat, _), kind(splat, "dictionary_splat"), child(splat, raw, 0), unparen(raw, c).
+gfu_build_edge(n, c) :- kind(n, "binary_operator"), op(n, "+"), (field(n, "left", raw) ; field(n, "right", raw)), unparen(raw, c).
+gfu_build_edge(n, c) :- kind(n, "conditional_expression"), child(n, raw, i), (i = 0 ; i = 2), unparen(raw, c).
+gfu_build_edge(n, c) :- kind(n, "call"), field(n, "function", raw), unparen(raw, fn), kind(fn, "attribute"), field(fn, "attribute", attr), text(attr, name), (name = "casefold" ; name = "format" ; name = "format_map" ; name = "join" ; name = "lower" ; name = "lstrip" ; name = "removeprefix" ; name = "removesuffix" ; name = "replace" ; name = "rstrip" ; name = "strip" ; name = "translate" ; name = "upper"), field(fn, "object", receiver), unparen(receiver, c).
+.decl gfu_build_walk(ctx: node, event: node, n: node)
+gfu_build_walk(ctx, event, expr) :- gfu_eval(ctx, event, _, _, expr).
+gfu_build_walk(ctx, event, c) :- gfu_build_walk(ctx, event, n), gfu_build_edge(n, c).
+.decl gfu_string_name(ctx: node, event: node, name: symbol)
+gfu_string_name(m, event, name) :- gfu_module(d, m), gfu_eval(m, event, _, t, _), gfu_module_string(d, name, before), before < t.
+gfu_string_name(c, event, name) :- gfu_class(c, d, _, entry), gfu_eval(c, event, _, _, _), gfu_module_string(d, name, before), before < entry.
+gfu_string_name(c, event, name) :- gfu_eval(c, event, depth, t, _), gfu_init_string(c, name, before_depth, before), (before_depth < depth ; before_depth = depth, before < t).
+.decl gfu_build(ctx: node, event: node, n: node)
+gfu_build(ctx, event, n) :- gfu_build_walk(ctx, event, n), str_const(n, _).
+gfu_build(ctx, event, n) :- gfu_build_walk(ctx, event, n), fstring(n).
+gfu_build(ctx, event, n) :- gfu_build_walk(ctx, event, n), kind(n, "call"), field(n, "function", raw), unparen(raw, fn), kind(fn, "identifier"), text(fn, name), @nfkc(name) = "str".
+gfu_build(ctx, event, n) :- gfu_build_walk(ctx, event, n), kind(n, "identifier"), text(n, name), gfu_string_name(ctx, event, @nfkc(name)).
+gfu_build(ctx, event, n) :- gfu_build_walk(ctx, event, n), gfu_build_edge(n, c), gfu_build(ctx, event, c).
+.decl gfu_module_string(d: number, name: symbol, t: number)
+gfu_module_string(d, @nfkc(name), t) :- gfu_module_assignment(a, d, t), gfu_module(d, m), gfu_eval(m, a, _, _, value), gfu_build(m, a, value), assign_target(a, raw), unparen(raw, target), kind(target, "identifier"), text(target, name).
+.decl gfu_init_string(c: node, name: symbol, depth: number, t: number)
+gfu_init_string(c, @nfkc(name), depth, t) :- gfu_init_assignment(c, a, depth, t), gfu_eval(c, a, depth, t, value), gfu_build(c, a, value), assign_target(a, raw), unparen(raw, target), kind(target, "identifier"), text(target, name).
+.decl gfu_field(n: node, receiver: symbol, name: symbol)
+gfu_field(n, @nfkc(receiver), @nfkc(name)) :- kind(n, "attribute"), field(n, "object", raw), unparen(raw, obj), kind(obj, "identifier"), text(obj, receiver), field(n, "attribute", attr), text(attr, name).
+.decl gfu_captured(c: node, field: symbol)
+gfu_captured(c, @nfkc(name)) :- gfu_class_assignment(c, a), gfu_class(c, d, _, _), gfu_module(d, m), gfu_eval(m, a, _, _, value), gfu_build(m, a, value), assign_target(a, raw), unparen(raw, target), kind(target, "identifier"), text(target, name).
+gfu_captured(c, @nfkc(name)) :- gfu_class_assignment(c, a), assign_ann(a, annotation), gfu_name(annotation, "str"), assign_target(a, raw), unparen(raw, target), kind(target, "identifier"), text(target, name).
+gfu_captured(c, name) :- gfu_init_assignment(c, a, _, _), gfu_eval(c, a, _, _, value), gfu_build(c, a, value), assign_target(a, raw), unparen(raw, target), gfu_field(target, "self", name).
+.decl gfu_sequence(n: node)
+gfu_sequence(n) :- kind(n, k), (k = "tuple" ; k = "list" ; k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern" ; k = "expression_list").
+.decl gfu_element(n: node, c: node, i: number)
+gfu_element(n, c, i) :- gfu_sequence(n), child(n, raw, ordinal), !kind(raw, "comment"), unparen(raw, c), i = count : { child(n, other, before), !kind(other, "comment"), before < ordinal }.
+gfu_captured(c, name) :- gfu_init_assignment(c, a, _, _), count : { assign_target(a, _) } = 1, assign_target(a, traw), unparen(traw, target), gfu_sequence(target), assign_value(a, vraw), unparen(vraw, value), gfu_sequence(value), gfu_element(target, item, i), gfu_field(item, "self", name), gfu_element(value, expr, i), gfu_build(c, a, expr).
+.decl gfu_parameter(c: node, name: symbol, annotation: loc, i: number)
+gfu_parameter(c, @nfkc(name), a, i) :- gfu_capture_class(c), gfu_first(c, "__init__", f), sig_param(f, _, nm, i, _, a, _), text(nm, name), @nfkc(name) != "self".
+.decl gfu_parameter_last(c: node, name: symbol, annotation: loc)
+gfu_parameter_last(c, name, a) :- gfu_parameter(c, name, a, i), i = max j : { gfu_parameter(c, name, _, j) }.
+.decl gfu_unsafe(c: node, field: symbol)
+gfu_unsafe(c, field) :- gfu_init_assignment(c, a, _, _), assign_value(a, raw), unparen(raw, value), kind(value, "identifier"), text(value, name), gfu_parameter_last(c, @nfkc(name), annotation), (unset(annotation) ; gfu_name(annotation, "str") ; gfu_name(annotation, "Any")), assign_target(a, traw), unparen(traw, target), gfu_field(target, "self", field).
+'''
+
+
+def returns():
+    return r'''
+.decl gfu_last_method(c: node, name: symbol, f: node)
+gfu_last_method(c, name, f) :- gfu_method(c, f, name, i), name != "render", i = max j : { gfu_method(c, _, name, j) }.
+gfu_last_method(c, "render", f) :- gfu_first(c, "render", f).
+.decl gfu_reach(c: node, f: node)
+gfu_reach(c, f) :- gfu_capture_class(c), gfu_first(c, "render", f).
+gfu_reach(c, other) :- gfu_reach(c, f), kind(call, "call"), gfu_ancestor(call, f), field(call, "function", raw), unparen(raw, fn), gfu_field(fn, receiver, name), (receiver = "self" ; receiver = "cls"), gfu_last_method(c, name, other).
+.decl gfu_return(c: node, method: node, ret: node, expr: node)
+gfu_return(c, method, ret, expr) :- gfu_reach(c, method), kind(ret, "return_statement"), gfu_ancestor(ret, method), child(ret, raw, 0), unparen(raw, expr).
+.decl gfu_return_edge(n: node, c: node)
+gfu_return_edge(n, c) :- kind(n, "binary_operator"), op(n, "+"), (field(n, "left", raw) ; field(n, "right", raw)), unparen(raw, c).
+gfu_return_edge(n, c) :- kind(n, "conditional_expression"), child(n, raw, i), (i = 0 ; i = 2), unparen(raw, c).
+gfu_return_edge(n, c) :- kind(n, "subscript"), field(n, "value", raw), unparen(raw, c).
+.decl gfu_fragment_wrapper(call: node)
+gfu_fragment_wrapper(call) :- kind(call, "call"), field(call, "function", raw), unparen(raw, fn), kind(fn, "identifier"), text(fn, name), @nfkc(name) = "SqlFragment".
+gfu_fragment_wrapper(call) :- kind(call, "call"), field(call, "function", raw), unparen(raw, fn), gfu_field(fn, "SqlFragment", name), (name = "static" ; name = "with_params").
+gfu_return_edge(n, c) :- gfu_fragment_wrapper(n), field(n, "arguments", args), child(args, raw, i), !kind(raw, "comment"), !kind(raw, "keyword_argument"), !kind(raw, "dictionary_splat"), i = min j : { child(args, other, j), !kind(other, "comment"), !kind(other, "keyword_argument"), !kind(other, "dictionary_splat") }, unparen(raw, c).
+.decl gfu_return_walk(c: node, root: node, n: node)
+gfu_return_walk(c, expr, expr) :- gfu_return(c, _, _, expr).
+gfu_return_walk(c, root, n) :- gfu_return_walk(c, root, p), gfu_return_edge(p, n).
+.decl gfu_return_captured(c: node, expr: node)
+gfu_return_captured(c, root) :- gfu_return_walk(c, root, n), gfu_class(c, _, cls, _), gfu_field(n, receiver, name), (receiver = "self" ; receiver = cls), gfu_captured(c, name).
+gfu_result(d, l, cls, "render() returns SQL built from a captured SQL string", ret, tag) :- gfu_class(c, d, cls, _), gfu_return(c, method, ret, expr), gfu_return_captured(c, expr), line(ret, l), visit_index(method, rank), tag = cat("method:", to_string(rank)).
+gfu_result(d, l, cls, "render() directly returns an unsafe constructor value as rendered SQL", ret, tag) :- gfu_class(c, d, cls, _), gfu_return(c, method, ret, expr), !gfu_return_captured(c, expr), gfu_field(expr, "self", field), gfu_unsafe(c, field), line(ret, l), visit_index(method, rank), tag = cat("method:", to_string(rank)).
 '''
 
 
@@ -40,14 +228,14 @@ def outputs():
 .violation GFUFact(at: span, class_name: symbol, detail: symbol, origin: node, tag: symbol) code "GFU_FACT" "{detail}"
 GFUFact(@place(path, l), cls, detail, n, tag) :- option("entryPoint", "files"), gfu_result(d, l, cls, detail, n, tag), gfu_path(d, path).
 .severity GFUFinding hard-fail
-.violation GFUFinding(at: span, class_name: symbol, detail: symbol, origin: node, tag: symbol) code "sqlfragment_usage" "{class_name}: {detail}"
-GFUFinding(@place(path, l), cls, detail, n, tag) :- !option("entryPoint", _), gfu_result(d, l, cls, detail, n, tag), gfu_path(d, path).
+.violation GFUFinding(at: span, class_name: symbol, detail: symbol, origin: node, tag: symbol, report_severity: symbol) code "sqlfragment_usage" "{class_name}: {detail}"
+GFUFinding(@place(path, l), cls, detail, n, tag, "hard-fail") :- !option("entryPoint", _), gfu_result(d, l, cls, detail, n, tag), gfu_path(d, path).
 .decl gfu_parse(d: number, detail: symbol)
 gfu_parse(d, cat("Cannot inspect Python syntax: SyntaxError: ", message, " (", name, ", line ", to_string(l), ")")) :- gfu_selected(d), syntax_error(d, l, message), file_name(d, logical_name), !option_item("documentPaths", _, _), name = logical_name.
 gfu_parse(d, cat("Cannot inspect Python syntax: SyntaxError: ", message, " (", name, ", line ", to_string(l), ")")) :- gfu_selected(d), syntax_error(d, l, message), doc(d, logical, _), option_item("documentPaths", i, logical), option_item("originalNames", i, name).
 .violation GFUParseFact(at: span, class_name: symbol, detail: symbol) code "GFU_FACT" "{detail}"
 GFUParseFact(@place(path, 1), "<parse>", detail) :- option("entryPoint", "files"), gfu_parse(d, detail), gfu_path(d, path).
 .severity GFUParse hard-fail
-.violation GFUParse(at: span) code "python_parse_error" "<parse>: {detail}"
-GFUParse(@place(path, 1)) :- !option("entryPoint", _), gfu_parse(d, detail), gfu_path(d, path).
-'''.replace('GFUParse(at: span) code','GFUParse(at: span, detail: symbol) code').replace('GFUParse(@place(path, 1))','GFUParse(@place(path, 1), detail)')
+.violation GFUParse(at: span, detail: symbol, report_severity: symbol) code "python_parse_error" "<parse>: {detail}"
+GFUParse(@place(path, 1), detail, "hard-fail") :- !option("entryPoint", _), gfu_parse(d, detail), gfu_path(d, path).
+'''

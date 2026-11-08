@@ -1,0 +1,2596 @@
+{
+  "cases": [
+    {
+      "id": "build-literal",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-bytes",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = b'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-formatted",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = f'SELECT {value}'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-tuple",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = (42, 'SQL')\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-set",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = {'SQL'}\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-list",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = [0, 'SQL']\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-dict-value",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = {42: 'SQL'}\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-dict-key-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = {'SQL': 42}\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-dict-splat",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = {**'SQL'}\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-addition",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = other + 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-subtraction-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = other - 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-if-body",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL' if condition else 42\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-if-else",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 42 if condition else 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-if-condition-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 1 if 'SQL' else 2\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-str-call",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = str(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-str-attribute-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = module.str(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-str-alias-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = string(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-method-name-receiver-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = value.lower()\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-method-args-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = value.format('SQL')\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-call-container-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = list(['SQL'])\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-fstring-no-fields",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = f'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "build-unicode-literal",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = '\u00e9 \u03bb'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-casefold",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.casefold(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-format",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.format(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-format_map",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.format_map(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-join",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.join(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-lower",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.lower(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-lstrip",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.lstrip(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-removeprefix",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.removeprefix(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-removesuffix",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.removesuffix(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-replace",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.replace(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-rstrip",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.rstrip(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-strip",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.strip(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-translate",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.translate(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-upper",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.upper(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "method-unknown",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'.unknown(value)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-direct",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-class-qualified",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlCapture.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-other-receiver",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return other.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-addition",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return value + self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-conditional-body",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql if condition else value\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-conditional-else",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return value if condition else self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-conditional-test-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return value if self.sql else other\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-subscript",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql[0]\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-subscript-index-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return other[self.sql]\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-constructor",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment(self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-static",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment.static(self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-params",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment.with_params(self.sql, values)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-bound-parameter-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment.param(self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-other-factory-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return module.SqlFragment(self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-keyword-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment(value=self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-second-argument-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment(42, self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-starred-first-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return SqlFragment(*self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-list-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return [self.sql]\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-tuple-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return (self.sql,)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-subtract-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql - other\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "return-unknown-call-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return wrapper(self.sql)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-0",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: SqlFragment):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-1",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: pkg.SqlFragment):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-2",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: list[SqlFragment]):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-3",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: tuple[int, SqlFragment]):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-4",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: Callable[[SqlFragment], int]):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-5",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: SqlFragment | None):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-6",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: SqlFragment + int):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-7",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"SqlFragment\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-8",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"list[SqlFragment]\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-9",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"NotSqlFragment\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-10",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"SqlFragment_\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-11",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"9SqlFragment\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-12",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"\u00e9SqlFragment\u03bb\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-13",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: factory(SqlFragment)):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-14",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: [SqlFragment]):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-15",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: {SqlFragment}):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-16",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: {\"a\": SqlFragment}):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-17",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: Any):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-18",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: str):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-19",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: typing.Any):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-20",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: typing.str):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-21",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: \"str\"):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-22",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: str[int]):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "annotation-23",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: str()):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-posonly",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: SqlFragment, /):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-vararg",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, *value: SqlFragment):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-kwonly",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, *, value: SqlFragment):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-kwarg",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, **value: SqlFragment):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-self-skipped",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self: SqlFragment, value: int):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-untyped",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-unsafe-str",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: str):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "parameter-unsafe-any",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self, value: Any):\n        self.sql = value\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-local-alias",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        selected = 'SQL'\n        self.sql = selected\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-forward-local",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = selected\n        selected = 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-sticky-local",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        selected = 'SQL'\n        selected = 0\n        self.sql = selected\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-sticky-field",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SQL'\n        self.sql = 0\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-bfs-alias-acquired-later",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        if condition:\n            selected = 'SQL'\n        self.sql = selected\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-bfs-alias-before-deep",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        if condition:\n            self.sql = selected\n        selected = 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-nested-function-leaks",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        def nested():\n            selected = 'SQL'\n            self.sql = selected\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-destructure",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql, other = ('SQL', 1)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-destructure-short",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql, other = ('SQL',)\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-destructure-second",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        other, self.sql = (1, 'SQL')\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-destructure-not-string",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql, other = (1, 'SQL')\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-annotated-field",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql: int = 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-annotation-only",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql: str\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "init-chained-fields",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = self.other = 'SQL'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-literal",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-alias",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW0 = 'SQL'\nRAW = RAW0\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-sticky",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nRAW = 0\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-function-leak",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def outside():\n    RAW = 'SQL'\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-annotated",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW: int = 'SQL'\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-annotation-only",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW: str\nclass SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-later-write",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = RAW\n    def render(self):\n        return self.sql\nRAW = 'SQL'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "module-name-shadowed-param",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    def __init__(self, RAW: int):\n        self.sql = RAW\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-value",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql = 'SQL'\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-str-annotation",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql: str\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-attribute-str",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql: builtins.str\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-quoted-str",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql: 'str'\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-container-str",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql: list[str]\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-alias-does-not-propagate",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    first = 'SQL'\n    sql = first\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "class-module-alias",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "RAW = 'SQL'\nclass SqlCapture:\n    sql = RAW\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-import",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import SqlFragment as Fragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-assignment",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Fragment = SqlFragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-chain",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "First = SqlFragment\nFragment = First\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-sticky-assignment",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Fragment = SqlFragment\nFragment = int\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-reset-import",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Fragment = SqlFragment\nfrom p import Other as Fragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-reset-then-write",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Fragment = SqlFragment\nfrom p import Other as Fragment\nFragment = SqlFragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-different-grammar",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Fragment = SqlBase\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-canonical-rebound",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import Other as SqlFragment\nFragment = SqlFragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-import-duplicate-last",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import SqlFragment as Fragment, Other as Fragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-import-duplicate-first",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import Other as Fragment, SqlFragment as Fragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-nested-import-leaks",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Ordinary:\n    from p import SqlFragment as Fragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-function-assignment-leaks",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def outside():\n    Fragment = SqlFragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "fragment-alias-class-assignment-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Ordinary:\n    Fragment = SqlFragment\nclass SqlCapture:\n    value: Fragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-raw-prefix",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Captured(SqlBase):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-import-prefix",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "from p import SqlBase as Base\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-assignment",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Base = SqlBase\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-chain",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "First = SqlBase\nBase = First\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-reset",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Base = SqlBase\nfrom p import Other as Base\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-known-class",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Original:\n    def render(self): pass\nBase = Original\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-forward-class",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "Base = Original\nclass Original:\n    def render(self): pass\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-attribute",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Captured(pkg.SqlBase):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "grammar-base-subscript-ignored",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Captured(SqlBase[int]):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "known-class-sticky",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Base:\n    def render(self): pass\nclass Base: pass\nclass Captured(Base):\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "async-init",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    async def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "async-render",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    async def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "first-init",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    def __init__(self): self.sql = 1\n    def __init__(self): self.sql = \"SQL\"\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "first-render",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def render(self): return 1\n    def render(self): return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "duplicate-helper-last",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def helper(self): return 1\n    def helper(self): return self.sql\n    def render(self): return self.helper()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "helper-cycle",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def a(self): return self.b()\n    def b(self):\n        self.a()\n        return self.sql\n    def render(self): return self.a()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "unreachable-helper",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def helper(self): return self.sql\n    def render(self): return 1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "cls-reach",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def helper(cls): return G.sql\n    def render(self): return cls.helper()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-returns",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class G:\n    sql = \"SQL\"\n    def render(self):\n        def nested(): return self.sql\n        return 1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "duplicate-returns-one-line",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql; return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "forbidden",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlDeferredRenderable:\n    value: SqlFragment\n    def render(self): return self.value\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "sqlfragment-self-capture",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlFragment:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "no-grammar",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class Ordinary:\n    value: SqlFragment\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-class-in-function",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def outside():\n    class SqlInner:\n        value: SqlFragment\n        def __init__(self, arg: SqlFragment): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "nested-init-definition",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlX:\n    def method(self):\n        def __init__(value: SqlFragment): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "explicit-tests/case.py",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "tests/case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "tests/case.py"
+        }
+      }
+    },
+    {
+      "id": "explicit-test/case.py",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "test/case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "test/case.py"
+        }
+      }
+    },
+    {
+      "id": "explicit-tmp/case.py",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "tmp/case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "tmp/case.py"
+        }
+      }
+    },
+    {
+      "id": "explicit-.venv/case.py",
+      "check": "grammar_fragment_usage",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": ".venv/case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": ".venv/case.py"
+        }
+      }
+    },
+    {
+      "id": "directory-scope",
+      "check": "grammar_fragment_usage",
+      "entry": "check_directory",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        },
+        {
+          "path": "tests/a.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        },
+        {
+          "path": "test/b.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        },
+        {
+          "path": ".venv/c.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        },
+        {
+          "path": "tmp/d.py",
+          "source": "class SqlCapture:\n    def __init__(self):\n        self.sql = 'SELECT 1'\n    def render(self):\n        return self.sql\n"
+        }
+      ],
+      "arguments": {
+        "directory": {
+          "path": "."
+        }
+      }
+    }
+  ]
+}

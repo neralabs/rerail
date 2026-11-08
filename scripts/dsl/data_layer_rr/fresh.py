@@ -109,6 +109,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'grammar_fragment_usage' in modules:
+            from grammar_fragment_usage_port import install
+            install(backend,modules['grammar_fragment_usage'])
         if 'grammar_callable_constructors' in modules:
             from grammar_callable_constructors_port import install
             install(backend,modules['grammar_callable_constructors'])
@@ -276,7 +279,7 @@ def run(args):
                         action = lambda: owner.analyze(values['tree'])
                     def call():
                         return analyzed_state(owner, action())
-                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors'}:
+                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage'}:
                     backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:getattr(module,case['entry'])(**values)
                 elif native:
@@ -292,7 +295,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors'}:
+                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

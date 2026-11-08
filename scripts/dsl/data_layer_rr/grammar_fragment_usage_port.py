@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 
 
+def ordered(rows):return sorted(rows,key=lambda r:(r['path'],r['line'],r['parameters'].get('origin',-1),r['parameters'].get('tag','')))
+
 def install(suite,module):
     formatted={}
     def native(entry,documents=(),options=None):
@@ -24,7 +26,7 @@ def install(suite,module):
         if not documents:return []
         return native(None if root is not None else 'files',documents,dict(documentPaths=[d['path'] for d in documents],originalPaths=original,originalNames=[Path(p).name for p in original]))
     def scan(paths):
-        rows=files(paths)
+        rows=ordered(files(paths))
         return sorted([module.Violation(Path(r['path']),r['line'],r['parameters']['class_name'],r['parameters']['detail']) for r in rows if r['code']=='GFU_FACT'],key=lambda v:(str(v.file),v.line))
     def check_file(file_path):
         if not file_path.is_file():raise FileNotFoundError(f'Python input file does not exist: {file_path}')
@@ -51,7 +53,7 @@ def install(suite,module):
         for value in values:
             if id(value) not in plugins:raise NotImplementedError('This migration adapter only executes its native policy')
             _,root=plugins[id(value)];rows=files(sorted(root.rglob('*.py')),root)
-            violations=tuple(module.StructuredViolation(linter_name=value.name,code=r['code'],path=Path(r['path']),line=r['line'],message=r['message'],severity=r['severity']) for r in sorted(rows,key=lambda r:(r['path'],r['line'])) if r['code'] in {'sqlfragment_usage','python_parse_error'})
+            violations=tuple(module.StructuredViolation(linter_name=value.name,code=r['code'],path=Path(r['path']),line=r['line'],message=r['message'],severity=r['parameters']['report_severity']) for r in ordered(rows) if r['code'] in {'sqlfragment_usage','python_parse_error'})
             result.append(StructuredLinterResult(name=value.name,enforcement=value.enforcement,violations=violations,duration_ms=0))
         return result
     suite.replace(module.FactEngine,'run_plugins',run_plugins)
