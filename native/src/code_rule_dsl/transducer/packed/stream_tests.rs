@@ -37,12 +37,16 @@ fn a_tier2_program_writes_its_nodes() {
     let nodes = run(&p, b"aa a ", &tier1(&[0, 1, 3], &[])).expect("parses");
     let spans: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
     assert_eq!(spans, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 1, 2, 1), (2, 3, 4, 1)]);
-    // A byte no state takes, a token past the file, an unread last byte, an empty stream:
-    // refused.
+    // A byte no state takes, a token past the file, an empty stream: refused.
     assert!(run(&p, b"ab", &tier1(&[0, 1], &[])).is_err());
     assert!(run(&p, b"a", &tier1(&[0, 1], &[])).is_err());
-    assert!(run(&p, b"aa", &tier1(&[0, 1], &[1])).is_err());
     assert!(run(&p, b"", &tier1(&[], &[])).is_err());
+    // The last bytes are the stream a `SPAN m=1` names; this program names none, so it reads
+    // none. One that does takes a last byte per token, and refuses one left unread.
+    let lasts = rir::assemble(&RUN.replace("  0003 SPAN 1\n", "  0003 SPAN m=1 1\n")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1])).is_ok());
+    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1, 1])).is_err());
+    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0])).is_err());
 }
 
 /// The verifier refuses a loop that does not pass a `TOKEN`: here the second switch jumps to
