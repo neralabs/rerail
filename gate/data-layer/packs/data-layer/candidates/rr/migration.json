@@ -1600,7 +1600,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
+      "sha256": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1620,12 +1620,17 @@
           "before": "7233c353d5202c2dd94ce23400a84a3d1132b2a75800294e5a3b449bd9b4af94",
           "after": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
           "reason": "Add mixin reachability alternatives only after proving their mutual dispatch reachability; 130 source analyses, 64 seeded source observations and 12 successful native mutation controls (historical engine 220a5d4f5, rr-survey-mixin-choices.json.gz)."
+        },
+        {
+          "before": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860",
+          "after": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b",
+          "reason": "Render exact source survey reports from typed rows, with occurrence order, error precedence, Python limits, and JSON formatting"
         }
       ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
-      "sha256": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038",
+      "sha256": "26788dbc7e15b34f65789d98758a7707a532ab9fb170bb0bbbf524ab71d0dea5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1639,8 +1644,14 @@
           "before": "06286ecd50c9a8911acab950546b26dd58d68203b0c9be7ecdbd5028ebbc3d45",
           "after": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038",
           "reason": "Feed native source facts into the existing graph consumer; preserve first insertion keys and import-reference confidence; 121 complete source analysis comparisons pass (rr-survey-source-analysis.json.gz). Randomized mixin targets remain a separately recorded gap."
+        },
+        {
+          "before": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038",
+          "after": "26788dbc7e15b34f65789d98758a7707a532ab9fb170bb0bbbf524ab71d0dea5",
+          "reason": "Render exact source survey reports from typed rows, with occurrence order, error precedence, Python limits, and JSON formatting"
         }
-      ]
+      ],
+      "importedSha256": "0c5336e1c476813922fad89160a80d7b2f4ad6c4c737b6ef8e185c48d6244038"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-assembly.rr",
@@ -1740,7 +1751,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-produced-graph.rr",
-      "sha256": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
+      "sha256": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
@@ -1751,6 +1762,11 @@
           "before": "beb9f20e76755413e06f0c96c4e702457bfb52fb6d90785a2c7ad5c2c9fcc7ba",
           "after": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
           "reason": "Keep ordered graph membership separate from loaded facade resources; recover logical paths and extract facade names independently"
+        },
+        {
+          "before": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
+          "after": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
+          "reason": "Render exact source survey reports from typed rows, with occurrence order, error precedence, Python limits, and JSON formatting"
         }
       ]
     },
@@ -1800,6 +1816,12 @@
           "reason": "Apply exact size-balanced partition order after discovery, preserving occurrence IDs and process worker settings"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-report.rr",
+      "origin": "authored",
+      "sha256": "4df7ebef4dc02660cbccfa043ab76ca128943b8158ab1f9fa3d195825c4876d7",
+      "importedSha256": "4df7ebef4dc02660cbccfa043ab76ca128943b8158ab1f9fa3d195825c4876d7"
     }
   ],
   "rules": [
@@ -2242,7 +2264,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "bc1600d65eb8c57afdc59bbe32716029597616fcd059c0ac117638f46d292860"
+      "ruleSha256": "c062ba9b64e7a0b74fba01a2bcfc16d856b17c80352d7b7de0a92ad26a66a65b"
     },
     {
       "check": "imperative_private_functions",

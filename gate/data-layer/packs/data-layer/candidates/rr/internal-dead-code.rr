@@ -8,6 +8,7 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_internal_dead_code.py
 #include "python/ast.rr"
 #include "data-layer/survey-produced-graph.rr"
+#include "data-layer/survey-report.rr"
 
 .violation IDCValue(at: span, value: symbol) code "IDC_VALUE" "{value}"
 IDCValue(@place("", 0), "") :- option("entryPoint", _), 1 = 0.
@@ -130,3 +131,23 @@ idc_result("high_confidence_other_classes", sid) :- idc_high_class(sid), !idc_in
 idc_sorted(category, sid, ordinal) :- idc_result(category, sid), sg_symbol(_, sid, _, _, _, path, line, _, _, _), sg_order(sid, file, local), ordinal = count : { idc_result(category, other), sg_symbol(_, other, _, _, _, other_path, other_line, _, _, _), sg_order(other, f, i), (@str_cmp(other_path, path) < 0 ; (other_path = path, other_line < line) ; (other_path = path, other_line = line, (f < file ; (f = file, i < local)))) }.
 IDCGroup(@place("", 0), category, i) :- option("entryPoint", "analyze_dead_code"), idc_category(i, category), !idc_source_unproven().
 IDCItem(@place("", 0), category, sid, ordinal) :- option("entryPoint", "analyze_dead_code"), idc_sorted(category, sid, ordinal), !idc_excluded(sid), !idc_source_unproven().
+
+// Reporting takes the exact supplied results, including category insertion
+// order and duplicate symbol occurrences. The native library renders all text.
+srep_mode("text") :- option("entryPoint", "_print_text").
+srep_mode("json") :- option("entryPoint", "_print_json").
+srep_mode("worst") :- option("entryPoint", "_worst_files").
+srep_category(i, category) :- srep_mode(_), option_item("resultCategories", i, category).
+srep_item(category, i, sid) :- srep_mode(_), idc_supplied(category, sid, i).
+srep_symbol(sid, path, line, qual) :- srep_mode(_), sg_symbol(_, sid, _, _, _, path, line, _, _, _), sg_qualname(sid, qual).
+srep_worst_input(i, sid) :- srep_mode("worst"), option_item("worstSymbols", i, sid).
+srep_worst_input(i, sid) :- srep_mode("text"), srep_item("high_confidence_functions", i, sid).
+srep_limit_none() :- option("reportLimitNone", "true").
+srep_limit(text) :- option("reportLimit", text), !srep_limit_none().
+srep_limit("20") :- srep_mode("worst"), !option("reportLimit", _), !srep_limit_none().
+.violation IDCReportOutput(at: span, stage: number, ordinal: number, text: symbol) code "IDC_REPORT_OUTPUT" "report"
+IDCReportOutput(@place("",0), stage, ordinal, text) :- srep_output(stage, ordinal, text).
+.violation IDCReportError(at: span, key: symbol) code "IDC_REPORT_ERROR" "Missing report key {key}"
+IDCReportError(@place("",0), key) :- srep_first_error(_, _, key).
+.violation IDCWorstFile(at: span, ordinal: number, path: symbol, count: number) code "IDC_WORST_FILE" "worst file"
+IDCWorstFile(@place("",0), i, path, n) :- srep_mode("worst"), !srep_failed(), srep_file_rank(path, n, i), srep_worst_bound(limit), i < limit.

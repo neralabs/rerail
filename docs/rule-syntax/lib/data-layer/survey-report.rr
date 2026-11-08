@@ -1,0 +1,98 @@
+// Survey reporting over typed category, occurrence, and symbol rows.
+// The caller supplies one mode and the Python limit argument as decimal text.
+.decl srep_mode(mode: symbol)
+.decl srep_category(i: number, category: symbol)
+.decl srep_item(category: symbol, ordinal: number, sid: symbol)
+.decl srep_symbol(sid: symbol, path: symbol, line: number, qualname: symbol)
+.decl srep_worst_input(ordinal: number, sid: symbol)
+.decl srep_limit(text: symbol)
+.decl srep_limit_none()
+
+.decl srep_count(category: symbol, n: number)
+srep_count(category, n) :- srep_category(_, category), n = count : { srep_item(category, _, _) }.
+.decl srep_text_count(stage: number, category: symbol, label: symbol)
+srep_text_count(1, "unused_functions", "unused functions: ").
+srep_text_count(2, "unused_intents", "unused intents: ").
+srep_text_count(3, "unused_grammar_classes", "unused grammar classes: ").
+srep_text_count(4, "unused_other_classes", "unused other classes: ").
+srep_text_count(7, "high_confidence_functions", "functions: ").
+srep_text_count(8, "high_confidence_intents", "intents: ").
+srep_text_count(9, "high_confidence_grammar_classes", "grammar classes: ").
+srep_text_count(10, "high_confidence_other_classes", "other classes: ").
+.decl srep_detail(i: number, category: symbol, label: symbol)
+srep_detail(0, "high_confidence_functions", "High-confidence functions").
+srep_detail(1, "high_confidence_intents", "High-confidence intents").
+srep_detail(2, "high_confidence_grammar_classes", "High-confidence grammar classes").
+srep_detail(3, "high_confidence_other_classes", "High-confidence other classes").
+srep_detail(4, "unused_functions", "Unused functions").
+srep_detail(5, "unused_intents", "Unused intents").
+srep_detail(6, "unused_grammar_classes", "Unused grammar classes").
+srep_detail(7, "unused_other_classes", "Unused other classes").
+.decl srep_hc_total(n: number)
+srep_hc_total(a+b+c+d) :- srep_count("high_confidence_functions", a), srep_count("high_confidence_intents", b), srep_count("high_confidence_grammar_classes", c), srep_count("high_confidence_other_classes", d).
+
+// Counter.most_common sorts equal counts by the path's first occurrence.
+.decl srep_file_count(path: symbol, n: number, first: number)
+srep_file_count(path, n, first) :- srep_worst_input(_, sid), srep_symbol(sid, path, _, _), n = count : { srep_worst_input(i, other), srep_symbol(other, path, _, _) }, first = min j : { srep_worst_input(j, other), srep_symbol(other, path, _, _) }.
+.decl srep_file_rank(path: symbol, n: number, ordinal: number)
+srep_file_rank(path, n, ordinal) :- srep_file_count(path, n, first), ordinal = count : { srep_file_count(other, m, earlier), (m > n ; (m = n, earlier < first)) }.
+.decl srep_file_total(n: number)
+srep_file_total(n) :- n = count : { srep_file_count(_, _, _) }.
+.decl srep_worst_bound(n: number)
+srep_worst_bound(20) :- srep_mode("text").
+srep_worst_bound(n) :- srep_mode("worst"), srep_limit_none(), srep_file_total(n).
+srep_worst_bound(n) :- srep_mode("worst"), srep_limit(text), srep_file_total(total), n = @python_int_clamped(text, 0, total, 0), n >= 0.
+.decl srep_shown(category: symbol, n: number)
+srep_shown(category, n) :- srep_count(category, n), srep_limit_none().
+srep_shown(category, bound) :- srep_count(category, total), srep_limit(text), bound = @python_int_clamped(text, 0-total, total, 0), bound >= 0.
+srep_shown(category, total+bound) :- srep_count(category, total), srep_limit(text), bound = @python_int_clamped(text, 0-total, total, 0), bound < 0.
+
+// Error positions follow Python evaluation order. Text keeps prior output;
+// JSON and the Counter helper construct their whole value before returning it.
+.decl srep_error(stage: number, ordinal: number, key: symbol)
+srep_error(stage, 0, category) :- srep_mode("text"), srep_text_count(stage, category, _), !srep_count(category, _).
+srep_error(6, i, category) :- srep_mode("text"), srep_detail(i, category, _), i < 4, !srep_count(category, _).
+srep_error(13, i, sid) :- srep_mode("text"), srep_worst_input(i, sid), !srep_symbol(sid, _, _, _).
+srep_error(16+section*3+1, i, sid) :- srep_mode("text"), srep_detail(section, category, _), srep_shown(category, n), srep_item(category, i, sid), i < n, !srep_symbol(sid, _, _, _).
+srep_error(0, i, sid) :- srep_mode("worst"), srep_worst_input(i, sid), !srep_symbol(sid, _, _, _).
+srep_error(section, i, sid) :- srep_mode("json"), srep_category(section, category), srep_item(category, i, sid), !srep_symbol(sid, _, _, _).
+.decl srep_error_stage(stage: number)
+srep_error_stage(stage) :- srep_error(_, _, _), stage = min s : { srep_error(s, _, _) }.
+.decl srep_first_error(stage: number, ordinal: number, key: symbol)
+srep_first_error(stage, ordinal, key) :- srep_error_stage(stage), ordinal = min i : { srep_error(stage, i, _) }, srep_error(stage, ordinal, key).
+.decl srep_failed()
+srep_failed() :- srep_first_error(_, _, _).
+
+.decl srep_text_line(stage: number, ordinal: number, text: symbol)
+srep_text_line(0, 0, "Internal dead-code survey\n=========================\n") :- srep_mode("text").
+srep_text_line(stage, 0, cat(label, to_string(n), "\n")) :- srep_mode("text"), srep_text_count(stage, category, label), srep_count(category, n).
+srep_text_line(5, 0, "\nHigh-confidence deletion candidates\n------------------------------------\n") :- srep_mode("text").
+srep_text_line(11, 0, cat("TOTAL: ", to_string(n), "\n")) :- srep_mode("text"), srep_hc_total(n).
+srep_text_line(12, 0, "\nWorst files (high-confidence functions):\n") :- srep_mode("text").
+srep_text_line(14, i, cat("  ", path, ": ", to_string(n), "\n")) :- srep_mode("text"), srep_file_rank(path, n, i), i < 20.
+srep_text_line(15, 0, "\n") :- srep_mode("text").
+srep_text_line(16+section*3, 0, cat(label, " (", to_string(total), " total, showing ", to_string(shown), "):\n")) :- srep_mode("text"), srep_detail(section, category, label), srep_count(category, total), total > 0, srep_shown(category, shown).
+srep_text_line(16+section*3+1, i, cat("  ", path, ":", to_string(line), " ", qual, "\n")) :- srep_mode("text"), srep_detail(section, category, _), srep_shown(category, shown), srep_item(category, i, sid), i < shown, srep_symbol(sid, path, line, qual).
+srep_text_line(16+section*3+2, 0, "\n") :- srep_mode("text"), srep_detail(section, category, _), srep_count(category, total), total > 0.
+.decl srep_output(stage: number, ordinal: number, text: symbol)
+srep_output(stage, i, text) :- srep_text_line(stage, i, text), !srep_failed().
+srep_output(stage, i, text) :- srep_text_line(stage, i, text), srep_first_error(error_stage, error_i, _), (stage < error_stage ; (stage = error_stage, i < error_i)).
+
+// json.dumps(indent=2) with its original insertion order and ASCII escaping.
+.decl srep_json_item(category: symbol, ordinal: number, text: symbol)
+srep_json_item(category, i, cat("    {\n      \"symbol_id\": ", @json_str(sid), ",\n      \"path\": ", @json_str(path), ",\n      \"line\": ", to_string(line), ",\n      \"qualname\": ", @json_str(qual), "\n    }")) :- srep_mode("json"), srep_item(category, i, sid), srep_symbol(sid, path, line, qual).
+.decl srep_json_list(category: symbol, text: symbol)
+srep_json_list(category, "[]") :- srep_mode("json"), srep_count(category, 0).
+srep_json_list(category, cat("[\n", body, "\n  ]")) :- srep_mode("json"), srep_count(category, n), n > 0, body = join text by i sep ",\n" : { srep_json_item(category, i, text) }.
+.decl srep_summary_field(i: number, text: symbol)
+srep_summary_field(i, cat("    ", @json_str(category), ": ", to_string(n))) :- srep_mode("json"), srep_category(i, category), srep_count(category, n).
+.decl srep_has_category()
+srep_has_category() :- srep_category(_, _).
+.decl srep_summary(text: symbol)
+srep_summary("{}") :- srep_mode("json"), !srep_has_category().
+srep_summary(cat("{\n", body, "\n  }")) :- srep_mode("json"), srep_has_category(), body = join text by i sep ",\n" : { srep_summary_field(i, text) }.
+.decl srep_json_field(i: number, text: symbol)
+srep_json_field(-1, cat("  \"summary\": ", body)) :- srep_summary(body), !srep_category(_, "summary").
+srep_json_field(-1, cat("  \"summary\": ", body)) :- srep_mode("json"), srep_json_list("summary", body).
+srep_json_field(i, cat("  ", @json_str(category), ": ", body)) :- srep_mode("json"), srep_category(i, category), category != "summary", srep_json_list(category, body).
+srep_output(0, 0, cat("{\n", body, "\n}\n")) :- srep_mode("json"), !srep_failed(), body = join text by i sep ",\n" : { srep_json_field(i, text) }.

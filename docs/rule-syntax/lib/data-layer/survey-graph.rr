@@ -10,6 +10,8 @@ sg_symbol(i, sid, name, module, k, path, to_number(line), owner, to_number(has_o
 sg_order(sid, 0, i) :- option_item("symbolIds", i, sid).
 .decl sg_symbol_fq(sid: symbol, fq: symbol)
 sg_symbol_fq(sid, fq) :- option_item("symbolIds", i, sid), option_item("symbolFqNames", i, fq).
+.decl sg_qualname(sid: symbol, qualname: symbol)
+sg_qualname(sid, qualname) :- option_item("symbolIds", i, sid), option_item("symbolQualnames", i, qualname).
 .decl sg_flag(sid: symbol, flag: symbol)
 sg_flag(sid, flag) :- option_item("flagSymbols", i, sid), option_item("flagNames", i, flag).
 .decl sg_class(sid: symbol)

@@ -13,6 +13,7 @@ sgp_owner(n, 1) :- sgs_definition(n, _, _, _, _, owner), owner != "".
 sg_symbol(first_local, sid, name, module, k, path, row, owner, has, abstract) :- sgp_active(), sgc_symbol(n, _, first_local, sid), sgs_symbol(n, d, _, _, _, name, _, k, owner, row, _), sgs_module(d, path, module), sgp_owner(n, has), sgs_abstract(n, abstract).
 sg_order(sid, file, local) :- sgp_active(), sgc_symbol(_, file, local, sid).
 sg_symbol_fq(sid, fq) :- sgp_active(), sgc_fqname(fq, sid).
+sg_qualname(sid, qual) :- sgp_active(), sgc_symbol(n, _, _, sid), sgs_symbol(n, _, _, _, _, _, qual, _, _, _, _).
 sg_decorator(sid, text) :- sgp_active(), sgc_symbol(n, _, _, sid), sgs_decorator(n, _, text).
 sg_base_text(sid, text) :- sgp_active(), sgc_symbol(n, _, _, sid), sgs_base(n, _, text).
 sg_base(c, b, i) :- sgp_active(), sgc_base(c, i, b).
