@@ -496,6 +496,7 @@ pub(super) struct CoreRows {
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
+    ast_match: Vec<[i64; 4]>,
 }
 
 impl CoreRows {
@@ -712,6 +713,41 @@ impl CoreRows {
         }
     }
 
+    /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
+    /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
+    /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
+    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+        if patterns.is_empty() {
+            return;
+        }
+        let f = &*p.facts;
+        let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
+        for local in 0..p.len() {
+            let id = p.core[local as usize];
+            at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
+        }
+        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        let node_of = |n: &ast_grep_core::Node<'_, _>| {
+            let r = n.range();
+            at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
+        };
+        let empty = string("") as i64;
+        for (text, pattern) in patterns {
+            let pat = string(text) as i64;
+            let names = crate::code_rule_dsl::logic::rr::single_metavars(text);
+            for m in tree.root().find_all(pattern) {
+                let Some(n) = node_of(&m) else { continue };
+                let captures: Option<Vec<(i64, i64)>> = names
+                    .iter()
+                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .collect();
+                let Some(captures) = captures else { continue };
+                self.ast_match.push([pat, n, empty, n]);
+                self.ast_match.extend(captures.into_iter().map(|(g, c)| [pat, n, g, c]));
+            }
+        }
+    }
+
     /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
     /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
     /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
@@ -814,6 +850,7 @@ impl CoreRows {
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
+            ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
     }
 }

@@ -378,6 +378,9 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             }
         }
         all.policies.extend(prog.policies);
+        // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
+        all.rx_spans.extend(prog.rx_spans);
+        all.ast_patterns.extend(prog.ast_patterns);
         for mut setting in prog.settings {
             if matches!(setting.0.as_str(), "input" | "output") && let Some((rel, params)) = setting.1.split_once('(') {
                 setting.1 = format!("{}({params}", rename(rel));

@@ -342,6 +342,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+    /// The AST patterns (``n ~ `$O[:-$K]` ``) the rules read: the batch matches each over every document of the
+    /// program's language and makes `ast_match(p, n, g, c)` for them (`rr::lower`).
+    pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
 }
 
 /// The spans a `rx_span` pattern runs over: a document's whole text (`source`), or each line (`src_line`).

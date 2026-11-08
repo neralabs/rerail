@@ -467,6 +467,7 @@ impl Lowerer {
             .and_then(|(_, text)| text.split('"').nth(1))
             .unwrap_or_default()
             .to_owned();
+        let scoped = self.scope_filter();
         self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         self.prog.outputs.retain(|o| o != "violation");
         self.prog.outputs.push("violation".to_owned());
@@ -490,11 +491,11 @@ impl Lowerer {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")])]
             };
-            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).collect() });
+            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
             if f.places {
                 let mut args = vec![v("rr_p"), v("rr_l")];
                 args.extend(cols.into_iter().skip(1));
-                self.prog.rules.push(Rule { head, body: vec![atom(&place_relation(&f.name), args)] });
+                self.prog.rules.push(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
             }
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
@@ -505,6 +506,7 @@ impl Lowerer {
                 // A file's own error: a guest's is `.on guest_error`'s.
                 let not_guest = Literal::Atom(Atom { rel: "guest".to_owned(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
+                body.extend(scoped.iter().cloned());
                 if line_one {
                     body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
                 }
@@ -542,6 +544,74 @@ impl Lowerer {
             self.prog.rules.push(Rule { head, body });
         }
         Ok(())
+    }
+
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
+    /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
+    /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
+    /// `.scope given` program reads the files it is given, all in scope.
+    fn scope_filter(&mut self) -> Vec<Literal> {
+        // `.scope given`: the files are a caller's (a test's), not found by walking a repository.
+        if self.prog.settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given") {
+            return Vec::new();
+        }
+        let (mut within, mut out) = (Vec::new(), Vec::new());
+        for (_, text) in self.prog.settings.iter().filter(|(k, _)| k == "scope") {
+            // The setting's tokens: comments are not in them.
+            let Ok(tokens) = super::syntax::tokens(text) else { continue };
+            let tokens: Vec<&super::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
+            let words: Vec<&str> = tokens.iter().filter_map(|t| if let super::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+            // `report dirs` and `text` say where findings land and how files are read, not which.
+            if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
+                continue;
+            }
+            let mut word = "";
+            for (k, t) in tokens.iter().enumerate() {
+                match t {
+                    // `option("…")`: an entry from a policy option, not known here.
+                    super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
+                    super::syntax::Tok::Id(w) => {
+                        if w == "false" && word == "tests" {
+                            out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
+                        }
+                        word = w.as_str();
+                    }
+                    super::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(super::syntax::Tok::P("("))) => match word {
+                        "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
+                        "include" => within.push(g.clone()),
+                        "exclude" => out.push(g.clone()),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+        if within.is_empty() && out.is_empty() {
+            return Vec::new();
+        }
+        let v = |s: &str| Term::Var(s.to_owned());
+        let doc = Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
+        let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let head = |rel: &str, var: &str| Atom { rel: rel.to_owned(), args: vec![v(var)], neg: false, gated: false };
+        self.prog.decls.entry("doc".to_owned()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        if !self.prog.inputs.iter().any(|i| i == "doc") {
+            self.prog.inputs.push("doc".to_owned());
+        }
+        // rr_scope_drop(p): a document's path out of the scope.
+        self.prog.decls.insert("rr_scope_drop".to_owned(), vec![("p".to_owned(), "sym".to_owned())]);
+        if !within.is_empty() {
+            self.prog.decls.insert("rr_scope_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            for g in &within {
+                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: vec![doc.clone(), glob(g)] });
+            }
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
+        }
+        for g in &out {
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), glob(g)] });
+        }
+        vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
 
     /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
@@ -762,7 +832,7 @@ impl Lowerer {
                 }
                 out
             }
-            Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
+            Lit::Pattern { subject, pattern, neg } => self.pattern(subject, pattern, *neg)?,
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
                 self.node_axis(rel, args, *neg, outer)?
             }
@@ -1317,6 +1387,12 @@ impl Lowerer {
                 };
                 self.prog.rx_spans.insert((within, p.clone()));
             }
+            // The AST patterns, read off the rules too.
+            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
+                if let Some(Term::Str(p)) = a.args.first() {
+                    self.prog.ast_patterns.insert(p.clone());
+                }
+            }
         }
         Ok(())
     }
@@ -1339,6 +1415,31 @@ impl Lowerer {
         let text = Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
         let test = self.atom(rel, &[p.clone(), STerm::Var(t)], neg)?;
         Ok(vec![vec![text, test]])
+    }
+
+    /// ``n ~ `pattern` ``: node n is a match of the AST pattern (ast-grep's syntax, in the program's language), and
+    /// each metavariable `$X` binds variable X to the node it captured. The batch matches the pattern once over each
+    /// document (`core_rr::CoreRows::patterns`) and makes `ast_match(p, n, g, c)`: capture g of the match at n is
+    /// node c, and capture "" is n itself. A negated pattern binds nothing: no match at n. A `$$$X` (a run of
+    /// nodes) and a `$_X` capture nothing.
+    fn pattern(&mut self, subject: &STerm, pattern: &str, neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let STerm::Var(n) = subject else {
+            return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
+        };
+        if !self.prog.inputs.iter().any(|i| i == "ast_match") {
+            self.prog.inputs.push("ast_match".to_owned());
+            let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
+            self.prog.decls.insert("ast_match".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        }
+        let atom = |g: &str, c: Term, neg: bool| {
+            Literal::Atom(Atom { rel: "ast_match".to_owned(), args: vec![Term::Str(pattern.to_owned()), Term::Var(n.clone()), Term::Str(g.to_owned()), c], neg, gated: false })
+        };
+        if neg {
+            return Ok(vec![vec![atom("", Term::Wild, true)]]);
+        }
+        let mut out = vec![atom("", Term::Wild, false)];
+        out.extend(super::single_metavars(pattern).into_iter().map(|x| atom(&x, Term::Var(x.clone()), false)));
+        Ok(vec![out])
     }
 
     /// `rx_span` as an input of the program (`core_rr::CoreRows::matches` makes it).
@@ -2062,3 +2163,4 @@ pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     }
     out
 }
+
