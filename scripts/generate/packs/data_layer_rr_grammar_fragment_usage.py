@@ -157,7 +157,7 @@ gfu_build_edge(n, c) :- kind(n, "dictionary"), child(n, pair, _), kind(pair, "pa
 gfu_build_edge(n, c) :- kind(n, "dictionary"), child(n, splat, _), kind(splat, "dictionary_splat"), child(splat, raw, 0), unparen(raw, c).
 gfu_build_edge(n, c) :- kind(n, "binary_operator"), op(n, "+"), (field(n, "left", raw) ; field(n, "right", raw)), unparen(raw, c).
 gfu_build_edge(n, c) :- kind(n, "conditional_expression"), child(n, raw, i), (i = 0 ; i = 2), unparen(raw, c).
-gfu_build_edge(n, c) :- kind(n, "call"), field(n, "function", raw), unparen(raw, fn), kind(fn, "attribute"), field(fn, "attribute", attr), text(attr, name), (name = "casefold" ; name = "format" ; name = "format_map" ; name = "join" ; name = "lower" ; name = "lstrip" ; name = "removeprefix" ; name = "removesuffix" ; name = "replace" ; name = "rstrip" ; name = "strip" ; name = "translate" ; name = "upper"), field(fn, "object", receiver), unparen(receiver, c).
+gfu_build_edge(n, c) :- kind(n, "call"), field(n, "function", raw), unparen(raw, fn), kind(fn, "attribute"), field(fn, "attribute", attr), text(attr, spelling), name = @nfkc(spelling), (name = "casefold" ; name = "format" ; name = "format_map" ; name = "join" ; name = "lower" ; name = "lstrip" ; name = "removeprefix" ; name = "removesuffix" ; name = "replace" ; name = "rstrip" ; name = "strip" ; name = "translate" ; name = "upper"), field(fn, "object", receiver), unparen(receiver, c).
 .decl gfu_build_walk(ctx: node, event: node, n: node)
 gfu_build_walk(ctx, event, expr) :- gfu_eval(ctx, event, _, _, expr).
 gfu_build_walk(ctx, event, c) :- gfu_build_walk(ctx, event, n), gfu_build_edge(n, c).
