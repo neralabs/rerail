@@ -28,6 +28,8 @@ def selected_cases(cases, part, parts):
 
 def arguments(values, root):
     def convert(value):
+        if isinstance(value,dict) and set(value)=={'tuple'}:
+            return tuple(convert(item) for item in value['tuple'])
         if isinstance(value,dict) and set(value)=={'frozenset'}:
             return frozenset(convert(item) for item in value['frozenset'])
         if isinstance(value, dict) and set(value) == {'pythonAst', 'mode'}:
@@ -50,6 +52,9 @@ def invoke(call, root):
     try:
         return dict(result=canonical(call(), root))
     except Exception as error:
+        if isinstance(error,SyntaxError):
+            return dict(error=dict(type=type(error).__module__+'.'+type(error).__qualname__,args=canonical(error.args,root),
+                attributes={key:canonical(getattr(error,key),root) for key in ['filename','lineno','offset','end_lineno','end_offset','text','msg','print_file_and_line']}))
         if isinstance(error, OSError):
             return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
                 args=canonical(error.args, root), filename=canonical(error.filename, root), errno=error.errno))
@@ -109,6 +114,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'grammar_allowlist_burndown' in modules:
+            from grammar_allowlist_burndown_port import install
+            install(backend,modules['grammar_allowlist_burndown'])
         if 'grammar_fragment_usage' in modules:
             from grammar_fragment_usage_port import install
             install(backend,modules['grammar_fragment_usage'])
@@ -171,7 +179,16 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='grammar_callable_constructors':
+                if case['check']=='grammar_allowlist_burndown':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='cli':
+                        from grammar_allowlist_burndown_port import cli_probe
+                        call=lambda:cli_probe(module,values)
+                    elif case['entry']=='reporter_facts':
+                        from grammar_allowlist_burndown_port import reporter_probe
+                        call=lambda:reporter_probe(module,values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='grammar_callable_constructors':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='cli':
                         from grammar_callable_constructors_port import cli_probe
@@ -279,7 +296,7 @@ def run(args):
                         action = lambda: owner.analyze(values['tree'])
                     def call():
                         return analyzed_state(owner, action())
-                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage'}:
+                elif native and case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
                     backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:getattr(module,case['entry'])(**values)
                 elif native:
@@ -295,7 +312,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage'}:
+                if case['check'] in {'sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

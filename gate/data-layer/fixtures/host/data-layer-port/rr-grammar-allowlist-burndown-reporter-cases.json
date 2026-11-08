@@ -1,0 +1,244 @@
+{
+  "cases": [
+    {
+      "id": "report-0-grown",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'b', 'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-0-last",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'a', 'b'}\nALLOWLISTED_STATIC_CLASSES = {'c'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-0-empty-retains",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'a'}\nALLOWLISTED_STATIC_CLASSES = frozenset()\n"
+        }
+      ]
+    },
+    {
+      "id": "report-1-grown",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = {'b', 'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-1-last",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = {'a', 'b'}\nLEGACY_ALLOWLISTED_CLASSES = {'c'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-1-empty-retains",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = {'a'}\nLEGACY_ALLOWLISTED_CLASSES = frozenset()\n"
+        }
+      ]
+    },
+    {
+      "id": "report-2-grown",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_CLASSES = {'b', 'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-2-last",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_CLASSES = {'a', 'b'}\nALLOWLISTED_CLASSES = {'c'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-2-empty-retains",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\nALLOWLISTED_CLASSES = frozenset()\n"
+        }
+      ]
+    },
+    {
+      "id": "report-3-grown",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "DATA_VALUE_PARAMS = {'b', 'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-3-last",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "DATA_VALUE_PARAMS = {'a', 'b'}\nDATA_VALUE_PARAMS = {'c'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-3-empty-retains",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "DATA_VALUE_PARAMS = {'a'}\nDATA_VALUE_PARAMS = frozenset()\n"
+        }
+      ]
+    },
+    {
+      "id": "report-4-grown",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "OPERATOR_PARAMS = {'b', 'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-4-last",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "OPERATOR_PARAMS = {'a', 'b'}\nOPERATOR_PARAMS = {'c'}\n"
+        }
+      ]
+    },
+    {
+      "id": "report-4-empty-retains",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/arbitrary.py",
+          "source": "OPERATOR_PARAMS = {'a'}\nOPERATOR_PARAMS = frozenset()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/tests/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/tests/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/test/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/test/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/.venv/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/.venv/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/tmp/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/tmp/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/a.py",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "all-groups",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "OPERATOR_PARAMS = {'a'}\nDATA_VALUE_PARAMS = {'a'}\nALLOWLISTED_CLASSES = {'a'}\nLEGACY_ALLOWLISTED_CLASSES = {'a'}\nALLOWLISTED_STATIC_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-target",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "ALLOWLISTED_CLASSES = ALLOWLISTED_CLASSES = {'a'}\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-error",
+      "check": "grammar_allowlist_burndown",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "ALLOWLISTED_CLASSES = {'a'}\ndef broken(:\n"
+        }
+      ]
+    }
+  ]
+}

@@ -79,3 +79,39 @@ def install(suite,module):
         sys.stdout.write(''.join(p['text'] for p in output))
         return next(r['parameters']['status'] for r in rows if r['code']=='GAB_EXIT')
     suite.replace(module,'cli_main',cli_main)
+
+    def plugin(root):
+        def report(view):
+            data={key:[] for key in ['reportNames','reportPaths','reportFileOrders','reportOrdinals','reportTargets','reportCounts']}
+            for file_order,bundle in enumerate(view.files.values()):
+                raw=bundle.facts.get(module.GRAMMAR_ALLOWLIST_BURNDOWN_EXTRACTOR.extractor_id,[])
+                if not isinstance(raw,list):continue
+                for ordinal,fact in enumerate(raw):
+                    if not isinstance(fact,dict):continue
+                    values=[str(fact.get('variable_name','')),str(fact.get('path','scripts')),str(file_order),str(ordinal),'0',str(fact.get('count',0))]
+                    for key,value in zip(data,values):data[key].append(value)
+            rows=native('reporter_facts',options=data)
+            return [module.StructuredViolation(linter_name='grammar_allowlist_burndown',code=r['code'],path=root/r['path'],line=r['line'],message=r['message'],severity='hard-fail') for r in sorted(rows,key=lambda r:r['parameters']['spec_ordinal']) if r['code']=='allowlist_grew']
+        return module.LinterPlugin(name='grammar_allowlist_burndown',enforcement='hard-fail',description='SQL grammar linter allowlists must not grow',file_scope=module.FileScopeSpec(directories=(root/'scripts',),include_tests=False),required_facts=(module.GRAMMAR_ALLOWLIST_BURNDOWN_EXTRACTOR,),reporter=report)
+    suite.replace(module,'grammar_allowlist_burndown_plugin',plugin)
+
+
+def cli_probe(module,values):
+    previous_file,previous_args=module.__file__,sys.argv
+    previous_maxima={key:getattr(module,key) for key in values.get('maxima',{})}
+    for key,value in values.get('maxima',{}).items():setattr(module,key,value)
+    try:
+        module.__file__=str(values['root']/'scripts/lint_grammar_allowlist_burndown.py')
+        sys.argv=['lint_grammar_allowlist_burndown.py',*values['args']]
+        return module.cli_main()
+    finally:
+        module.__file__=previous_file;sys.argv=previous_args
+        for key,value in previous_maxima.items():setattr(module,key,value)
+
+
+def reporter_probe(module,values):
+    from types import SimpleNamespace
+    root=values['root'];bundles={}
+    for ordinal,facts in enumerate(values['files']):
+        bundles[root/str(ordinal)]=SimpleNamespace(facts={module.GRAMMAR_ALLOWLIST_BURNDOWN_EXTRACTOR.extractor_id:facts})
+    return module.grammar_allowlist_burndown_plugin(root).reporter(SimpleNamespace(files=bundles))

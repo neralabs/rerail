@@ -53,10 +53,28 @@ GABSyntax(@place(path, 1), cat(message, " (", name, ", line ", to_string(l), ")"
 
 def extraction():
     return r'''
+// Supplied ASTs are external test arguments, transported as typed syntax fields.
+// Production file analysis uses only the modern engine's native syntax relations.
+.decl gab_arg_kind(n: node, k: symbol)
+gab_arg_kind(n, k) :- option_item("astKinds", n, k).
+.decl gab_arg_edge(n: node, field: symbol, c: node)
+gab_arg_edge(to_number(parent), field, c) :- option_item("astParents", c, parent), parent != "-1", option_item("astFields", c, field).
+.decl gab_arg_union(n: node)
+gab_arg_union(n) :- gab_arg_kind(n, "BinOp"), gab_arg_edge(n, "op", op), gab_arg_kind(op, "BitOr").
+.decl gab_set_edge(n: node, c: node)
+gab_set_edge(n, c) :- kind(n, "binary_operator"), op(n, "|"), (field(n, "left", raw) ; field(n, "right", raw)), unparen(raw, c).
+gab_set_edge(n, c) :- gab_arg_union(n), (gab_arg_edge(n, "left", c) ; gab_arg_edge(n, "right", c)).
 .decl gab_set_value(n: node, value: symbol)
-gab_set_value(n, value) :- option("unimplementedEmptyDetector", "true"), kind(n, "set"), child(n, element, _), str_const(element, value).
+gab_set_value(n, value) :- kind(n, "set"), child(n, raw, _), unparen(raw, element), str_const(element, value).
+gab_set_value(n, value) :- gab_arg_kind(n, "Set"), gab_arg_edge(n, "elts", element), gab_arg_kind(element, "Constant"), option_item("astValueTypes", element, "str"), option_item("astConstantText", element, value).
+gab_set_value(n, value) :- gab_set_edge(n, c), gab_set_value(c, value).
+.decl gab_first_arg(call: node, arg: node)
+gab_first_arg(call, arg) :- kind(call, "call"), field(call, "arguments", args), child(args, raw, i), !kind(raw, "comment"), !kind(raw, "keyword_argument"), !kind(raw, "dictionary_splat"), i = min j : { child(args, other, j), !kind(other, "comment"), !kind(other, "keyword_argument"), !kind(other, "dictionary_splat") }, unparen(raw, arg).
+gab_first_arg(call, arg) :- gab_arg_kind(call, "Call"), gab_arg_edge(call, "args", arg), option_item("astOrdinals", arg, "0").
 .decl gab_frozen_value(n: node, value: symbol)
-gab_frozen_value(n, value) :- gab_set_value(n, value).
+gab_frozen_value(n, value) :- kind(n, "set"), gab_set_value(n, value).
+gab_frozen_value(n, value) :- gab_arg_kind(n, "Set"), gab_set_value(n, value).
+gab_frozen_value(n, value) :- gab_first_arg(n, arg), gab_set_value(arg, value).
 .decl gab_assignment(d: number, a: node, target: node, name: symbol, ordinal: number, target_ordinal: number)
 gab_assignment(d, a, target, @nfkc(name), ordinal, target_ordinal) :- gab_file(d), asgstmt(a, _), docof(a, d), assign_target(a, raw), unparen(raw, target), kind(target, "identifier"), text(target, name), visit_index(a, ordinal), visit_index(target, target_ordinal).
 .decl gab_entry(d: number, a: node, target: node, name: symbol, ordinal: number, target_ordinal: number, value: symbol)
@@ -72,14 +90,23 @@ GABValue(@place("", 0), value) :- option("entryPoint", "_extract_frozenset_value
 GABValue(@place("", 0), value) :- option("entryPoint", "from_ast"), option("variableName", name), gab_entry(d, _, _, name, i, _, value), i = min j : { gab_entry(d, _, _, name, j, _, _) }.
 .violation GABFact(at: span, variable_name: symbol, entry: symbol, count: number, ordinal: number, target_ordinal: number) code "GAB_FACT" "fact"
 GABFact(@place(path, 1), name, value, count, i, ti) :- option("entryPoint", "facts"), gab_entry(d, a, target, name, i, ti, value), gab_path(d, path), count = count : { gab_entry(d, a, target, name, i, ti, _) }.
-// The default reporter consumes the last nonempty fact. The CLI below has a separate owner-bound union contract.
-.decl gab_last_path(name: symbol, path: symbol)
-gab_last_path(name, path) :- gab_entry(_, _, _, name, _, _, _), path = max p : { gab_entry(d, _, _, name, _, _, _), gab_path(d, p) }.
-.decl gab_last_ordinal(d: number, name: symbol, ordinal: number)
-gab_last_ordinal(d, name, i) :- gab_last_path(name, path), gab_path(d, path), i = max j : { gab_entry(d, _, _, name, j, _, _) }.
+// Producer order is explicit. Do not order symbols by their interned atom ids.
+.decl gab_file_order(d: number, ordinal: number)
+gab_file_order(d, i) :- doc(d, path, _), option_item("inputFiles", i, path).
+gab_file_order(d, d) :- doc(d, path, _), !option_item("inputFiles", _, path).
+.decl gab_report_fact(name: symbol, path: symbol, file_order: number, ordinal: number, target_ordinal: number, count: number)
+gab_report_fact(name, path, file_order, i, ti, n) :- gab_entry(d, a, target, name, i, ti, _), gab_path(d, path), gab_file_order(d, file_order), n = count : { gab_entry(d, a, target, name, i, ti, _) }.
+gab_report_fact(name, path, to_number(file_order), to_number(ordinal), to_number(target_ordinal), to_number(count)) :- option("entryPoint", "reporter_facts"), option_item("reportNames", row, name), option_item("reportPaths", row, path), option_item("reportFileOrders", row, file_order), option_item("reportOrdinals", row, ordinal), option_item("reportTargets", row, target_ordinal), option_item("reportCounts", row, count).
+.decl gab_last_file(name: symbol, file_order: number)
+gab_last_file(name, file_order) :- gab_report_fact(name, _, _, _, _, _), file_order = max i : { gab_report_fact(name, _, i, _, _, _) }.
+.decl gab_last_ordinal(name: symbol, file_order: number, ordinal: number)
+gab_last_ordinal(name, file_order, ordinal) :- gab_last_file(name, file_order), ordinal = max i : { gab_report_fact(name, _, file_order, i, _, _) }.
+.decl gab_report_count(order: number, path: symbol, count: number)
+gab_report_count(order, path, count) :- gab_spec(order, _, name, _, _, _), gab_last_ordinal(name, file_order, ordinal), ti = max j : { gab_report_fact(name, _, file_order, ordinal, j, _) }, gab_report_fact(name, path, file_order, ordinal, ti, count).
+gab_report_count(order, "scripts", 0) :- gab_spec(order, _, name, _, _, _), !gab_last_file(name, _).
 .severity GABGrew hard-fail
 .violation GABGrew(at: span, spec_ordinal: number, count: number, maximum: number, growth: number, description: symbol) code "allowlist_grew" "{description}: {count} > {maximum} (grew by {growth})"
-GABGrew(@place(path, 1), order, count, maximum, count - maximum, desc) :- !option("entryPoint", _), gab_spec(order, _, name, desc, _, _), gab_max(order, maximum), gab_last_ordinal(d, name, i), gab_path(d, path), count = count : { gab_entry(d, _, _, name, i, _, _) }, count > maximum.
+GABGrew(@place(path, 1), order, count, maximum, count - maximum, desc) :- (!option("entryPoint", _) ; option("entryPoint", "reporter_facts")), gab_spec(order, _, _, desc, _, _), gab_max(order, maximum), gab_report_count(order, path, count), count > maximum.
 '''
 
 

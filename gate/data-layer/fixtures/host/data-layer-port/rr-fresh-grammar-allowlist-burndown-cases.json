@@ -1,0 +1,3296 @@
+{
+  "cases": [
+    {
+      "id": "helper-_extract_set_values-set",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-set",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-set",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a', 'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-empty-string",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{''}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-empty-string",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{''}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-empty-string",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {''}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-unicode",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'\u03bb', '\u00e9', '\ud800\udc00'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-unicode",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'\u03bb', '\u00e9', '\ud800\udc00'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-unicode",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'\u03bb', '\u00e9', '\ud800\udc00'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-deduplicate",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-deduplicate",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-deduplicate",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a', 'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-mixed",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 1, None, True, 1j}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-mixed",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a', 1, None, True, 1j}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-mixed",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a', 1, None, True, 1j}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-bytes",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{b'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-bytes",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{b'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-bytes",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {b'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-formatted",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{f'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-formatted",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{f'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-formatted",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {f'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-fstring-expr",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{f'{value}'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-fstring-expr",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{f'{value}'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-fstring-expr",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {f'{value}'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-concatenated",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a' 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-concatenated",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a' 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-concatenated",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a' 'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-escaped",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a\\n', '\\u03bb'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-escaped",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a\\n', '\\u03bb'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-escaped",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a\\n', '\\u03bb'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-set-starred",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{*{'a'}, 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-set-starred",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{*{'a'}, 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-set-starred",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {*{'a'}, 'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-comprehension",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{value for value in ['a']}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-comprehension",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{value for value in ['a']}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-comprehension",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {value for value in ['a']}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} | {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} | {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a'} | {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-union-nested",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "({'a'} | {'b'}) | ({'c'} | {'d'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-union-nested",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "({'a'} | {'b'}) | ({'c'} | {'d'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-union-nested",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = ({'a'} | {'b'}) | ({'c'} | {'d'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-union-nonset",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "other | {'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-union-nonset",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "other | {'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-union-nonset",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = other | {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-intersection",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} & {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-intersection",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} & {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-intersection",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a'} & {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-subtraction",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} - {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-subtraction",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a'} - {'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-subtraction",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a'} - {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "('a',)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "('a',)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = ('a',)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "['a']",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "['a']",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = ['a']\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-dict",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a': 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-dict",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{'a': 'b'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-dict",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a': 'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-name",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "ALIAS",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-name",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "ALIAS",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-name",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = ALIAS\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-frozen",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-frozen",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-frozen",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset({'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-other-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "anything({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-other-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "anything({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-other-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = anything({'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-attribute-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "pkg.make({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-attribute-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "pkg.make({'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-attribute-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = pkg.make({'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-empty-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset()",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-empty-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset()",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-empty-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-call-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'} | {'b'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-call-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'} | {'b'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-call-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset({'a'} | {'b'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-call-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(['a'])",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-call-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(['a'])",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-call-list",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(['a'])\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-call-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(('a',))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-call-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(('a',))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-call-tuple",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(('a',))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-call-second",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(1, {'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-call-second",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(1, {'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-call-second",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(1, {'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-call-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'}, 1)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-call-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'}, 1)",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-call-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset({'a'}, 1)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-keyword-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(value={'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-keyword-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(value={'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-keyword-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(value={'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-kw-before-pos",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(value={'ignored'}, *[{'a'}])",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-kw-before-pos",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(value={'ignored'}, *[{'a'}])",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-kw-before-pos",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(value={'ignored'}, *[{'a'}])\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-starred-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(*{'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-starred-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(*{'a'})",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-starred-first",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(*{'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-nested-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(frozenset({'a'}))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-nested-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset(frozenset({'a'}))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-nested-call",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset(frozenset({'a'}))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-union-call-arm",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'} | frozenset({'b'}))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-union-call-arm",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "frozenset({'a'} | frozenset({'b'}))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-union-call-arm",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset({'a'} | frozenset({'b'}))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-parenthesized",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "((frozenset(({'a'}))))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-parenthesized",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "((frozenset(({'a'}))))",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-parenthesized",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = ((frozenset(({'a'}))))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-union-floats",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "1.5 | {'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-union-floats",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "1.5 | {'a'}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-union-floats",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = 1.5 | {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "helper-_extract_set_values-set-parenthesized-element",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_set_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{('a')}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "helper-_extract_frozenset_values-set-parenthesized-element",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_values",
+      "files": [],
+      "arguments": {
+        "node": {
+          "pythonAst": "{('a')}",
+          "mode": "eval"
+        }
+      }
+    },
+    {
+      "id": "file-set-parenthesized-element",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {('a')}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "assignment-first-nonempty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset()\nFOO = {'a'}\nFOO = {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-first-nonempty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = frozenset()\nFOO = {'a'}\nFOO = {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-first-before-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a'}\nFOO = frozenset()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-first-before-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'a'}\nFOO = frozenset()\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-nested-dfs",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def first():\n    FOO = {'nested'}\nFOO = {'module'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-nested-dfs",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def first():\n    FOO = {'nested'}\nFOO = {'module'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-class",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class C:\n    FOO = {\"a\"}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-class",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "class C:\n    FOO = {\"a\"}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-chain",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = BAR = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-chain",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = BAR = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-repeated-target",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-repeated-target",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-tuple-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO, BAR = {'a'}, {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-tuple-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO, BAR = {'a'}, {'b'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-annotated",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO: frozenset[str] = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-annotated",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO: frozenset[str] = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-annotation-only",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO: frozenset[str]\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-annotation-only",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO: frozenset[str]\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-attribute-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-attribute-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "obj.FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-augmented-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO |= {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-augmented-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO |= {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-walrus-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "(FOO := {'a'})\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-walrus-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "(FOO := {'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-unicode-name",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "\uff26\uff2f\uff2f = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-unicode-name",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "\uff26\uff2f\uff2f = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-comments",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "# FOO = {\"fake\"}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-comments",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "# FOO = {\"fake\"}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "assignment-parse-error",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "facts-parse-error",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_facts_for_files",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": {
+          "tuple": [
+            {
+              "path": "case.py"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "explicit-tests/case.py",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "tests/case.py",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "tests/case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "explicit-test/case.py",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "test/case.py",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "test/case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "explicit-.venv/case.py",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": ".venv/case.py",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": ".venv/case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "explicit-tmp/case.py",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "tmp/case.py",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "tmp/case.py"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "explicit-case.txt",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.txt",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.txt"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "explicit-case.PY",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_ast",
+      "files": [
+        {
+          "path": "case.PY",
+          "source": "FOO = {'a'}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "case.PY"
+        },
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "source-ignored",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_source",
+      "files": [
+        {
+          "path": "case.py",
+          "source": "FOO = {'from-file'}\n"
+        }
+      ],
+      "arguments": {
+        "source": "FOO = {'from-argument'}",
+        "variable_name": "FOO",
+        "file_path": {
+          "path": "case.py"
+        }
+      }
+    },
+    {
+      "id": "source-no-path",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_extract_frozenset_from_source",
+      "files": [],
+      "arguments": {
+        "source": "FOO = {'ignored'}",
+        "variable_name": "FOO"
+      }
+    },
+    {
+      "id": "specs",
+      "check": "grammar_allowlist_burndown",
+      "entry": "_allowlist_specs",
+      "files": [],
+      "arguments": {}
+    },
+    {
+      "id": "cli-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-empty-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-empty-check",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-negative-maxima",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_STATIC_ALLOWLIST": -1,
+          "MAX_RENDER_LEGACY_ALLOWLIST": -1,
+          "MAX_ESCAPE_HATCH_ALLOWLIST": -1,
+          "MAX_DATA_VALUE_PARAMS": -1,
+          "MAX_OPERATOR_PARAMS": -1
+        }
+      }
+    },
+    {
+      "id": "cli-positive-maxima",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_STATIC_ALLOWLIST": 3,
+          "MAX_RENDER_LEGACY_ALLOWLIST": 3,
+          "MAX_ESCAPE_HATCH_ALLOWLIST": 3,
+          "MAX_DATA_VALUE_PARAMS": 3,
+          "MAX_OPERATOR_PARAMS": 3
+        }
+      }
+    },
+    {
+      "id": "cli-0-grown",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-0-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-0-at-limit",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_STATIC_ALLOWLIST": 2
+        }
+      }
+    },
+    {
+      "id": "cli-0-remaining",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_STATIC_ALLOWLIST": 3
+        }
+      }
+    },
+    {
+      "id": "cli-0-wrong-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'misplaced'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-1-grown",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-1-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-1-at-limit",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_LEGACY_ALLOWLIST": 2
+        }
+      }
+    },
+    {
+      "id": "cli-1-remaining",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_RENDER_LEGACY_ALLOWLIST": 3
+        }
+      }
+    },
+    {
+      "id": "cli-1-wrong-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "LEGACY_ALLOWLISTED_CLASSES = {'misplaced'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-2-grown",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-2-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-2-at-limit",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_ESCAPE_HATCH_ALLOWLIST": 2
+        }
+      }
+    },
+    {
+      "id": "cli-2-remaining",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_ESCAPE_HATCH_ALLOWLIST": 3
+        }
+      }
+    },
+    {
+      "id": "cli-2-wrong-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_CLASSES = {'misplaced'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-3-grown",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "DATA_VALUE_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-3-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "DATA_VALUE_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-3-at-limit",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "DATA_VALUE_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_DATA_VALUE_PARAMS": 2
+        }
+      }
+    },
+    {
+      "id": "cli-3-remaining",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "DATA_VALUE_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_DATA_VALUE_PARAMS": 3
+        }
+      }
+    },
+    {
+      "id": "cli-3-wrong-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "DATA_VALUE_PARAMS = {'misplaced'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-4-grown",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "OPERATOR_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--check"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-4-verbose",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "OPERATOR_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-4-at-limit",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "OPERATOR_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_OPERATOR_PARAMS": 2
+        }
+      }
+    },
+    {
+      "id": "cli-4-remaining",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "OPERATOR_PARAMS = frozenset({'b', 'a', 'a'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {
+          "MAX_OPERATOR_PARAMS": 3
+        }
+      }
+    },
+    {
+      "id": "cli-4-wrong-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "OPERATOR_PARAMS = {'misplaced'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-union-over-assignments",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'a'}\nALLOWLISTED_STATIC_CLASSES = {'b'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-empty-does-not-clear",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'a'}\nALLOWLISTED_STATIC_CLASSES = frozenset()\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-missing-render",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-missing-escape",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-parse-error",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "def broken(:\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "cli-unicode-output",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'\u03bb', '\u00e9', 'A', '\ud800\udc00', ''}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ],
+        "maxima": {}
+      }
+    },
+    {
+      "id": "ordered-facts-forward",
+      "check": "grammar_allowlist_burndown",
+      "entry": "reporter_facts",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": [
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/a.py",
+              "count": 1
+            }
+          ],
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/b.py",
+              "count": 2
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ordered-facts-reverse",
+      "check": "grammar_allowlist_burndown",
+      "entry": "reporter_facts",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": [
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/b.py",
+              "count": 2
+            }
+          ],
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/a.py",
+              "count": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ordered-facts-last-zero",
+      "check": "grammar_allowlist_burndown",
+      "entry": "reporter_facts",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": [
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/a.py",
+              "count": 2
+            },
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/b.py",
+              "count": 0
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ordered-facts-empty",
+      "check": "grammar_allowlist_burndown",
+      "entry": "reporter_facts",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": []
+      }
+    },
+    {
+      "id": "ordered-facts-non-owner",
+      "check": "grammar_allowlist_burndown",
+      "entry": "reporter_facts",
+      "files": [],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "files": [
+          [
+            {
+              "variable_name": "ALLOWLISTED_CLASSES",
+              "path": "scripts/other.py",
+              "count": 3
+            }
+          ]
+        ]
+      }
+    }
+  ]
+}

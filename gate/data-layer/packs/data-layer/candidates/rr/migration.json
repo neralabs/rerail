@@ -1534,7 +1534,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-allowlist-burndown.rr",
-      "sha256": "c7edb50e054f282919e2bd222829944803e0d6e26780070d8a66ce6ec442f6bc",
+      "sha256": "9acf8b5bec696ae0ef0dc6dae9fe8e8d784ddd9843ec98dab295c54d4122ef6b",
       "origin": "authored",
       "upstreamPath": "scripts/lint_grammar_allowlist_burndown.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1890,7 +1890,7 @@
       "legacySha256": "0596978d51eeddec03b1db10fcf33f1792ac5c7b9cd16d881bb5c0ce374c813f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-allowlist-burndown.rr",
-      "ruleSha256": "c7edb50e054f282919e2bd222829944803e0d6e26780070d8a66ce6ec442f6bc"
+      "ruleSha256": "9acf8b5bec696ae0ef0dc6dae9fe8e8d784ddd9843ec98dab295c54d4122ef6b"
     },
     {
       "check": "rust_sql_grammar_boundary",
