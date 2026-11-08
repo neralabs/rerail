@@ -235,13 +235,18 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.rr",
-      "sha256": "6c695ad5771ef6d178f7f2f179df9d2b895447007d1c5222b8e75ba9cab59a39",
+      "sha256": "77a68da220876dabe9491c98cc683647c912a42a5a7a762b00634c6871cbdeb6",
       "importedSha256": "b41a0d43693983898aa71c60ce92b0aa642dee73c627fa85ebf4e715119a8533",
       "repairs": [
         {
           "before": "b41a0d43693983898aa71c60ce92b0aa642dee73c627fa85ebf4e715119a8533",
           "after": "7dbfbb347e12e8cd02d2962fe345ad841439307a2624ec576522d01b353199c5",
           "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        },
+        {
+          "before": "6c695ad5771ef6d178f7f2f179df9d2b895447007d1c5222b8e75ba9cab59a39",
+          "after": "77a68da220876dabe9491c98cc683647c912a42a5a7a762b00634c6871cbdeb6",
+          "reason": "Adopt committed Final shape 8ce26cfb7 library and lazy architecture resolutions"
         }
       ],
       "upstreamSha256": "3d5058d2fc426777ed48096bbb8a2cba688537c500ec654f5e25359e8fe271b9",
@@ -589,7 +594,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/lazy-analyzer.rr",
-      "sha256": "8ba3cc99b75b37e770217c48b70a06d2a198aac9fa3a44fedc4ca321f849af62",
+      "sha256": "cb93405683f14902728f53ff9747344a6ae5fed76957fbbd252394e3191e1678",
       "upstreamSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
       "importedSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
@@ -598,6 +603,11 @@
           "before": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
           "after": "8ba3cc99b75b37e770217c48b70a06d2a198aac9fa3a44fedc4ca321f849af62",
           "reason": "State the existing class-parent preorder bound explicitly for the current Final shape value-cycle checker"
+        },
+        {
+          "before": "8ba3cc99b75b37e770217c48b70a06d2a198aac9fa3a44fedc4ca321f849af62",
+          "after": "cb93405683f14902728f53ff9747344a6ae5fed76957fbbd252394e3191e1678",
+          "reason": "Adopt committed Final shape 8ce26cfb7 library and lazy architecture resolutions"
         }
       ]
     },
@@ -2192,7 +2202,7 @@
       "legacySha256": "aa6829187db40df122163b82441638f86d85ab5738e3220dc23422c900a05163",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.rr",
-      "ruleSha256": "6c695ad5771ef6d178f7f2f179df9d2b895447007d1c5222b8e75ba9cab59a39"
+      "ruleSha256": "77a68da220876dabe9491c98cc683647c912a42a5a7a762b00634c6871cbdeb6"
     },
     {
       "check": "pure_lazy_runtime_purity",
@@ -2552,8 +2562,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "434090efd96e96646e43a2d6f6a41063ba37ed3d",
-    "status": "Root Final shape through 434090efd with reviewed generic syntax capabilities and planner repairs",
+    "upstreamCommit": "8ce26cfb729d80e2f0e6fa1cdea99734d19c67c5",
+    "status": "Root Final shape through 8ce26cfb7 with reviewed generic syntax capabilities and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2589,11 +2599,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "5747e6b0063bec3e7906fc9e9177a746db11788d1ccfc50e90ca08e9d34b43df"
+        "sha256": "30166a72dca2d42495d191007bdaaca08b3497187edf5b1efbd49e8d7ceee60c"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "89a7e595470d547ca5d6e17a491e0aa30ec5a8ec291afceb15fc186255e35a84"
+        "sha256": "be5f7d96f45637693482578462dbc40ce35e47e419e7d8046ec97f290e270c69"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2629,7 +2639,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "0c1c1b8e8b582c2355388a900705af9a5058585bfff52aff1c2414fee6e6be3f"
+        "sha256": "1cee6db34f66427a348d43d29e391eb33ee97e63858a8bf0cddebaf15f7e70a5"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
@@ -2637,19 +2647,19 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "9cb178d7bf6b5209fc978a144f47d68615f022d2ae61bf6118aee384816f1f91"
+        "sha256": "94916fa7bf57c3ec6b953a1a82124371ba5f0304ac26106030cc17df70da2f75"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "c4026f4cd9086df0a67c3c535ae92fcdf650fcaa49d38cf86ddbd7b70abae5d0"
+        "sha256": "5a4a6a594a4f4ae0dfef45a5e6eac0d57e49ed863f3fb601adaba79850970652"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "0dacb3ba5126bca5b421b3940cc347afcf50284c11c7ddd7b27c606ef90621fc"
+        "sha256": "d80c63ea475676f8797bffe3fbd40740ed95659e38fdcbed81713e872031a1b7"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "5c743cd45f0c2f9b1a61c04aa9e8163727edf3dcb120c0ccea9ed9acf40ce22d"
+        "sha256": "3b085362f39b7128d323531e3d5fc4590553f924b7ce012b0f46a3784cfd13e4"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
@@ -2661,6 +2671,6 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "43e884a184eec1d8ec10c714c8bd2204a0dbbbf7"
+    "upstreamMerge": "5eb3269a0fe4284545f026a56ad4f4aa307eb2bc"
   }
 }
