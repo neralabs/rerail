@@ -8,18 +8,20 @@ pub(super) struct Operator {
     pub improvements: String,
     pub active: bool,
     pub comparison: versions::Version,
-    ready: bool,
+    pub(super) ready: bool,
+    pub(super) phase_eligible: bool,
+    pub(super) phase_arms: usize,
     pub(super) seen: BTreeMap<String, versions::Version>,
     pub(super) pending: BTreeMap<String, Pending>,
 }
 #[derive(Clone)]
 pub(super) struct Pending {
-    plus: String,
-    minus: String,
+    pub(super) plus: String,
+    pub(super) minus: String,
     width: usize,
 }
 impl Pending {
-    fn add(&self, w: &mut Work<'_>, d: &Delta) -> Result<()> {
+    pub(super) fn add(&self, w: &mut Work<'_>, d: &Delta) -> Result<()> {
         if let Some(store) = w.versions {
             if store.compose(&self.plus, &self.minus, &d.plus, &d.minus)? {
                 return Ok(());
@@ -81,7 +83,7 @@ fn bind(query: &mut Query, names: &BTreeMap<String, String>) {
     }
 }
 
-fn order(query: &mut Query, db: &rusqlite::Connection) {
+pub(super) fn order(query: &mut Query, db: &rusqlite::Connection) {
     for block in query
         .ctes
         .iter_mut()
@@ -142,14 +144,6 @@ impl Operator {
         let (step, query) = &trace.steps[id];
         let spec = &trace.relations[&step.output];
         let result = format!("{prefix}_o{id}");
-        for (name, keys) in [
-            (result.clone(), spec.keys),
-            (format!("new_{result}"), spec.width),
-            (format!("delta_{result}"), spec.keys),
-        ] {
-            store.create(w.db, &name, versions::Schema::integers(spec.width, keys))?;
-            store.restrict_indexes(&name, &[])?;
-        }
         let mut query = query.clone();
         bind(&mut query, inputs);
         let mut emitted = (*trace.emitted).clone();
@@ -211,6 +205,21 @@ impl Operator {
             program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
             producers: BTreeMap::new(),
         };
+        let planned = reductions::planned(w.db, &run, true)?;
+        let phase_eligible = planned.get(&result).is_some_and(|s| s.can_fuse());
+        let phase_arms = planned.get(&result).map_or(0, |s| s.phase_arms());
+        for (name, keys) in [
+            (result.clone(), spec.keys),
+            (format!("new_{result}"), spec.width),
+            (format!("delta_{result}"), spec.keys),
+        ] {
+            if phase_eligible {
+                store.create_readonly(w.db, &name, versions::Schema::integers(spec.width, keys))?;
+            } else {
+                store.create(w.db, &name, versions::Schema::integers(spec.width, keys))?;
+            }
+            store.restrict_indexes(&name, &[])?;
+        }
         let mut seen = BTreeMap::new();
         let mut pending = BTreeMap::new();
         for (at, name) in run.inputs.iter().enumerate() {
@@ -228,13 +237,13 @@ impl Operator {
                 width,
             };
             for table in [&p.plus, &p.minus] {
-                store.create(w.db, table, versions::Schema::integers(width, width))?;
+                store.create_readonly(w.db, table, versions::Schema::integers(width, width))?;
                 store.restrict_indexes(table, &[])?;
             }
             pending.insert(name.clone(), p);
         }
         let improvements = format!("{result}_improve");
-        store.create(
+        store.create_readonly(
             w.db,
             &improvements,
             versions::Schema::integers(spec.width, spec.keys),
@@ -247,6 +256,8 @@ impl Operator {
             active: false,
             comparison: store.version(&inputs[&step.output]),
             ready: false,
+            phase_eligible,
+            phase_arms,
             seen,
             pending,
         })

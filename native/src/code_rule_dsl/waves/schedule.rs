@@ -200,21 +200,8 @@ fn declare(lease: &impl SqlOwner, program: &Program, existing:bool) -> rusqlite:
         storage.declare(lease, name, definition, true)?;
         storage.written(name, true);
     }
-    for (rel, arity) in &program.relations {
-        let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>();
-        let typed = cols.iter().enumerate().map(|(i,c)| format!("{c} {}", program.column_types.get(rel).and_then(|t|t.get(i)).map_or("INTEGER",String::as_str))).collect::<Vec<_>>().join(", ");
-        // A lattice relation and its delta hold one value per key; its `new_` rows, every candidate.
-        let keys = lattice(program, rel).map_or(*arity, |(keys, _)| keys);
-        for (table, keys) in [(rel.clone(), keys), (format!("new_{rel}"), *arity), (format!("delta_{rel}"), keys)] {
-            let definition = format!("CREATE TEMP TABLE {}{table}({typed}, PRIMARY KEY ({})) WITHOUT ROWID",if existing {"IF NOT EXISTS "}else{""}, cols[..keys].join(", "));
-            storage.declare(lease, &table, definition, true)?;
-        }
-        if program.lattice_operations.get(rel).is_some_and(|ops| ops.after.is_some()) {
-            let typed = cols[..keys].iter().enumerate().map(|(i,c)| format!("{c} {}",program.column_types.get(rel).and_then(|t|t.get(i)).map_or("INTEGER",String::as_str))).collect::<Vec<_>>().join(", ");
-            let table = format!("__sql_changes_{rel}");
-            storage.declare(lease, &table, format!("CREATE TEMP TABLE {}{table}({typed}, changes INTEGER NOT NULL, PRIMARY KEY ({})) WITHOUT ROWID",if existing {"IF NOT EXISTS "}else{""},cols[..keys].join(", ")),true)?;
-        }
-    }
+    drop(storage);
+    declare_relations(lease, program, existing, false)?;
     let mut step = lease.prepare_cached("INSERT INTO temp.wave_step(step, stratum, output, sql) VALUES (?1, ?2, ?3, ?4)")?;
     let mut read = lease.prepare_cached("INSERT OR IGNORE INTO temp.wave_read(rel, step) VALUES (?1, ?2)")?;
     for (i, s) in program.steps.iter().enumerate() {
@@ -231,6 +218,38 @@ fn declare(lease: &impl SqlOwner, program: &Program, existing:bool) -> rusqlite:
            c(stratum, before) AS (SELECT * FROM e UNION SELECT c.stratum, e.before FROM c JOIN e ON e.stratum = c.before) \
          SELECT * FROM c WHERE stratum <> before",
     )?;
+    Ok(())
+}
+
+fn declare_relations(lease: &impl SqlOwner, program: &Program, existing: bool, public_only: bool) -> rusqlite::Result<()> {
+    let mut storage = lease.storage().borrow_mut();
+    for (rel, arity) in &program.relations {
+        let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        let typed = cols.iter().enumerate().map(|(i,c)| format!("{c} {}", program.column_types.get(rel).and_then(|t|t.get(i)).map_or("INTEGER",String::as_str))).collect::<Vec<_>>().join(", ");
+        // A lattice relation and its delta hold one value per key; its `new_` rows, every candidate.
+        let keys = lattice(program, rel).map_or(*arity, |(keys, _)| keys);
+        for (table, keys) in [(rel.clone(), keys), (format!("new_{rel}"), *arity), (format!("delta_{rel}"), keys)] {
+            if public_only && table != *rel { continue; }
+            let definition = format!("CREATE TEMP TABLE {}{table}({typed}, PRIMARY KEY ({})) WITHOUT ROWID",if existing {"IF NOT EXISTS "}else{""}, cols[..keys].join(", "));
+            storage.declare(lease, &table, definition, true)?;
+        }
+        if !public_only && program.lattice_operations.get(rel).is_some_and(|ops| ops.after.is_some()) {
+            let typed = cols[..keys].iter().enumerate().map(|(i,c)| format!("{c} {}",program.column_types.get(rel).and_then(|t|t.get(i)).map_or("INTEGER",String::as_str))).collect::<Vec<_>>().join(", ");
+            let table = format!("__sql_changes_{rel}");
+            storage.declare(lease, &table, format!("CREATE TEMP TABLE {}{table}({typed}, changes INTEGER NOT NULL, PRIMARY KEY ({})) WITHOUT ROWID",if existing {"IF NOT EXISTS "}else{""},cols[..keys].join(", ")),true)?;
+        }
+    }
+    Ok(())
+}
+
+/// Retained waves need public outputs and wave diagnostics; cold control tables are deferred.
+pub(in crate::code_rule_dsl) fn declare_outputs(db: &Database, program: &Program) -> StoreResult<()> {
+    {
+        let mut storage = db.storage().borrow_mut();
+        let (name, definition) = CONTROL[2];
+        storage.declare(db, name, definition.to_owned(), true)?;
+    }
+    declare_relations(db, program, false, true)?;
     Ok(())
 }
 

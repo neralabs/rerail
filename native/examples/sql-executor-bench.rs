@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     phases.push(json!({"phase":"open","wall_s":start.elapsed().as_secs_f64(),"cpu_s":usage().0-cpu,"peak_rss_mb":usage().1}));
     let handle = unsafe { session.connection().handle() };
     let shared_profile = session.sql_profile_totals().is_some();
-    if !shared_profile {
+    if !shared_profile && std::env::var("RERAIL_SQL_BENCH_UNPROFILED").as_deref() != Ok("1") {
         unsafe {
             ffi::sqlite3_trace_v2(
                 handle,

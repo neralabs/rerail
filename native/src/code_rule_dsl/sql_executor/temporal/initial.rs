@@ -7,6 +7,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     run: &mut session::Execution,
     namespace: usize,
     original: &schedule::Program,
+    declared_counts: bool,
 ) -> Result<Option<u32>> {
     // A SQL producer's query is opaque to the retained waves: such a program runs cold.
     if !run.producers.is_empty() {
@@ -154,14 +155,22 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             )
             .map_err(error)?;
             if spec.widening() {
-                w.db.execute(
-                    &format!(
-                        "INSERT INTO __sql_changes_{r} SELECT * FROM {}",
-                        quote(&frame.counters[r])
-                    ),
-                    [],
-                )
-                .map_err(error)?;
+                let counters = store.version(&frame.counters[r]);
+                let _public = store.activate(0)?;
+                let table = format!("__sql_changes_{r}");
+                if declared_counts && !store.contains(&table) {
+                    w.db.execute_batch(&format!("DROP TABLE temp.{}", quote(&table)))
+                        .map_err(error)?;
+                }
+                store.alias_readonly(
+                    w.db,
+                    &table,
+                    counters,
+                    (0..spec.keys)
+                        .map(|c| format!("c{c}"))
+                        .chain(["changes".into()])
+                        .collect(),
+                )?;
             }
         }
         attempt.cleanup()?;

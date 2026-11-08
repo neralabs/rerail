@@ -1,5 +1,5 @@
 // Count executions at their observed origin, before merging identical SQL text.
-const phases = ["connectionSetup", "catalogPublication", "filePublication", "candidatePreparation", "relationalEvaluation", "cleanup", "unknown"];
+const phases = ["connectionSetup", "catalogPublication", "filePublication", "candidatePreparation", "relationalEvaluation", "verification", "cleanup", "unknown"];
 
 function phase(sql, context) {
   const body = sql.replace(/^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "");

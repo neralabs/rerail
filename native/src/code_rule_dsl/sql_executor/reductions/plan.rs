@@ -297,7 +297,6 @@ impl Rule {
             return Ok(());
         }
         if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts)
-            .filter(|s| s.writable())
         {
             source.prepare_index(&columns);
             return Ok(());
