@@ -10,8 +10,7 @@
 #   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
 #   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
 #   - number is -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)? (grammar.js): an exponent's sign is
-#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers (the number masks below send
-#     them to tree-sitter).
+#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers.
 #   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
 #     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
 #   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
@@ -34,9 +33,7 @@ class lf        = '\n'
 class op        = '{' '}' '[' ']' ',' ':'
 # A number's bytes.
 class digit     = '0'..'9'
-class zero      = '0'
-class minus     = '-'
-class dot       = '.'
+class nonzero   = '1'..'9'
 class expo      = 'e' 'E'
 
 # --- Strings: simdjson's stage 1 -----------------------------------------------------------------
@@ -74,11 +71,11 @@ keywords escape_sequence {
 # One token per structural byte; its kind is its text (tier 2).
 token punctuation     = start code & op
 keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
-# A run of word bytes is one token: a number if it starts with a digit or '-', else a keyword
-# (tier 2 compares it once; any other word sends the file to tree-sitter).
-token number          = start starts(word) & (digit | minus) last lasts(word)
-token atom            = start starts(word) & ~(digit | minus) last lasts(word)
-keywords atom { "true" -> true  "false" -> false  "null" -> null } required
+# A run of word bytes is one token, as simdjson's stage 1 leaves it: a keyword if its text is
+# one (tier 2 compares it once), else a number, which tier 2 checks (below). Any other word fails
+# the check and sends the file to tree-sitter.
+token number          = start starts(word) last lasts(word)
+keywords number { "true" -> true  "false" -> false  "null" -> null }
 
 skip code & ws
 
@@ -89,22 +86,10 @@ error "newline in a string"        when body & lf
 # A string open at the end of the file is tier 2's: its node has no end, as simdjson's stage 1
 # finds it from the final carry, not per byte.
 
-# A number's syntax, as masks (doc 18 §4): -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)?. A word
-# that starts with a digit or '-' is a number; one that starts otherwise is a keyword, which
-# tier 2 compares once. (`1.` is a number for tree-sitter; it goes to tree-sitter here.)
-mask wstart     = starts(word)
-mask num        = fill(wstart & (digit | minus), ~word)
-mask seen_dot   = fill(num & (dot | expo), ~num)        # from a dot or an exponent to the end
-mask seen_expo  = fill(num & expo, ~num)
-error "a stray byte in a number"   when num & ~(digit | minus | dot | expo)
-error "a '-' inside a number"      when num & minus & ~wstart & ~prev(expo)
-error "a '-' without a digit"      when num & minus & ~next(digit)
-error "a leading zero"             when num & zero & (wstart | prev(wstart & minus)) & next(digit)
-error "a '.' between non-digits"   when num & dot & ~(prev(digit) & next(digit))
-error "a second '.' or one in an exponent" when num & dot & prev(seen_dot)
-error "an exponent between non-digits" when num & expo & ~(prev(digit) & next(digit | minus))
-error "a second exponent"          when num & expo & prev(seen_expo)
-error "a number ending in a non-digit" when num & lasts(word) & ~digit
+# A number's syntax is tier 2's, as simdjson's stage 2 parses a number (doc 18 §4): tier 1 only
+# finds the word. The number's arm checks its bytes against this grammar, tree-sitter-json's
+# -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)?; a word that fails it goes to tree-sitter.
+check number = ['-'] ('0' | nonzero digit*) ['.' digit*] [expo ['-'] digit+]
 
 # A comment (valid for tree-sitter-json, an extra) is in a word: no grammar rule takes it, and
 # the file goes to tree-sitter.

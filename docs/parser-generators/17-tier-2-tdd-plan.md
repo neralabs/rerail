@@ -61,6 +61,7 @@ the digest covers them. The old rows (`after`, `before`, `also`, `parent`, code 
 `json_number` validator) are deleted, with the Rust tape writer's leftovers.
 
 **Tests:** `json_tier2_states_print_as_designed` (19 states, pinned whole),
+`json_number_check_is_parse_numbers_steps` (8 states), `check_matches_a_tokens_bytes`,
 `rir::tests::block_tree_rows_round_trip`, `json_rows_equal_the_evaluator_on_every_executor`
 (the token rows), `only_the_compiler_reads_tier2s_states`.
 
@@ -107,9 +108,10 @@ body to it, lowered from the states and arms:
 
 The IR's interpreter, Cranelift (`native_cpu_block`) and later MSL all run that body.
 
-**5c. The kinds.** A token row with a kind gives it; a keyworded row's kind is read from the
-token's bytes: a punctuation byte, an escape's second byte, or one compare of a word (`true`
-is one 32-bit compare). A word that is no keyword refuses.
+**5c. The kinds and checks.** A token row with a kind gives it; a keyword retypes it, read
+from the token's bytes: a punctuation byte, an escape's second byte, or one compare of a word
+(`true` is one 32-bit compare). A token with a `check` runs its byte state machine in its arm,
+as simdjson's `parse_number` (decision 0052): JSON's number is 8 states.
 
 **5d. The stack.** simdjson's: one frame per nested open, in memory: the open's ord and the
 return state. A close writes the size into the open's slot. Its depth is the file's.
@@ -129,10 +131,9 @@ again at the known widths: at most one second pass.
 - `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in
   CPU time.
 
-**Open: tier 1's cost.** The number masks took JSON's tier 1 from 41 operations to 95, its loop
-from 178 instructions to 450, its carried state from 4 bits to 15. Tier 1 is no longer next to
-simdjson's stage 1, and the ratchets fail. Undecided: cheaper masks, or a number check in
-tier 2's arm for `number` (straight-line, no loop over bytes).
+**Tier 1's cost (decision 0052).** The number masks took tier 1 to 95 operations and 450 loop
+instructions; with the check in tier 2 and one word token it is 37 and 174, below the old
+ratchets, which are lowered.
 
 ## 6. Metal
 

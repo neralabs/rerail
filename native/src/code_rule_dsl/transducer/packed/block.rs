@@ -322,6 +322,17 @@ pub(in crate::code_rule_dsl) enum Act {
     Leaf { field: u16, supers: Vec<u16> },
 }
 
+/// A token row's `check` (doc 18 §4): a state machine over each of its tokens' bytes, which the
+/// token's arm runs, as simdjson's stage 2 parses a number. State 0 is the start; an arm takes
+/// the bytes of its set, arms from one state on disjoint sets. A byte with no arm, or a token
+/// that ends outside an accepting state, refuses the file.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct CheckRow {
+    pub(super) token: u16,
+    pub(super) accept: Vec<bool>,
+    pub(super) arms: Vec<(u16, [u64; 4], u16)>,
+}
+
 /// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
 /// enters a nested level and keeps the state to return to.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -361,6 +372,7 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     pub(super) skip: Option<u16>,
     pub(super) states: Vec<StateRow>,
     pub(super) arms: Vec<ArmRow>,
+    pub(super) checks: Vec<CheckRow>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -424,7 +436,15 @@ impl BlockProgram {
                     && !self.arms[..i].iter().any(|b| b.from == a.from && b.token == a.token)
                     && a.acts.iter().all(|act| !matches!(act, Act::Open { kind: 0, .. }))
             });
-        let nodes = tokens && machine;
+        let checks = self.checks.iter().all(|c| {
+            let state = |s: u16| usize::from(s) < c.accept.len();
+            row(c.token)
+                && !c.accept.is_empty()
+                && c.arms.iter().enumerate().all(|(i, a)| {
+                    state(a.0) && state(a.2) && a.1 != [0; 4] && c.arms[..i].iter().all(|b| b.0 != a.0 || (0..4).all(|w| a.1[w] & b.1[w] == 0))
+                })
+        });
+        let nodes = tokens && machine && checks;
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
             return Err(Error::InvalidTarget(0));
         }
@@ -465,7 +485,7 @@ impl BlockProgram {
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
         // And the tree section: its rows and its state machine.
-        if !self.tokens.is_empty() || !self.states.is_empty() {
+        if !self.tokens.is_empty() || !self.states.is_empty() || !self.checks.is_empty() {
             // Their text (`rir`), which names every field of every row.
             out.extend_from_slice(b"tree3");
             let mut text = String::new();

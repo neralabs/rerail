@@ -631,7 +631,7 @@ fn one_byte_tokens_end_at_their_start() {
 }
 
 /// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 41;
+const JSON_OPS: usize = 37;
 const JSON_CARRIED_WORDS: usize = 4;
 
 #[test]
@@ -661,10 +661,11 @@ fn json_loop_keeps_values_in_registers() {
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
 /// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
-/// 0049) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a full-block body with folded
-/// logic to 178; the target is
-/// stage 1's 150.
-const JSON_LOOP: usize = 178;
+/// 0049) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a
+/// full-block body with folded logic to 178, and one word token with the number check in tier 2
+/// (decision 0052) to 174.
+/// The target is stage 1's 150.
+const JSON_LOOP: usize = 174;
 const JSON_LOOP_STACK: usize = 0;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
@@ -827,7 +828,7 @@ fn only_the_compiler_reads_tier2s_states() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
-    let needles = [".arms", "ArmRow", "StateRow", "block::Act", "Act::Open", "Act::Close", "Act::Leaf"];
+    let needles = [".arms", "ArmRow", "StateRow", "CheckRow", "block::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
     let mut dirs = vec![root];
     while let Some(dir) = dirs.pop() {
@@ -849,3 +850,34 @@ fn only_the_compiler_reads_tier2s_states() {
     }
     assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
 }
+
+/// JSON's number check (doc 18 §4), the steps of simdjson's `parse_number`: 0 the start, 1 after
+/// `-`, 2 after a leading `0`, 3 in the integer, 4 after `.` and in the fraction, 5 after `e`,
+/// 6 after `e-`, 7 in the exponent; 2, 3, 4 and 7 accept. Bytes as 64 hex digits, byte 0 last:
+/// `-` 0x2d, `0` 0x30, `1`..`9`, `.` 0x2e, `e` `E`.
+#[test]
+fn json_number_check_is_parse_numbers_steps() {
+    let text = rir::disassemble(&json_program(), None);
+    let got: String = text.lines().filter(|l| l.starts_with("  block 0 check ")).map(|l| format!("{}\n", &l[10..])).collect();
+    assert_eq!(got, JSON_NUMBER_CHECK, "\n{got}");
+}
+
+const JSON_NUMBER_CHECK: &str = "\
+check 0 token 4 accept 2 3 4 7\n\
+check 0 arm 0 on 0000000000000000000000000000000000000000000000000000200000000000 to 1\n\
+check 0 arm 0 on 0000000000000000000000000000000000000000000000000001000000000000 to 2\n\
+check 0 arm 0 on 00000000000000000000000000000000000000000000000003fe000000000000 to 3\n\
+check 0 arm 1 on 0000000000000000000000000000000000000000000000000001000000000000 to 2\n\
+check 0 arm 1 on 00000000000000000000000000000000000000000000000003fe000000000000 to 3\n\
+check 0 arm 2 on 0000000000000000000000000000000000000000000000000000400000000000 to 4\n\
+check 0 arm 2 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
+check 0 arm 3 on 0000000000000000000000000000000000000000000000000000400000000000 to 4\n\
+check 0 arm 3 on 00000000000000000000000000000000000000000000000003ff000000000000 to 3\n\
+check 0 arm 3 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
+check 0 arm 4 on 00000000000000000000000000000000000000000000000003ff000000000000 to 4\n\
+check 0 arm 4 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
+check 0 arm 5 on 0000000000000000000000000000000000000000000000000000200000000000 to 6\n\
+check 0 arm 5 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
+check 0 arm 6 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
+check 0 arm 7 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
+";

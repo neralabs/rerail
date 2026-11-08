@@ -441,3 +441,144 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     }
     Ok((states, arms))
 }
+
+/// A `check`'s grammar over a token's bytes to a byte state machine (doc 18 §4): its names are
+/// byte classes, its literals bytes. Glushkov's positions, each a set of bytes; then a state per
+/// set of positions reached (subset construction), the arms from one state on disjoint bytes.
+/// State 0 is the start. The token's arm runs it over the token's bytes, as simdjson's stage 2
+/// parses a number; a byte with no arm, or an end outside an accepting state, refuses.
+pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Result<(Vec<bool>, Vec<(u16, [u64; 4], u16)>), String> {
+    fn set(ranges: &[(u32, u32)]) -> [u64; 4] {
+        let mut s = [0u64; 4];
+        for &(lo, hi) in ranges {
+            for b in lo..=hi.min(255) {
+                s[(b / 64) as usize] |= 1 << (b % 64);
+            }
+        }
+        s
+    }
+    fn expand(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>, sets: &mut Vec<[u64; 4]>) -> Result<E, String> {
+        let pos = |s: [u64; 4], sets: &mut Vec<[u64; 4]>| {
+            sets.push(s);
+            E::Tok(sets.len() - 1)
+        };
+        Ok(match g {
+            Gram::Lit(text) if !text.is_empty() => E::Seq(text.bytes().map(|b| pos(set(&[(u32::from(b), u32::from(b))]), sets)).collect()),
+            Gram::Lit(_) => return Err("check: an empty literal".into()),
+            Gram::Sym(name) => pos(set(classes.get(name).ok_or_else(|| format!("check: `{name}` is no class"))?), sets),
+            Gram::Seq(items) => E::Seq(items.iter().map(|i| expand(i, classes, sets)).collect::<Result<_, _>>()?),
+            Gram::Alt(alts) => E::Alt(alts.iter().map(|a| expand(a, classes, sets)).collect::<Result<_, _>>()?),
+            Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
+            Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
+            Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
+            Gram::Field(..) => return Err("check: a field in a byte grammar".into()),
+        })
+    }
+    let mut sets = Vec::new();
+    let e = expand(g, classes, &mut sets)?;
+    let mut edges = Vec::new();
+    follow(&e, &mut edges);
+    let starts: Vec<usize> = first(&e).into_iter().map(|p| p.0).collect();
+    let ends: Vec<usize> = last(&e).into_iter().map(|p| p.0).collect();
+    // A state: a sorted set of positions; `None` in it is the start.
+    let mut states: Vec<Vec<Option<usize>>> = vec![vec![None]];
+    let mut accept = vec![nullable(&e)];
+    let mut arms = Vec::new();
+    let mut at = 0;
+    while at < states.len() {
+        let next: Vec<usize> = {
+            let mut n: Vec<usize> = Vec::new();
+            for p in &states[at] {
+                match p {
+                    None => n.extend(&starts),
+                    Some(p) => n.extend(edges.iter().filter(|e| e.from == Some(*p)).filter_map(|e| e.to)),
+                }
+            }
+            n.sort_unstable();
+            n.dedup();
+            n
+        };
+        // Split the bytes the next positions take into blocks that take the same positions.
+        for b in 0..=255u32 {
+            let bit = |s: &[u64; 4]| s[(b / 64) as usize] >> (b % 64) & 1 == 1;
+            let to: Vec<Option<usize>> = next.iter().copied().filter(|&q| bit(&sets[q])).map(Some).collect();
+            if to.is_empty() {
+                continue;
+            }
+            let t = match states.iter().position(|s| *s == to) {
+                Some(t) => t,
+                None => {
+                    accept.push(to.iter().any(|q| q.is_some_and(|q| ends.contains(&q))));
+                    states.push(to);
+                    states.len() - 1
+                }
+            };
+            let (from, to) = (at as u16, t as u16);
+            match arms.iter_mut().find(|a: &&mut (u16, [u64; 4], u16)| a.0 == from && a.2 == to) {
+                Some(a) => a.1[(b / 64) as usize] |= 1 << (b % 64),
+                None => {
+                    let mut s = [0u64; 4];
+                    s[(b / 64) as usize] |= 1 << (b % 64);
+                    arms.push((from, s, to));
+                }
+            }
+        }
+        at += 1;
+        if states.len() > 256 {
+            return Err("check: more than 256 states".into());
+        }
+    }
+    Ok(merge(&accept, &arms))
+}
+
+/// A byte machine with the states that act alike merged (Moore's refinement), numbered from the
+/// start in the order they are reached.
+fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16, [u64; 4], u16)>) {
+    let n = accept.len();
+    let target = |s: usize, b: u32| arms.iter().find(|a| usize::from(a.0) == s && a.1[(b / 64) as usize] >> (b % 64) & 1 == 1).map(|a| usize::from(a.2));
+    let mut class: Vec<usize> = accept.iter().map(|&a| usize::from(a)).collect();
+    loop {
+        let mut sigs: Vec<(usize, Vec<Option<usize>>)> = Vec::new();
+        let next: Vec<usize> = (0..n)
+            .map(|s| {
+                let sig = (class[s], (0..256).map(|b| target(s, b).map(|t| class[t])).collect());
+                sigs.iter().position(|x| *x == sig).unwrap_or_else(|| {
+                    sigs.push(sig);
+                    sigs.len() - 1
+                })
+            })
+            .collect();
+        let stable = sigs.len() == class.iter().collect::<std::collections::HashSet<_>>().len();
+        class = next;
+        if stable {
+            break;
+        }
+    }
+    // Number the classes from the start, in the order the arms reach them.
+    let mut number: HashMap<usize, u16> = HashMap::new();
+    let mut order = vec![0usize];
+    number.insert(class[0], 0);
+    let mut at = 0;
+    while at < order.len() {
+        let here = order[at];
+        for a in arms.iter().filter(|a| usize::from(a.0) == here) {
+            let t = usize::from(a.2);
+            if !number.contains_key(&class[t]) {
+                number.insert(class[t], order.len() as u16);
+                order.push(t);
+            }
+        }
+        at += 1;
+    }
+    let mut out: Vec<(u16, [u64; 4], u16)> = Vec::new();
+    for (k, &s) in order.iter().enumerate() {
+        for a in arms.iter().filter(|a| usize::from(a.0) == s) {
+            let to = number[&class[usize::from(a.2)]];
+            match out.iter_mut().find(|o| usize::from(o.0) == k && o.2 == to) {
+                Some(o) => (0..4).for_each(|w| o.1[w] |= a.1[w]),
+                None => out.push((k as u16, a.1, to)),
+            }
+        }
+    }
+    (order.iter().map(|&s| accept[s]).collect(), out)
+}

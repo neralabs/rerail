@@ -113,9 +113,11 @@ pub enum Stmt {
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     Choice { name: String, supertype: Option<String>, body: Gram },
-    /// `check KIND is VALIDATOR`: each node of the kind is checked by a built-in validator
-    /// (`json_number`, `integer`, `float`, …); a failing one sends the file to tree-sitter.
-    Check { kind: String, validator: String },
+    /// `check KIND = G`: each token of the kind (after `keywords`) must match `G` over its bytes,
+    /// a grammar whose names are byte classes and whose literals are bytes; one that does not
+    /// sends the file to tree-sitter. Tier 2 checks it in the token's arm, as simdjson's stage 2
+    /// parses a number (doc 18 §4).
+    Check { kind: String, body: Gram },
     /// `extra KIND …`: nodes of these kinds carry the extra flag.
     Extra(Vec<String>),
 }
@@ -697,8 +699,8 @@ impl P {
             }
             "check" => {
                 let kind = self.kind()?;
-                self.want_kw("is")?;
-                Stmt::Check { kind, validator: self.ident()? }
+                self.want_p("=")?;
+                Stmt::Check { kind, body: self.gram()? }
             }
             "extra" => {
                 let mut kinds = vec![];
@@ -870,5 +872,16 @@ tree json {
         assert_eq!((name.as_str(), s.as_str(), alts.len()), ("value", "_value", 7));
         let Stmt::Node { body: Gram::Alt(alts), .. } = &body[6] else { panic!("list") };
         assert_eq!(alts, &vec![Gram::Plus(Box::new(sym("item"))), Gram::Seq(vec![lit("("), lit(")")])]);
+    }
+
+    /// `check KIND = G`, a grammar over a token's bytes; the evaluator refuses a token it does
+    /// not match (doc 18 §4).
+    #[test]
+    fn check_matches_a_tokens_bytes() {
+        let src = "lexer t\nclass digit = '0'..'9'\nclass nonzero = '1'..'9'\nclass ws = ' '\nmask word = ~ws\ntoken number = start starts(word) last lasts(word)\nskip ws\ncheck number = ['-'] ('0' | nonzero digit*) ['.' digit*]\n";
+        let stmts = parse(src).expect("parses");
+        let tables = std::collections::HashMap::new();
+        let errors = |text: &str| crate::eval::Ev::run(&stmts, text.as_bytes(), &tables).expect("runs").errors.len();
+        assert_eq!([errors("0 -12 3. 4.50"), errors("01"), errors("-"), errors("1x"), errors("1..2")], [0, 1, 1, 1, 1]);
     }
 }

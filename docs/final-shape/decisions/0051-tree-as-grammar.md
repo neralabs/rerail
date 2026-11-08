@@ -27,7 +27,8 @@ the states nor the grammar check. It now states each node's content, as tree-sit
 ## Decision
 
 1. **The tree section is a grammar:** `node K [nested] = E` and `choice N [supertype S] = …`,
-   with fields as `f: X`. The rows keep only the tokens.
+   with fields as `f: X`. The rows keep only the tokens. (A number's syntax: tier 2's `check`, decision
+   0052, not tier-1 masks.)
 2. **The compiler builds one DFA per level** (the root and each `nested` node), inlining the
    rest, with open, leaf and close actions on each transition, calls for nested nodes, and
    refusals for everything else. LL(1) per level, or the compiler refuses it.

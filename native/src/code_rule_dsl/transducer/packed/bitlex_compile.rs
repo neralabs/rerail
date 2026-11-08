@@ -54,7 +54,7 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, ClassTable, KeywordRow, TokenRow};
+use super::block::{BlockOp, BlockProgram, CheckRow, ClassTable, KeywordRow, TokenRow};
 use super::grammar;
 use ::bitlex::syntax::{Arg, Expr, Stmt};
 use std::collections::HashMap;
@@ -121,6 +121,8 @@ struct Lowering {
     /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
     tree: Vec<Stmt>,
     extra: Vec<String>,
+    /// Each `check`: a token kind and its grammar over the token's bytes.
+    checks: Vec<(String, ::bitlex::syntax::Gram)>,
 }
 
 /// Whether a keyword gives kind `name`.
@@ -164,6 +166,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         skip: None,
         tree: Vec::new(),
         extra: Vec::new(),
+        checks: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -252,6 +255,12 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let (states, arms) = grammar::build(&low.tree, &ids)?;
         low.program.states = states;
         low.program.arms = arms;
+        // Each check, a state machine over its tokens' bytes (doc 18 §4).
+        for (kind, g) in &low.checks {
+            let token = token_specs.iter().position(|t| &t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))? as u16;
+            let (accept, arms) = grammar::byte_check(g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
+            low.program.checks.push(CheckRow { token, accept, arms });
+        }
     }
     low.program.delay = delay;
     let program = live(&low.program);
@@ -308,7 +317,7 @@ impl Lowering {
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
                 Stmt::Node { .. } | Stmt::Choice { .. } => self.tree.push(stmt.clone()),
-                Stmt::Check { kind, .. } => return Err(format!("check {kind}: a validator is tier-1 masks and errors (doc 18 §4), not a check")),
+                Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
             }
@@ -967,6 +976,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     out.tokens = program.tokens.iter().map(|r| TokenRow { start: n(r.start), end: n(r.end), ..r.clone() }).collect();
     out.states = program.states.clone();
     out.arms = program.arms.clone();
+    out.checks = program.checks.clone();
     out.keywords = program.keywords.clone();
     out.skip = program.skip.map(n);
     out

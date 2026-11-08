@@ -89,7 +89,7 @@ directed acyclic graph of mask operations.
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
 | `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. With `required`, a token of `KIND` that is none of them is an error. |
-| `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
+| `check KIND = G` | Every token of `KIND` (after `keywords`) must match `G` in full, a grammar over its bytes in the tree section's notation (names are byte classes, literals bytes), or the file goes to tree-sitter. Tier 2 runs it in the token's arm, as simdjson's `parse_number` (decision 0052). |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
 | `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
