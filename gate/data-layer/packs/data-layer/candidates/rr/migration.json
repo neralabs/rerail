@@ -2712,8 +2712,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "79fabb23d768c9eb6153e921068426f9b657e921",
-    "status": "Root Final shape through 79fabb23d with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
+    "status": "Root Final shape through 0f0049ec7 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2845,7 +2845,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "d1ee5d5fb18c223ae265ee71849dd34fab8f47aa",
+    "upstreamMerge": "7a846bfcae740fd20390e1b490467d386982d2a0",
     "cliArtifact": {
       "engineCommit": "8c690b90f0887a40f816eea64e91b04a39c0006c",
       "upstreamCommit": "79fabb23d768c9eb6153e921068426f9b657e921",
