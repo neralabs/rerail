@@ -92,14 +92,9 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
     }
 }
 
-/// A comparison's operator: one of the parser's punctuation. Named so serde's derive reads it by `punctuation`, not
-/// as a string borrowed from its input.
-pub(in crate::code_rule_dsl) type Op = &'static str;
-
-/// A comparison's operator read back (a stored prepared program, decision 0073): one of the parser's own.
-fn punctuation<'de, D: serde::Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
-    let op = <String as serde::Deserialize>::deserialize(d)?;
-    PUNCT.iter().copied().find(|p| *p == op).ok_or_else(|| serde::de::Error::custom(format!("no operator {op:?}")))
+/// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
+pub(in crate::code_rule_dsl) fn operator(op: &str) -> Option<&'static str> {
+    PUNCT.iter().copied().find(|p| *p == op)
 }
 
 fn near(src: &str, pos: usize) -> &str {
@@ -107,7 +102,7 @@ fn near(src: &str, pos: usize) -> &str {
     &src[pos..end]
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Term {
     Var(String),
     Wild,
@@ -134,7 +129,7 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Atom {
     pub(in crate::code_rule_dsl) rel: String,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
@@ -154,7 +149,7 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
@@ -166,15 +161,10 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
-    Cmp {
-        l: Term,
-        #[serde(deserialize_with = "punctuation")]
-        op: Op,
-        r: Term,
-    },
+    Cmp { l: Term, op: &'static str, r: Term },
     /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
@@ -295,14 +285,14 @@ pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
     pub(in crate::code_rule_dsl) body: Vec<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct LatticeDecl {
     pub(in crate::code_rule_dsl) keys: usize,
     /// The value column's type, which names the lattice (`flat`, `min`, `max`) unless `merge` does.
@@ -322,13 +312,13 @@ impl LatticeDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Value {
     Int(i64),
     Str(String),
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Program {
     /// Each relation's columns: (name, type).
     pub(in crate::code_rule_dsl) decls: BTreeMap<String, Vec<(String, String)>>,
@@ -359,19 +349,37 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+    /// The AST patterns (``n ~ `$O[:-$K]` ``) the rules read: the batch matches each over every document of the
+    /// program's language and makes `ast_match(p, n, g, c)` for them (`rr::lower`).
+    pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
+    /// The documents the policies' `.scope` selects (`rr::lower`'s scope filter): a document is read when an entry
+    /// holds it, its path matching one of the entry's first globs (any path, when there are none) and none of its
+    /// second. `None`: every document (no scope, `.scope given`, or a combined program with a policy of no scope).
+    pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
-/// comment node (`kind(c, "comment")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+/// Whether `doc_scopes` reads the document at `path`.
+pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
+    let glob = |g: &String| crate::code_rule_dsl::logic::strings::test("glob", path, g);
+    scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
+}
+
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), each
+/// comment node (`kind(c, "comment")`), each node of some kinds (`kind(c, "string")`, through derived columns too),
+/// or each span another pattern's group captured (decision 0081).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
     Comment,
+    /// The nodes of these kinds.
+    Kinds(std::collections::BTreeSet<String>),
+    /// The spans group `.1` of pattern `.0` captured (as `rx_span` names them).
+    Capture(String, String),
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
     /// second column, one memo shared).
@@ -379,6 +387,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
+    /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
+    /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
+    Components { edge: String, own: String },
 }
 
 impl Native {
@@ -391,6 +402,10 @@ impl Native {
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
             Native::MatchAll { input, .. } => *input = rename(input),
+            Native::Components { edge, own } => {
+                *edge = rename(edge);
+                *own = rename(own);
+            }
         }
     }
     /// The relations it reads.
@@ -398,6 +413,7 @@ impl Native {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
         }
     }
 }
@@ -978,6 +994,27 @@ pub(in crate::code_rule_dsl) fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) 
         }
     }
     sccs
+}
+
+/// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
+pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
+    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
+    for r in &prog.rules {
+        body_of.entry(&r.head.rel).or_default().push(&r.body);
+    }
+    let (mut need, mut todo) = (BTreeSet::new(), roots);
+    while let Some(r) = todo.pop() {
+        if !need.insert(r.clone()) {
+            continue;
+        }
+        if let Some(native) = prog.natives.get(&r) {
+            todo.extend(native.reads().into_iter().map(str::to_owned));
+        }
+        for body in body_of.get(r.as_str()).into_iter().flatten() {
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+        }
+    }
+    need
 }
 
 /// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.

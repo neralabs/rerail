@@ -15,13 +15,18 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
+mod catalog;
 mod constants;
+// A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
+#[cfg(target_pointer_width = "64")]
+mod corpus;
 mod documents;
 mod indexes;
 mod live;
 mod maintenance;
 mod overlay;
 mod phase;
+mod producers;
 mod profiling;
 mod recursive;
 mod reductions;
@@ -203,22 +208,7 @@ impl CodeRuleSqlExecutor {
                 types: Option<Vec<String>>,
             }
             let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
-            if this.documents.is_some()
-                && this.inputs.contains_key(&input.name)
-                && !this.mutable_inputs.contains(&input.name)
-            {
-                return Err(error(
-                    "native snapshot families cannot be replaced with bindRelation",
-                ));
-            }
             let logical_arity = input.columns.len();
-            if this
-                .input_shapes
-                .get(&input.name)
-                .is_some_and(|(arity, _)| *arity != logical_arity)
-            {
-                return Err(error("rebinding a fact cannot change its logical arity"));
-            }
             let logical_types = input.types.clone();
             if let Some(types) = &input.types {
                 if types.len() != input.columns.len()
@@ -230,20 +220,6 @@ impl CodeRuleSqlExecutor {
                         "fact types must match columns and be number, symbol, node, or loc",
                     ));
                 }
-            }
-            if !identifier(&input.name) || reserved(&input.name) {
-                return Err(error("a fact relation needs a non-reserved SQL identifier"));
-            }
-            let stored: bool = this
-                .db
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE)",
-                    [&input.name],
-                    |r| r.get(0),
-                )
-                .map_err(error)?;
-            if stored || input.name.eq_ignore_ascii_case("atoms") {
-                return Err(error("a fact binding cannot replace a stored relation"));
             }
             let boolean = input.columns.is_empty();
             if boolean && input.rows.iter().any(|row| !row.is_empty()) {
@@ -271,20 +247,7 @@ impl CodeRuleSqlExecutor {
             if input.rows.iter().any(|r| r.len() != input.columns.len()) {
                 return Err(error("a fact row does not have the declared arity"));
             }
-            if this
-                .inputs
-                .keys()
-                .any(|name| name.eq_ignore_ascii_case(&input.name) && *name != input.name)
-            {
-                return Err(error("fact names must be unique ignoring case"));
-            }
-            if this
-                .inputs
-                .get(&input.name)
-                .is_some_and(|s| s.columns() != input.columns)
-            {
-                return Err(error("rebinding a fact cannot change its columns"));
-            }
+            this.check_input(&input.name, &input.columns, logical_arity)?;
             let symbols: BTreeSet<&str> = input
                 .rows
                 .iter()
@@ -306,16 +269,112 @@ impl CodeRuleSqlExecutor {
                         .collect::<Result<Vec<_>>>()
                 })
                 .collect::<Result<BTreeSet<_>>>()?;
-            this.invalidate(&BTreeSet::from([input.name.clone()]))?;
             let source = Arc::new(live::Live::from_rows(input.columns, values));
-            this.db.bind(&input.name, source.clone()).map_err(error)?;
-            this.mutable_inputs.insert(input.name.clone());
-            this.live_inputs.insert(input.name.clone(), source.clone());
-            this.input_shapes
-                .insert(input.name.clone(), (logical_arity, logical_types));
-            this.inputs.insert(input.name, source);
+            this.install_input(input.name.clone(), source.clone(), logical_arity, logical_types, true)?;
+            this.live_inputs.insert(input.name, source);
             Ok(())
         })
+    }
+
+    /// Whether `name` may be bound as a fact relation of these columns.
+    fn check_input(&self, name: &str, columns: &[String], logical_arity: usize) -> Result<()> {
+        if self.documents.is_some() && self.inputs.contains_key(name) && !self.mutable_inputs.contains(name) {
+            return Err(error("native snapshot families cannot be replaced with bindRelation"));
+        }
+        if self.input_shapes.get(name).is_some_and(|(arity, _)| *arity != logical_arity) {
+            return Err(error("rebinding a fact cannot change its logical arity"));
+        }
+        if !identifier(name) || reserved(name) {
+            return Err(error("a fact relation needs a non-reserved SQL identifier"));
+        }
+        let stored: bool = self
+            .db
+            .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE)", [name], |r| r.get(0))
+            .map_err(error)?;
+        if stored || name.eq_ignore_ascii_case("atoms") {
+            return Err(error("a fact binding cannot replace a stored relation"));
+        }
+        if self.inputs.keys().any(|n| n.eq_ignore_ascii_case(name) && n != name) {
+            return Err(error("fact names must be unique ignoring case"));
+        }
+        if self.inputs.get(name).is_some_and(|s| s.columns() != columns) {
+            return Err(error("rebinding a fact cannot change its columns"));
+        }
+        Ok(())
+    }
+
+    /// Bind a checked fact relation, invalidating what read the one it replaces. A mutable one takes
+    /// `applyChanges`.
+    fn install_input(&mut self, name: String, source: Arc<dyn Source>, logical_arity: usize, types: Option<Vec<String>>, mutable: bool) -> Result<()> {
+        self.invalidate(&BTreeSet::from([name.clone()]))?;
+        self.db.bind(&name, Arc::clone(&source)).map_err(error)?;
+        if mutable {
+            self.mutable_inputs.insert(name.clone());
+        } else {
+            self.mutable_inputs.remove(&name);
+        }
+        self.live_inputs.remove(&name);
+        self.input_shapes.insert(name.clone(), (logical_arity, types));
+        self.inputs.insert(name, source);
+        Ok(())
+    }
+
+    /// Bind the relations of the newest corpus run of `root` from what its per-file memo already wrote
+    /// (`docs/sql-access/01-design.md` §2, option C): each export's rows and each file-local output's lines, as a
+    /// read-only input under its own name and declared columns, plus `corpus_document(doc, path)` from each file's
+    /// document key to its stored path. Nothing is evaluated, and frames are decoded per document when a statement
+    /// reads them (`corpus`). `relations` limits which are bound; a name the run's memo does not hold is an error.
+    #[napi]
+    pub fn bind_corpus(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let _ = (root, relations);
+            return Err(error("bindCorpus needs a 64-bit target: its rows are document << 32 | row"));
+        }
+        #[cfg(target_pointer_width = "64")]
+        self.bind_corpus_64(root, relations)
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    fn bind_corpus_64(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
+        let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
+        let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
+            .map_err(error)?
+            .ok_or_else(|| error(format!("{root}: no corpus run is recorded for this root")))?;
+        let wanted: Vec<String> = match relations {
+            Some(names) => {
+                if let Some(missing) = names.iter().find(|n| !recorded.contains_key(*n)) {
+                    return Err(error(format!("{missing}: not a relation of the run's memo")));
+                }
+                names
+            }
+            None => recorded.keys().cloned().collect(),
+        };
+        let run = Arc::new(corpus::Run::open(frames)?);
+        let mut bound = serde_json::Map::new();
+        for rel in &wanted {
+            // An export's columns, or `{"lines": columns}` for a file-local output's rendered lines.
+            let value: Value = serde_json::from_str(&recorded[rel]).map_err(error)?;
+            let (form, decl) = match value.get("lines") {
+                Some(cols) => (corpus::Form::Lines, cols.clone()),
+                None => (corpus::Form::Rows, value),
+            };
+            let decl: Vec<(String, String)> = serde_json::from_value(decl).map_err(error)?;
+            let columns = if decl.is_empty() { vec!["__presence".to_owned()] } else { catalog::view_columns(&decl) };
+            self.check_input(rel, &columns, decl.len())?;
+            let types = decl.iter().map(|(_, t)| t.clone()).collect();
+            let source = corpus::Corpus::new(Arc::clone(&run), rel, columns, types, form, self.store.atoms_handle());
+            let bound_types = source.bound_types();
+            bound.insert(rel.clone(), json!(if form == corpus::Form::Lines { "lines" } else { "rows" }));
+            self.install_input(rel.clone(), Arc::new(source), decl.len(), bound_types, false)?;
+        }
+        let paths: Vec<&str> = run.documents().map(|(_, p)| p).collect();
+        let atoms = self.store.intern_atoms(&paths).map_err(error)?;
+        let documents: Vec<Value> = run.documents().zip(atoms).map(|((key, _), path)| json!([key, path])).collect();
+        self.bind_relation(
+            json!({"name": "corpus_document", "columns": ["doc", "path"], "types": ["number", "symbol"], "rows": documents}).to_string(),
+        )?;
+        serde_json::to_string(&json!({"files": run.len(), "relations": bound})).map_err(error)
     }
 
     /// Clear generated results while keeping bound facts and connection-local extensions.
@@ -375,13 +434,13 @@ impl CodeRuleSqlExecutor {
     #[napi]
     pub fn lower(&self, program: String, dialect: String) -> Result<String> {
         self.profiled_read("lower", |this| {
-            let program = front::prune(rr::parse(&program).map_err(error)?);
+            let program = producers::prune(rr::parse(&program).map_err(error)?);
             let arities: BTreeMap<_, _> = program
                 .decls
                 .iter()
                 .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
                 .collect();
-            let emitted = this.compile(program, &dialect)?;
+            let (emitted, _) = this.compile(program, &dialect)?;
             serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
                 .map_err(error)
         })
@@ -398,7 +457,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run", |this| {
             this.run_program(
-                front::prune(rr::parse(&program).map_err(error)?),
+                producers::prune(rr::parse(&program).map_err(error)?),
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -415,7 +474,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run_file", |this| {
             this.run_program(
-                front::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
+                producers::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -488,6 +547,7 @@ fn reserved(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "atoms"
         || name.starts_with("__rr_update_")
+        || catalog::owns(&name)
         || ["sqlite_", "wave_", "delta_", "new_", "rdl_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
@@ -539,7 +599,10 @@ impl CodeRuleSqlExecutor {
         Ok(())
     }
 
-    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<plan::emit::Emitted> {
+    /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
+    /// returned beside the program, each with the session inputs its query reads.
+    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
+        let producers = producers::take(&mut program)?;
         let _scope = profiling::scope(&self.db, "compile");
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
@@ -706,7 +769,11 @@ impl CodeRuleSqlExecutor {
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;
-        Ok(emitted)
+        let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
+        // A table a query reads that is a session input is watched under the input's own name.
+        let inputs = |name: &String| self.inputs.keys().find(|i| i.eq_ignore_ascii_case(name)).cloned();
+        let producers = other.into_iter().map(|(rel, reads)| (rel, reads.iter().filter_map(inputs).collect())).collect();
+        Ok((emitted, producers))
     }
 
     fn run_program(
@@ -716,12 +783,13 @@ impl CodeRuleSqlExecutor {
         max_waves: u32,
     ) -> Result<String> {
         let outputs = program.outputs.clone();
+        let declared = Arc::new(program.clone());
         let arities: BTreeMap<_, _> = program
             .decls
             .iter()
             .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
-        let emitted = self.compile(program, dialect)?;
+        let (emitted, producers) = self.compile(program, dialect)?;
         let indexes = indexes::wanted(&emitted);
         let objects = self.output_objects(&emitted)?;
         self.db
@@ -810,6 +878,7 @@ impl CodeRuleSqlExecutor {
                 .collect();
             let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
             let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
+            dependencies.extend(producers.values().flatten().cloned());
             for q in emitted
                 .queries
                 .iter()
@@ -829,6 +898,8 @@ impl CodeRuleSqlExecutor {
                 objects: objects.clone(),
                 counts,
                 emitted: Arc::new(emitted.clone()),
+                program: declared.clone(),
+                producers: producers.clone(),
                 outputs: outputs.clone(),
                 max_waves,
                 reductions: None,
@@ -961,6 +1032,7 @@ impl CodeRuleSqlExecutor {
         self.generated.extend(execution.objects.iter().cloned());
         self.executions.push(execution);
         self.stats_ready.set(true);
+        self.refresh_catalog()?;
         serde_json::to_string(
             &json!({"waves": waves, "outputs": outputs, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
         )
@@ -992,7 +1064,7 @@ impl CodeRuleSqlExecutor {
         self.executions.clear();
         self.scratch.clear(&self.db, &self.versions)?;
         self.db.reset_execution();
-        Ok(())
+        self.refresh_catalog()
     }
 }
 

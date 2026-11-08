@@ -89,15 +89,15 @@ directed acyclic graph of mask operations.
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
 | `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. With `required`, a token of `KIND` that is none of them is an error. |
-| `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
+| `check KIND = G` | Every token of `KIND` (after `keywords`) must match `G` in full, a grammar over its bytes in the tree section's notation (names are byte classes, literals bytes), or the file goes to tree-sitter. Tier 2 runs it in the token's arm, as simdjson's `parse_number` (decision 0078). |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
 | `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
-| `tree NAME { … }` | The tree section: where each node starts and ends, for the tape (`13-tape-on-the-gpu.md`). It holds the statements below, and masks and scans of its own. |
-| `node KIND start S end E [level L]` | A node at each bit of `S`. It ends at the first bit of `E` at or after its start where count `L` after the byte equals `L` before the start; without a level, at the first bit. Listed order is rank: outermost first at one byte. |
-| `field NAME of KIND … = EXPR`, `supertype NAME of KIND … = EXPR` | A node of those kinds starting at a bit of `EXPR` has the field, or is in the supertype. |
+| `tree NAME { … }` | The tree section: the grammar of the tokens, for the tape (`18-tree-as-grammar.md`). It holds the statements below. |
+| `node KIND [nested] = G` | A node of `KIND` spans what grammar `G` matches. The first is the root. `nested`: it may contain itself, and runs on a stack frame. |
+| `choice NAME [supertype S] = A \| B …` | No node of its own; each alternative's node is in supertype `S`. |
+| `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
-| `untoken KIND …` | Tokens of these kinds are not nodes; a `node` statement makes those nodes instead. |
 
 ### 2.2 Mask expressions
 

@@ -119,6 +119,12 @@ pub(crate) trait Source: Send + Sync {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
+    /// Why rows could not be made, where a source makes them on demand and making them failed (a
+    /// stored frame that does not decode). The statement reading it fails with this message rather
+    /// than reading the rows as absent.
+    fn failure(&self) -> Option<String> {
+        None
+    }
     fn indexed(&self, column: usize) -> bool;
     /// Whether an upper bound on `upper` also bounds `lower` (an end bounds its start).
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {
@@ -673,7 +679,7 @@ unsafe impl VTabCursor for Cursor {
         self.selected = None;
         self.direct=None;
         self.stream=None;self.stream_row=None;
-        self.range = 0..self.source.len();
+        self.range = 0..0;
         if index==ORDERED {
             self.lazy=true;
             let (direction,columns)=list.ok_or_else(||failure("missing ordered columns"))?.split_once(':').ok_or_else(||failure("invalid ordered columns"))?;
@@ -782,6 +788,13 @@ unsafe impl VTabCursor for Cursor {
             }
             self.direct=self.source.direct_one(column,&values);
             if self.direct.is_none() {self.selected = self.source.lookup(column, &values);}
+        }
+        // Only a scan takes the length: a source whose rows are made on lookup makes all of them for it.
+        if self.selected.is_none() && self.direct.is_none() {
+            self.range = 0..self.source.len();
+        }
+        if let Some(message) = self.source.failure() {
+            return Err(failure(&message));
         }
         let count = self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.len(), Vec::len),Vec::len);
         stats.candidates.fetch_add(count as u64, Ordering::Relaxed);

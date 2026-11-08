@@ -114,6 +114,21 @@ pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json
     Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
 }
 
+/// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
+/// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
+pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
+    let filter = ["rr_scope_drop", "rr_scope_in"];
+    program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
+    for r in &mut program.rules {
+        r.body.retain(|l| !l.atom().is_some_and(|a| filter.contains(&a.rel.as_str())));
+    }
+    filter.iter().for_each(|f| {
+        program.decls.remove(*f);
+    });
+    program.settings.push(("scope".to_owned(), "given".to_owned()));
+    program.doc_scopes = None;
+}
+
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
     read_file(path).map(|(program, _)| program)
@@ -153,6 +168,8 @@ impl LibraryFile {
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
 const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+/// The library's programs the engine adds to a run itself (decision 0076's import components).
+const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
@@ -188,8 +205,10 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
             }
         }
     }
-    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places.
-    for (file, statements) in &statements {
+    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places. The engine's own
+    // library programs (`ENGINE_FILES`, which the runner adds; no rule includes them) may use them.
+    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+    for (file, statements) in statements.iter().filter(|(file, _)| !own.contains(file)) {
         for (item, line) in statements {
             let names: Vec<&String> = match item {
                 syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => vec![name],
@@ -233,6 +252,12 @@ fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
 /// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
 /// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
 /// here.
+/// `src` (a document named `name`) as a program, read off the tape the store keeps for it, as a rule file's is
+/// (`stored_statements`): a prepared program's document (decision 0074).
+pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
+    lower::lower(stored_statements(Path::new(name), src)?)
+}
+
 fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
     let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
     if let Some(store) = store {
@@ -294,4 +319,28 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen)?;
     Ok((out, read_files))
+}
+
+/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
+pub(in crate::code_rule_dsl) fn single_metavars(pattern: &str) -> Vec<String> {
+    let b = pattern.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && b[j] == b'$' {
+            j += 1;
+        }
+        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+        let name = &pattern[j..k];
+        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
+            out.push(name.to_owned());
+        }
+        i = k.max(i + 1);
+    }
+    out
 }

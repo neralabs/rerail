@@ -22,6 +22,8 @@ mod setfix;
 pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
+/// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
+pub(in crate::code_rule_dsl) mod components;
 pub(in crate::code_rule_dsl) mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(test)]
@@ -30,7 +32,7 @@ pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, forget_derived, live, materialize, open, release, reprobe, run, step_counts, table_source, unindex};
+    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, forget_derived, forget_inputs_of, live, materialize, open, release, reprobe, run, step_counts, table_source, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

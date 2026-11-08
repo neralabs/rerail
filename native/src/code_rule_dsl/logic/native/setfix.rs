@@ -1004,6 +1004,19 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
     }
 }
 
+/// Drops the input relations loaded on `conn`'s database that read any of `tables` (their views and indexes), and
+/// the stored tables of those names: no later stratum reads them.
+pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
+    let path = conn.path().unwrap_or_default().to_owned();
+    let names = |spec: &str| -> Vec<String> {
+        let Some(hex) = spec.split(':').nth(1) else { return Vec::new() };
+        let Ok(text) = unhex(hex) else { return Vec::new() };
+        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_owned).collect()
+    };
+    INPUTS.lock().unwrap().retain(|(p, spec), _| *p != path || !names(spec).iter().any(|w| tables.contains(w)));
+    STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
+}
+
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
 pub fn forget_derived(conn: &Connection) {
     let at = scope(conn);
@@ -1468,6 +1481,8 @@ enum Step {
     /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
     /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
     Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
+    /// `a` is (`want`) or is not one of the constants `set` (`@equals(x, {…})`, `@in(x, {…})` once lowered).
+    In { a: Key, set: Vec<i64>, want: bool },
 }
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
@@ -1590,6 +1605,25 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     Key::Slot(_) => None,
                 };
                 steps.push(Step::Test { op, s, p, matcher, want: toks[4] == "1" });
+            }
+            "testset" => {
+                // `testset <op> <s> <0|1> <constants…>`: a text test against a set of symbols' names.
+                use crate::code_rule_dsl::logic::strings;
+                let Some(&op) = strings::TESTS.iter().find(|&&t| t == toks[1]) else { return Err(err(format!("no text test {}", toks[1]))) };
+                let Some(s) = tok(toks[2], syms)? else { return Err(err("a text test of `_`")) };
+                if !is_bound(&bound, s) { return Err(err(format!("{op} of an unbound slot"))); }
+                let patterns = toks[4..].iter().map(|t| match tok(t, syms)? { Some(Key::Const(c)) => Ok(syms.name(c).to_string()), _ => Err(err("a pattern that is not a constant")) }).collect::<Result<Vec<String>>>()?;
+                let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
+                // A set that does not compile matches nothing, as SQL's `str_test`.
+                let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
+                steps.push(Step::Test { op, s, p, matcher, want: toks[3] == "1" });
+            }
+            "in" => {
+                // `in <a> <0|1> <constants…>`
+                let Some(a) = tok(toks[1], syms)? else { return Err(err("a membership test of `_`")) };
+                if !is_bound(&bound, a) { return Err(err("a membership test of an unbound slot")); }
+                let set = toks[3..].iter().map(|t| match tok(t, syms)? { Some(Key::Const(c)) => Ok(c), _ => Err(err("a set member that is not a constant")) }).collect::<Result<Vec<_>>>()?;
+                steps.push(Step::In { a, set, want: toks[2] == "1" });
             }
             "deq" | "dne" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
@@ -1790,6 +1824,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 if hit == *want { go(cx, i + 1, slots) }
             }
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
+            Step::In { a, set, want } => if set.contains(&val(slots, *a)) == *want { go(cx, i + 1, slots) },
         }
     }
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new() };

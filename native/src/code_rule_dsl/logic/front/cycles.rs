@@ -50,6 +50,9 @@ enum Move {
     /// From a text to a part of it.
     Shorter,
     Longer,
+    /// To a node nearer the root, and further from it (`Depths`).
+    Shallower,
+    Deeper,
 }
 
 impl Move {
@@ -59,6 +62,8 @@ impl Move {
             Move::Up => Move::Down,
             Move::Shorter => Move::Longer,
             Move::Longer => Move::Shorter,
+            Move::Shallower => Move::Deeper,
+            Move::Deeper => Move::Shallower,
         }
     }
 }
@@ -171,6 +176,168 @@ fn reach(edges: &BTreeMap<String, Vec<(String, Option<Step>)>>, from: &str, to: 
     }
 }
 
+/// Depth, a second measure beside preorder: how much deeper one node column lies than another, as an
+/// interval `[lo, hi]` (`INF` for no bound that side). Every tree edge changes depth by exactly one, so the
+/// moves along a path add up, whatever they are; preorder only knows their direction. A climb through a
+/// decorator's expression to the definition it decorates (`ast_parent(e, f) :- decorator(f, e)`) moves to a
+/// later node, so preorder cannot bound it, but its depth falls by one: up two edges, down one.
+type Span = (i64, i64);
+const INF: i64 = 1 << 40;
+/// No row: the start of a recursive relation's fixpoint.
+const EMPTY: Span = (INF, -INF);
+
+/// Per relation, the depth from one of its node columns to another that holds in every row.
+type Depths = BTreeMap<String, BTreeMap<(usize, usize), Span>>;
+
+fn add_span(a: Span, b: Span) -> Span {
+    let lo = if a.0 <= -INF || b.0 <= -INF { -INF } else { (a.0 + b.0).min(INF) };
+    let hi = if a.1 >= INF || b.1 >= INF { INF } else { (a.1 + b.1).max(-INF) };
+    (lo, hi)
+}
+
+fn back_span((lo, hi): Span) -> Span {
+    (hi.saturating_neg(), lo.saturating_neg())
+}
+
+/// The base relations' depths: a child one deeper than its parent, a next sibling as deep.
+fn depth_base() -> Depths {
+    let mut depths = Depths::new();
+    for (rel, from, to, d) in [("child", 0, 1, 1), ("field", 0, 2, 1), ("tape", 1, 0, 1), ("next_sibling", 0, 1, 0)] {
+        let pairs = depths.entry(rel.to_owned()).or_default();
+        pairs.insert((from, to), (d, d));
+        pairs.insert((to, from), (-d, -d));
+    }
+    depths
+}
+
+/// A rule's variables' depth edges: `var → [(var, span)]`.
+fn depth_edges(rule: &Rule, depths: &Depths) -> BTreeMap<String, Vec<(String, Span)>> {
+    let mut out = BTreeMap::<String, Vec<(String, Span)>>::new();
+    let mut add = |a: &str, b: &str, d: Span| {
+        out.entry(a.to_owned()).or_default().push((b.to_owned(), d));
+        out.entry(b.to_owned()).or_default().push((a.to_owned(), back_span(d)));
+    };
+    for literal in &rule.body {
+        match literal {
+            Literal::Atom(a) if !a.neg => {
+                for (&(i, j), &d) in depths.get(&a.rel).into_iter().flatten() {
+                    if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
+                        add(x, y, d);
+                    }
+                }
+            }
+            Literal::Nearest { n, a, .. } => add(n, a, (-INF, -1)),
+            Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Var(y) } => add(x, y, (0, 0)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The depth of each variable from `from`: per variable the tightest bounds that some walk gives (each walk's
+/// sum is a valid bound, so the least `hi` and the greatest `lo` of any are).
+fn depth_reach(edges: &BTreeMap<String, Vec<(String, Span)>>, from: &str) -> BTreeMap<String, Span> {
+    let mut at = BTreeMap::from([(from.to_owned(), (0, 0))]);
+    for _ in 0..=edges.len() {
+        let mut changed = false;
+        for (x, &dx) in at.clone().iter() {
+            for (y, d) in edges.get(x).into_iter().flatten() {
+                let (lo, hi) = add_span(dx, *d);
+                let e = at.entry(y.clone()).or_insert((-INF, INF));
+                let next = (e.0.max(lo), e.1.min(hi));
+                if next != *e {
+                    *e = next;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    at
+}
+
+/// What `rules` (one relation) guarantee in depth between its node columns, given `depths`: per pair the
+/// widest of its rules' spans; a pair some rule does not connect has none.
+fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(usize, usize), Span> {
+    let columns = node_columns(prog, &rules[0].head.rel);
+    let reached: Vec<BTreeMap<usize, BTreeMap<String, Span>>> = rules
+        .iter()
+        .map(|rule| {
+            let edges = depth_edges(rule, depths);
+            columns.iter().filter_map(|&i| match rule.head.args.get(i) { Some(Term::Var(x)) => Some((i, depth_reach(&edges, x))), _ => None }).collect()
+        })
+        .collect();
+    let mut out = BTreeMap::new();
+    for &i in &columns {
+        for &j in columns.iter().filter(|&&j| j != i) {
+            let mut span = EMPTY;
+            let mut all = true;
+            for (rule, reached) in rules.iter().zip(&reached) {
+                let d = match (reached.get(&i), rule.head.args.get(j)) {
+                    (Some(r), Some(Term::Var(y))) => r.get(y).copied(),
+                    _ => None,
+                };
+                let Some(d) = d.filter(|d| d.0 > -INF || d.1 < INF) else {
+                    all = false;
+                    break;
+                };
+                span = (span.0.min(d.0), span.1.max(d.1));
+            }
+            if all {
+                out.insert((i, j), span);
+            }
+        }
+    }
+    out
+}
+
+/// The depth guarantees of a component's relations: for a recursive one the least spans its rules keep,
+/// from no rows up, widened to no bound on a side that still moves after a few rounds.
+fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths) {
+    let rels: Vec<&String> = component.iter().filter(|rel| by_head.contains_key(rel.as_str()) && node_columns(prog, rel).len() > 1).collect();
+    for rel in &rels {
+        let columns = node_columns(prog, rel);
+        let empty = columns.iter().flat_map(|&i| columns.iter().filter(move |&&j| j != i).map(move |&j| ((i, j), EMPTY))).collect();
+        depths.insert((*rel).clone(), empty);
+    }
+    for round in 0..64 {
+        let mut changed = false;
+        for rel in &rels {
+            let next = depth_summary(prog, &by_head[rel.as_str()], depths);
+            let old = &depths[rel.as_str()];
+            // Joined with what held (a pair either lacks is unbounded), and widened past round 8.
+            let joined: BTreeMap<(usize, usize), Span> = next
+                .into_iter()
+                .filter_map(|(pair, (lo, hi))| {
+                    let &(olo, ohi) = old.get(&pair)?;
+                    let (mut lo, mut hi) = (lo.min(olo), hi.max(ohi));
+                    if round >= 8 {
+                        if lo < olo {
+                            lo = -INF;
+                        }
+                        if hi > ohi {
+                            hi = INF;
+                        }
+                    }
+                    (lo > -INF || hi < INF).then_some((pair, (lo, hi)))
+                })
+                .collect();
+            if &joined != old {
+                depths.insert((*rel).clone(), joined);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
+    for rel in rels {
+        depths.remove(rel.as_str());
+    }
+}
+
 /// Whether a rule makes a value: a computed head term, or `$v = @f(…)` binding a head variable.
 fn creates(rule: &Rule) -> bool {
     let head: BTreeSet<String> = rule.head.vars();
@@ -257,7 +424,21 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 break;
             }
         }
+        // A head term that a finite variable is assigned (`$t = @add($l, 1), lines(d, $t, _)` and the head's
+        // `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's finitely many values
+        // (O111: `era001`'s `era_run`).
+        let finite_terms: Vec<&Term> = rule
+            .body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if finite.contains(v) => Some(r),
+                _ => None,
+            })
+            .collect();
         for (j, t) in rule.head.args.iter().enumerate() {
+            if finite_terms.contains(&t) {
+                continue;
+            }
             for (c, made) in sources(t, &from) {
                 out.push((c, (rule.head.rel.clone(), j), made));
             }
@@ -469,11 +650,18 @@ fn bounded(
     functions: &BTreeMap<&str, BTreeSet<usize>>,
     way: Move,
     moves: &Moves,
+    depths: &Depths,
 ) -> Result<(), String> {
     let mut same = BTreeMap::<&str, BTreeSet<&str>>::new();
     let mut creating_same = Vec::new();
     for rule in rules.iter().filter(|r| !functions.contains_key(r.head.rel.as_str())) {
         let edges = edges(rule, moves);
+        // Along depth, a key moves strictly or not at all: the head's node, and where each atom's lies.
+        let by_depth = matches!(way, Move::Shallower | Move::Deeper);
+        let depth_from = match (by_depth, rule.head.args.get(key[rule.head.rel.as_str()].0)) {
+            (true, Some(Term::Var(h))) => Some(depth_reach(&depth_edges(rule, depths), h)),
+            _ => None,
+        };
         let finite = finite_vars(rule, component);
         let (primary, count) = key[rule.head.rel.as_str()];
         let head_primary = rule.head.args.get(primary);
@@ -483,6 +671,11 @@ fn bounded(
         let lies = |a: &super::Atom| -> Option<Lies> {
             let (p, c) = key[a.rel.as_str()];
             let Some(Term::Var(b)) = a.args.get(p) else { return None };
+            if by_depth {
+                let &(lo, hi) = depth_from.as_ref()?.get(b)?;
+                let strict = if way == Move::Shallower { hi <= -1 } else { lo >= 1 };
+                return (strict && c.is_none()).then_some(Lies::Before);
+            }
             match head_primary? {
                 Term::Var(h) => match reach(&edges, h, b, way)? {
                     true => Some(Lies::Before),
@@ -573,6 +766,58 @@ fn keys<'a>(choices: &[(&'a str, Vec<Key>)], limit: usize) -> Vec<BTreeMap<&'a s
     out
 }
 
+/// Whether a component recurses only between constant keys, and never back to one (O111): each relation has a
+/// column that is a constant in every rule's head and in every atom of the component read, and the graph from a head's
+/// `(relation, constant)` to its atoms' is acyclic. Every derivation is then at most as deep as that graph, and makes
+/// finitely many values: `era001`'s `era_re` builds its statement grammar from `N` up to `STMT` this way.
+fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
+    let key = |t: &Term| match t {
+        Term::Str(s) => Some(format!("s{s}")),
+        Term::Int(n) => Some(format!("i{n}")),
+        _ => None,
+    };
+    let arity = |rel: &str| rules.iter().find(|r| r.head.rel == rel).map_or(0, |r| r.head.args.len());
+    // Each relation's key column: the first that every head and every read in the component holds a constant at.
+    let mut columns = BTreeMap::<&str, usize>::new();
+    for rel in component {
+        let reads = rules.iter().flat_map(|r| {
+            r.body.iter().filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == *rel => Some(a),
+                _ => None,
+            })
+        });
+        let heads = rules.iter().filter(|r| r.head.rel == *rel).map(|r| &r.head);
+        let atoms: Vec<_> = heads.chain(reads).collect();
+        let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
+        columns.insert(rel.as_str(), c);
+    }
+    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.clone(), k));
+    let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
+    for rule in rules {
+        let Some(head) = node(&rule.head) else { return false };
+        let to = graph.entry(head).or_default();
+        for l in &rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && component.contains(&a.rel)
+            {
+                let Some(n) = node(a) else { return false };
+                to.insert(n);
+            }
+        }
+    }
+    // Acyclic: repeatedly remove the keys that reach no other key.
+    let mut left = graph;
+    loop {
+        let sinks: Vec<_> = left.iter().filter(|(_, to)| to.iter().all(|t| !left.contains_key(t))).map(|(k, _)| k.clone()).collect();
+        if sinks.is_empty() {
+            return left.is_empty();
+        }
+        for k in sinks {
+            left.remove(&k);
+        }
+    }
+}
+
 /// The components with a value cycle, each bounded by the tree; fails on one that is not
 /// (`Error::UnboundedValueCycle`).
 pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
@@ -580,6 +825,7 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
     let Ok((sccs, edges_by)) = super::strata(prog) else { return Ok(Vec::new()) };
     let mut treed = Vec::new();
     let mut moves = base();
+    let mut depths = depth_base();
     let mut by_head = BTreeMap::<&str, Vec<&Rule>>::new();
     for rule in &prog.rules {
         by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
@@ -588,11 +834,18 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
         // The component's guarantees, for its own rules and the components above it.
         summaries(prog, component, &by_head, &mut moves);
+        depth_summaries(prog, component, &by_head, &mut depths);
         if !recursive {
             continue;
         }
         let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
         if !value_cycle(prog, &rules, component) {
+            continue;
+        }
+        // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so
+        // finitely many values when the constants do not come back.
+        if constant_keyed(&rules, component) {
+            treed.push(component.clone());
             continue;
         }
         // The relations with no node column: functions between the others' rows, or keyed by a count.
@@ -621,8 +874,8 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         let mut first = None;
         let ok = !choices.is_empty()
             && choices.iter().all(|(_, columns)| !columns.is_empty())
-            && [Move::Down, Move::Up, Move::Longer].into_iter().any(|way| {
-                keys(&choices, 4096).iter().any(|key| match bounded(&rules, component, key, &functions, way, &moves) {
+            && [Move::Down, Move::Up, Move::Longer, Move::Shallower, Move::Deeper].into_iter().any(|way| {
+                keys(&choices, 4096).iter().any(|key| match bounded(&rules, component, key, &functions, way, &moves, &depths) {
                     Ok(()) => true,
                     Err(rule) => {
                         first.get_or_insert(rule);

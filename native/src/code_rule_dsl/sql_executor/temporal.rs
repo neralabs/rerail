@@ -419,6 +419,10 @@ pub(super) fn prepare(
         }
     }
     for (stratum, group) in groups {
+        // A SQL producer's step has no checked query: its stratum is recomputed whole (`maintenance`).
+        if group.iter().any(|r| run.producers.contains_key(r)) {
+            continue;
+        }
         let steps = e
             .program
             .steps

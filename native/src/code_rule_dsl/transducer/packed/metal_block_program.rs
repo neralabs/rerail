@@ -267,8 +267,10 @@ pub(in crate::code_rule_dsl) fn run_batch(
                 let out0 = fit(outs.len())?;
                 outs.extend(n.outputs.iter().map(|&v| u32::from(v)));
                 let ext0 = fit(outs.len())?;
+                // Each extract: its output, and the output's delay in the top byte.
                 for &k in &n.extracts {
-                    outs.push(fit(k)?);
+                    let d = u32::from(n.output_delays.get(k).copied().unwrap_or(n.delay));
+                    outs.push(fit(k)? | d << 24);
                 }
                 table.push(ProgramRow {
                     step0,
@@ -796,8 +798,9 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
     // (`extract_write`). It polls longer than the carries do (still bounded).
     for (e, &k) in native.extracts.iter().enumerate() {
         out.push_str(&format!(
-            "  if (!extract_write(v{}, gl, g, l, len, ext_states + f.ext_base + {e}u * f.groups, positions + f.pos_base + {e}u * max(len, 1u), max(len, 1u), counts + f.ext_base + {e}u * f.groups, spins * {EXTRACT_POLLS}u)) return false;\n",
-            native.outputs[k]
+            "  if (!extract_write(v{}, gl, g, l, len, {}u, ext_states + f.ext_base + {e}u * f.groups, positions + f.pos_base + {e}u * max(len, 1u), max(len, 1u), counts + f.ext_base + {e}u * f.groups, spins * {EXTRACT_POLLS}u)) return false;\n",
+            native.outputs[k],
+            native.output_delays.get(k).copied().unwrap_or(native.delay)
         ));
     }
     out.push_str("  return true;\n}\n\n");

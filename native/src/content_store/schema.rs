@@ -328,6 +328,14 @@ CREATE TABLE IF NOT EXISTS corpus_plans (
     plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
     live INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
+-- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
+-- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's frames by name. Collected with the plan.
+CREATE TABLE IF NOT EXISTS corpus_plan_relations (
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    relation TEXT NOT NULL,
+    columns TEXT NOT NULL,
+    PRIMARY KEY (plan_digest, relation)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS corpus_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,

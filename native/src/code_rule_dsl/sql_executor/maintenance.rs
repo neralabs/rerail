@@ -499,14 +499,23 @@ pub(super) fn maintain(
                     !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
                 })
         });
-        if !affected && !indirect {
+        // A SQL producer's query is opaque: what it reads is its step's resolved reads and the
+        // session inputs it names (`producers`), and its stratum is recomputed whole.
+        let produced = group.iter().any(|r| run.producers.contains_key(r));
+        let feeds = produced
+            && steps.iter().flat_map(|(s, _)| s.reads.iter()).chain(group.iter().filter_map(|r| run.producers.get(r)).flatten()).any(|r| {
+                !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
+            });
+        if !affected && !indirect && !feeds {
             continue;
         }
-        let nonmonotone = group
-            .iter()
-            .any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
+        let nonmonotone = produced
+            || group.iter().any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
             || steps.iter().filter_map(|(_, q)| q.as_ref()).any(barrier);
-        if group.len() == 1
+        // A producer's stratum is recomputed whole: the retained reductions, temporal waves and
+        // recursive partitions maintain rules' own queries, which a producer's is not.
+        if !produced
+            && group.len() == 1
             && let Some(r) = group.first()
             && let Some(state) = run
                 .reductions
@@ -538,7 +547,7 @@ pub(super) fn maintain(
                 .map(|s| s.stratum)
                 .max()
                 .unwrap_or(0);
-            if let Some(state) = run.temporal.get_mut(&stratum) {
+            if !produced && let Some(state) = run.temporal.get_mut(&stratum) {
                 let store = w
                     .versions
                     .ok_or_else(|| error("temporal execution requires versioned storage"))?;
@@ -567,7 +576,8 @@ pub(super) fn maintain(
                 }
                 continue;
             }
-            if let Some(state) = group
+            if !produced
+                && let Some(state) = group
                 .first()
                 .and_then(|r| {
                     run.emitted

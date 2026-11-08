@@ -364,6 +364,45 @@ Additional producers can bind integer facts without changing the SQL compiler.
 Rust extensions can register SQL functions or virtual tables through `session.connection()`.
 The connection belongs to the session, so Rust statements and cursors borrow that session.
 
+## Catalog and typed views
+
+After every run, removal and reset, the session rebuilds a catalog of its retained programs as temporary tables:
+- `rr_relation`, `rr_column`, `rr_rule`, `rr_atom` and `rr_plan` (`sql_executor/catalog.rs`);
+- for each relation, the typed view `rr_rel_<name>`, whose columns are the `.decl`'s names.
+
+For example, `SELECT src, dst FROM rr_rel_reach` reads `reach`, whose own columns are `c0, c1`. The `rr_` prefix is reserved.
+Design: `docs/sql-access/01-design.md`.
+
+### A corpus run's rows
+
+`bindCorpus(root, relations?)` binds the relations that the newest corpus run of `root` memoised per file:
+- each export, from the rows the run wrote, under its declared columns;
+- each file-local output, from the text lines the run wrote. Number and node columns are parsed;
+  other columns are interned as symbols;
+- `corpus_document(doc, path)`, which maps each document key to its file. A node's document is
+  `n >> 32`.
+
+Nothing is evaluated: SQL and rules read the bound relations as read-only inputs. `applyChanges`
+does not change them.
+
+Frames are read lazily:
+- binding reads only each frame's document key, from its first eight decompressed bytes;
+- a lookup on a node or location column decodes the one document it names;
+- a scan, or a lookup on another column, decodes every document once.
+
+The result names each relation's form: `{"files": 2, "relations": {"def": "rows", "named": "lines"}}`.
+
+### SQL producers
+
+A relation can take its rows from a SQL query:
+- `.input r(IO=sql, query="SELECT …")`.
+- The query may read session tables and the program's own relations, by name or through `rr_rel_<name>`.
+- The relation's step runs once every relation the query reads is complete. Rules that read `r` run after it; strata are renumbered so their numbers follow this order.
+- Recursion through a producer is refused.
+- `symbol` columns are interned.
+- `applyChanges` recomputes a producer when a relation or session input its query reads changes, and maintains its readers from the difference.
+- A change made by plain SQL to another table is not seen: run the program again.
+
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.

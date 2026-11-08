@@ -9,6 +9,10 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     original: &schedule::Program,
     declared_counts: bool,
 ) -> Result<Option<u32>> {
+    // A SQL producer's query is opaque to the retained waves: such a program runs cold.
+    if !run.producers.is_empty() {
+        return Ok(None);
+    }
     let e = run.emitted.clone();
     let outputs = original
         .relations

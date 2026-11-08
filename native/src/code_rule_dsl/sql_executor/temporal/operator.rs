@@ -201,6 +201,9 @@ impl Operator {
             reductions: None,
             recursive: BTreeMap::new(),
             temporal: BTreeMap::new(),
+            // A temporal trace's one step is a rule's query, not a producer's.
+            program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
+            producers: BTreeMap::new(),
         };
         let planned = reductions::planned(w.db, &run, true)?;
         let phase_eligible = planned.get(&result).is_some_and(|s| s.can_fuse());

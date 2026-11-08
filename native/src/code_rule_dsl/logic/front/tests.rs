@@ -142,9 +142,33 @@ fn named_errors() {
     // Down one way and up the other: no key moves one way.
     let both = format!("{decls}q(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- field(n, \"object\", o), q(o, p), nm(n, s).\nq(o, s) :- field(n, \"object\", o), q(n, s).\n");
     assert!(matches!(parse(&both), Err(Error::UnboundedValueCycle { .. })));
+    // O111: through constant keys that never come back (`era001`'s grammar), finitely many values; a key that comes
+    // back is not bounded.
+    let grammar = ".decl g(k: symbol, r: symbol)\ng(\"N\", \"[a-z]+\").\ng(\"E\", @cat(n, \"(?:,\", n, \")*\")) :- g(\"N\", n).\ng(\"S\", @cat(\"(?:\", e, \")\")) :- g(\"E\", e).\n";
+    assert!(parse(grammar).is_ok(), "{:?}", parse(grammar).err());
+    let back = format!("{grammar}g(\"N\", @cat(s, \"x\")) :- g(\"S\", s).\n");
+    assert!(matches!(parse(&back), Err(Error::UnboundedValueCycle { .. })));
+    // A count whose next value a lower stratum binds (`era_run` along `era_cline`'s lines) takes its values.
+    let lines = ".decl ln(d: number, l: number)\n.input ln\n.decl run(d: number, l0: number, l: number)\nrun(d, l, l) :- ln(d, l).\nrun(d, l0, @add(l, 1)) :- run(d, l0, l), t = @add(l, 1), ln(d, t).\n";
+    assert!(parse(lines).is_ok(), "{:?}", parse(lines).err());
+    let unbound = ".decl ln(d: number, l: number)\n.input ln\n.decl run(d: number, l0: number, l: number)\nrun(d, l, l) :- ln(d, l).\nrun(d, l0, @add(l, 1)) :- run(d, l0, l), t = @add(l, 2), ln(d, t).\n";
+    assert!(matches!(parse(unbound), Err(Error::UnboundedValueCycle { .. })));
+    let same = ".decl g(k: symbol, r: symbol)\ng(\"N\", \"a\").\ng(\"N\", @cat(n, \"a\")) :- g(\"N\", n).\n";
+    assert!(matches!(parse(same), Err(Error::UnboundedValueCycle { .. })));
     // A derived relation's guarantee carries the bound (`attr_of` in T's calls.rdl).
     let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());
+
+    // Depth bounds what preorder cannot: a parent relation with a decorator's edge (to the definition, a later
+    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rr`).
+    let tree = ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl nm(n: node, s: symbol)\n.input child, kind, nm\n\
+        .decl deco(f: node, e: node)\ndeco(f, e) :- kind(dd, \"decorated_definition\"), child(dd, f, 1), child(dd, dc, 0), child(dc, e, 0).\n\
+        .decl up(n: node, p: node)\nup(n, p) :- child(p, n, _), !kind(p, \"block\").\nup(e, f) :- deco(f, e).\nup(n, q) :- child(p, n, _), kind(p, \"block\"), up(p, q).\n";
+    let climb = format!("{tree}.decl qn(k: node, s: symbol)\nqn(k, s) :- kind(k, \"class\"), nm(k, s).\nqn(k, @dot(p, s)) :- kind(k, \"class\"), up(k, o), qn(o, p), nm(k, s).\n");
+    assert!(parse(&climb).is_ok(), "{:?}", parse(&climb).err());
+    // A sibling keeps the depth: no bound.
+    let sideways = format!("{tree}.decl sib(a: node, b: node)\nsib(a, b) :- child(p, a, _), child(p, b, _).\n.decl qn(k: node, s: symbol)\nqn(k, s) :- nm(k, s).\nqn(k, @dot(p, s)) :- sib(k, o), qn(o, p), nm(k, s).\n");
+    assert!(matches!(parse(&sideways), Err(Error::UnboundedValueCycle { .. })));
 
     // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
     let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");

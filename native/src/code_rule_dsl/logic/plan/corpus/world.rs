@@ -5,10 +5,10 @@
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
 //!
-//! and ask for documents with `load(path, module, grammar, role)`: the file at `path`, parsed in `grammar`, as
-//! module `module` (its resolution's answer, which names the document as a file of the corpus is named by its path),
-//! in `role` (`library`). A loaded document's path is the file's canonical path, and `loaded(path, module, grammar,
-//! role)` says which documents were loaded, by that path.
+//! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
+//! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
+//! loaded document's path is the file's canonical path, and `loaded(path, module, grammar)` says which documents
+//! were loaded, by that path. A loaded document is evaluated like any other.
 //!
 //! Reading `dir_entry` or `file_line` asks for it: `rr::lower` derives `rr_dir_req(dir)` and `rr_file_req(path)` from
 //! the literals that bind the key, as `parsed` asks for a guest (decision 0055). The runner answers in rounds
@@ -52,7 +52,6 @@ pub(super) struct Loaded {
     pub(super) path: String,
     pub(super) module: String,
     pub(super) grammar: String,
-    pub(super) role: String,
 }
 
 #[derive(Default)]
@@ -132,8 +131,8 @@ impl World {
             self.files.insert(asked, text.split_terminator('\n').map(str::to_owned).collect());
         }
         for row in lines(LOAD)? {
-            let c: Vec<&str> = row.splitn(4, '\t').collect();
-            let [asked, module, g, role] = c.as_slice() else { continue };
+            let c: Vec<&str> = row.splitn(3, '\t').collect();
+            let [asked, module, g] = c.as_slice() else { continue };
             if corpus.contains(*asked) || self.refused.contains(*asked) {
                 continue;
             }
@@ -153,7 +152,7 @@ impl World {
                 continue;
             }
             grew = true;
-            self.loads.insert(path.clone(), Loaded { path, module: (*module).to_owned(), grammar: (*g).to_owned(), role: (*role).to_owned() });
+            self.loads.insert(path.clone(), Loaded { path, module: (*module).to_owned(), grammar: (*g).to_owned() });
         }
         Ok(grew)
     }
@@ -172,7 +171,7 @@ impl World {
             out.insert("file_line".into(), rows.into());
         }
         if prog.decls.contains_key(LOADED) {
-            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar, l.role])).collect::<Vec<_>>().into());
+            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar])).collect::<Vec<_>>().into());
         }
         serde_json::Value::Object(out)
     }
@@ -182,8 +181,77 @@ impl World {
         let mut o = base.as_object().cloned().unwrap_or_default();
         o.insert(OPTION.into(), round.into());
         o.insert("worldFacts".into(), self.facts(prog).into());
-        o.insert("libraryFiles".into(), self.loads.values().map(|l| serde_json::json!([l.path, l.module])).collect::<Vec<_>>().into());
+        o.insert("loadedFiles".into(), self.loads.values().map(|l| serde_json::json!([l.path, l.module])).collect::<Vec<_>>().into());
         serde_json::Value::Object(o)
+    }
+
+    /// The answers and what they were read from, for the store: discovery is a derivation (decision 0065 §2). Each
+    /// loaded file's content digest is kept, and whether each refused path existed, so [`World::holds`] can check them.
+    pub(super) fn record(&self, rounds: usize) -> String {
+        use serde_json::json;
+        let digest = |p: &str| std::fs::read(p).ok().map(|b| hex_sha(&b));
+        let refused: Vec<_> = self.refused.iter().map(|p| json!([p, self.allowed(p).is_some_and(|q| q.exists())])).collect();
+        json!({
+            "rounds": rounds,
+            "dirs": self.dirs.iter().map(|(d, e)| json!([d, e])).collect::<Vec<_>>(),
+            "files": self.files.iter().map(|(p, l)| json!([p, l])).collect::<Vec<_>>(),
+            "loads": self.loads.values().map(|l| json!([l.path, l.module, l.grammar, digest(&l.path)])).collect::<Vec<_>>(),
+            "refused": refused,
+            "dropped": self.dropped,
+        })
+        .to_string()
+    }
+
+    /// The world [`World::record`] wrote, over `root` and `prog`'s settings, if what it read is unchanged: every
+    /// directory lists as it did, every file reads as it did, every loaded file has its digest, and every refused
+    /// path exists or not as it did. Returns it with its rounds.
+    pub(super) fn recall(root: &Path, prog: &front::Program, text: &str) -> Option<(World, usize)> {
+        let v: serde_json::Value = serde_json::from_str(text).ok()?;
+        let mut world = World::new(root, prog);
+        let strs = |v: &serde_json::Value| v.as_str().map(str::to_owned);
+        for d in v["dirs"].as_array()? {
+            let entries: Vec<(String, bool)> = d[1].as_array()?.iter().filter_map(|e| Some((strs(&e[0])?, e[1].as_bool()?))).collect();
+            world.dirs.insert(strs(&d[0])?, entries);
+        }
+        for f in v["files"].as_array()? {
+            world.files.insert(strs(&f[0])?, f[1].as_array()?.iter().filter_map(strs).collect());
+        }
+        let mut digests = Vec::new();
+        for l in v["loads"].as_array()? {
+            let loaded = Loaded { path: strs(&l[0])?, module: strs(&l[1])?, grammar: strs(&l[2])? };
+            digests.push((loaded.path.clone(), strs(&l[3])));
+            world.loads.insert(loaded.path.clone(), loaded);
+        }
+        let refused: Vec<(String, bool)> = v["refused"].as_array()?.iter().filter_map(|r| Some((strs(&r[0])?, r[1].as_bool()?))).collect();
+        world.refused = refused.iter().map(|(p, _)| p.clone()).collect();
+        world.dropped = v["dropped"].as_u64()? as usize;
+        // What was read is as it was.
+        for (dir, entries) in &world.dirs {
+            let Some(path) = world.allowed(dir) else { return None };
+            let mut now: Vec<(String, bool)> = std::fs::read_dir(&path).ok()?.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect();
+            now.sort();
+            if &now != entries {
+                return None;
+            }
+        }
+        for (file, lines) in &world.files {
+            let text = std::fs::read_to_string(world.allowed(file)?).ok()?;
+            let text = text.replace("\r\n", "\n").replace('\r', "\n");
+            if text.split_terminator('\n').ne(lines.iter().map(String::as_str)) {
+                return None;
+            }
+        }
+        for (path, digest) in &digests {
+            if std::fs::read(path).ok().map(|b| hex_sha(&b)) != *digest {
+                return None;
+            }
+        }
+        for (path, existed) in &refused {
+            if world.allowed(path).is_some_and(|q| q.exists()) != *existed {
+                return None;
+            }
+        }
+        Some((world, v["rounds"].as_u64()? as usize))
     }
 
     pub(super) fn summary(&self, rounds: usize) -> String {
@@ -215,7 +283,12 @@ pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
 }
 
-/// The library documents an option names: path and module.
-pub(super) fn library_files(options: &serde_json::Value) -> Vec<(String, String)> {
-    options.get("libraryFiles").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| Some((v.get(0)?.as_str()?.to_owned(), v.get(1)?.as_str()?.to_owned()))).collect()
+/// The loaded documents an option names: path and module.
+pub(super) fn loaded_files(options: &serde_json::Value) -> Vec<(String, String)> {
+    options.get("loadedFiles").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| Some((v.get(0)?.as_str()?.to_owned(), v.get(1)?.as_str()?.to_owned()))).collect()
+}
+
+fn hex_sha(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
