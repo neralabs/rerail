@@ -1,6 +1,11 @@
 # 0059: A library's cross-file rows are a derivation, replayed into the workspace run
 
-Status: proposed (2026-11-07)
+Status: withdrawn (2026-11-07); the code is removed. Replaced by 0065.
+
+**Why withdrawn.** It made the library a second, separate run (a "stage"), and copied its rows into every round of
+the workspace run. Both are wrong in shape. A library's documents are ordinary documents, the normal fixpoint
+derives their rows, and the store records them (0065). The measurements below are kept as evidence: replay into
+bounded rounds cost more than it saved.
 
 ## Intro
 
@@ -66,10 +71,43 @@ their statistics, not in process memory.
 ## Order of work
 
 1. The stage, its rows, and replay with the head guard, behind the setting `library.rows`
-   (`on` by default; `off` runs as before), to compare the two.
+   (`off` by default since Measured; `on` replays), to compare the two.
 2. `calls.rr`: `stage("library")` opens `need_attr`, `need_name` and the star names (`wantx`).
 3. Measured on the 84-file corpus: the Jedi score unchanged, and a warm run costing at most 10%
    more than the run without typeshed (t21 step 2's goal).
+
+## Measured (2026-11-07)
+
+A one-file workspace importing the same modules as the 84-file corpus (149 library documents), `calls.rr` at k = 1,
+debug build, load 15-100 (CPU s of the cross-file part):
+
+```text
+// library.rows   rows replayed   cross
+off               -                9.2   the workspace derives what it asks of the library, under its demand
+on (warm)         1,062,869       12.5   the stage's rows, read from the store, then the same rounds
+```
+
+Replay does not pay, for two reasons the design missed:
+
+- **The stage's open demand.** The workspace asks little of the library (its `need_attr` rows are a few thousand),
+  so the rows it derives about library nodes are few. The stage, open for any workspace, derives every class's
+  every attribute: a million rows, which cost more to load and index than the few to derive.
+- **Rows are loaded per round.** The rounds (0035, 0056) run the cone again each round, and each round loads the
+  replayed rows into the engine and indexes them again.
+
+Two changes the first measurements forced stay, and serve any later form of this decision:
+
+- Replayed rows are a component's *closed* rows (`setfix`'s `rel ... closed <table>`): rows at the lowest ids, of
+  an earlier wave, never a delta. Without it every rule joined the whole library again in the first wave and
+  discarded the rows at the head guard (53 s, not 12).
+- Only relations in or after a recursive component are kept (`library::kept`); a one-pass relation (`kind`, a walk)
+  costs what reading it back costs.
+
+A form that could pay reads the stored rows in place, by index, as the workspace's demand asks (no load), and
+once per run, not per round. Until then the setting is `library.rows=on` to measure, off otherwise.
+
+Measured with it: what the rounds read and no round changes runs once before them (`cross_rounds::pre_split`):
+69 of the cone's relations, 1.9 s once instead of each round.
 
 ## Not decided here
 

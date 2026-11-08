@@ -290,8 +290,9 @@ fn python_and_rr_policies_run_over_one_repository() {
 /// the parser's own, statement for statement, and a file that does not parse gives the parser's error.
 #[test]
 fn statements_from_the_tape_are_the_parsers() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
-    let mut pending = vec![root];
+    // The rule library and packs, and the engine's own programs (typing's, and the pinned golden ones).
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut pending = vec![manifest.join("../docs/rule-syntax"), manifest.join("src/code_rule_dsl/typing/programs"), manifest.join("src/code_rule_dsl/logic/plan/golden/programs")];
     let mut checked = 0;
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {

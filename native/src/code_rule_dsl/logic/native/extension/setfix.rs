@@ -543,6 +543,16 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
         }
+        // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics (as `native::setfix`; here
+        // each probe runs it, not once a wave per rule).
+        "whole" => {
+            let j = parse_join(conn, &unhex(body)?, &mut SYMS.write().unwrap())?;
+            let mut store = comp.store.write().unwrap();
+            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
+            drop(store);
+            comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?.whole = Some(j);
+            return Ok(());
+        }
         other => return Err(err(format!("unknown probe kind {other}"))),
     };
     comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?.body = body;

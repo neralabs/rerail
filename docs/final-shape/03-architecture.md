@@ -255,6 +255,7 @@ These are the Typing branch's resolutions, adopted.
 - Inference is approximate and progressive: language-specific inference programs over the AST, aiming at 80/20. Their results are facts, invalidated like any other fact. No full type checker is ever embedded.
 - **R0 runs per file.** It is a lattice fixpoint inside the GPU dispatch (§7).
 - **R1..Rk run across files** over interface summaries from the previous round, with an early cutoff on interface digests. These are bounded rounds, k = 2 *(adopted)*, not a global fixpoint.
+  - *Under revision (decision 0065, draft):* the cross-file part runs as one fixpoint over every loaded document. A library's cross-file rows are recorded by the store per import-closed group of documents (§14), and types are interned terms. The rounds go.
 
 **Type terms.**
 - All terms live in one space of interned terms. A term is one of:

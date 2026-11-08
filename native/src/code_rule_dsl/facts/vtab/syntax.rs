@@ -382,6 +382,8 @@ enum Class {
     Integer,
     Operator,
     FunctionDefinition,
+    /// `for` and `with` statements, which an `async` keyword marks too.
+    AsyncStatement,
     FunctionItem,
     Attribute,
     String,
@@ -398,6 +400,7 @@ impl Class {
                 Self::Operator
             }
             "function_definition" => Self::FunctionDefinition,
+            "for_statement" | "with_statement" => Self::AsyncStatement,
             "function_item" => Self::FunctionItem,
             "attribute" => Self::Attribute,
             "string" => Self::String,
@@ -897,7 +900,8 @@ impl Batch {
                         }
                     }
                     // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
-                    Class::FunctionDefinition if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
+                    // `async for`, `async with` likewise.
+                    Class::FunctionDefinition | Class::AsyncStatement if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
                         op_t.push([n, string("async") as i64]);
                     }
                     Class::FunctionItem

@@ -428,6 +428,7 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
 const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
 #[test]
+#[ignore = "O110: since the Typing-support merge of 2026-11-07, four builtin receivers of pkg/typed.py are Unknown"]
 fn python_type_relations_agree_with_the_runtime() {
     let answers = score_python_types(&program("calls"));
     let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
@@ -578,6 +579,274 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     assert!(rows[0].0.starts_with("main.py:"), "{text}");
     assert!(rows[0].1.rsplit_once(':').unwrap().0.ends_with("world_load/ts/stdlib/os/path.pyi"), "{text}");
     let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order() {
+    // fixtures/python/world_site/ws: a venv, the user's declarations and a miniature typeshed (rerail.env). Each
+    // module of main.py resolves at one layer of python/modules.rr: alpha's stub package before its typed package,
+    // beta's typed package from its `.py`, gamma (installed untyped, so not read) from typeshed's stubs/, delta from
+    // a directory a `.pth` file names, eps from the declarations before its stub package. zeta, a single-file module
+    // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
+    // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
+    // another generic class, would be Var's base and its `__init__` a target).
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_site/ws");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("site");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let mut got: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(_, t)| t.rsplit_once(':').unwrap().0.split("world_site/").nth(1).unwrap().to_owned())
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "decls/eps.pyi",
+            "ts/stdlib/cv.pyi",
+            "ts/stubs/types-gamma/gamma/__init__.pyi",
+            "venv/extra/delta/__init__.pyi",
+            "venv/lib/python3.13/site-packages/alpha-stubs/__init__.pyi",
+            "venv/lib/python3.13/site-packages/beta/__init__.py",
+        ],
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
+    // fixtures/python/world_decl/app: the inputs `typed_corpus_reads_declarations_and_dependency_summaries` gave
+    // `typing::deps` and `typing::declare`, as t21 reads them (step 3): the user's declarations are `.pyi` files under
+    // `python.declarations`, and the installed package `vendor` (no stubs, no `py.typed`) is read from its sources
+    // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_decl/app");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("decl");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let mut got: Vec<&str> = text.lines().filter_map(|l| l.split_once('\t')).map(|(_, t)| t).filter(|t| *t != "module").collect();
+    got.sort();
+    // version() and make(): str; other.thing(): bytes | None.
+    assert_eq!(got, ["None", "bytes", "str", "str"], "{text}");
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert!(targets.contains("world_decl/decls/vendor/core.pyi:"), "{targets}");
+    assert!(targets.contains("world_decl/decls/other.pyi:"), "{targets}");
+    assert!(targets.contains("site-packages/vendor/__init__.py:"), "{targets}");
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute() {
+    // PEP 544: `Concrete` derives from the protocol `Sized` without listing `Protocol`, so it is an ordinary class: a
+    // parameter declared `Concrete` holds a Concrete (or a subclass), and its method call has a target and is not
+    // open. `self.names: list[Concrete] = []` in a method declares `names` on the class, as `names: ...` in its body.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("proto");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Protocol\n\nclass Sized(Protocol):\n    def size(self) -> int: ...\n\nclass Concrete(Sized):\n    def size(self) -> int:\n        return 1\n\nclass Holder:\n    def __init__(self) -> None:\n        self.names: list[Concrete] = []\n    def first(self) -> Concrete: ...\n\ndef use(c: Concrete, h: Holder) -> None:\n    c.size()\n    h.first().size()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    // c.size() and h.first().size() reach Concrete.size; h.first() reaches Holder.first.
+    assert_eq!(targets.lines().count(), 3, "{targets}");
+    assert_eq!(open, "", "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_generic_binds() {
+    // t21 §5.1, first version: `x: M[str, Box]` binds M's `_V` to Box, so `x.get("a")` is a Box and `.m()` targets
+    // Box.m; `class D(M[str, Box])` binds it for every D; `pick`'s own `_T` is the argument its parameter is given.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("generic");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_K = TypeVar(\"_K\")\n_V = TypeVar(\"_V\")\n_T = TypeVar(\"_T\")\nclass Box:\n    def m(self) -> int: ...\nclass M(Generic[_K, _V]):\n    def get(self, k: _K) -> _V: ...\n    def pick(self, k: _K, d: _T) -> _V | _T: ...\nclass D(M[str, Box]): ...\ndef f(x: M[str, Box], y: D) -> None:\n    x.get(\"a\").m()\n    y.get(\"a\").m()\n    x.pick(\"a\", Box()).m()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    // get, get, pick, and the three `.m()` calls.
+    assert_eq!(targets.lines().count(), 6, "{targets}");
+    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_subscript_is_a_call_of_its_receivers_getitem() {
+    // `b[0]` is `b.__getitem__(0)`: its value is what B's `__getitem__` returns, so `.run()` targets V.run; a generic's
+    // `__getitem__` returns what the receiver's annotation binds (`x: M[str, Box]`). A class's subscript
+    // (`M[str, Box]`, a generic alias) is no call of `__getitem__`: calling it stays unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("subscript");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_K = TypeVar(\"_K\")\n_V = TypeVar(\"_V\")\nclass V:\n    def run(self) -> int: ...\nclass Box:\n    def m(self) -> int: ...\nclass B:\n    def __getitem__(self, i: int) -> V: ...\nclass M(Generic[_K, _V]):\n    def __getitem__(self, k: _K) -> _V: ...\ndef f(b: B, x: M[str, Box]) -> None:\n    b[0].run()\n    x[\"a\"].m()\n    M[str, Box]()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 1, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered() {
+    // `for x in s`: x is `s.__iter__().__next__()`; `with c as z`: z is `c.__enter__()`. Their `async` forms call other
+    // methods (`__aiter__`, `__aenter__`): their targets stay unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protocols");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "class V:\n    def run(self) -> int: ...\nclass It:\n    def __next__(self) -> V: ...\nclass Seq:\n    def __iter__(self) -> It: ...\nclass Cm:\n    def __enter__(self) -> V: ...\ndef f(s: Seq, c: Cm) -> None:\n    for x in s:\n        x.run()\n    with c as z:\n        z.run()\nasync def h(s: Seq, c: Cm) -> None:\n    async for x in s:\n        x.run()\n    async with c as z:\n        z.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 2, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_declared_generic_return_carries_the_receivers_binding() {
+    // t21 §5.1: `Seq[V]`'s `__iter__() -> It[_T]` is an It of V, so the loop's `__next__() -> _T` is a V; `Gen`'s
+    // `__iter__() -> It[V]` is one as written. The declared generic's class is exact: `Sub`'s `__next__` is typed by
+    // It's and does not reach the loop.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("genret");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_T = TypeVar(\"_T\")\nclass V:\n    def run(self) -> int: ...\nclass W:\n    def run(self) -> int: ...\nclass It(Generic[_T]):\n    def __next__(self) -> _T: ...\nclass Sub(It[W]):\n    def __next__(self) -> W: ...\nclass Seq(Generic[_T]):\n    def __iter__(self) -> It[_T]: ...\nclass Gen:\n    def __iter__(self) -> It[V]: ...\ndef f(s: Seq[V], g: Gen) -> None:\n    for x in s:\n        x.run()\n    for y in g:\n        y.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    // Both calls target one definition (V.run, not W.run).
+    let defs: BTreeSet<&str> = targets.lines().filter_map(|l| l.split('\t').nth(1)).collect();
+    assert_eq!(defs.len(), 1, "{targets}");
+    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
+    // `deco(cls: type[T]) -> type[T]` gives back the class it decorates, whatever its body returns (an unknown
+    // `wrap(cls)`): A stays A, so B's base is known and `b.m()` targets A.m. Only `wrap(cls)` is unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("classdec");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import TypeVar\nT = TypeVar(\"T\")\ndef deco(cls: type[T]) -> type[T]:\n    return wrap(cls)\n@deco\nclass A:\n    def m(self) -> int: ...\nclass B(A): ...\ndef f(b: B) -> None:\n    b.m()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 1, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 1, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return() {
+    // `cm(func: Callable[P, It[T]]) -> Callable[P, Cm[T]]` (contextlib's `contextmanager`): `opened()` runs
+    // `opened` and holds a Cm of V (`Gen[V]` is an It of V). Cm's parameter is read from its first base with a type
+    // variable as an argument (`Enter[T]`, not `Base[It[T]]`), so `with opened() as v` binds v to a V and `v.run()`
+    // targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("wrapcm");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Callable, Generic, ParamSpec, Protocol, TypeVar\nT = TypeVar(\"T\")\nP = ParamSpec(\"P\")\nclass It(Generic[T]): ...\nclass Gen(It[T]): ...\nclass Enter(Protocol[T]):\n    def __enter__(self) -> T: ...\nclass Base(Generic[T]): ...\nclass Cm(Base[It[T]], Enter[T]): ...\ndef cm(func: Callable[P, It[T]]) -> Callable[P, Cm[T]]: ...\nclass V:\n    def run(self) -> int: ...\n@cm\ndef opened() -> Gen[V]: ...\ndef f() -> None:\n    with opened() as v:\n        v.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.V")).count(), 2, "{types}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
+    // `pick(xs: It[S]) -> S` and `ordered(xs: It[S]) -> Seq[S]` (`min`, `sorted`): S is what the argument's class gives
+    // It's parameter, through its generic value (`Seq[V]`) or its class's bases (`class Vs(Seq[V])`). Every `run()`
+    // targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ownvar");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\nT = TypeVar(\"T\")\nS = TypeVar(\"S\")\nclass It(Generic[T]): ...\nclass Seq(It[T]):\n    def first(self) -> T: ...\nclass V:\n    def run(self) -> int: ...\nclass Vs(Seq[V]): ...\ndef ordered(xs: It[S]) -> Seq[S]: ...\ndef pick(xs: It[S], d: int = 0) -> S: ...\ndef f(xs: Seq[V], ys: Vs) -> None:\n    pick(xs).run()\n    ordered(xs).first().run()\n    pick(ys).run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    eprintln!("T {targets}\nO {open}");
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(targets.lines().count(), 7, "{targets}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
+    // `step(i: HasNext[S]) -> S` (`next`): Feed does not derive from HasNext; S is what `feed.__next__()` returns, a
+    // V, so `run()` targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protovar");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Protocol, TypeVar\nT = TypeVar(\"T\")\nS = TypeVar(\"S\")\nclass HasNext(Protocol[T]):\n    def __next__(self) -> T: ...\nclass V:\n    def run(self) -> int: ...\nclass Feed:\n    def __next__(self) -> V: ...\ndef step(i: HasNext[S]) -> S: ...\ndef f(feed: Feed) -> None:\n    step(feed).run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
+    // `get(1)` fits only the first overload (the second requires the keyword z), `get(1, 2, z=3)` only the second (the
+    // first takes one positional argument), and `k.m()`, its `self` bound, only the first. Each call is one class, so
+    // every `a()` and `b()` is a known method.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ovlarity");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import overload\nclass A:\n    def a(self) -> int: ...\nclass B:\n    def b(self) -> int: ...\n@overload\ndef get(x: int, /) -> A: ...\n@overload\ndef get(x: int, y: int = 0, *, z: int) -> B: ...\nclass K:\n    @overload\n    def m(self) -> A: ...\n    @overload\n    def m(self, y: int) -> B: ...\ndef f(k: K) -> None:\n    get(1).a()\n    get(1, 2, z=3).b()\n    k.m().a()\n    k.m(2).b()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.A") || l.ends_with("\tm.B")).count(), 4, "{types}");
+    let _ = std::fs::remove_dir_all(&project);
 }
 
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting

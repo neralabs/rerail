@@ -184,10 +184,6 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
-                // `.pragma "library-open" "r s"` (decision 0059): relations a workspace run still derives about library nodes.
-                [key, rels] if key == "library-open" => {
-                    l.prog.settings.push(("pragma".to_owned(), format!("\"library-open\" \"{rels}\"")));
-                }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),

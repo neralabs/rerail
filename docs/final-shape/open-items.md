@@ -1209,7 +1209,9 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
   round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
   is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
   - pending marking for the other programs (`calls_rust.rr`, workload);
-  - the per-document cutoff, since each round still reruns the whole cross-file part.
+  - the per-document cutoff, since each round still reruns the whole cross-file part. *Superseded by decision 0065
+    (draft):* no rounds at all. The cross-file part becomes one fixpoint, so nothing is cut and nothing is
+    pending. The cutoff (0064) was measured and withdrawn.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
@@ -2069,3 +2071,45 @@ depends on it being a `call`, and a negated comparison is refused. Nothing outsi
 **Closure:** the parser builds only the tree, and decides from node kinds what it decided from statements. The
 parity test becomes a comparison of the tape-read statements with a recorded set, and the replay (3988 303 298 0)
 and the rr tests are unchanged.
+
+## O108. A corpus run takes two collection leases for one problem
+
+Rerail-rule-expressivity and Typing-support-final-shape each fixed collection deleting a running corpus run's sources
+(O95), in different ways. The final shape now has both:
+- `ContentStore::hold_collection` (`CollectionLease`) with `HeldPlan` (`hold_corpus_plan`, `hold_sources`);
+- `ContentStore::begin_corpus_run` (`CorpusRunLease`, with the store's busy retries).
+
+A run takes both and releases both once its manifest is recorded, before its collection starts (`record_run`). One of
+them is enough.
+
+**Closure:** one lease, the other's tests kept against it.
+
+## O109. A run read from memoised base rows derives other rows
+
+Decision 0063 memoises the base rows a file hands the cross-file part (`memo::Entry::base`), each row its file's by
+its first column, and a memo hit replays them. Merged with typing's `calls.rr`, a run read entirely from the memo
+gave 233 `call_open` rows where the evaluated run and T give 241: eight calls of `glob.py` missing
+(`own_ingestion_derives_what_t_facts_do`, the 4096-node run after the 262144-node one). Every file was a hit and no
+chunk was refused. With `RERAIL_CORPUS_MEMO=off` the rows agree. The cause is not found: the replayed base rows, or
+the statistics the cross-file part plans with (measured once over every file's rows in a memoised run), are the
+candidates. Crediting a guest's rows to its host file made no difference.
+
+Until then a run whose cross-file part reads base relations is not memoised, as before 0063: `memoised &&
+stored.is_empty()`. The entry's `base` field stays. `a_session_reruns_what_an_edit_changed` (0063's test, whose rule
+reads base relations) is ignored with this reason, so a session reruns every file of such a rule.
+
+**Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
+the session test runs again.
+
+## O110. Four builtin receivers are Unknown after the Typing-support merge
+
+After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`
+finds four receivers of `fixtures/python/calls/project/pkg/typed.py` Unknown: `text = str(12)`, `data = b"ab"`,
+`words = [...]` and `table = {...}` (40 exact of 44). It fails with `RERAIL_CORPUS_MEMO=off` too, so the memo is not
+the cause. The merged `calls.rr` is that branch's, unchanged. The rr tape reader gives the parser's statements for it
+(`statements_from_the_tape_are_the_parsers` now covers the typing and golden programs). The run reads no typeshed:
+the world round loads no documents, and `litq`'s classes come from `qv("builtins.…", "cls", c)`. Whether the test
+passes on that branch alone was not checked: building a second target would exceed the disk budget. The test is
+ignored with this reason.
+
+**Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
