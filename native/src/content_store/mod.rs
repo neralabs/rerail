@@ -204,7 +204,7 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    pub(crate) fn from_sha256_digest(digest: [u8; 32]) -> Self {
+    pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
 

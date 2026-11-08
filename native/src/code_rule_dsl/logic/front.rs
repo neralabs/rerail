@@ -92,14 +92,9 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
     }
 }
 
-/// A comparison's operator: one of the parser's punctuation. Named so serde's derive reads it by `punctuation`, not
-/// as a string borrowed from its input.
-pub(in crate::code_rule_dsl) type Op = &'static str;
-
-/// A comparison's operator read back (a stored prepared program, decision 0073): one of the parser's own.
-fn punctuation<'de, D: serde::Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
-    let op = <String as serde::Deserialize>::deserialize(d)?;
-    PUNCT.iter().copied().find(|p| *p == op).ok_or_else(|| serde::de::Error::custom(format!("no operator {op:?}")))
+/// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
+pub(in crate::code_rule_dsl) fn operator(op: &str) -> Option<&'static str> {
+    PUNCT.iter().copied().find(|p| *p == op)
 }
 
 fn near(src: &str, pos: usize) -> &str {
@@ -107,7 +102,7 @@ fn near(src: &str, pos: usize) -> &str {
     &src[pos..end]
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Term {
     Var(String),
     Wild,
@@ -134,7 +129,7 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Atom {
     pub(in crate::code_rule_dsl) rel: String,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
@@ -154,7 +149,7 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
@@ -166,15 +161,10 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
-    Cmp {
-        l: Term,
-        #[serde(deserialize_with = "punctuation")]
-        op: Op,
-        r: Term,
-    },
+    Cmp { l: Term, op: &'static str, r: Term },
     /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
@@ -295,14 +285,14 @@ pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
     pub(in crate::code_rule_dsl) body: Vec<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct LatticeDecl {
     pub(in crate::code_rule_dsl) keys: usize,
     /// The value column's type, which names the lattice (`flat`, `min`, `max`) unless `merge` does.
@@ -322,13 +312,13 @@ impl LatticeDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Value {
     Int(i64),
     Str(String),
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Program {
     /// Each relation's columns: (name, type).
     pub(in crate::code_rule_dsl) decls: BTreeMap<String, Vec<(String, String)>>,
@@ -363,7 +353,7 @@ pub(in crate::code_rule_dsl) struct Program {
 
 /// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
 /// comment node (`kind(c, "comment")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
@@ -371,7 +361,7 @@ pub(in crate::code_rule_dsl) enum SpanIn {
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
     /// second column, one memo shared).
