@@ -1451,3 +1451,19 @@ It does not present those paths as clean results.
 The [shared contract and remaining producer plan](data-layer-survey-graph.md) specify the next work and its acceptance requirements.
 Production reporting, CLI/enforcement, registry/scope, persistent workspaces, and broader helper domains remain open.
 The inventory is 89 drafts and 11 absent translations. This is a consumer checkpoint, not a completed rule or global acceptance.
+
+## 2026-11-08 — Native survey source inventory
+
+Final shape remains at `65d78128c`, already merged. The prior clarification turn made no migration changes.
+The next work starts from the pinned `_scan_symbol_tree`, which uses `_ModuleVisitor`, rather than the separate event collector.
+Its symbol naming and import scope differ from the modern call resolver.
+
+Thirteen offline source recordings now compare complete projected symbol occurrences, per-name definition lists, module paths, and final import maps.
+The empty native producer fails all thirteen comparisons through successful engine execution (`eb247006a`).
+The shared `survey-source.rr` producer then passes all thirteen on the existing root CLI `90739a806101e6ca`.
+The checks retain duplicate definitions, flattened class names, classes inside functions, omitted nested functions, and last-import replacement.
+They also cover Unicode identifier normalization, relative import clamping, package files, star imports, and future imports.
+All fifteen focused guard and alignment tests pass, including four subtests.
+
+This producer has no Python dependency at execution time. Its contract command reads the earlier source recording.
+No native engine code changed. Full graph construction, consumer integration, and production acceptance remain incomplete.

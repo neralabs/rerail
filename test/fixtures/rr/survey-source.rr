@@ -3,6 +3,12 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "python/ast.rr"
+#include "data-layer/survey-source.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
-Inventory(@place(path, 0), "module", path, module) :- doc(_, path, module), 1 = 0.
+Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
+.violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number) code "SURVEY_SYMBOL" "symbol"
+Symbol(@place(path, 0), "symbol", path, module, ordinal, sid, fq, name, qual, k, line, owner, flag) :- sgs_symbol(_, d, ordinal, sid, fq, name, qual, k, owner, line, flag), sgs_module(d, path, module).
+.violation Defined(at: span, kind: symbol, path: symbol, module: symbol, name: symbol, sid: symbol, ordinal: number) code "SURVEY_DEFINED" "defined"
+Defined(@place(path, 0), "defined", path, module, name, sid, ordinal) :- sgs_defined(d, name, sid, ordinal), sgs_module(d, path, module).
+.violation Imported(at: span, kind: symbol, path: symbol, module: symbol, name: symbol, target: symbol) code "SURVEY_IMPORTED" "import"
+Imported(@place(path, 0), k, path, module, name, target) :- sgs_import(d, k, name, target), sgs_module(d, path, module).

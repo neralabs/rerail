@@ -2,7 +2,8 @@
 
 `internal_dead_code` and `imperative_private_functions` use the same upstream symbol graph.
 The native contract lives in `docs/rule-syntax/lib/data-layer/survey-graph.rr`.
-Its current input is a supplied graph argument. Native extraction from repository source is still missing.
+The consumer currently takes a supplied graph argument. The source producer has an independently tested inventory and import projection.
+It does not yet construct a complete graph from repository source.
 This document does not certify either rule as complete.
 
 ## Implemented consumer
@@ -31,7 +32,7 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Derive symbol and module inventory. Preserve qualified identifiers, definition replacement, source order, decorators, annotations, and class ownership.
+1. Extend the tested symbol and module inventory with decorators and annotations. Preserve definition replacement and class ownership.
 2. Derive imports, reexports, definitions, `__all__`, module references, exported roots, and literal dynamic-import roots.
 3. Derive bases, method tables, calls, class uses, and legacy synthetic edges. Compare with the pinned graph builder before using the rows for findings.
 4. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
@@ -43,6 +44,12 @@ Do not invoke Python, restore an older runtime, or add a second Rust graph engin
 Share a producer only when both consumers request the same source scope.
 Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
+
+The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
+Thirteen source fixtures compare symbol occurrences, definition lists, module names, and final import maps with the pinned `_ModuleVisitor`.
+They include nested classes, omitted nested functions, duplicate definitions, Unicode names, package paths, and imports from nested scopes.
+The native command reads an offline source recording. It does not import the Python scanner.
+These checks do not certify annotations, call edges, roots, findings, or production integration.
 
 ## Ordered class accessors
 

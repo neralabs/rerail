@@ -1,0 +1,40 @@
+// Source inventory for the pinned SymbolGraph _ModuleVisitor. This is deliberately
+// separate from the modern call resolver: the source flattens nested class names,
+// records classes inside functions, omits nested functions, and hoists every import.
+// Rows retain occurrences. Graph construction later replaces duplicate symbol IDs.
+#include "python/ast.rr"
+
+.decl sgs_module(d: number, path: symbol, module: symbol)
+sgs_module(d, path, @replace_all(@replace_all(path, "(?:/)?__init__\\.py$", ""), "/", ".")) :- doc(d, path, _), suffix("__init__.py", path), (path = "__init__.py" ; suffix("/__init__.py", path)).
+sgs_module(d, path, @replace_all(@slice(path, 0, strlen(path)-3), "/", ".")) :- doc(d, path, _), suffix(".py", path), path != "__init__.py", !suffix("/__init__.py", path).
+.decl sgs_definition(n: node, d: number, name: symbol, qual: symbol, k: symbol, owner: symbol)
+sgs_definition(n, d, @nfkc(name), @nfkc(name), "class", "") :- kind(n, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).
+sgs_definition(n, d, @nfkc(name), @nfkc(name), "function", "") :- kind(n, "function_definition"), !nearest(n, _, "function_definition"), !nearest(n, _, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).
+sgs_definition(n, d, @nfkc(name), cat(@nfkc(owner), ".", @nfkc(name)), "method", @nfkc(owner)) :- kind(n, "function_definition"), !nearest(n, _, "function_definition"), nearest(n, c, "class_definition"), def_name(c, owner), def_name(n, name), docof(n, d), sgs_module(d, _, _).
+.decl sgs_async(n: node, flag: number)
+sgs_async(n, 1) :- sgs_definition(n, _, _, _, _, _), is_async(n).
+sgs_async(n, 0) :- sgs_definition(n, _, _, _, _, _), !is_async(n).
+.decl sgs_symbol(n: node, d: number, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, k: symbol, owner: symbol, row: number, async_flag: number)
+sgs_symbol(n, d, ordinal, cat(module, "::", qual), cat(module, ".", qual), name, qual, k, owner, row, flag) :- sgs_definition(n, d, name, qual, k, owner), sgs_module(d, _, module), line(n, row), sgs_async(n, flag), ordinal = count : { sgs_definition(other, d, _, _, _, _), earlier(other, n) }.
+.decl sgs_defined(d: number, name: symbol, sid: symbol, ordinal: number)
+sgs_defined(d, name, sid, ordinal) :- sgs_symbol(n, d, _, sid, _, name, _, _, _, _, _), ordinal = count : { sgs_symbol(other, d, _, _, _, name, _, _, _, _, _), earlier(other, n) }.
+
+// Relative imports are clamped at the root by the original visitor, even when
+// Python execution would reject them. Keep module and symbol namespaces separate.
+.decl sgs_package(d: number, package: symbol)
+sgs_package(d, module) :- sgs_module(d, path, module), (path = "__init__.py" ; suffix("/__init__.py", path)).
+sgs_package(d, @pkg_up(module, 1)) :- sgs_module(d, path, module), path != "__init__.py", !suffix("/__init__.py", path).
+.decl sgs_from(i: node, module: symbol)
+sgs_from(i, @nfkc(module)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, module).
+sgs_from(i, @pkg_up(package, strlen(dots)-1)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), child(mn, pre, 0), text(pre, dots), !child(mn, _, 1), docof(i, d), sgs_package(d, package).
+sgs_from(i, @dot(@pkg_up(package, strlen(dots)-1), @nfkc(tail))) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), child(mn, pre, 0), text(pre, dots), child(mn, dn, 1), text(dn, tail), docof(i, d), sgs_package(d, package).
+sgs_from(i, "__future__") :- kind(i, "future_import_statement").
+.decl sgs_alias(i: node, a: node, local: symbol, imported: symbol)
+sgs_alias(i, a, @nfkc(name), @nfkc(name)) :- sgs_from(i, _), field(i, "name", a), kind(a, "dotted_name"), text(a, name).
+sgs_alias(i, a, @nfkc(local), @nfkc(name)) :- sgs_from(i, _), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n), text(n, name), field(a, "alias", al), text(al, local).
+.decl sgs_import_candidate(a: node, d: number, k: symbol, name: symbol, target: symbol)
+sgs_import_candidate(a, d, "imported", local, cat(module, ".", name)) :- sgs_alias(i, a, local, name), sgs_from(i, module), module != "", docof(i, d).
+sgs_import_candidate(a, d, "import_module", @head(@nfkc(module)), @nfkc(module)) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "dotted_name"), text(a, module), docof(i, d).
+sgs_import_candidate(a, d, "import_module", @nfkc(local), @nfkc(module)) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n), text(n, module), field(a, "alias", al), text(al, local), docof(i, d).
+.decl sgs_import(d: number, k: symbol, name: symbol, target: symbol)
+sgs_import(d, k, name, target) :- sgs_import_candidate(a, d, k, name, target), count : { sgs_import_candidate(later, d, k, name, _), earlier(a, later) } = 0.
