@@ -28,17 +28,17 @@ use std::collections::HashMap;
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_corpus");
 
 /// A seeded xorshift: the corpus is the same on every run.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    fn below(&mut self, n: u64) -> u64 {
+    pub(super) fn below(&mut self, n: u64) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0 % n
     }
 
-    fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
+    pub(super) fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
         &xs[self.below(xs.len() as u64) as usize]
     }
 }
@@ -670,10 +670,10 @@ const GAPS: [&str; 0] = [];
 
 /// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1.
 #[derive(Default)]
-struct Ids(std::cell::RefCell<HashMap<String, u16>>);
+pub(super) struct Ids(pub(super) std::cell::RefCell<HashMap<String, u16>>);
 
 impl Ids {
-    fn of(&self, name: &str) -> u16 {
+    pub(super) fn of(&self, name: &str) -> u16 {
         let mut m = self.0.borrow_mut();
         let n = m.len() as u16 + 1;
         *m.entry(name.to_owned()).or_insert(n)

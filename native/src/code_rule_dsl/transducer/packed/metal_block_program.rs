@@ -278,8 +278,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
                 outs.extend(n.outputs.iter().enumerate().map(|(k, &v)| u32::from(v) | u32::from(n.output_delays[k]) << 24));
                 let ext0 = fit(outs.len())?;
                 // Each counted output: its index, its extract (0xff: a total only) and its delay.
-                for &k in &counted[pi] {
-                    let e = n.extracts.iter().position(|&x| x == k).map_or(0xff, |e| e as u32);
+                for (c, &k) in counted[pi].iter().enumerate() {
+                    let e = if c < n.extracts.len() { c as u32 } else { 0xff };
                     outs.push(fit(k)? | e << 16 | u32::from(n.output_delays[k]) << 24);
                 }
                 table.push(ProgramRow {
@@ -347,18 +347,14 @@ pub(in crate::code_rule_dsl) fn run_batch(
             })
             .collect();
         let capacity = len.max(1);
-        let mine = &counted[row.program as usize];
-        let count = |k: usize| counts[row.tot_base as usize + mine.iter().position(|&c| c == k).expect("counted")];
-        let positions = n
-            .extracts
-            .iter()
-            .enumerate()
-            .map(|(e, &k)| {
+        let count = |c: usize| counts[row.tot_base as usize + c];
+        let positions = (0..n.extracts.len())
+            .map(|e| {
                 let from = row.pos_base as usize + e * capacity;
-                positions[from..from + (count(k) as usize).min(capacity)].to_vec()
+                positions[from..from + (count(e) as usize).min(capacity)].to_vec()
             })
             .collect();
-        let totals = n.totals.iter().map(|&k| u64::from(count(k))).collect();
+        let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
         let _ = groups;
         results.push(BlockRun { outputs, positions, totals });
     }
@@ -817,7 +813,7 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
         }
     }
     for (c, &k) in super::native_cpu_block::counted(native).iter().enumerate() {
-        let e = native.extracts.iter().position(|&x| x == k);
+        let e = (c < native.extracts.len()).then_some(c);
         out.push_str(&format!(
             "  if (!count_sink(v{}, gl, g, l, f.groups, len, {}u, ext_states + f.ext_base + {c}u * f.groups, positions + f.pos_base + {}u * max(len, 1u), max(len, 1u), {}, counts + f.tot_base + {c}u, spins * {EXTRACT_POLLS}u)) return false;\n",
             native.outputs[k],

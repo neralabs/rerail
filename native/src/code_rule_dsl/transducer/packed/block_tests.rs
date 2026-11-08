@@ -194,7 +194,7 @@ fn eq_swar_form_equals_reference() {
 
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
 /// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
-fn body_of(clif: &str) -> Vec<String> {
+pub(super) fn body_of(clif: &str) -> Vec<String> {
     hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
 }
 
@@ -242,7 +242,7 @@ pub(super) fn sink_params(native: &native_ir::BlockNative) -> usize {
 }
 
 /// The CLIF opcode of an instruction line (`v3 = icmp eq v1, v2` → `icmp`).
-fn opcode(line: &str) -> &str {
+pub(super) fn opcode(line: &str) -> &str {
     let line = line.split(" ;").next().unwrap_or(line);
     let rhs = line.split_once(" = ").map_or(line, |(_, r)| r);
     rhs.split([' ', '.']).next().unwrap_or("")

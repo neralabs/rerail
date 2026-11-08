@@ -42,13 +42,13 @@ type Entry = unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Row {
-    bytes: u64,
+    pub(super) bytes: u64,
     blocks: u64,
-    len: u64,
+    pub(super) len: u64,
     out: u64,
-    positions: u64,
-    capacity: u64,
-    counts: u64,
+    pub(super) positions: u64,
+    pub(super) capacity: u64,
+    pub(super) counts: u64,
 }
 
 /// A compiled block program.
@@ -57,7 +57,7 @@ pub(super) struct CompiledBlock {
     entry: Entry,
     outputs: usize,
     delay: u8,
-    extracts: Vec<usize>,
+    pub(super) extracts: Vec<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -67,15 +67,10 @@ pub(super) struct CompiledBlock {
     pub(super) disassembly: String,
 }
 
-/// The outputs that need a running count: each extract's and each total's, once.
+/// The running counts, as output indexes: each extract's, then each total's. A file's counts are
+/// laid out in this order, so tier 2 reads its totals from the count after the extracts'.
 pub(super) fn counted(native: &BlockNative) -> Vec<usize> {
-    let mut out: Vec<usize> = Vec::new();
-    for &k in native.extracts.iter().chain(&native.totals) {
-        if !out.contains(&k) {
-            out.push(k);
-        }
-    }
-    out
+    native.extracts.iter().chain(&native.totals).copied().collect()
 }
 
 impl CompiledBlock {
@@ -101,11 +96,11 @@ impl CompiledBlock {
 /// bytes; a row per file; and one buffer each for the mask words, positions and counts. The host
 /// lays out and reads back; every word in them is the function's.
 pub(super) struct Batch {
-    bytes: Vec<u8>,
-    rows: Vec<Row>,
+    pub(super) bytes: Vec<u8>,
+    pub(super) rows: Vec<Row>,
     out: Vec<u64>,
-    positions: Vec<u32>,
-    counts: Vec<u64>,
+    pub(super) positions: Vec<u32>,
+    pub(super) counts: Vec<u64>,
 }
 
 impl Batch {
@@ -126,6 +121,8 @@ impl Batch {
             counts += program.counted.len() as u64;
             rows.push(row);
         }
+        // 64 zero bytes after the last file: tier 2 reads a token's bytes a block at a time.
+        bytes.resize(bytes.len() + 64, 0);
         Self { bytes, rows, out: vec![0u64; words as usize], positions: vec![0u32; positions as usize], counts: vec![0u64; counts as usize] }
     }
 
@@ -152,17 +149,14 @@ impl Batch {
             .map(|(row, bytes)| {
                 let (base, n) = (row.out as usize, bytes.len().div_ceil(64));
                 let outputs = (0..program.outputs).map(|k| (0..n).map(|i| self.out[base + i * program.outputs + k]).collect()).collect();
-                let count = |k: usize| self.counts[row.counts as usize + program.counted.iter().position(|&c| c == k).expect("counted")];
-                let positions = program
-                    .extracts
-                    .iter()
-                    .enumerate()
-                    .map(|(e, &k)| {
+                let count = |c: usize| self.counts[row.counts as usize + c];
+                let positions = (0..program.extracts.len())
+                    .map(|e| {
                         let at = (row.positions + e as u64 * row.capacity) as usize;
-                        self.positions[at..at + count(k) as usize].to_vec()
+                        self.positions[at..at + count(e) as usize].to_vec()
                     })
                     .collect();
-                let totals = program.totals.iter().map(|&k| count(k)).collect();
+                let totals = (0..program.totals.len()).map(|t| count(program.extracts.len() + t)).collect();
                 BlockRun { outputs, positions, totals }
             })
             .collect()
@@ -835,7 +829,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let mut counts_out = Vec::with_capacity(counted.len());
             for (c, &k) in counted.iter().enumerate() {
                 let n = counts_in[c];
-                let cnt = match native.extracts.iter().position(|&x| x == k) {
+                let cnt = match (c < native.extracts.len()).then_some(c) {
                     Some(e) => {
                         let start = f.ins().ishl_imm(i, 6);
                         let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));

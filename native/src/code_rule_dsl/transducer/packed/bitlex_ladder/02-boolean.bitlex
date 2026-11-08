@@ -1,0 +1,19 @@
+# Step 2: one boolean, `true` or `false`.
+#
+# New: a second keyword, and a choice between them in the tree.
+
+lexer ladder02
+
+class ws    = ' ' '\t' '\n' '\r' 0x0b 0x0c
+class alpha = 'a'..'z'
+
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "true" "false" } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha
+
+tree ladder {
+  node document = boolean
+  choice boolean = true | false
+}

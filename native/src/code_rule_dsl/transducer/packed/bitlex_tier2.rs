@@ -45,10 +45,11 @@ pub(super) struct Row {
 }
 
 impl Row {
-    /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): not one byte, and not all keywords,
-    /// whose words give their lengths.
+    /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): every row but one of one-byte
+    /// tokens. A row of keywords only is no exception: its token runs to its last byte whatever
+    /// the word, and `truee` is not `true` (the word's bytes are compared over the whole token).
     pub(super) fn takes_last(&self) -> bool {
-        !self.one_byte && self.kind != 0
+        !self.one_byte
     }
 }
 
@@ -305,7 +306,8 @@ impl Emit<'_> {
         }
         if words.len() == 1 {
             let w = words[0].word.clone().expect("a keyword");
-            // A row of keywords only: the word gives the length. Else the token ends at its last byte.
+            // A one-byte row: the word is its byte. Else the token ends at its last byte, and the
+            // word is compared with all of it.
             let span = if row.takes_last() { Span::Last } else { Span::Len(w.len() as u16) };
             // The switches have read every byte of the word, and its length is its row's: no `WORD`.
             let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w) };

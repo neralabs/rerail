@@ -276,6 +276,8 @@ pub(in crate::code_rule_dsl) mod stream;
 mod bitlex_compile_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
+#[cfg(test)]
+mod bitlex_ladder_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;

@@ -1,0 +1,22 @@
+# Step 3: booleans separated by commas, `true, false, true`.
+#
+# New: a one-byte token, and a repetition in the tree.
+
+lexer ladder03
+
+class ws    = ' ' '\t' '\n' '\r' 0x0b 0x0c
+class alpha = 'a'..'z'
+class comma = ','
+
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "true" "false" } required
+token punctuation = start comma
+keywords punctuation { "," } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha & ~comma
+
+tree ladder {
+  node document = boolean (',' boolean)*
+  choice boolean = true | false
+}

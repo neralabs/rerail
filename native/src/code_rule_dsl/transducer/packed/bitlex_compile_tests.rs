@@ -227,27 +227,24 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
     // The kinds whose tokens' last bytes are in the stream: rows with a last byte of their own,
-    // and their keywords, unless every token of the row is a keyword.
+    // and their keywords. A row of keywords only is one too: its token runs to its own last byte,
+    // which tier 2 compares with the word (`truee` is not `true`).
     let mut late: Vec<String> = Vec::new();
     for s in &stmts {
         if let Stmt::Token { kind, last, through, .. } = s
             && (last.is_some() || through.is_some())
         {
-            let keywords = stmts.iter().find_map(|k| match k {
-                Stmt::Keywords { kind: k, words, required, .. } if k == kind => Some((words, *required)),
+            late.push(kind.clone());
+            if let Some(words) = stmts.iter().find_map(|k| match k {
+                Stmt::Keywords { kind: k, words, .. } if k == kind => Some(words),
                 _ => None,
-            });
-            match keywords {
-                Some((_, true)) => {}
-                Some((words, false)) => {
-                    late.push(kind.clone());
-                    late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
-                }
-                None => late.push(kind.clone()),
+            }) {
+                late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
             }
+            late.dedup();
         }
     }
-    assert_eq!(late, ["string_content", "number", "true", "false", "null"]);
+    assert_eq!(late, ["string_content", "escape_sequence", "number", "true", "false", "null"]);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -577,15 +574,20 @@ fn json_state_is_bits() {
     assert!(bits <= JSON_STATE_BITS, "json: {bits} state bits (budget {JSON_STATE_BITS})");
 }
 
-/// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049).
-const JSON_STATE_BITS: usize = 4;
+/// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049); 5 since a
+/// keyword-only row's tokens end at their own last bytes (an escape's last byte, one byte after
+/// its backslash, is carried into the next block's last-bytes stream).
+const JSON_STATE_BITS: usize = 5;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
 /// tier 1 began to hand tier 2 its stream (decision 0053): the starts' four ORs, as simdjson's
 /// structural mask; one OR of the last bytes; and a guard of two (a number starting at a quote)
-/// that a sharper first-byte analysis would drop. The four token-row outputs went.
-const JSON_OPS: usize = 40;
-const JSON_CARRIED_WORDS: usize = 4;
+/// that a sharper first-byte analysis would drop. The four token-row outputs went. 42 and 5
+/// carried words when escapes' last bytes joined the stream (a `prev` by one and an OR): a row of
+/// keywords only is checked over its token's whole length, so `truee` is not `true`. A fixed
+/// length the compiler can prove would drop them.
+const JSON_OPS: usize = 42;
+const JSON_CARRIED_WORDS: usize = 5;
 
 #[test]
 #[ignore = "a dump; run by name"]

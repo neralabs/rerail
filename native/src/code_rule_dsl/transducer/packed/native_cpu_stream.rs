@@ -713,3 +713,52 @@ impl Tape {
         out
     }
 }
+
+/// A language's whole compiled path: tier 1's function, then tier 2's over the buffers tier 1
+/// wrote. Between and around the two calls the host only lays out the file (padded, as simdjson
+/// requires) and reads the node table back.
+pub(super) struct Parser {
+    pub(super) tier1: super::native_cpu_block::CompiledBlock,
+    pub(super) tier2: CompiledStream,
+}
+
+impl Parser {
+    pub(super) fn new(native: &NativeModule) -> Result<Self, Error> {
+        let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+        Ok(Parser { tier1: super::native_cpu_block::compile(block)?, tier2: compile(native)? })
+    }
+
+    /// The nodes of `bytes`, or the word that refused it (the file goes to tree-sitter).
+    pub(super) fn parse(&self, bytes: &[u8]) -> Result<Vec<Node>, Refused> {
+        let mut batch = super::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
+        batch.call(&self.tier1);
+        let row = batch.rows[0];
+        let extracts = self.tier1.extracts.len();
+        // Each stream as tier 1 wrote it: its positions (room for two past its count) and count.
+        let stream = |e: Option<usize>| -> (&[u32], usize) {
+            match e {
+                Some(e) => {
+                    let at = (row.positions + e as u64 * row.capacity) as usize;
+                    (&batch.positions[at..at + row.capacity as usize], batch.counts[row.counts as usize + e] as usize)
+                }
+                None => (&batch.positions[..0], 0),
+            }
+        };
+        let (starts, lasts) = (stream(self.tier2.starts), stream(self.tier2.lasts));
+        let none = [0u64];
+        let totals = match batch.counts.get(row.counts as usize + extracts..) {
+            Some(t) if !t.is_empty() => t,
+            _ => &none[..],
+        };
+        debug_assert!(starts.0.len() >= starts.1 + 2 || self.tier2.starts.is_none());
+        let mut tape = self.tier2.tape(starts.1);
+        // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
+        // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
+        // sized for the stream.
+        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, totals, &mut tape) };
+        if r != 0 {
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
+        }
+        Ok(tape.nodes())
+    }
+}
