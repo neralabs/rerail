@@ -9,7 +9,11 @@ fn packs() -> Vec<(String, Value)> {
         for f in std::fs::read_dir(&rules).into_iter().flatten() {
             let path = f.unwrap().path();
             if path.extension().is_some_and(|e| e == "json") {
-                out.push((path.display().to_string(), serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()));
+                let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                // Packs also ship conversation (command) rules, which are no policy documents.
+                if doc["format"] == "rerail.policy/v1" {
+                    out.push((path.display().to_string(), doc));
+                }
             }
         }
     }
@@ -26,6 +30,15 @@ fn pack_policies_round_trip_through_datalog_text() {
     let mut rules = 0;
     for (path, doc) in &docs {
         let mut prog = Program::default();
+        // A forbid clause of another form (main's packs hold `regex` ones) is no matcher: the front refuses
+        // the whole policy, as the wave path does (`waves::policies`).
+        let ast_only = doc["clauses"].as_array().into_iter().flatten().all(|clause| {
+            clause.get("forbid").is_none_or(|forbid| forbid.as_object().is_some_and(|f| f.len() == 1 && f.contains_key(MARK)))
+        });
+        if !ast_only {
+            assert!(add(&mut prog, doc).is_err(), "{path}: a non-ast forbid clause is refused");
+            continue;
+        }
         add(&mut prog, doc).unwrap_or_else(|e| panic!("{path}: {e}"));
         rules += prog.rules.len();
         let text = text(&prog);
