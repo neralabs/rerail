@@ -1,0 +1,164 @@
+name: Dependabot auto-merge
+
+# Merges a Dependabot pull request the reviewer approved, once the whole of CI has passed on the approved commit.
+#
+# 1. `rerun-ci`, on the neralabs-reviewer app's approval of a Dependabot pull request (reviewer.yml reviews one once CI
+#    passes on its head). Dependabot's own CI run skips every job that needs a secret or the OIDC token (ci.yml), so
+#    its CI result says little: the unit, Rust and conformance tests never ran. This job checks the update is a minor
+#    or patch one and not the reviewer's own pin, then dispatches CI on the branch as the neralabs-ci app. That run is
+#    not Dependabot's, so it runs everything.
+# 2. `arm`, when that dispatched CI run passes: if the pull request's head is still the commit the reviewer approved,
+#    it enables auto-merge (squash) pinned to that commit with --match-head-commit, so a later push merges nothing.
+#
+# A major update, the reviewer's own pin (`reviewer` group), or an update fetch-metadata cannot read goes to a person.
+# fetch-metadata reads the head commit, so a pull request that dependabot-pins.yml pushed to (the OMP SDK and ast-grep
+# CLI groups) yields no metadata and is left for a person too.
+#
+# Neither job checks out or runs anything from the branch; the dispatched CI run does, on the commit the reviewer read.
+# Both jobs mint the neralabs-ci app's token from RELEASE_APP_CLIENT_ID and the Actions secret RELEASE_APP_PRIVATE_KEY,
+# as release-pr.yml does. Neither event's actor is Dependabot (the reviewer app approves; the neralabs-ci app
+# dispatches), so GitHub hands them Actions secrets, not Dependabot secrets. Auto-merge needs the repository's
+# "Allow auto-merge" setting.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  rerun-ci:
+    name: Run the whole of CI on the approved commit
+    if: >-
+      ${{
+        github.event_name == 'pull_request_review' &&
+        github.event.review.state == 'approved' &&
+        github.event.review.user.login == 'neralabs-reviewer[bot]' &&
+        github.event.pull_request.user.login == 'dependabot[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - id: meta
+        name: Read the update's metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ github.token }}
+
+      - id: decide
+        name: Minor or patch, not the reviewer, approved at the head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REVIEWED: ${{ github.event.review.commit_id }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+          NAMES: ${{ steps.meta.outputs.dependency-names }}
+        run: |
+          set -euo pipefail
+          leave() { echo "::notice::Pull request #$PR is left for a person: $1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          case "$UPDATE_TYPE" in
+            version-update:semver-minor|version-update:semver-patch) ;;
+            "") leave "fetch-metadata read no update type (a commit on top of Dependabot's, or not a version update)" ;;
+            *) leave "a $UPDATE_TYPE update" ;;
+          esac
+          if [ "$GROUP" = "reviewer" ] || [[ "$NAMES" == *neralabs/reviewer* ]]; then
+            leave "it moves the reviewer's own pin"
+          fi
+          head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)"
+          if [ "$head" != "$REVIEWED" ]; then
+            leave "the reviewer approved $REVIEWED, but the head is now $head"
+          fi
+          echo "go=true" >> "$GITHUB_OUTPUT"
+
+      - id: app-token
+        if: steps.decide.outputs.go == 'true'
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-actions: write
+
+      # Dispatches at the branch, not at a commit. If the branch moves first, the run is at the new head and `arm`
+      # finds no approval for it.
+      - name: Dispatch CI on the branch
+        if: steps.decide.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+  arm:
+    name: Enable auto-merge on the approved commit
+    # A CI run the neralabs-ci app dispatched on a Dependabot branch, that passed. A person dispatching CI arms nothing.
+    if: >-
+      ${{
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'workflow_dispatch' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.triggering_actor.login == 'neralabs-ci[bot]' &&
+        startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - id: pr
+        name: Find the pull request and the reviewer's approval of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          prs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/pulls" -f state=open -f head="${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
+            --jq "[.[] | select(.user.login == \"dependabot[bot]\" and .head.repo.full_name == \"$GITHUB_REPOSITORY\")]")"
+          if [ "$(jq length <<<"$prs")" != 1 ]; then
+            echo "::notice::No single open Dependabot pull request has head branch $BRANCH."
+            exit 0
+          fi
+          pr="$(jq -r '.[0].number' <<<"$prs")"
+          head="$(jq -r '.[0].head.sha' <<<"$prs")"
+          if [ "$head" != "$HEAD_SHA" ]; then
+            echo "::notice::Pull request #$pr's head is $head; this CI run was at $HEAD_SHA."
+            exit 0
+          fi
+          # The reviewer's last review must be an approval of this commit: a later comment review withdraws it.
+          last="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
+            --jq '.[] | select(.user.login == "neralabs-reviewer[bot]") | [.state, .commit_id] | @tsv' | tail -n 1)"
+          if [ "$last" != "$(printf 'APPROVED\t%s' "$HEAD_SHA")" ]; then
+            echo "::notice::The reviewer's last review of #$pr is not an approval of $HEAD_SHA (${last:-none})."
+            exit 0
+          fi
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - id: app-token
+        if: steps.pr.outputs.number != ''
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # --match-head-commit: GitHub refuses the merge if the head is no longer the commit the reviewer approved and CI
+      # just passed on.
+      - name: Enable auto-merge
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --auto --squash --match-head-commit "$HEAD_SHA"

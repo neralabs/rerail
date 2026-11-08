@@ -5,10 +5,17 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export {
+  DAEMON_ACCESS_TOKEN_FILE,
+  DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  daemonFetch,
   type DaemonHealth,
   type DaemonLaunchOptions,
+  type EngineEndpoint,
   type DaemonState,
+  probeDaemon,
+  readDaemonState,
+  START_LOCK_DIR,
   startDaemon,
   stopDaemon,
 } from "./daemon-control.js";
@@ -31,6 +38,7 @@ export {
   workspaceStartState,
 } from "./repository-start.js";
 export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
+export { resolveModelPath } from "./session-paths.js";
 export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE, type DroppedEvents } from "./session-state.js";
 export {
   SESSION_EVENT_PAGE_LIMIT,
@@ -38,7 +46,7 @@ export {
   SqliteSessionReader,
   SqliteSessionStore,
 } from "./session-store.js";
-export { type RepositorySetupIo, onRuleCount } from "./repository-start.js";
+export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
 export { type NpmRunner } from "./npm.js";
 export {
   addRemote,

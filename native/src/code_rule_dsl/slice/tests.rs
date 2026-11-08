@@ -437,7 +437,7 @@ fn pack_census() {
             rules += 1;
             for clause in &compiled.inner.clauses {
                 let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-                for grammar in matchers {
+                for grammar in matchers.iter() {
                     clauses += 1;
                     let Some(matcher) = match_tree(grammar).ok().and_then(|tree| LoweredMatcher::lower(&tree).ok()) else {
                         unlowered += 1;

@@ -45,6 +45,11 @@ impl Adapter for Rr {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
+    /// `.rr` files have no suppression comments, so no `rerail-ignore` directives either.
+    const COMMENT_KINDS: &'static [&'static str] = &[];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Refused;

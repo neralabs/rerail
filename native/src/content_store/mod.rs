@@ -31,6 +31,7 @@ pub(crate) use postings::segment_positions;
 #[allow(dead_code)]
 pub(crate) mod prefilter;
 pub(crate) use prefilter::TapePrefilter;
+mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -77,7 +78,6 @@ use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(test)]
@@ -625,9 +625,8 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;

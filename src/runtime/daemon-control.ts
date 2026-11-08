@@ -245,7 +245,8 @@ export function nodeExecutable(): string {
 
 export const DAEMON_STATE_FILE = "daemon.json";
 export const DAEMON_LOG_FILE = "daemon.log";
-const START_LOCK_DIR = "start.lock";
+/** In the Rerail home: the lock a daemon start holds. */
+export const START_LOCK_DIR = "start.lock";
 
 const START_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 10_000;

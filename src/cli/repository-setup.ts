@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { and, eq } from "drizzle-orm";
 import type { RulesDashboardScope } from "../api/session-contracts.js";
-import { CODING_AGENT_NAMES } from "../setup/coding-agents.js";
+import { CODING_AGENT_NAMES, type ConnectResult } from "../setup/coding-agents.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { HARNESSES, type Harness } from "../setup/harness-registration.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RuleSetting } from "../engine/catalog/repository-model.js";
@@ -21,10 +21,10 @@ import {
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, recommendRulePacks, rulePackPackageName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
-import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
+import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
 import {
   discoverPacks,
   installedPackVersion,
@@ -42,7 +42,9 @@ import {
   confirmPacksAnswers,
   NO_PACKS,
   NO_REPO_ANSWERS,
+  PACKS_NOT_DOWNLOADED_ANSWERS,
   PICK_PACKS_ANSWERS,
+  packsNotDownloadedQuestion,
   pickPacksQuestion,
   noRepoQuestion,
   READ_REPO_ANSWERS,
@@ -65,6 +67,7 @@ import {
   renderStoppedRepo,
   renderSummary,
   setupQuestion,
+  type AgentsConnection,
   type AvailablePack,
   type CodingAgent,
   type DashboardLink,
@@ -131,8 +134,16 @@ export type DashboardPage = "rules";
 export interface SetupEnvironment {
   /** Coding agents installed on this computer. */
   agentsFound(): readonly Harness[];
-  /** Connect these coding agents. `repoRoot` is the repository the person said yes to, if any. */
-  connect(agents: readonly Harness[], repoRoot: string | undefined): Promise<void>;
+  /**
+   * Coding agents an earlier set-up or `rerail install` found or was named (`seenCodingAgents`), or undefined when there
+   * is no record to go by.
+   */
+  agentsSeen(): readonly Harness[] | undefined;
+  /**
+   * Connect these coding agents, each on its own, and record every one found or named as seen, but one that could not
+   * be connected, which leaves the record. `repoRoot` is the repository the person said yes to, if any.
+   */
+  connect(agents: readonly Harness[], repoRoot: string | undefined): Promise<ConnectResult>;
   /** Whether the person has let Rerail read their coding agent sessions on this computer (T2b, asked once). */
   sessionsApproved(): boolean;
   /** Record their answer: yes is kept, no takes back an earlier yes. */
@@ -157,7 +168,7 @@ export interface RepositorySetupOptions {
    * chose. Nothing is installed before an answer that names them.
    */
   packs?: readonly PackVersion[];
-  /** An answer's `--packs` that is not `<id>@<version>,…`: set-up asks its confirm question again, with this error. */
+  /** An answer's `--packs` that is not `<id>@<version>,…` (or `<package>@<version>`): set-up asks its confirm question again, with this error. */
   packsError?: string;
   /** `rerail start --repository`: start every checkout of the repository, not just this one and those inside it. */
   repository?: boolean;
@@ -363,8 +374,8 @@ async function askFolder(io: RepositorySetupIo): Promise<Repository | undefined>
 }
 
 /**
- * The packs a line names: each entry a number from the list, an id, or an id at the listed version. Undefined, with
- * the reason, for an entry that names none of them.
+ * The packs a line names: each entry a number from the list, a pack as `--packs` names it (its id, or a third party's
+ * package name), or that at the listed version. Undefined, with the reason, for an entry that names none of them.
  */
 export function pickPacks(line: string, available: readonly AvailablePack[]): PackVersion[] | string {
   const entries = line.split(",").map(entry => entry.trim()).filter(entry => entry !== "");
@@ -374,7 +385,7 @@ export function pickPacks(line: string, available: readonly AvailablePack[]): Pa
     const byNumber = /^\d+$/u.test(entry) ? available[Number.parseInt(entry, 10) - 1] : undefined;
     const found = byNumber ?? available.find(pack => pack.id === entry || `${pack.id}@${pack.version}` === entry);
     if (found === undefined) return `${entry} is not one of the rule packs listed.`;
-    if (!picked.some(pack => pack.id === found.id)) picked.push({ id: found.id, version: found.version });
+    if (!picked.some(pack => pack.packageName === found.packageName)) picked.push({ packageName: found.packageName, id: packIdOfPackage(found.packageName)!, version: found.version });
   }
   return picked;
 }
@@ -485,7 +496,7 @@ function dashboardScope(run: Run, repository: Repository): RulesDashboardScope {
 }
 
 /** Step 6: what is on, how to try it, the link to manage rules, and the other started repos. */
-async function summary(run: Run, repository: Repository, open: boolean): Promise<SetupOutcome> {
+async function summary(run: Run, repository: Repository, open: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
   const scope = dashboardScope(run, repository);
   const { packNames, ruleCount, others } = readDatabase(run, database => {
     const checkout = lookupCheckout(database, repository.root);
@@ -502,15 +513,33 @@ async function summary(run: Run, repository: Repository, open: boolean): Promise
     ruleCount,
     dashboard,
     otherStartedRepos: others,
+    agents,
   }, run.io.lane));
   return { status: "started", repositoryName: repository.name, ruleCount };
 }
 
-/** Coding agents first: registration checks every config before writing, so a bad one changes nothing in Rerail. */
-async function connect(run: Run, repository: Repository | undefined): Promise<readonly Harness[]> {
-  const agents = run.request.agents ?? run.request.environment.agentsFound();
-  await run.request.environment.connect(agents, repository?.root);
-  return agents;
+/**
+ * Coding agents first, each on its own: one whose config cannot be read is left as it is and named in the summary, and
+ * the others are connected. `again`: set-up ran again where it was set up, so without `--agents` it connects only the
+ * agents found since an earlier run saw any, never one the person removed or left out. With no record to go by (an
+ * install from before there was one) it connects none: what is found now is recorded, and the next agent installed is
+ * the first new one.
+ */
+async function connect(run: Run, repository: Repository | undefined, again = false): Promise<AgentsConnection> {
+  const { environment, agents: named } = run.request;
+  const found = environment.agentsFound();
+  const seen = again ? environment.agentsSeen() : undefined;
+  const agents = named ?? (!again ? found : seen === undefined ? [] : found.filter(id => !seen.includes(id)));
+  const result = await environment.connect(agents, repository?.root);
+  return {
+    connected: codingAgents(result.all),
+    ...(again && named === undefined ? { added: codingAgents(result.changed) } : {}),
+    failed: result.failures.map(({ agent, message, file }) => ({ agent: { id: agent, name: CODING_AGENT_NAMES[agent] }, message, ...(file === undefined ? {} : { file }) })),
+    codexTrust: result.codexTrust,
+    ompPlugin: result.ompPlugin,
+    anyFound: found.length > 0,
+    worksWith: codingAgents(HARNESSES),
+  };
 }
 
 /** What starting Rerail adds to the repository. */
@@ -549,16 +578,16 @@ function turnOn(run: Run, repository: Repository, startWith: StartWith): number 
 
 /** Steps 5 and 6. */
 async function start(run: Run, repository: Repository, startWith: StartWith): Promise<SetupOutcome> {
-  await connect(run, repository);
-  if (turnOn(run, repository, startWith) === undefined) return alreadySetUp(run, repository, true);
-  return summary(run, repository, true);
+  const agents = await connect(run, repository);
+  if (turnOn(run, repository, startWith) === undefined) return alreadySetUp(run, repository, agents);
+  return summary(run, repository, true, agents);
 }
 
 /** E4 with no pack: on, without reading any code, and every rule pack off. */
 async function pickMyself(run: Run, repository: Repository): Promise<SetupOutcome> {
-  await connect(run, repository);
-  if (turnOn(run, repository, chosenPacks([], false)) === undefined) return alreadySetUp(run, repository, true);
-  return summary(run, repository, true);
+  const agents = await connect(run, repository);
+  if (turnOn(run, repository, chosenPacks([], false)) === undefined) return alreadySetUp(run, repository, agents);
+  return summary(run, repository, true, agents);
 }
 
 /**
@@ -569,7 +598,8 @@ async function pickMyself(run: Run, repository: Repository): Promise<SetupOutcom
 async function pickPacksMyself(run: Run, repository: Repository): Promise<SetupOutcome> {
   const { packs, packsError } = run.request;
   if (packsError === undefined && packs !== undefined) return startPicked(run, repository, packs);
-  const offered = discoveryOffering(await discoverPacks(undefined, run.request.environment.packs));
+  const discovery = await discoverPacks(undefined, run.request.environment.packs);
+  const offered = discoveryOffering(discovery);
   // Nothing to pick, and nothing went wrong: on with none. When packs could not be fetched or installed, the person
   // is told why and asked, rather than started without the packs they wanted.
   if (offered.available.length === 0 && offered.unavailable.length === 0 && packsError === undefined) return pickMyself(run, repository);
@@ -578,6 +608,7 @@ async function pickPacksMyself(run: Run, repository: Repository): Promise<SetupO
     repoPath: repository.root,
     available: offered.available,
     unavailable: offered.unavailable,
+    withoutRules: discovery.withoutRules.map(found => found.pack.name),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   }, run.io.lane);
   if (packsError !== undefined) say(run.io, packsError);
@@ -619,40 +650,45 @@ function withPacksError(run: Run, problem: string): Run {
  */
 async function installAnswered(run: Run, packs: readonly PackVersion[]): Promise<string | undefined> {
   const older = packs.flatMap(pack => {
-    const installed = installedPackVersion(pack.id, packsHome(run));
-    return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${pack.id}@${pack.version} is older than the installed ${installed}`] : [];
+    const installed = installedPackVersion(pack.packageName, packsHome(run));
+    return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${rulePackShortName(pack.packageName)}@${pack.version} is older than the installed ${installed}`] : [];
   });
   if (older.length > 0) return `${older.join("; ")}: set-up does not downgrade a pack every repository uses; rerail packs add does.`;
   return await installPackVersions(packs, run.request.environment.packs);
 }
 
-/** "Not now" at the confirm question: nothing installed, connected or turned on. */
+/**
+ * "Not now" at the confirm question: nothing installed, connected or turned on. The start command is written for the
+ * coding agents "Yes" would have connected, the ones the person types it in.
+ */
 function notNow(run: Run): SetupOutcome {
-  say(run.io, renderNotNow(run.io.lane));
+  say(run.io, renderNotNow(codingAgents(agentsToConnect(run)), run.io.lane));
   return { status: "not-now" };
 }
 
 /** E5: installed and connected, on in no repo. */
 async function skip(run: Run): Promise<SetupOutcome> {
-  await connect(run, undefined);
-  say(run.io, renderSkipped(run.io.lane));
+  say(run.io, renderSkipped(await connect(run, undefined), run.io.lane));
   return { status: "skipped" };
 }
 
 /**
- * Set-up ran again where Rerail was set up before: say how things are, changing nothing. Coding agents
- * are connected again only when named (`--agents`) and not just `connected`, and the browser is not opened a second time.
+ * Set-up ran again where Rerail was set up before: say how things are, and connect the coding agents found since
+ * (or those named with `--agents`) unless this run connected them (`connected`); the repository is not changed, and
+ * the browser is not opened a second time.
  */
-async function alreadySetUp(run: Run, repository: Repository, connected = false): Promise<SetupOutcome> {
-  if (!connected && run.request.agents !== undefined) await connect(run, repository);
-  if (workspaceStartState(repository.root, run.databasePath) === "started") return summary(run, repository, false);
-  say(run.io, renderStoppedRepo({ repoName: repository.name }, run.io.lane));
+async function alreadySetUp(run: Run, repository: Repository, connected?: AgentsConnection): Promise<SetupOutcome> {
+  const agents = connected ?? await connect(run, repository, true);
+  if (workspaceStartState(repository.root, run.databasePath) === "started") return summary(run, repository, false, agents);
+  say(run.io, renderStoppedRepo({ repoName: repository.name, agents }, run.io.lane));
   return { status: "stopped", repositoryName: repository.name, ruleCount: 0 };
 }
 
 /** A rule pack set-up offers to install and add, at the version it installs. */
 interface Offer {
   readonly recommendation: RulePackRecommendation;
+  /** The pack's npm package, Rerail's own or an installed third party's. */
+  readonly packageName: string;
   readonly version: string;
   /** The version installed now, if any; installing another replaces it for every repository on this computer. */
   readonly installed: string | null;
@@ -664,22 +700,33 @@ interface Offering {
   readonly available: readonly AvailablePack[];
   /** Packs set-up could not fetch or check, and why. */
   readonly unavailable: readonly string[];
+  /** The names of the packs that fit but have no rules yet, so are not offered. */
+  readonly withoutRules: readonly string[];
   /** The catalog the offered packs' rules come from, for the lint config's settings. */
   readonly catalog: RuleCatalog;
 }
 
 const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
 
+/** A pack "Choose rule packs…" lists, named as `--packs` names it: its id, or a third party's package name. */
+const availablePack = (pack: RulePack, packageName: string, version: string): AvailablePack =>
+  ({ id: rulePackShortName(packageName), packageName, version, name: pack.name });
+
 /** What discovery found: the packs that fit, offered at the version fetched. */
 function discoveryOffering(discovery: PackDiscovery): Offering {
   return {
     offers: discovery.recommended.flatMap(found => found.match === undefined ? [] : [{
       recommendation: { pack: found.pack, ruleCount: found.ruleCount, reason: found.match.reason, folder: found.match.folder },
+      packageName: found.packageName,
       version: found.version,
       installed: found.installed,
     }]),
-    available: discovery.available.map(found => ({ id: found.pack.id, version: found.version, name: found.pack.name, ...(found.match === undefined ? {} : { reason: found.match.reason }) })),
+    available: discovery.available.map(found => ({
+      ...availablePack(found.pack, found.packageName, found.version),
+      ...(found.match === undefined ? {} : { reason: found.match.reason }),
+    })),
     unavailable: discovery.problems,
+    withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
   };
 }
@@ -691,45 +738,53 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
  */
 function chosenOffering(run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository = true): Offering {
   const catalog = loadRuleCatalog(packsHome(run));
-  const missing = chosen.filter(({ id, version }) => catalog.packs.get(id)?.version !== version);
-  if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${pack.id}@${pack.version}`).join(", ")}.`);
-  const packs = chosen.map(({ id }) => catalog.packs.get(id)!);
-  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs) : []).map(found => [found.pack.id, found]));
-  const offers = packs.map(pack => ({
+  const missing = chosen.filter(({ id, packageName, version }) => catalog.packs.get(id)?.packageName !== packageName || catalog.packs.get(id)?.version !== version);
+  if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${rulePackShortName(pack.packageName)}@${pack.version}`).join(", ")}.`);
+  const packs = chosen.map(({ id, packageName }) => ({ pack: catalog.packs.get(id)!, packageName }));
+  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs.map(({ pack }) => pack)) : []).map(found => [found.pack.id, found]));
+  const offers = packs.map(({ pack, packageName }) => ({
     recommendation: matched.get(pack.id) ?? { pack, ruleCount: onRules(pack), reason: "you chose it", folder: "" },
+    packageName,
     version: pack.version!,
     installed: pack.version,
   }));
   return {
     offers,
-    available: offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version, name: offer.recommendation.pack.name, reason: offer.recommendation.reason })),
+    available: offers.map(offer => ({ ...availablePack(offer.recommendation.pack, offer.packageName, offer.version), reason: offer.recommendation.reason })),
     unavailable: [],
+    withoutRules: [],
     catalog,
   };
 }
 
-const offeredVersions = (offering: Offering): PackVersion[] => offering.offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version }));
+const offeredVersions = (offering: Offering): PackVersion[] =>
+  offering.offers.map(offer => ({ packageName: offer.packageName, id: offer.recommendation.pack.id, version: offer.version }));
 const recommendationsOf = (offering: Offering): RulePackRecommendation[] => offering.offers.map(offer => offer.recommendation);
 const chosenRecommendations = (run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
   recommendationsOf(chosenOffering(run, repository, chosen, readRepository));
 
+/** What an answer connects: the agents `--agents` named, or every one found. */
+const agentsToConnect = (run: Run): readonly Harness[] => run.request.agents ?? run.request.environment.agentsFound();
+
 function packsInput(run: Run, repository: Repository, offering: Offering): RecommendedPacksInput {
-  // What the answer will connect: the agents `--agents` named, or every one found.
-  const connecting = run.request.agents ?? run.request.environment.agentsFound();
+  const connecting = agentsToConnect(run);
   return {
     repoName: repository.name,
     repoPath: repository.root,
-    packs: offering.offers.map(({ recommendation: { pack, ruleCount, reason }, version, installed }) => ({
-      id: pack.id,
+    packs: offering.offers.map(({ recommendation: { pack, ruleCount, reason }, packageName, version, installed }) => ({
+      id: rulePackShortName(packageName),
       name: pack.name,
       ruleCount,
       reason,
-      packageName: rulePackPackageName(pack.id),
+      packageName,
       version,
       installed,
+      ...(pack.publisher === RERAIL_PUBLISHER ? {} : { thirdParty: pack.publisher }),
+      ...(pack.localSource === undefined ? {} : { installedFrom: pack.localSource.kind }),
     })),
     available: offering.available,
     unavailable: offering.unavailable,
+    withoutRules: offering.withoutRules,
     agentsFound: codingAgents(connecting),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
     lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
@@ -754,11 +809,29 @@ async function confirm(run: Run, repository: Repository, answer: string | undefi
   }
   // An answer without `--packs` answers a question that offered no rule pack.
   if (errors.length === 0 && answer === "start") return start(run, repository, recommended([]));
-  const offering = discoveryOffering(await discoverPacks(repository.root, run.request.environment.packs));
-  const question = recommendedPacksQuestion(packsInput(run, repository, offering), run.io.lane);
   // A bad answer's coding agents or rule packs: the same question again, as the terminal asks again after one.
   for (const error of errors) say(run.io, error);
-  return confirmLoop(run, repository, offering, question);
+  const discovery = await discoverPacks(repository.root, run.request.environment.packs);
+  if (discovery.downloadFailures !== undefined && discovery.available.length === 0) return packsNotDownloaded(run, repository, discovery.downloadFailures);
+  const offering = discoveryOffering(discovery);
+  return confirmLoop(run, repository, offering, recommendedPacksQuestion(packsInput(run, repository, offering), run.io.lane));
+}
+
+/**
+ * Step 4 when npm gave no rule pack and none is installed to stand in: set-up cannot tell which fit, so it says why and
+ * asks to try again. "None fit" would be wrong, and starting with none is not what the person asked for.
+ */
+async function packsNotDownloaded(run: Run, repository: Repository, reasons: readonly string[]): Promise<SetupOutcome> {
+  const question = packsNotDownloadedQuestion({
+    repoName: repository.name,
+    repoPath: repository.root,
+    reasons,
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  }, run.io.lane);
+  const picked = await choose(run, question, PACKS_NOT_DOWNLOADED_ANSWERS);
+  if (picked === undefined) return halted(run.io);
+  if (picked === "not-now") return notNow(run);
+  return confirm(run, repository, picked);
 }
 
 /**

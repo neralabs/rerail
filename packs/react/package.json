@@ -1,7 +1,16 @@
 {
   "name": "@neralabs/rerail-pack-react",
-  "version": "0.1.4",
+  "version": "0.1.8",
   "description": "Rerail rule pack: eslint-plugin-react and eslint-plugin-react-hooks rules ported to Rerail code rules.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "react",
+    "eslint-plugin-react",
+    "eslint-plugin-react-hooks"
+  ],
   "license": "Apache-2.0 AND MIT",
   "repository": {
     "type": "git",
@@ -25,6 +34,6 @@
     }
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   }
 }

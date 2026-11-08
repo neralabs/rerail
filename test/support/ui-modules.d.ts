@@ -45,7 +45,7 @@ declare module "*/ui/sessions-model.js" {
   }
   export function sessionTurns(events: readonly unknown[]): TurnView[];
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
-  export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; how?: string };
+  export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; cwd?: string };
   export function droppedEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
@@ -90,6 +90,8 @@ declare module "*/ui/poll.js" {
   export interface StoredRule {
     rule: { id: string; mode: string };
     source: { kind: string; id: string };
+    /** "pack" for a rule a rule pack brings, "user" for one created by you. */
+    origin: string;
     enabled: boolean;
     folders: string[];
     folderStates: FolderState[];
@@ -109,6 +111,15 @@ declare module "*/ui/derive.js" {
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
+  /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
+  export function isFromPack(stored: { origin: string }): boolean;
+  export function publisherLabel(pack: { publisher: string }): string;
+  /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
+  export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
+}
+
+declare module "*/ui/render/pack-panel.js" {
+  export function packKind(pack: { category: string; publisher: string }): string;
 }
 
 declare module "*/ui/state.js" {
@@ -130,7 +141,7 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean; repositoryKey?: string } | null;
+    repository: { setUp: boolean; repositoryKey?: string; name?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
@@ -139,7 +150,7 @@ declare module "*/ui/state.js" {
     disconnected: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actRule: string | null; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
+  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
@@ -152,8 +163,13 @@ declare module "*/ui/attachments.js" {
   /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
-    keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+    keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
   };
+}
+
+declare module "*/ui/format.js" {
+  /** A failure toast: what did not happen, then the error as a sentence. */
+  export function failed(what: string, error: unknown): string;
 }
 
 declare module "*/ui/settings-writes.js" {
@@ -161,12 +177,24 @@ declare module "*/ui/settings-writes.js" {
   export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
   /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
-  /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
-  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
-    setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
-    setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
-    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
+  /** The page's rule setting writes; `toast`, `invalidate` and `owner` (given the one pack a change is to) are the page's. */
+  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: (packId?: string) => "repository" | "checkout" }): {
+    setEnabled(ids: readonly string[], enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackEnabled(packId: string, enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string, failed?: string): Promise<void>;
   };
+}
+
+declare module "*/ui/shell.js" {
+  /** Who a change to pack `packId`'s rules belongs to: this worktree for its own rules, else the repository. */
+  export function changeOwner(packId?: string): "repository" | "checkout";
+}
+
+declare module "*/ui/rule-remove.js" {
+  /** Delete rule `id`, created by you, from the repository the page shows; the toast offers Undo. */
+  export function removeRule(id: string): Promise<void>;
+  /** Undo: add rule `id` back to the repository its delete removed it from. */
+  export function restoreRule(id: string): Promise<void>;
 }
 
 declare module "*/ui/pack-model.js" {
@@ -179,8 +207,8 @@ declare module "*/ui/pack-model.js" {
   export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];
   export function shownRules<R extends Stored>(rules: readonly R[]): R[];
   export function runningOf(rules: readonly Stored[]): number;
-  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
-  export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
+  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" };
+  export function switchTurnsOn(state: "true" | "false"): boolean;
   export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
   export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
   export const SHEET_FILTER_AT: number;
@@ -189,7 +217,10 @@ declare module "*/ui/pack-model.js" {
 
 declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
-  export interface Route { view: ViewName | null; pack?: string; filterRule?: string; rule?: string; session?: string; jump?: boolean }
+  export interface Route {
+    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
+    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
+  }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
   export function bootRoute(search: string, hash: string): Route & { view: ViewName };
@@ -206,7 +237,7 @@ declare module "*/ui/history-model.js" {
   export interface RankedRule { id: string; title: string; origin: string; count: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
   export function historyOrigin(id: string): string;
-  export function rankedRules(): RankedRule[];
+  export function rankedRules(outcome?: "all" | "steered" | "logged"): RankedRule[];
   export function historyRuleId(ranked?: RankedRule[]): string | null;
   export function historyTitle(id: string): string;
   export type HistoryEmpty = { kind: "noRules" } | { kind: "noSessions" } | { kind: "noViolations"; sessions: number } | { kind: "nothingInRange" };
@@ -217,6 +248,7 @@ declare module "*/ui/repo-rules.js" {
   export interface RuleCounts { total: number; on: number }
   export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
   export function repoTag(counts: RuleCounts | null): string | null;
+  export function repoLine(repo: { setUp: boolean; started: boolean; checkoutCount: number }, counts: RuleCounts | null): string;
   export function repoRuleCounts(key: string): RuleCounts | null;
   export function loadRepoRuleCounts(keys: readonly string[]): Promise<boolean>;
 }
@@ -227,8 +259,12 @@ declare module "*/ui/settings-model.js" {
     tone: "on" | "warn" | "off" | "";
     command: { text: string; label: string } | null;
     problem?: string;
+    data?: { text: string; warn: boolean };
   }
-  export function agentStatus(agent: { id: string; name: string; found: boolean; connected: boolean; problem: string | null }): AgentStatus;
+  export function agentStatus(agent: {
+    id: string; name: string; found: boolean; connected: boolean; problem: string | null;
+    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+  }): AgentStatus;
   export function installedLabel(ms: number | null | undefined): string | null;
 }
 
@@ -239,6 +275,9 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export interface AskRule { id: string; title: string; scope: string; mode: string }
   export function askPrompt(rule: AskRule, intent: AskIntent): string;
   export function agentSeesPrompt(id: string, text: string): string;
+  export const LOG_NOTE: string;
+  export function askHint(rule: { fromPack: boolean }): string;
+  export function agentSeesHint(rule: { fromPack: boolean; log: boolean }): string;
   export function fmtDay(t: number | null | undefined): string;
   export interface LibraryAttachment { sourceKind: "library_rule"; sourceId: string; folder: string }
   export function libraryAttachments(stored: object): LibraryAttachment[];

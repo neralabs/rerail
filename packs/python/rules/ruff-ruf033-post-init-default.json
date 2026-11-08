@@ -1,0 +1,243 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf033-post-init-default",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare init-only dataclass parameters with their defaults as InitVar fields in the class body, not on the post-init method; the generated constructor ignores those defaults.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "post-init-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "stdlib-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "dataclasses.dataclass"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "stdlib-name"
+                  }
+                }
+              ]
+            },
+            "attrs-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "attrs.define",
+                      "attrs.frozen",
+                      "attrs.mutable",
+                      "attr.define",
+                      "attr.frozen",
+                      "attr.mutable",
+                      "attr.s",
+                      "attr.attributes",
+                      "attr.attrs"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "attrs-name"
+                  }
+                }
+              ]
+            },
+            "stdlib-decorator": {
+              "kind": "decorator",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "stdlib-callable"
+              },
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "attrs-callable"
+                  }
+                }
+              }
+            },
+            "stdlib-callable": {
+              "any": [
+                {
+                  "matches": "stdlib-name"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "stdlib-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "stdlib-callable"
+                  }
+                }
+              ]
+            },
+            "attrs-callable": {
+              "any": [
+                {
+                  "matches": "attrs-name"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "attrs-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "attrs-callable"
+                  }
+                }
+              ]
+            },
+            "post-init": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^__post_init__$"
+              },
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ]
+                },
+                "kind": "class_definition",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "stdlib-decorator"
+                  }
+                }
+              }
+            },
+            "default-value": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "function_definition",
+                        "matches": "post-init"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "default-value"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "default-value",
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[()]$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF033",
+        "message": "The generated `__init__` ignores `__post_init__` defaults: declare this parameter as an `InitVar` field with this default in the class body and drop the default here, unless only direct calls pass it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF033"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

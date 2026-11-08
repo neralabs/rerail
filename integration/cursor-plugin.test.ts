@@ -69,7 +69,9 @@ describe("Cursor packaged event adapter", () => {
     expect(await invokeCursorHook(executable, { ...common, hook_event_name: "sessionEnd" }, kernelSocketPath)).toEqual({});
 
     const sessionRoot = join(root, ".rerail", "sessions");
-    const [sessionDirectory] = await readdir(sessionRoot);
+    const [sessionDirectory] = (await readdir(sessionRoot, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
     const ledger = await readFile(join(sessionRoot, sessionDirectory!, "events.jsonl"), "utf8");
     const eventIds = ledger.trim().split("\n").map(line => JSON.parse(line) as { type: string; eventId?: string })
       .filter(entry => entry.type === "event")

@@ -1,0 +1,294 @@
+{
+  "rules": {
+    "B101": [
+      "examples/assert.py"
+    ],
+    "B102": [
+      "examples/exec.py"
+    ],
+    "B103": [
+      "examples/os-chmod.py"
+    ],
+    "B104": [
+      "examples/binding.py"
+    ],
+    "B105": [
+      "examples/hardcoded-passwords.py"
+    ],
+    "B106": [
+      "examples/hardcoded-passwords.py",
+      "examples/pyghmi.py"
+    ],
+    "B107": [
+      "examples/hardcoded-passwords.py"
+    ],
+    "B108": [
+      "examples/hardcoded-tmp.py",
+      "examples/os-chmod.py"
+    ],
+    "B110": [
+      "examples/try_except_pass.py"
+    ],
+    "B112": [
+      "examples/try_except_continue.py"
+    ],
+    "B113": [
+      "examples/requests-missing-timeout.py"
+    ],
+    "B201": [
+      "examples/flask_debug.py"
+    ],
+    "B202": [
+      "examples/tarfile_extractall.py"
+    ],
+    "B301": [
+      "examples/dill.py",
+      "examples/imports-aliases.py",
+      "examples/jsonpickle.py",
+      "examples/pandas_read_pickle.py",
+      "examples/pickle_deserialize.py",
+      "examples/shelve_open.py"
+    ],
+    "B302": [
+      "examples/marshal_deserialize.py"
+    ],
+    "B303": [
+      "examples/ciphers.py",
+      "examples/crypto-md5.py",
+      "examples/nosec.py"
+    ],
+    "B304": [
+      "examples/ciphers.py"
+    ],
+    "B305": [
+      "examples/cipher-modes.py"
+    ],
+    "B306": [
+      "examples/mktemp.py"
+    ],
+    "B307": [
+      "examples/eval.py"
+    ],
+    "B308": [
+      "examples/mark_safe.py",
+      "examples/mark_safe_insecure.py",
+      "examples/mark_safe_secure.py"
+    ],
+    "B310": [
+      "examples/urlopen.py"
+    ],
+    "B311": [
+      "examples/mark_safe_insecure.py",
+      "examples/random_module.py"
+    ],
+    "B312": [
+      "examples/telnetlib.py"
+    ],
+    "B313": [
+      "examples/xml_etree_celementtree.py"
+    ],
+    "B314": [
+      "examples/xml_etree_elementtree.py"
+    ],
+    "B315": [
+      "examples/xml_expatreader.py"
+    ],
+    "B316": [
+      "examples/xml_expatbuilder.py"
+    ],
+    "B317": [
+      "examples/new_candidates-all.py",
+      "examples/new_candidates-nosec.py",
+      "examples/new_candidates-some.py",
+      "examples/xml_sax.py"
+    ],
+    "B318": [
+      "examples/xml_minidom.py"
+    ],
+    "B319": [
+      "examples/xml_pulldom.py"
+    ],
+    "B321": [
+      "examples/ftplib.py"
+    ],
+    "B323": [
+      "examples/unverified_context.py"
+    ],
+    "B324": [
+      "examples/crypto-md5.py",
+      "examples/hashlib_new_insecure_functions.py",
+      "examples/imports-aliases.py"
+    ],
+    "B401": [
+      "examples/telnetlib.py"
+    ],
+    "B402": [
+      "examples/ftplib.py"
+    ],
+    "B403": [
+      "examples/dill.py",
+      "examples/imports-aliases.py",
+      "examples/imports-function.py",
+      "examples/imports-with-importlib.py",
+      "examples/imports.py",
+      "examples/pandas_read_pickle.py",
+      "examples/pickle_deserialize.py",
+      "examples/shelve_open.py"
+    ],
+    "B404": [
+      "examples/imports-aliases.py",
+      "examples/imports-from.py",
+      "examples/imports-function.py",
+      "examples/imports-with-importlib.py",
+      "examples/imports.py",
+      "examples/multiline_statement.py",
+      "examples/nosec.py",
+      "examples/partial_path_process.py",
+      "examples/subprocess_shell.py",
+      "examples/wildcard-injection.py"
+    ],
+    "B405": [
+      "examples/xml_etree_celementtree.py",
+      "examples/xml_etree_elementtree.py"
+    ],
+    "B406": [
+      "examples/xml_expatreader.py",
+      "examples/xml_sax.py"
+    ],
+    "B407": [
+      "examples/xml_expatbuilder.py"
+    ],
+    "B408": [
+      "examples/xml_minidom.py"
+    ],
+    "B409": [
+      "examples/xml_pulldom.py"
+    ],
+    "B411": [
+      "examples/xml_xmlrpc.py"
+    ],
+    "B412": [
+      "examples/httpoxy_cgihandler.py",
+      "examples/httpoxy_twisted_directory.py",
+      "examples/httpoxy_twisted_script.py"
+    ],
+    "B413": [
+      "examples/ciphers.py",
+      "examples/crypto-md5.py",
+      "examples/pycrypto.py",
+      "examples/weak_cryptographic_key_sizes.py"
+    ],
+    "B415": [
+      "examples/pyghmi.py"
+    ],
+    "B501": [
+      "examples/requests-ssl-verify-disabled.py"
+    ],
+    "B502": [
+      "examples/ssl-insecure-version.py"
+    ],
+    "B503": [
+      "examples/ssl-insecure-version.py"
+    ],
+    "B504": [
+      "examples/ssl-insecure-version.py"
+    ],
+    "B505": [
+      "examples/weak_cryptographic_key_sizes.py"
+    ],
+    "B506": [
+      "examples/new_candidates-all.py",
+      "examples/new_candidates-nosec.py",
+      "examples/new_candidates-some.py",
+      "examples/yaml_load.py"
+    ],
+    "B507": [
+      "examples/no_host_key_verification.py"
+    ],
+    "B508": [
+      "examples/snmp.py"
+    ],
+    "B509": [
+      "examples/snmp.py"
+    ],
+    "B601": [
+      "examples/paramiko_injection.py"
+    ],
+    "B602": [
+      "examples/imports-aliases.py",
+      "examples/multiline_statement.py",
+      "examples/new_candidates-all.py",
+      "examples/new_candidates-nosec.py",
+      "examples/new_candidates-some.py",
+      "examples/nosec.py",
+      "examples/subprocess_shell.py",
+      "examples/wildcard-injection.py"
+    ],
+    "B603": [
+      "examples/partial_path_process.py",
+      "examples/skip.py",
+      "examples/subprocess_shell.py",
+      "examples/wildcard-injection.py"
+    ],
+    "B604": [
+      "examples/subprocess_shell.py"
+    ],
+    "B605": [
+      "examples/os-popen.py",
+      "examples/os_system.py",
+      "examples/popen_wrappers.py",
+      "examples/subprocess_shell.py",
+      "examples/wildcard-injection.py"
+    ],
+    "B606": [
+      "examples/os-exec.py",
+      "examples/os-spawn.py",
+      "examples/os-startfile.py",
+      "examples/wildcard-injection.py"
+    ],
+    "B607": [
+      "examples/nosec.py",
+      "examples/partial_path_process.py"
+    ],
+    "B608": [
+      "examples/sql_multiline_statements.py",
+      "examples/sql_statements.py"
+    ],
+    "B609": [
+      "examples/wildcard-injection.py"
+    ],
+    "B610": [
+      "examples/django_sql_injection_extra.py"
+    ],
+    "B611": [
+      "examples/django_sql_injection_raw.py"
+    ],
+    "B612": [
+      "examples/logging_config_insecure_listen.py"
+    ],
+    "B613": [
+      "examples/trojansource.py"
+    ],
+    "B614": [
+      "examples/pytorch_load.py"
+    ],
+    "B615": [
+      "examples/huggingface_unsafe_download.py"
+    ],
+    "B701": [
+      "examples/jinja2_templating.py"
+    ],
+    "B702": [
+      "examples/mako_templating.py"
+    ],
+    "B703": [
+      "examples/mark_safe_insecure.py",
+      "examples/mark_safe_secure.py"
+    ],
+    "B704": [
+      "examples/markupsafe_markup_xss.py",
+      "examples/markupsafe_markup_xss_allowed_calls.py",
+      "examples/markupsafe_markup_xss_extend_markup_names.py"
+    ]
+  }
+}

@@ -965,6 +965,7 @@ mod tests {
             workspace_id,
             snapshot_id: snapshot,
             owner,
+            secret_names: Default::default(),
             _maintenance: None,
         });
         let compiled =

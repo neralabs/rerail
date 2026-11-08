@@ -83,7 +83,7 @@ fn w_lines(source: &str, lf_only: bool) -> Vec<String> {
         lines: Some(RegexLines { include: vec![], exclude: vec![], first: true, lf_only, state: None, indentation: None }),
         ..Default::default()
     };
-    let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(&regex::Regex::new("(?s).*").unwrap(), source, &options, usize::MAX);
+    let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(&regex::Regex::new("(?s).*").unwrap(), &crate::code_rule_dsl::model::RegexSource::Content, source, &options, usize::MAX);
     assert!(complete);
     matches.into_iter().map(|m| format!("{}\t{}", m.line.unwrap() + 1, &source[m.context])).collect()
 }

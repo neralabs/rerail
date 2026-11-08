@@ -24,10 +24,14 @@ import {
   type LoadedRulePack,
   type RulePackLocalSource,
 } from "./rule-packs.js";
+import { engineRegexIssues } from "./rule-regexes.js";
+
+/** In the Rerail home: the npm prefix rule packs are installed into. */
+export const INSTALLED_PACKS_DIR = "packs";
 
 /** The npm prefix packs are installed into: `$RERAIL_HOME/packs`. */
 export function installedPacksPrefix(home: string = defaultRerailHome()): string {
-  return join(home, "packs");
+  return join(home, INSTALLED_PACKS_DIR);
 }
 
 /**
@@ -224,19 +228,28 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
 }
 
 /**
- * The first code rule of `loaded` the engine rejects, or undefined; throws `EngineUnavailableError` without the engine.
+ * The first rule of `loaded` the engine rejects, or undefined; throws `EngineUnavailableError` without the engine. A
+ * code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern leaves the
+ * pack out here rather than failing a session when it loads the rule.
  * A published pack passed the engine of the core it was released with, so on a person's machine a rule that does not
  * compile almost always means their Rerail is older than the pack: the reason says so before the engine's own words.
  */
 function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined): string | undefined {
+  const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
+  const cannotRun = (ruleId: string, engineSays: string): string =>
+    `${rerail} cannot run its rule ${ruleId}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
   for (const document of loaded.documents) {
-    if (document.kind !== "code") continue;
+    if (document.kind === "conversation") {
+      // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
+      const [issue] = engineRegexIssues(document.rule);
+      if (issue !== undefined) return cannotRun(document.rule.id, `${issue.path.join(".")} ${issue.message}`);
+      continue;
+    }
     try {
       storableCodeRule(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
-      const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
-      return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${error.reason}`;
+      return cannotRun(document.rule.id, error.reason);
     }
   }
   return undefined;

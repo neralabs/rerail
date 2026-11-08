@@ -116,20 +116,20 @@ export function classifyNpmError(output) {
 }
 
 /**
- * What to tell the user when `npm view @neralabs/rerail@<tag>` failed. npm answers 404, not 403, for a restricted
- * package the account cannot read, so a 404 only means "not published" once access is otherwise proven.
+ * What to tell the user when `npm view @neralabs/rerail@<tag>` failed. The package is public, so a 404 means the tag
+ * names nothing published, or npm asks another registry for the scope; a failure while logged in may be the token.
  */
 export function accessFailureMessage({ kind, reason, user, registry, tag }) {
   const spec = `${PACKAGE}@${tag}`;
   if (kind === "network") return `Could not reach ${registry} (${reason}). Check your network and re-run just rerail.`;
   if (kind === "other") return `npm could not read ${spec} from ${registry} (${reason}).`;
   if (user === undefined) {
-    return `npm is not logged in to ${registry}, and ${PACKAGE} is private until launch. Run \`npm login\` with an npm `
-      + `account that has access to the ${SCOPE} scope, then re-run just rerail.`;
+    return `${spec} is not on ${registry} (${reason}). Try --tag next, or check which registry your npm configuration `
+      + `names for the ${SCOPE} scope, then re-run just rerail.`;
   }
-  return `npm is logged in to ${registry} as ${user}, but ${user} cannot read ${spec} (${reason}). ${PACKAGE} is private `
-    + `until launch: ask a ${SCOPE} organization owner to give ${user} read access to the ${SCOPE} scope, then re-run `
-    + `just rerail. (If ${user} already has access, ${spec} may not be published: try --tag next.)`;
+  return `npm is logged in to ${registry} as ${user}, but cannot read ${spec} (${reason}). ${PACKAGE} is public, so `
+    + `check the token in ~/.npmrc or run \`npm logout\`, then re-run just rerail. (${spec} may not be published: `
+    + `try --tag next.)`;
 }
 
 function windowsNpmBin(execPath, env) {

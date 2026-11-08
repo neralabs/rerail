@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +40,16 @@ function gitRepository(path: string, origin?: string): string {
   git(path, "-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
   if (origin !== undefined) git(path, "remote", "add", "origin", origin);
   return path;
+}
+
+/** Whether this filesystem matches names case-insensitively, as macOS does by default. */
+function caseInsensitiveFilesystem(): boolean {
+  const probe = realpathSync(mkdtempSync(join(tmpdir(), "rerail-case-")));
+  try {
+    return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
 }
 
 function open(path: string): RerailDatabase {
@@ -229,6 +239,19 @@ describe("the repository registry", () => {
     expect(pruneCheckouts(database)).toEqual([worktree]);
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
     expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: main }]);
+  });
+
+  it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a path typed in another case than the folder has", async () => {
+    const root = await temporary("rerail-registry-prune-case-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    mkdirSync(join(root, "elsewhere"));
+    git(main, "worktree", "add", "-q", "-b", "feature", join(root, "Elsewhere", "feature"));
+    recordCheckout(database, main);
+    const worktree = recordCheckout(database, join(root, "elsewhere", "feature")).checkoutPath;
+    expect(worktree).toBe(join(root, "elsewhere", "feature"));
+
+    expect(pruneCheckouts(database)).toEqual([]);
   });
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {

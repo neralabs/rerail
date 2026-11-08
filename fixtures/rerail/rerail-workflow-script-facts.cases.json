@@ -1,0 +1,202 @@
+{
+  "caught": [
+    {
+      "path": ".github/workflows/release.yml",
+      "content": "      - name: Smoke the installed package\n        run: |\n          installed=\"$(npm root)/@neralabs/rerail\"\n          for hook in cursor claude codex; do\n            test -f \"$installed/dist/$hook-hook.js\" || { echo \"missing dist/$hook-hook.js\" >&2; exit 1; }\n          done\n"
+    },
+    {
+      "path": ".github/workflows/package.yml",
+      "content": "      - name: Check the hooks\n        run: test -f dist/hosts/cursor/cursor-hook.js\n"
+    },
+    {
+      "path": ".github/workflows/env-matrix.yml",
+      "content": "on:\n  push:\n    branches:\n      - main\n    paths-ignore:\n      - \"**/*.md\"\n      - \"docs/**\"\n"
+    },
+    {
+      "path": ".github/workflows/core-smoke.yml",
+      "content": "on:\n  push:\n    branches: [main]\n    paths:\n      # what the package ships\n      - \"src/**\"\n      - \"native/**\"\n      - package.json\n"
+    },
+    {
+      "path": ".github/workflows/core-smoke-flow.yml",
+      "content": "on:\n  pull_request:\n    paths: [\"package.json\", \"src/**\", \"native/src/**\"]\n"
+    },
+    {
+      "path": ".github/workflows/rule-gates.yml",
+      "content": "    strategy:\n      matrix:\n        # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml.\n        include:\n          - pack: python\n            tool: ruff\n          - pack: python\n            tool: bandit\n"
+    },
+    {
+      "path": ".github/workflows/port-readiness-record.yml",
+      "content": "        env:\n          # recording a tool-pack is one run of the live adapter; plan.test.ts fails when the two lists differ.\n          TOOL_PACKS: |\n            [\n              {\"pack\": \"python\", \"tool\": \"ruff\"},\n              {\"pack\": \"sql\", \"tool\": \"sqlfluff\"}\n            ]\n"
+    },
+    {
+      "path": ".github/workflows/nightly.yml",
+      "content": "      matrix:\n        include:\n          - tool: ruff\n            pack: python\n"
+    },
+    {
+      "path": ".github/workflows/nightly-flow.yml",
+      "content": "      matrix:\n        pack: [python, sql, vue]\n"
+    },
+    {
+      "path": ".github/workflows/upstream-bump.yml",
+      "content": "      - name: Set up the pinned PHP and Composer\n        if: matrix.pack == 'php' || matrix.pack == 'blade'\n        uses: ./.github/actions/php\n"
+    },
+    {
+      "path": ".github/workflows/upstream-bump-contains.yml",
+      "content": "      - name: Set up the pinned PHP and Composer\n        if: contains(fromJSON('[\"php\",\"blade\"]'), matrix.pack)\n        uses: ./.github/actions/php\n"
+    },
+    {
+      "path": ".github/workflows/upstream-bump-shell.yml",
+      "content": "      - name: Set up PHP\n        run: |\n          if [ \"$PACK\" = php ]; then ./scripts/php.sh; fi\n"
+    },
+    {
+      "path": ".github/actions/pack-test-data/action.yml",
+      "content": "runs:\n  using: composite\n  steps:\n    - if: inputs.tool == 'clippy'\n      run: rustup component add clippy\n      shell: bash\n"
+    },
+    {
+      "path": ".github/workflows/H1-join-style-hooks.yml",
+      "content": "      - name: Smoke the installed package\n        run: |\n          node --input-type=module --eval '\n            import { existsSync } from \"node:fs\";\n            import { join } from \"node:path\";\n            const root = process.argv[1];\n            for (const host of [\"claude\", \"codex\", \"cursor\"]) {\n              if (!existsSync(join(root, \"dist\", \"hosts\", host, `${host}-hook.js`))) process.exit(1);\n            }\n          ' \"$installed\"\n"
+    },
+    {
+      "path": ".github/workflows/H2-hosts-dir-var.yml",
+      "content": "      - name: Smoke the hooks\n        run: |\n          hosts=\"$installed/dist/hosts\"\n          for host in claude codex cursor; do\n            test -f \"$hosts/$host/$host-hook.js\" || { echo \"missing $host hook\" >&2; exit 1; }\n          done\n"
+    },
+    {
+      "path": ".github/workflows/H3-launcher-daemon.yml",
+      "content": "      - name: Smoke the installed package\n        run: |\n          test -f \"$installed/dist/harness/hook-launcher.js\"\n          test -f \"$installed/dist/cli/daemon-entry.js\"\n          test -f \"$installed/dist/harness/event-stream.js\"\n"
+    },
+    {
+      "path": ".github/workflows/P1-negated-paths.yml",
+      "content": "on:\n  push:\n    branches: [main]\n    paths:\n      - \"**\"\n      - \"!docs/**\"\n      - \"!**/*.md\"\n"
+    },
+    {
+      "path": ".github/workflows/C3-flow-multiline.yml",
+      "content": "on:\n  push:\n    branches: [main]\n    paths: [\n      \"src/**\",\n      \"native/**\",\n      \"package.json\",\n    ]\n"
+    },
+    {
+      "path": ".github/workflows/L1-name-first.yml",
+      "content": "    strategy:\n      matrix:\n        include:\n          - name: Python Ruff\n            pack: python\n            tool: ruff\n          - name: SQLFluff\n            pack: sql\n            tool: sqlfluff\n"
+    },
+    {
+      "path": ".github/workflows/L1b-tool-version-pack.yml",
+      "content": "      matrix:\n        include:\n          - tool: ruff\n            version: 0.16.9\n            pack: python\n"
+    },
+    {
+      "path": ".github/workflows/L2-block-vector.yml",
+      "content": "    strategy:\n      matrix:\n        pack:\n          - python\n          - sql\n          - vue\n"
+    },
+    {
+      "path": ".github/workflows/L3-tool-pack-key.yml",
+      "content": "    strategy:\n      matrix:\n        tool-pack: [python/ruff, sql/sqlfluff, vue/eslint-plugin-vue]\n"
+    },
+    {
+      "path": ".github/workflows/L4-shell-loop.yml",
+      "content": "      - name: Pull each tool-pack's data\n        run: |\n          for pack in python sql vue; do\n            node scripts/s3/pack-fixtures.mjs pull --pack \"$pack\"\n          done\n"
+    },
+    {
+      "path": ".github/workflows/L5-js-object.yml",
+      "content": "      - run: |\n          node --input-type=module --eval '\n            const legs = [{ pack: \"python\", tool: \"ruff\" }, { pack: \"sql\", tool: \"sqlfluff\" }];\n            console.log(JSON.stringify(legs));\n          ' > legs.json\n"
+    },
+    {
+      "path": ".github/workflows/L8-fromjson-literal.yml",
+      "content": "    strategy:\n      matrix:\n        pack: ${{ fromJSON('[\"python\", \"sql\", \"vue\"]') }}\n"
+    },
+    {
+      "path": ".github/workflows/N3-lowercase-var.yml",
+      "content": "      - run: |\n          while read -r pack tool; do\n            if [ \"$pack\" = php ] || [ \"$pack\" = blade ]; then ./scripts/php.sh; fi\n          done < legs.tsv\n"
+    },
+    {
+      "path": ".github/workflows/N4-double-bracket.yml",
+      "content": "      - env:\n          PACK: ${{ matrix.pack }}\n        run: |\n          if [[ $PACK == php || $PACK == blade ]]; then ./scripts/php.sh; fi\n"
+    },
+    {
+      "path": ".github/workflows/N5-contains-first-arg.yml",
+      "content": "      - name: Set up PHP\n        if: startsWith(matrix.pack, 'php') || contains(matrix.pack, 'blade')\n        uses: ./.github/actions/php\n"
+    },
+    {
+      "path": ".github/workflows/N6-jq-select.yml",
+      "content": "      - id: plan\n        run: |\n          echo \"php=$(jq -c '[.[] | select(.pack == \"php\" or .pack == \"blade\")]' <<< \"$TOOL_PACKS\")\" >> \"$GITHUB_OUTPUT\"\n"
+    },
+    {
+      "path": ".github/workflows/N7-nested-matrix.yml",
+      "content": "      - name: Set up PHP\n        if: matrix.leg.pack == 'php' || env.PACK == 'blade' || needs.plan.outputs.pack == 'php'\n        uses: ./.github/actions/php\n"
+    },
+    {
+      "path": ".github/workflows/N8-rule-pack-name.yml",
+      "content": "      - name: Pack the complexity pack apart\n        if: inputs.pack == 'complexity'\n        run: npm pack --workspace packs/complexity\n"
+    },
+    {
+      "path": ".github/workflows/L6-rust-test-packs-matrix.yml",
+      "content": "  # The three tool-packs the Rust tests read, each its own cache key.\n  test-data-legs:\n    strategy:\n      matrix:\n        include:\n          - pack: python\n            tool: ruff\n          - pack: sql\n            tool: sqlfluff\n          - pack: vue\n            tool: eslint-plugin-vue\n    steps:\n      - uses: ./.github/actions/pack-test-data\n        with:\n          pack: ${{ matrix.pack }}\n          tool: ${{ matrix.tool }}\n          fetch: \"true\"\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": ".github/workflows/package.yml",
+      "content": "      - name: Smoke the installed package\n        run: |\n          node --input-type=module - \"$installed\" <<'EOF'\n          const { ENTRY_POINTS } = await import(pathToFileURL(join(root, \"dist\", \"engine\", \"package-root.js\")).href);\n          const missing = Object.values(ENTRY_POINTS).filter((path) => !existsSync(join(root, path)));\n          EOF\n"
+    },
+    {
+      "path": ".github/workflows/package-smoke.yml",
+      "content": "      - run: node dist/cli/cli.js install --root . --agents omp,pi,claude-code,codex,cursor --dry-run\n      - run: |\n          test -f \"$installed/dist/engine/package-root.js\"\n          test -f \"$installed/dist/ui/index.html\"\n"
+    },
+    {
+      "path": ".github/workflows/env-matrix-fixed.yml",
+      "content": "      - id: affected\n        name: Does this push change what core ships, or the matrix?\n        run: |\n          if ! run=\"$(node scripts/host/azure/matrix.mjs affected --base \"$BEFORE\" --head \"$AFTER\")\"; then exit 1; fi\n  azure:\n    needs: changes\n    if: needs.changes.outputs.run == 'true'\n"
+    },
+    {
+      "path": ".github/workflows/release-packs.yml",
+      "content": "on:\n  pull_request:\n    paths:\n      - \"packs/**\"\n      - \".changeset/**\"\n      - \"scripts/release/**\"\n      - \".github/workflows/release-packs.yml\"\n"
+    },
+    {
+      "path": ".github/workflows/release-cache.yml",
+      "content": "on:\n  push:\n    branches:\n      - main\n    paths:\n      - Cargo.lock\n      - Cargo.toml\n      - native/Cargo.toml\n      - .cargo/config.toml\n      - rust-toolchain.toml\n"
+    },
+    {
+      "path": ".github/workflows/port-readiness.yml",
+      "content": "    strategy:\n      matrix:\n        include: ${{ fromJSON(needs.plan.outputs.legs) }}\n    name: ${{ matrix.pack }}/${{ matrix.tool }}\n"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "content": "      - uses: ./.github/actions/pack-test-data\n        with:\n          pack: python\n          tool: ruff\n          fetch: \"true\"\n"
+    },
+    {
+      "path": ".github/workflows/release-packs-dispatch.yml",
+      "content": "      - if: inputs.pack != ''\n        env:\n          PACK: ${{ inputs.pack }}\n        run: echo \"$PACK\"\n"
+    },
+    {
+      "path": ".github/workflows/upstream-bump-publish.yml",
+      "content": "        description: 'The tool-packs to bump, as JSON: [{\"pack\": \"<id>\", \"tool\": \"<tool>\"}].'\n        run: jq -c '[.[] | { pack: .[0], tool: .[1] }]'\n"
+    },
+    {
+      "path": "scripts/release/core-paths.mjs",
+      "content": "export const NOT_SHIPPED = [\".github/\", \"docs/\", \"packs/\"];\n"
+    },
+    {
+      "path": ".github/workflows/H4-comment.yml",
+      "content": "      # The hooks sit under dist/hosts/<host>/ in the package; the smoke below reads ENTRY_POINTS for them.\n      - name: Smoke the installed package\n        run: node scripts/smoke.mjs \"$installed\"\n"
+    },
+    {
+      "path": ".github/workflows/P2-codeql-inline.yml",
+      "content": "      - uses: github/codeql-action/init@v4\n        with:\n          languages: javascript-typescript\n          config: |\n            paths-ignore:\n              - test/**\n              - fixtures/**\n"
+    },
+    {
+      "path": ".github/workflows/C1-rust-own-inputs.yml",
+      "content": "name: Engine fuzz\non:\n  pull_request:\n    paths:\n      - \"native/**\"\n      - \"Cargo.lock\"\n      - \"Cargo.toml\"\n      - \"rust-toolchain.toml\"\n"
+    },
+    {
+      "path": ".github/workflows/C1b-codeql-paths.yml",
+      "content": "      - uses: github/codeql-action/init@v4\n        with:\n          config: |\n            paths:\n              - src/**\n              - native/**\n"
+    },
+    {
+      "path": ".github/workflows/L7-description-example.yml",
+      "content": "on:\n  workflow_dispatch:\n    inputs:\n      tool-packs:\n        description: 'The tool-packs to bump, as JSON, for example [{\"pack\": \"python\", \"tool\": \"ruff\", \"version\": \"0.16.9\"}].'\n        required: true\n        type: string\n"
+    },
+    {
+      "path": ".github/workflows/N1-case-validation.yml",
+      "content": "      - env:\n          PACK: ${{ inputs.pack }}\n        run: |\n          case \"$PACK\" in\n            ''|*[!a-z0-9._-]*) echo \"::error::'$PACK' is not a pack id\"; exit 1 ;;\n          esac\n"
+    },
+    {
+      "path": ".github/workflows/N2-all-sentinel.yml",
+      "content": "      - name: Plan every tool-pack\n        if: inputs.pack == 'all'\n        run: npm run upstream:releases -- --json \"$RUNNER_TEMP/releases.json\"\n"
+    }
+  ]
+}

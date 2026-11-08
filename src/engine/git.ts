@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -205,15 +205,25 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, no optional locks, and a 10 s default timeout; throws
- * {@link GitUnavailableError} when Git is missing, never on a non-zero exit.
+ * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
+ * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
+ * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ */
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/**
+ * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
+ * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
+ * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    env: gitEnvironment(),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
@@ -222,6 +232,132 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 export function gitText(cwd: string, args: readonly string[]): string | undefined {
   const result = runGit(cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
+async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return undefined;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
+  execFile(
+    executable,
+    [...SAFE_CONFIG, "-C", cwd, ...args],
+    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => settle(error === null ? stdout.trim() : undefined),
+  );
+  return await promise;
+}
+
+/** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
+export async function gitHead(cwd: string): Promise<string | undefined> {
+  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/**
+ * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
+ * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
+ * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ */
+export async function gitExcludeFiles(cwd: string): Promise<string[]> {
+  // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+  if (exclude === undefined || exclude === "") return [];
+  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+}
+
+/** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
+function defaultExcludesFile(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
+}
+
+/**
+ * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
+ * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig`
+ * and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. The system file, which only an administrator writes, and files
+ * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ */
+export async function gitConfigFiles(cwd: string): Promise<string[]> {
+  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
+  if (local === undefined || local === "") return [];
+  const global = process.env.GIT_CONFIG_GLOBAL;
+  const globals = global === undefined || global === ""
+    ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    : [global];
+  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
+}
+
+/** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
+const MAX_REFLOG_ENTRIES = 256;
+/** The reflog subject of `git commit` in all its forms (`commit (amend): …`, `commit (merge): …`). */
+const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
+
+/**
+ * Whether everything that moved `HEAD` in `cwd` since it named `from` was a commit, which leaves the working tree as it
+ * found it, by `HEAD`'s reflog. Anything else there (a checkout, pull, merge, rebase, reset, cherry-pick) wrote files, and
+ * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
+ */
+export async function headMovedOnlyByCommits(cwd: string, from: string | undefined): Promise<boolean> {
+  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"]);
+  if (reflog === undefined) return false;
+  const entries = reflog.split("\n");
+  const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
+  return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
+}
+
+/** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
+export async function gitBranchTips(cwd: string): Promise<string[]> {
+  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"]);
+  return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
+}
+
+/** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
+export async function gitCommitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
+  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`]);
+  return commits === undefined || commits === "" ? [] : commits.split("\n");
+}
+
+/**
+ * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
+ * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
+ * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.
+ */
+export async function readGitBlobIds(cwd: string, revisions: readonly string[]): Promise<Map<string, string>> {
+  const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
+  const ids = new Map<string, string>();
+  if (asked.length === 0) return ids;
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return ids;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: DEFAULT_TIMEOUT_MS,
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  child.on("error", () => settle());
+  child.on("close", () => settle());
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
+  await promise;
+  // One line per revision, in order: `<oid> <type>`, or `<revision> missing` (or `ambiguous`), which repeats the
+  // revision and so may hold any text, spaces included; only a whole line of an object id and `blob` names one.
+  const lines = Buffer.concat(chunks).toString("utf8").split("\n");
+  asked.forEach((revision, index) => {
+    const id = /^([0-9a-f]{40}|[0-9a-f]{64}) blob$/u.exec(lines[index] ?? "")?.[1];
+    if (id !== undefined) ids.set(revision, id);
+  });
+  return ids;
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
@@ -257,7 +393,7 @@ export async function readGitBlobs(
   }
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
     timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
   });

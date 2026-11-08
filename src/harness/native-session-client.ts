@@ -195,6 +195,11 @@ export async function createNativeSession<Context>(
   return "attached";
 }
 
+type StreamedOrExplicitOperation = "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close";
+type NativeRequestPayload = { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] };
+
+const STREAMED_OPERATIONS: ReadonlySet<StreamedOrExplicitOperation> = new Set(["ingest", "poll", "yield"]);
+
 /** Native facade for the machine's Node daemon. */
 export class NativeSessionClient implements NativeSemanticToolRuntime {
   readonly #options: NativeSessionClientOptions;
@@ -477,58 +482,73 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
     }
   }
 
-  #request(
-    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close",
-    payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
-    event?: AdapterEvent,
-  ): Promise<unknown> {
-    const run = async () => {
-      // The breaker owns only the event stream. Explicit operations (tools, reload, reattach)
-      // always reach the daemon and carry their own error to the caller: a rejected reload is a
-      // fact about that reload, not about the live session. Any success reopens the stream.
-      const streamed = operation === "ingest" || operation === "poll" || operation === "yield";
-      if (operation === "close") {
-        // Events dropped while the queue drained are in the gap too; the daemon accepts its record only before the close.
-        // A daemon that does not answer must not double the time the host waits to retire this runtime.
-        this.#closeGap();
-        let timer: NodeJS.Timeout | undefined;
-        await Promise.race([
-          this.#recordGaps(),
-          new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, CLOSE_RECORD_WAIT_MS);
-            timer.unref();
-          }),
-        ]);
-        clearTimeout(timer);
-      }
-      if (streamed && this.#outage?.open === true) {
-        if (operation === "poll") throw this.#outage.error;
-        if (event !== undefined) this.#drop(event);
-        return DROPPED;
-      }
-      let reply: NativeSessionReply;
-      try {
-        reply = await this.#send(operation, payload);
-      } catch (error) {
-        // A daemon older than `yield` refuses it; the steers it holds still arrive by poll.
-        if (operation === "yield" && permanentRejection(error)) return DROPPED;
-        // A session still being built reports through its caller; only a live runtime owns an outage.
-        if (!streamed || !this.#active) throw error;
-        this.#fail(error);
-        if (operation === "poll") throw error;
-        if (event !== undefined) this.#drop(event);
-        return DROPPED;
-      }
-      if (operation !== "close") this.#recover();
-      if (streamed && this.#unrecorded.length > 0) void this.#recordGaps();
-      const committedRevision = this.#active || reply.resultRevisionEntry !== undefined
-        ? await this.#deliver(reply)
-        : (this.#buffer.push(reply), undefined);
-      return reply.resultRevisionEntry === undefined ? reply.result : watermarkReceipt(reply, committedRevision);
-    };
+  #request(operation: StreamedOrExplicitOperation, payload: NativeRequestPayload = {}, event?: AdapterEvent): Promise<unknown> {
+    const run = () => this.#runRequest(operation, payload, event);
     const pending = this.#pending.then(run, run);
     this.#pending = pending;
     return pending;
+  }
+
+  async #runRequest(operation: StreamedOrExplicitOperation, payload: NativeRequestPayload, event: AdapterEvent | undefined): Promise<unknown> {
+    // The breaker owns only the event stream. Explicit operations (tools, reload, reattach)
+    // always reach the daemon and carry their own error to the caller: a rejected reload is a
+    // fact about that reload, not about the live session. Any success reopens the stream.
+    const streamed = STREAMED_OPERATIONS.has(operation);
+    if (operation === "close") await this.#recordGapsBeforeClose();
+    if (streamed && this.#outage?.open === true) return this.#refuseStreamed(operation, event, this.#outage.error);
+    let reply: NativeSessionReply;
+    try {
+      reply = await this.#send(operation, payload);
+    } catch (error) {
+      return this.#failedSend(operation, streamed, event, error);
+    }
+    this.#noteSent(operation, streamed);
+    return await this.#settledReply(reply);
+  }
+
+  /**
+   * Events dropped while the queue drained are in the gap too; the daemon accepts its record only before the close.
+   * A daemon that does not answer must not double the time the host waits to retire this runtime.
+   */
+  async #recordGapsBeforeClose(): Promise<void> {
+    this.#closeGap();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.#recordGaps(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, CLOSE_RECORD_WAIT_MS);
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  /** A streamed operation the outage answers: a poll throws, and an event is dropped into the gap. */
+  #refuseStreamed(operation: StreamedOrExplicitOperation, event: AdapterEvent | undefined, error: unknown): typeof DROPPED {
+    if (operation === "poll") throw error;
+    if (event !== undefined) this.#drop(event);
+    return DROPPED;
+  }
+
+  #failedSend(operation: StreamedOrExplicitOperation, streamed: boolean, event: AdapterEvent | undefined, error: unknown): typeof DROPPED {
+    // A daemon older than `yield` refuses it; the steers it holds still arrive by poll.
+    if (operation === "yield" && permanentRejection(error)) return DROPPED;
+    // A session still being built reports through its caller; only a live runtime owns an outage.
+    if (!streamed || !this.#active) throw error;
+    this.#fail(error);
+    return this.#refuseStreamed(operation, event, error);
+  }
+
+  #noteSent(operation: StreamedOrExplicitOperation, streamed: boolean): void {
+    if (operation !== "close") this.#recover();
+    if (streamed && this.#unrecorded.length > 0) void this.#recordGaps();
+  }
+
+  async #settledReply(reply: NativeSessionReply): Promise<unknown> {
+    const committedRevision = this.#active || reply.resultRevisionEntry !== undefined
+      ? await this.#deliver(reply)
+      : (this.#buffer.push(reply), undefined);
+    return reply.resultRevisionEntry === undefined ? reply.result : watermarkReceipt(reply, committedRevision);
   }
 
   /**

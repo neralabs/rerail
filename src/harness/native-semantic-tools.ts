@@ -1,6 +1,4 @@
 import type { ExtensionAPI as OmpExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { ExtensionAPI as PiExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import type {
   ProjectionSpec,
   RelationSpec,
@@ -16,8 +14,8 @@ export interface NativeSemanticToolRuntime {
   relate(leftId: string, rightId: string, spec: RelationSpec): Promise<unknown>;
 }
 
-
-function result(details: unknown) {
+/** A semantic tool's result: its details as JSON text, and the details themselves. */
+export function semanticToolResult(details: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }],
     details,
@@ -45,7 +43,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
     strict: true,
     async execute(_id, input) {
       const parsed = markParameters.parse(input);
-      return result(await runtime.mark(parsed.change as WatermarkChange));
+      return semanticToolResult(await runtime.mark(parsed.change as WatermarkChange));
     },
   });
   pi.registerTool({
@@ -58,7 +56,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
     strict: true,
     async execute(_id, input) {
       const parsed = selectParameters.parse(input);
-      return result(await runtime.select(parsed.spec as SelectionSpec));
+      return semanticToolResult(await runtime.select(parsed.spec as SelectionSpec));
     },
   });
   pi.registerTool({
@@ -71,7 +69,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
     strict: true,
     async execute(_id, input) {
       const parsed = projectParameters.parse(input);
-      return result(await runtime.project(parsed.selectionId, parsed.spec as ProjectionSpec));
+      return semanticToolResult(await runtime.project(parsed.selectionId, parsed.spec as ProjectionSpec));
     },
   });
   pi.registerTool({
@@ -84,55 +82,11 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
     strict: true,
     async execute(_id, input) {
       const parsed = relateParameters.parse(input);
-      return result(await runtime.relate(
+      return semanticToolResult(await runtime.relate(
         parsed.leftProjectionId,
         parsed.rightProjectionId,
         parsed.spec as RelationSpec,
       ));
-    },
-  });
-}
-
-/** Internal testing: the semantic tools, as {@link registerOmpSemanticTools}. */
-export function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSemanticToolRuntime): void {
-  pi.registerTool({
-    name: "rerail_mark",
-    label: "Rerail Mark",
-    description: internalTesting("Attach or detach namespaced watermarks on active-session content."),
-    parameters: Type.Object({ change: Type.Unknown() }),
-    async execute(_id, input) {
-      return result(await runtime.mark(input.change as WatermarkChange));
-    },
-  });
-  pi.registerTool({
-    name: "rerail_select",
-    label: "Rerail Select",
-    description: internalTesting("Select active-session content with source and watermark filters."),
-    parameters: Type.Object({ spec: Type.Unknown() }),
-    async execute(_id, input) {
-      return result(await runtime.select(input.spec as SelectionSpec));
-    },
-  });
-  pi.registerTool({
-    name: "rerail_project",
-    label: "Rerail Project",
-    description: internalTesting("Render and embed a cached selection."),
-    parameters: Type.Object({ selectionId: Type.String(), spec: Type.Unknown() }),
-    async execute(_id, input) {
-      return result(await runtime.project(input.selectionId, input.spec as ProjectionSpec));
-    },
-  });
-  pi.registerTool({
-    name: "rerail_relate",
-    label: "Rerail Relate",
-    description: internalTesting("Compare two cached semantic projections."),
-    parameters: Type.Object({
-      leftProjectionId: Type.String(),
-      rightProjectionId: Type.String(),
-      spec: Type.Unknown(),
-    }),
-    async execute(_id, input) {
-      return result(await runtime.relate(input.leftProjectionId, input.rightProjectionId, input.spec as RelationSpec));
     },
   });
 }

@@ -1,0 +1,71 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz011-call-date-today",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Derive today's date from a timezone-aware current datetime instead of the naive local date; the local date depends on the machine's timezone.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-date-today",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.date.today"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ011",
+    "message": "Use `datetime.datetime.now(tz=...).date()` with the timezone whose calendar date you need; `date.today()` is the naive local date, so keep it only if that is intended.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ011"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

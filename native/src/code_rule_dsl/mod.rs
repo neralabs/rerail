@@ -11,6 +11,7 @@ mod facts;
 #[allow(dead_code)]
 mod findings;
 mod identifier;
+mod import_target;
 mod json;
 mod language;
 mod lines;
@@ -21,6 +22,7 @@ mod matcher;
 mod model;
 mod module_graph;
 mod module_path;
+mod npm_ignore;
 mod origin;
 mod package_manifest;
 // P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
@@ -114,7 +116,7 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn compile(
         source: String,
         format: String,
@@ -147,7 +149,7 @@ impl CodeRuleDslRuntime {
 /// `absolute` whose dialect's label is `label`: a dotted string, a list of names when one keeps
 /// a dot, or null outside a package and for a family without modules (`Adapter::module_path`).
 /// Hosts and the native repository ingestion paths share this one derivation.
-#[napi]
+#[napi(catch_unwind)]
 pub fn module_path(label: String, absolute: String) -> Option<napi::Either<String, Vec<String>>> {
     match language::adapter::module_path(&label, std::path::Path::new(&absolute))? {
         Value::String(module) => Some(napi::Either::A(module)),
@@ -184,37 +186,82 @@ pub struct PackageFacts {
     pub dependencies: Vec<String>,
     /// The package's `tsconfig.json` (else `jsconfig.json`) `compilerOptions.jsxImportSource`.
     pub jsx_import_source: Option<String>,
+    /// `true` where the manifest's `private` is `true`; none otherwise.
+    pub private: Option<bool>,
+    /// Whether npm publishes the file, as eslint-plugin-n's `getNpmignore` reads the manifest's
+    /// `files` and `main` and its folder's `.npmignore` or `.gitignore`: the file's own fact,
+    /// which `package_facts` sends and `nearest_package` does not.
+    pub published: Option<bool>,
+}
+
+impl PackageFacts {
+    fn of(manifest: &package_manifest::Manifest) -> Self {
+        Self {
+            folder: manifest.folder().to_owned(),
+            package_type: manifest.package_type().as_str().to_owned(),
+            bin: manifest.bin().map(str::to_owned).collect(),
+            node_version: manifest.node_version().map(str::to_owned),
+            dependencies: manifest.dependencies().map(str::to_owned).collect(),
+            jsx_import_source: manifest.jsx_import_source().map(str::to_owned),
+            private: manifest.is_private().then_some(true),
+            published: None,
+        }
+    }
 }
 
 /// The `package` a file carries, for the file at `absolute` whose dialect's label is `label`: its
-/// nearest `package.json` at or above it, never above `root` (the workspace's), or null without
-/// one and for a family that reads none (`Adapter::PACKAGE_MANIFESTS`). Hosts and the native
-/// repository ingestion paths share this one derivation.
-#[napi]
+/// nearest `package.json` at or above it, never above `root` (the workspace's), with whether npm
+/// publishes the file, or null without one and for a family that reads none
+/// (`Adapter::PACKAGE_MANIFESTS`). Hosts and the native repository ingestion paths share this one
+/// derivation; a host reading many files reads them through one `PackageFactsReader`.
+#[napi(catch_unwind)]
 pub fn package_facts(label: String, absolute: String, root: String) -> Option<PackageFacts> {
-    if !language::adapter::package_manifests(&label) {
-        return None;
+    PackageFactsReader::new(root).facts(label, absolute)
+}
+
+/// The `package` facts of the files below one root, each manifest and its ignore files read once
+/// (`package_manifest::Manifests`): one walk's reader, as files on disk do not change during it.
+#[napi]
+pub struct PackageFactsReader {
+    manifests: parking_lot::Mutex<package_manifest::Manifests>,
+}
+
+#[napi]
+impl PackageFactsReader {
+    #[napi(constructor)]
+    pub fn new(root: String) -> Self {
+        Self {
+            manifests: parking_lot::Mutex::new(package_manifest::Manifests::new(root)),
+        }
     }
-    nearest_package(absolute, root)
+
+    /// `package_facts` for the file at `absolute` below the reader's root.
+    #[napi(catch_unwind)]
+    pub fn facts(&self, label: String, absolute: String) -> Option<PackageFacts> {
+        if !language::adapter::package_manifests(&label) {
+            return None;
+        }
+        let mut manifests = self.manifests.lock();
+        let file = std::path::Path::new(&absolute);
+        let manifest = manifests.of_file(file)?;
+        let path = manifests.relative(file);
+        Some(PackageFacts {
+            published: manifest.publishes(&path),
+            ..PackageFacts::of(&manifest)
+        })
+    }
 }
 
 /// The nearest `package.json` at or above `absolute` (a file or a folder's `package.json`),
 /// never above `root`, whatever reads it: the package an edit of any file belongs to, so a host
 /// can tell which applied sources it may change. Null without one.
-#[napi]
+#[napi(catch_unwind)]
+// Only JavaScript calls it.
+#[cfg_attr(test, allow(dead_code))]
 pub fn nearest_package(absolute: String, root: String) -> Option<PackageFacts> {
-    let manifest = package_manifest::manifest_of_file(
-        std::path::Path::new(&absolute),
-        std::path::Path::new(&root),
-    )?;
-    Some(PackageFacts {
-        folder: manifest.folder().to_owned(),
-        package_type: manifest.package_type().as_str().to_owned(),
-        bin: manifest.bin().map(str::to_owned).collect(),
-        node_version: manifest.node_version().map(str::to_owned),
-        dependencies: manifest.dependencies().map(str::to_owned).collect(),
-        jsx_import_source: manifest.jsx_import_source().map(str::to_owned),
-    })
+    let manifest =
+        package_manifest::Manifests::new(root).of_file(std::path::Path::new(&absolute))?;
+    Some(PackageFacts::of(&manifest))
 }
 
 /// The server graph of the package whose folder (relative to `root`) is `folder`, read on disk
@@ -288,7 +335,7 @@ impl napi::Task for ServerGraphTask {
     type JsValue = Option<Vec<String>>;
 
     fn compute(&mut self) -> Result<Option<Vec<String>>> {
-        Ok(self.members())
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || Ok(self.members()))
     }
 
     fn resolve(
@@ -304,7 +351,7 @@ impl napi::Task for ServerGraphTask {
 /// reads on disk (`module_graph::Config`): its `tsconfig.json` (else `jsconfig.json`), then the
 /// `extends` bases followed, relative to `root`. Conformance forwards them with a corpus, as it
 /// forwards its `package.json` files.
-#[napi]
+#[napi(catch_unwind)]
 pub fn module_config_files(root: String, folder: String) -> Vec<String> {
     module_graph::config_on_disk(std::path::Path::new(&root), &folder)
         .files()
@@ -332,9 +379,16 @@ impl CompiledCodeRuleDsl {
     /// Whether a repository-relative path is inside this code rule's scope: the same
     /// matcher evaluation uses, so a host can hand the code rule only the files it will
     /// read and be sure the two never disagree.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn in_scope(&self, path: String) -> bool {
         self.inner.scope.matches(&path)
+    }
+
+    /// Whether the code rule reads text: a clause holds a regex or file query, so files no
+    /// code-rule language lists are read for it, as `text`.
+    #[napi]
+    pub fn reads_text(&self) -> bool {
+        self.inner.reads_text()
     }
 
     #[napi]
@@ -354,14 +408,14 @@ impl CompiledCodeRuleDsl {
         self.inner.reads_server_graph()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn evaluate(&self, snapshot_json: String, mode: String) -> Result<String> {
         let (snapshot, _) = parse_snapshot(&snapshot_json, self.inner.reads_server_graph())?;
         let evaluation = evaluate_code_rule(&self.inner, &snapshot, &mode)?;
         serde_json::to_string(&evaluation_json(evaluation, None, &[], &[])).map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn open_editor(&self, snapshot_json: String) -> Result<CodeRuleDslEditor> {
         let (snapshot, derived) = parse_snapshot(&snapshot_json, self.inner.reads_server_graph())?;
         Ok(CodeRuleDslEditor {
@@ -385,7 +439,7 @@ pub struct CodeRuleDslEditor {
 
 #[napi]
 impl CodeRuleDslEditor {
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn evaluate(&mut self, mode: String) -> Result<String> {
         let evaluation = evaluate_code_rule(&self.code_rule, &self.snapshot, &mode)?;
         let current = violation_ids(&evaluation.violations);
@@ -408,7 +462,7 @@ impl CodeRuleDslEditor {
         .map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn apply_edit(&mut self, edit_json: String, mode: String) -> Result<String> {
         let edit: Value = serde_json::from_str(&edit_json).map_err(json_error)?;
         let revision = required_u64(&edit, "revision", "edit")? as u32;

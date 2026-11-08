@@ -170,7 +170,7 @@ impl SqlViolationRow {
         let sql_violation = Some(self.to_value());
         crate::code_rule_dsl::violations::Witness {
             path: self.path,
-            span: self.span,
+            span: Some(self.span),
             captures: crate::code_rule_dsl::violations::Captures::from_spans(self.captures),
             message: Some(self.message),
             fix: self.fix.map(|fix| {

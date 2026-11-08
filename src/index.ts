@@ -7,7 +7,6 @@ export {
   type ConversationRulesOptions,
 } from "./hosts/omp/extension.js";
 export { bundledModelPath } from "./engine/package-root.js";
-export { createPiConversationRulesExtension, type PiConversationRulesOptions } from "./hosts/pi/pi-extension.js";
 export {
   CustomerActivationManager,
   CustomerProfileStore,
@@ -78,6 +77,7 @@ export {
   type CodeRuleDslCompare,
   type CodeRuleDslDocument,
   type CodeRuleDslEvidenceQuery,
+  type CodeRuleDslFileQuery,
   type CodeRuleDslRelation,
   type CodeRuleDslViolationAnchor,
   type CodeRuleDslViolationSpec,

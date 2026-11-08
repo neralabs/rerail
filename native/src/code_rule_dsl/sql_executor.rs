@@ -648,10 +648,7 @@ impl CodeRuleSqlExecutor {
             plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
                 .map_err(error)?;
         use sha2::Digest;
-        let key = format!(
-            "{:x}",
-            sha2::Sha256::digest(format!("{program:?}:{dialect:?}"))
-        );
+        let key = crate::lower_hex(&sha2::Sha256::digest(format!("{program:?}:{dialect:?}")));
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         emitted.program.lattice_operations = lattice_operations;

@@ -1,10 +1,10 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0-next.4",
-  "description": "Local semantic monitor and rule runtime for AI coding harnesses",
+  "version": "0.1.3",
+  "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -26,6 +26,10 @@
       "types": "./dist/engine/rules.d.ts",
       "import": "./dist/engine/rules.js"
     },
+    "./pi": {
+      "types": "./dist/hosts/pi/index.d.ts",
+      "import": "./dist/hosts/pi/index.js"
+    },
     "./schemas": {
       "types": "./dist/engine/schemas.d.ts",
       "import": "./dist/engine/schemas.js"
@@ -42,12 +46,20 @@
   "pi": {
     "extensions": [
       "./dist/hosts/pi/pi-extension.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/neralabs/rerail/main/docs/images/session-steer.png"
   },
   "keywords": [
     "pi-package",
-    "semantic-search",
-    "cosine-similarity"
+    "coding-agent",
+    "rules",
+    "linter",
+    "guardrails",
+    "claude-code",
+    "codex",
+    "cursor",
+    "omp",
+    "pi"
   ],
   "workspaces": [
     "packs/*"
@@ -62,18 +74,21 @@
     ".claude-plugin",
     ".codex-plugin",
     ".cursor-plugin",
+    "!.cursor-plugin/marketplace.json",
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "skills"
+    "skills",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:js",
     "build:js": "npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:ui": "node scripts/build/copy-ui.mjs",
+    "build:docs-site": "node --import tsx scripts/build/docs-site.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
-    "build:native": "node scripts/build/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/omp/default-extension.js",
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
@@ -81,8 +96,9 @@
     "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/cursor/cursor-hook.js",
     "build:claude": "esbuild src/hosts/claude/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/claude/claude-hook.js",
     "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/codex/codex-hook.js",
-    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:node-structures && npm run check:pins",
+    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:node-structures && npm run check:pins && npm run check:ci-paths",
     "check:boundaries": "node scripts/check/check-boundaries.mjs",
+    "check:ci-paths": "node scripts/check/check-ci-paths.mjs",
     "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
     "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
     "check:internal-refs": "node scripts/check/check-internal-refs.mjs",
@@ -118,61 +134,71 @@
     "ui:scenario": "node --import tsx scripts/dev/ui-scenario.ts",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
-    "port-readiness": "node --import tsx conformance/port-readiness/cli.ts",
-    "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
     "fixtures:pull": "node scripts/s3/pack-fixtures.mjs pull",
+    "fixtures:stage": "node scripts/s3/pack-fixtures.mjs stage",
     "fixtures:push": "node scripts/s3/pack-fixtures.mjs push",
     "fixtures:derive": "node --import tsx scripts/pack-data/derive.ts",
-    "port-readiness:upstream-releases": "node --import tsx conformance/port-readiness/upstream/releases.ts",
-    "port-readiness:bump": "node --import tsx conformance/port-readiness/upstream/bump.ts",
+    "upstream:releases": "node --import tsx scripts/upstream/releases.ts",
+    "upstream:bump": "node --import tsx scripts/upstream/bump.ts",
+    "upstream:watch": "node --import tsx scripts/upstream/watch.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
-    "prepack": "node scripts/build/stamp-plugin-versions.mjs stamp",
-    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore"
+    "prepack": "node scripts/release/shrinkwrap-pack.mjs write && node scripts/build/stamp-plugin-versions.mjs stamp",
+    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore && node scripts/release/shrinkwrap-pack.mjs remove"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "@babel/parser": "^7.29.9",
+    "@babel/parser": "^8.0.8",
     "@hono/node-server": "^2.1.5",
     "@hono/zod-openapi": "^1.6.3",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^13.0.3",
-    "diff": "8.0.3",
+    "diff": "9.0.0",
     "drizzle-orm": "^0.45.4",
     "drizzle-zod": "^0.8.3",
-    "hono": "^4.13.13",
-    "ignore": "7.0.13",
+    "hono": "^4.13.14",
+    "ignore": "7.0.14",
     "semver": "^7.8.5",
     "superjson": "2.2.6",
-    "typebox": "1.4.2",
     "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ast-grep/cli": "0.51.0",
-    "@babel/types": "^7.29.8",
+    "@babel/types": "^8.0.8",
     "@changesets/cli": "3.0.3",
-    "@earendil-works/pi-agent-core": "0.85.1",
-    "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/pi-coding-agent": "1.3.0",
-    "@napi-rs/cli": "3.10.8",
-    "@oh-my-pi/omptype": "18.12.2",
-    "@oh-my-pi/pi-agent-core": "18.12.2",
-    "@oh-my-pi/pi-ai": "18.12.2",
-    "@oh-my-pi/pi-coding-agent": "18.12.2",
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@napi-rs/cli": "3.10.9",
+    "@oh-my-pi/omptype": "18.14.2",
+    "@oh-my-pi/pi-agent-core": "18.14.2",
+    "@oh-my-pi/pi-ai": "18.14.2",
+    "@oh-my-pi/pi-coding-agent": "18.14.2",
     "@playwright/test": "^1.64.1",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "@types/semver": "^7.8.0",
     "@vitest/coverage-v8": "^5.0.5",
-    "apache-arrow": "21.2.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
+    "highlight.js": "11.12.0",
+    "marked": "18.1.2",
+    "node-html-markdown": "2.0.0",
     "smol-toml": "1.9.1",
     "tsx": "4.23.15",
-    "typescript": "5.9.3",
+    "typebox": "1.4.3",
+    "typescript": "6.0.3",
     "vitest": "5.0.5",
     "yaml": "2.9.1"
   },

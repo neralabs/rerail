@@ -1,0 +1,74 @@
+{
+  "caught": [
+    {
+      "path": "src/engine/catalog/rule-pack-matcher.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\nimport { pathToFileURL } from \"node:url\";\n\nexport function runMatchCheck(root: string, check: string) {\n  return spawnSync(process.execPath, [\"--permission\", `--allow-fs-read=${root}`, \"--eval\", MATCH_CHECK_RUNNER], { input: check });\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-lint-config.ts",
+      "content": "import { pathToFileURL } from \"node:url\";\nimport { join } from \"node:path\";\n\nexport async function loadFlatConfig(root: string) {\n  const config = await import(pathToFileURL(join(root, \"eslint.config.js\")).href);\n  return config.default;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-flat-config.ts",
+      "content": "import { runInNewContext } from \"node:vm\";\n\nexport const evaluate = (source: string) => runInNewContext(source, {});\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-packs.ts",
+      "content": "export function checkFor(source: string) {\n  return new Function(\"files\", source);\n}\n"
+    },
+    {
+      "path": "src/cli/packs-cli.ts",
+      "content": "const { execFileSync } = require(\"child_process\");\nexport const run = (script: string) => execFileSync(\"node\", [script]);\n"
+    },
+    {
+      "path": "src/engine/catalog/lint-config-formats.ts",
+      "content": "import { createRequire } from \"node:module\";\n\nexport function loadLegacy(file: string) {\n  return createRequire(import.meta.url)(file);\n}\nexport const evalIndirect = (src: string) => (0, eval)(src);\n"
+    },
+    {
+      "path": "src/runtime/repository-start.ts",
+      "content": "export async function checkRepo(root: string, src: string) {\n  const cp = await import(\"node:child_process\");\n  await import(\"data:text/javascript;base64,\" + src);\n  return runCommand(\"node\", [\"--eval\", src], { cwd: root });\n}\n"
+    },
+    {
+      "path": "src/setup/rule-pack-store.ts",
+      "content": "export function npmPackStore(npm: NpmRunner, prefix: string) {\n  return {\n    async remove(ids: readonly string[]) {\n      await npm([\"uninstall\", \"--prefix\", prefix, \"--no-audit\", \"--no-fund\", ...ids.map(rulePackPackageName)]);\n    },\n  };\n}\n"
+    },
+    {
+      "path": "src/setup/pack-staging.ts",
+      "content": "export async function add(npm: NpmRunner, prefix: string, quiet: readonly string[], specs: readonly string[]) {\n  await npm([\"install\", \"--prefix\", prefix, ...quiet, \"--save-exact\", ...specs]);\n}\n"
+    },
+    {
+      "path": "src/setup/pack-override.ts",
+      "content": "export async function add(npm: NpmRunner, prefix: string, specs: readonly string[]) {\n  await npm([\"install\", \"--prefix\", prefix, \"--ignore-scripts=false\", \"--\", ...specs]);\n}\n"
+    },
+    {
+      "path": "src/setup/runtimes.ts",
+      "content": "export async function installRuntime(runner: Runner, directory: string) {\n  await runChecked(runner, [\"npm\", \"ci\", \"--no-audit\", \"--no-fund\"], { cwd: directory });\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/setup/rule-pack-store.ts",
+      "content": "export function npmPackStore(npm: NpmRunner, prefix: string) {\n  const quiet = [\"--ignore-scripts\", \"--no-audit\", \"--no-fund\"];\n  return {\n    async add(specs: readonly string[], exact: boolean) {\n      await npm([\"install\", \"--prefix\", prefix, ...quiet, ...(exact ? [\"--prefer-offline\"] : []), \"--save-exact\", \"--\", ...specs]);\n    },\n    async remove(ids: readonly string[]) {\n      await npm([\"uninstall\", \"--prefix\", prefix, \"--ignore-scripts\", \"--no-audit\", \"--no-fund\", \"--\", ...ids.map(rulePackPackageName)]);\n    },\n  };\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-flat-config.ts",
+      "content": "import { createRequire } from \"node:module\";\n\nconst parser = createRequire(import.meta.url)(\"@babel/parser\");\nconst CODE_MODULES = new Set([\"vm\", \"child_process\", \"worker_threads\"]);\nconst formats = await import(\"./lint-config-formats.js\");\n"
+    },
+    {
+      "path": "src/setup/updater.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\nimport { pathToFileURL } from \"node:url\";\n\nexport async function installVersion(spec: string, prefix: string) {\n  await runNpm([\"install\", \"--prefix\", prefix, \"--omit=dev\", \"--no-audit\", \"--no-fund\", spec]);\n  spawnSync(process.execPath, [\"--eval\", HEALTH_SCRIPT]);\n  return await import(pathToFileURL(entrypoint).href);\n}\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "const COMMANDS = [\"install\", \"start\", \"stop\", \"update\"];\nexport const runLauncherUpdate = (options: Options) => runLauncher(options, [\"install\", \"--remove\"]);\n"
+    },
+    {
+      "path": "src/runtime/sqlite-repair.ts",
+      "content": "export async function ensureSqlite(prefix: string, npm = runNpm) {\n  await npm([\"rebuild\", SQLITE_PACKAGE_NAME], { cwd: prefix, node: process.execPath });\n}\n"
+    },
+    {
+      "path": "src/setup/pack-pin.ts",
+      "content": "export async function pin(npm: NpmRunner, staging: string, quiet: readonly string[], id: string, at: string) {\n  await npm([\"install\", \"--prefix\", staging, ...quiet, \"--no-package-lock\", \"--save-exact\", `${rulePackPackageName(id)}@${at}`]);\n}\n"
+    }
+  ]
+}

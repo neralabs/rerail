@@ -18,7 +18,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
-import type { RerailHost } from "../engine/adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
@@ -299,7 +299,8 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const wholeRepository = options.repository === true;
   const name = checkoutName(workspace, wholeRepository);
-  const sigil = options.session?.host === "codex" ? "$" : "/";
+  // No coding agent named (a terminal, or Cursor, which stops without one): the default sigil.
+  const sigil = options.session === undefined ? "/" : ADAPTER_CAPABILITIES[options.session.host].commandSigil;
   const startCommand = io.lane === "terminal" ? "rerail start" : `${sigil}rerail-start`;
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;

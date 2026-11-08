@@ -9,6 +9,7 @@
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { historyRuleId } from "./history-model.js";
+import { failed } from "./format.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -183,7 +184,7 @@ export function toStoredRules(entries) {
       kind: entry.kind,
       rule: { ...entry.rule, mode: entry.mode },
       enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
+      origin: entry.source.kind === "library_rule" ? "user" : "pack",
       source: entry.source,
       folders: [entry.folder],
       folderStates: [folderState(entry)],
@@ -197,6 +198,8 @@ export function toStoredRules(entries) {
       configError: entry.configError ?? null,
       revision: entry.revision,
       addedAt: entry.addedAt ?? null,
+      // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
+      approval: entry.approval ?? null,
       updatedAt: entry.updatedAt ?? null,
     });
   }
@@ -237,10 +240,13 @@ async function loadRules() {
   return true;
 }
 
+/** The installed packs, and the scoped checkout's own rules (`.rerail/rules`) as the pack `worktree`. */
 async function loadPacks() {
-  const body = await fetchFresh("/api/rule-packs", "packs");
+  const checkout = ui.scope?.checkout;
+  const body = await fetchFresh(checkout === undefined ? "/api/rule-packs" : `/api/rule-packs?${new URLSearchParams({ checkout })}`, "packs");
   if (body === undefined) return false;
   data.packs = body.packs;
+  data.packsSkipped = body.skipped;
   return true;
 }
 
@@ -279,10 +285,10 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
   data.followGitignore = follow; invalidate();
   try {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
-    toast(follow ? "Files Git ignores are not checked in sessions started from now on." : "Files Git ignores are checked in sessions started from now on.");
+    toast(follow ? "New sessions skip Git-ignored files." : "New sessions include Git-ignored files.");
   } catch (error) {
     data.followGitignore = was;
-    toast(`Could not save: ${error.message}`);
+    toast(failed("Couldn’t change Follow .gitignore", error));
   }
   invalidate();
 }
@@ -534,7 +540,7 @@ function pumpTitles() {
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
- * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `packs`: every rule pack installed on this machine, and the scoped checkout's own rules (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
  * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.
@@ -595,6 +601,7 @@ async function poll() {
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
     data.disconnected = false;
+    data.accessRequired = false;
     data.missing = false;
     data.loaded = true;
     backoff = INTERVAL;
@@ -602,9 +609,11 @@ async function poll() {
   } catch (error) {
     if (started !== generation) return;
     // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
-    // answering 404, not some other read (a session that went away is handled where it is read).
-    data.missing = /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
-    data.disconnected = !data.missing;
+    // answering 404, not some other read (a session that went away is handled where it is read). Neither is a 401: the
+    // daemon is up, and this browser has not opened its link.
+    data.accessRequired = error.name === "AccessRequired";
+    data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
+    data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
     backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
     if (!data.missing) console.warn("poll failed", error);
@@ -655,7 +664,9 @@ export function changeScope(scope) {
   ui.panel = null;
   ui.backToPack = null;
   ui.removeAsk = null;
+  ui.removedPacks.clear();
   ui.selectedSession = null;
+  ui.sessRule = null;
   Object.assign(data, {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),

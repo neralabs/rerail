@@ -1,0 +1,606 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt019-pytest-fixture-param-without-value",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Activate fixtures a test does not read with the usefixtures mark instead of declaring underscore-prefixed parameters for them.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "fixture-param-without-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "pytest-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^pytest$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pytest-name"
+                  }
+                }
+              ]
+            },
+            "pytest-mark": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "pytest-name"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^mark$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pytest-mark"
+                  }
+                }
+              ]
+            },
+            "pm-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "pytest-mark"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^parametrize$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pm-callee"
+                  }
+                }
+              ]
+            },
+            "name-expr": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-expr"
+                  }
+                }
+              ]
+            },
+            "seq-expr": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "seq-expr"
+                  }
+                }
+              ]
+            },
+            "str-lit": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "^[^'\"]*[bBfFtT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "^[^'\"]*[bBfFtT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-lit"
+                  }
+                }
+              ]
+            },
+            "pm-call": {
+              "kind": "call",
+              "arguments": {
+                "signature": [
+                  "argnames"
+                ],
+                "bind": {
+                  "A": "argnames"
+                },
+                "mode": "syntactic"
+              },
+              "has": {
+                "field": "function",
+                "matches": "pm-callee"
+              }
+            }
+          },
+          "transform": {
+            "T1": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){0}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T2": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){1}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T3": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){2}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T4": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){3}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T5": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){4}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T6": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){5}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T7": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){6}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T8": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){7}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T9": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){8}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T10": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){9}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T11": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){10}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "T12": {
+              "replace": {
+                "source": "$S",
+                "value": true,
+                "replace": "(?s)^(?:[^,]*,){11}\\s*([^,]*?)\\s*(?:,.*)?$",
+                "by": "$1"
+              }
+            },
+            "TE": {
+              "replace": {
+                "source": "$E",
+                "value": true,
+                "replace": "(?s)^\\s*(.*?)\\s*$",
+                "by": "$1"
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^_",
+                    "pattern": "$N"
+                  },
+                  {
+                    "kind": "typed_parameter",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^_",
+                      "pattern": "$N"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "has": {
+                      "field": "name",
+                      "regex": "^_",
+                      "pattern": "$N"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "pattern": "$S"
+                      },
+                      {
+                        "pattern": "$E"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "^"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "field": "name",
+                      "regex": "^test_"
+                    },
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "decorated_definition",
+                        "has": {
+                          "kind": "decorator",
+                          "has": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "any": [
+                              {
+                                "kind": "call",
+                                "matches": "pm-call",
+                                "has": {
+                                  "field": "arguments",
+                                  "kind": "argument_list",
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_argument"
+                                          },
+                                          {
+                                            "kind": "parenthesized_expression"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "any": [
+                                      {
+                                        "matches": "name-expr"
+                                      },
+                                      {
+                                        "matches": "seq-expr",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "name-expr"
+                                        }
+                                      }
+                                    ],
+                                    "pattern": "$B",
+                                    "all": [
+                                      {
+                                        "compare": {
+                                          "left": "B",
+                                          "op": "eq",
+                                          "right": "A",
+                                          "text": "structure"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "call",
+                                "matches": "pm-call",
+                                "has": {
+                                  "field": "arguments",
+                                  "kind": "argument_list",
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_argument"
+                                          },
+                                          {
+                                            "kind": "parenthesized_expression"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "matches": "str-lit",
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "compare": {
+                                              "left": "T1",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T2",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T3",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T4",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T5",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T6",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T7",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T8",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T9",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T10",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T11",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "T12",
+                                              "op": "eq",
+                                              "right": "N"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "S",
+                                          "op": "eq",
+                                          "right": "A",
+                                          "text": "structure"
+                                        }
+                                      }
+                                    ],
+                                    "pattern": "$S"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "call",
+                                "matches": "pm-call",
+                                "has": {
+                                  "field": "arguments",
+                                  "kind": "argument_list",
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_argument"
+                                          },
+                                          {
+                                            "kind": "parenthesized_expression"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "any": [
+                                      {
+                                        "kind": "list"
+                                      },
+                                      {
+                                        "kind": "tuple"
+                                      }
+                                    ],
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "str-lit",
+                                      "pattern": "$E",
+                                      "compare": {
+                                        "left": "TE",
+                                        "op": "eq",
+                                        "right": "N"
+                                      }
+                                    },
+                                    "pattern": "$L",
+                                    "all": [
+                                      {
+                                        "compare": {
+                                          "left": "L",
+                                          "op": "eq",
+                                          "right": "A",
+                                          "text": "structure"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT019",
+        "message": "If the test never reads `$N`, remove the parameter and add `@pytest.mark.usefixtures(\"$N\")` to the test; if it reads the value, leave it as is.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT019"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

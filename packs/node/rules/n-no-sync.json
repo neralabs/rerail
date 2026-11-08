@@ -1,0 +1,174 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-sync",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "any": [
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "property_identifier"
+                    }
+                  ],
+                  "field": "function",
+                  "regex": "Sync$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "matches": "c2"
+                  },
+                  "kind": "arguments"
+                }
+              }
+            ],
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            }
+          },
+          "c2": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "property_identifier"
+              }
+            ],
+            "regex": "Sync$"
+          }
+        }
+      }
+    },
+    {
+      "id": "call-child",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "c1"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-sync",
+        "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync().",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-sync"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "callee-member-descendant",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "has": {
+              "matches": "c2"
+            },
+            "any": [
+              {
+                "kind": "member_expression",
+                "inside": {
+                  "kind": "call_expression",
+                  "field": "function",
+                  "not": {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "template_string"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "member_expression",
+                  "inside": {
+                    "kind": "call_expression",
+                    "field": "function",
+                    "not": {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "template_string"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "kind": "arguments"
+                },
+                {
+                  "matches": "c1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-sync",
+        "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync().",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-sync"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

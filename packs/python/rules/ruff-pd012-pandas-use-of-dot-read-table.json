@@ -1,0 +1,103 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pd012-pandas-use-of-dot-read-table",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use pandas read_csv instead of read_table for comma-separated data; read_csv already defaults to a comma separator.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "pandas-use-of-dot-read-table",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "comma-string": {
+              "any": [
+                {"kind": "string", "regex": "^[uUrR]{0,2}['\"]"},
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {"regex": "^[uUrR]{0,2}['\"]"}
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {"stopBy": "neighbor", "matches": "comma-string"}
+                }
+              ],
+              "value": {"eq": ","}
+            },
+            "in-string": {
+              "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [{"matches": "read-table", "capture": "FUNC"}, {"matches": "in-string"}]
+                }
+              }
+            },
+            "sep-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "all": [
+                        {"has": {"stopBy": "neighbor", "field": "name", "regex": "^sep$"}},
+                        {"has": {"stopBy": "neighbor", "field": "value", "matches": "comma-string"}},
+                        {
+                          "not": {
+                            "follows": {
+                              "stopBy": "end",
+                              "kind": "keyword_argument",
+                              "has": {"stopBy": "neighbor", "field": "name", "regex": "^sep$"}
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "slot": {
+              "any": [
+                {"inside": {"stopBy": "neighbor", "field": "function", "matches": "sep-call"}},
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "slot"
+                  }
+                }
+              ]
+            },
+            "read-table": {
+              "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+              "resolves": {"import": ["pandas.read_table"]},
+              "matches": "slot"
+            }
+          },
+          "rule": {"any": [{"matches": "read-table", "pattern": "$FUNC"}, {"matches": "in-string"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.FUNC",
+        "code": "PD012",
+        "message": "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments.",
+        "suppress": {"noqa": {"codes": ["PD012"]}}
+      }
+    }
+  ]
+}

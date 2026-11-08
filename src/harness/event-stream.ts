@@ -1,12 +1,12 @@
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { hookRerailStarted } from "./hook-host.js";
-import { bundledModelPath } from "../engine/package-root.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
@@ -100,11 +100,8 @@ export interface RunRerailEventStreamOptions {
 export async function runRerailEventStream(options: RunRerailEventStreamOptions = {}): Promise<void> {
   const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
   // Absolute paths: in a main build the daemon, running elsewhere, opens them.
-  const storageRoot = resolve(options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(workspaceRoot, ".rerail", "sessions"));
-  const modelPath = options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath();
   const configuration = {
-    storageRoot,
-    modelPath,
+    ...resolveSessionPaths(workspaceRoot, options),
     databasePath: resolve(options.databasePath ?? defaultRerailDatabasePath()),
     workspaceRoot,
   };

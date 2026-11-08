@@ -7,6 +7,7 @@ use super::config::Options;
 use super::dialect::language_capability;
 use super::documents::{DocumentScopes, Side};
 use super::refuse_unavailable_semantics;
+use super::shared::SharedTables;
 use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
 use crate::code_rule_dsl::language::{CodeRuleLanguage, GrammarDialect};
@@ -29,8 +30,10 @@ pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>
 
 /// What the document's defines hold: shared utilities and options.
 pub(in crate::code_rule_dsl) struct Defines<'a> {
-    pub(super) utils: SharedUtils<'a>,
+    pub(super) utils: &'a SharedUtils<'a>,
     pub(super) options: Options,
+    /// The shared utilities' tables, which the queries that reach them fill.
+    pub(super) tables: SharedTables<'a>,
 }
 
 /// Whether a clause is a define.
@@ -208,6 +211,7 @@ fn check_dialects<'u>(
             captures: Default::default(),
             calls: Some(&calls),
             documents: documents.as_ref(),
+            instances: None,
             side: *side,
         };
         let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {
@@ -231,9 +235,7 @@ fn check_dialects<'u>(
         let mut gaps = BTreeMap::new();
         let compiled = compile(&mut gaps)?;
         if table.was_unfilled() {
-            if table.draft.set(compiled).is_err() {
-                unreachable!("a fresh table is drafted once");
-            }
+            table.draft_all(compiled);
             gaps.clear();
             compile(&mut gaps)?;
         }
@@ -331,6 +333,149 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", "window.x;\n");
         assert_eq!(clause_ids(&result), ["declared"], "{result}");
+    }
+
+    #[test]
+    fn queries_sharing_a_define_each_read_only_the_utilities_they_reach() {
+        let define = json!({ "id": "shared", "define": { "language": "typescript", "utils": {
+            "named": { "kind": "identifier", "pattern": "$NAME" },
+            "number": { "kind": "number" },
+        } } });
+        let named = query(
+            "named",
+            "typescript",
+            json!({ "rule": { "matches": "named" } }),
+        );
+        let compared = query(
+            "compared",
+            "typescript",
+            json!({ "rule": {
+            "kind": "binary_expression",
+            "has": { "matches": "number" },
+            "compare": { "left": "NAME", "op": "eq", "right": "NAME" },
+        } }),
+        );
+        // `named` binds `$NAME` for the query that reaches it, not for one compiled after it.
+        assert_eq!(
+            rejection(compile(json!([define, named, compared]))),
+            "/clauses/2/forbid/ast/rule/compare/left: `$NAME` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+        );
+        let number = query(
+            "number",
+            "typescript",
+            json!({ "rule": { "matches": "number" } }),
+        );
+        let compiled = compile(json!([define, named, number]))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, "typescript", "a.ts", "f(1);\n");
+        assert_eq!(clause_ids(&result), ["named", "number"], "{result}");
+    }
+
+    #[test]
+    fn a_shared_utility_compiles_alike_whichever_query_reaches_it_first() {
+        let define = json!({ "id": "shared", "define": { "language": "typescript", "utils": {
+            "bind": { "params": ["X"], "rule": { "kind": "identifier", "pattern": "$X" } },
+            "call": { "kind": "call_expression", "all": [
+                { "has": { "matches": { "bind": { "X": "$N" } } } },
+                { "has": { "kind": "identifier", "pattern": "$M" }, "compare": { "left": "N", "op": "eq", "right": "M" } },
+                { "has": { "kind": "identifier", "pattern": "$N" } },
+            ] },
+        } } });
+        let name = query(
+            "name",
+            "typescript",
+            json!({ "rule": { "matches": { "bind": { "X": "$A" } } } }),
+        );
+        let call = query(
+            "call",
+            "typescript",
+            json!({ "rule": { "matches": "call" } }),
+        );
+        // A query with a utility of its own compiles the shared ones in a table of its own.
+        let own = query(
+            "call",
+            "typescript",
+            json!({ "rule": { "matches": "local" }, "utils": { "local": { "matches": "call" } } }),
+        );
+        for clauses in [
+            json!([define, call]),
+            json!([define, name, call]),
+            json!([define, call, name]),
+            json!([define, name, own]),
+        ] {
+            let compiled = compile(clauses.clone())
+                .unwrap_or_else(|error| panic!("{clauses}: {}", error.reason));
+            let result = evaluate_file(&compiled, "typescript", "a.ts", "f(1);\n");
+            let mut ids = clause_ids(&result);
+            ids.retain(|id| id == "call");
+            assert_eq!(ids, ["call"], "{clauses}: {result}");
+        }
+    }
+
+    #[test]
+    fn a_shared_utilitys_all_order_conflict_is_settled_by_each_query_that_reaches_it() {
+        let define = json!({ "id": "shared", "define": { "language": "typescript", "utils": {
+            "same": { "all": [
+                { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } }, "compare": { "left": "A", "op": "eq", "right": "F" } },
+                { "has": { "field": "function", "pattern": "$F" } },
+            ] },
+        } } });
+        let bound = query(
+            "bound",
+            "typescript",
+            json!({ "rule": { "kind": "call_expression", "has": { "field": "function", "pattern": "$F" }, "matches": "same" } }),
+        );
+        let unbound = query(
+            "unbound",
+            "typescript",
+            json!({ "rule": { "matches": "same" } }),
+        );
+        let compiled =
+            compile(json!([define, bound])).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, "typescript", "a.ts", "f(f);\ng(f);\n");
+        assert_eq!(clause_ids(&result), ["bound"], "{result}");
+        for clauses in [
+            json!([define, bound, unbound]),
+            json!([define, unbound, bound]),
+        ] {
+            assert_eq!(
+                rejection(compile(clauses)),
+                "/clauses/0/define/utils/same/all/0 reads `$F`, which only /clauses/0/define/utils/same/all/1 binds, after it: an `all` runs its items in the order written; move all/1 before all/0"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shared_utility_with_a_calls_term_reports_as_if_each_query_listed_it() {
+        let sleeps = json!({ "kind": "call", "calls": { "has": {
+            "stopBy": "end", "kind": "call", "has": { "field": "function", "regex": "^sleep$" }
+        } } });
+        let define = json!({ "id": "shared", "define": { "language": "python", "utils": { "sleeps": sleeps } } });
+        // Two queries the shared table would serve (the second finds it given up), and one that
+        // lists the utility itself.
+        let first = query(
+            "first",
+            "python",
+            json!({ "rule": { "matches": "sleeps" } }),
+        );
+        let second = query(
+            "second",
+            "python",
+            json!({ "rule": { "matches": "sleeps" } }),
+        );
+        let listed = query(
+            "listed",
+            "python",
+            json!({ "rule": { "matches": "own" }, "utils": { "own": sleeps } }),
+        );
+        let compiled = compile(json!([define, first, second, listed]))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let source = "def pause():\n    sleep(1)\n\ndef rest():\n    pass\n\npause()\nrest()\n";
+        let result = evaluate_file(&compiled, "python", "a.py", source);
+        // Each reports the one call that reaches `sleep`: `pause()`, not `rest()` or `sleep(1)`.
+        let mut ids = clause_ids(&result);
+        ids.sort();
+        assert_eq!(ids, ["first", "listed", "second"], "{result}");
     }
 
     #[test]
@@ -471,7 +616,14 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "async function f() { return ((await x)); }\n";
         assert_violations(&evaluate_file(&compiled, "typescript", "a.ts", source), 1);
-        let utils = &grammar_matchers(&compiled)[0].utils.names;
-        assert_eq!(utils, &["tail-await".to_owned()]);
+        let grammar = &grammar_matchers(&compiled)[0];
+        let names = &grammar.utils.names;
+        let reached = grammar.query_utils.iter().map(|&index| &names[index]);
+        assert_eq!(reached.collect::<Vec<_>>(), ["tail-await"]);
+        let filled = (0..names.len()).filter(|&index| grammar.utils.rule(index).is_some());
+        assert_eq!(
+            filled.map(|index| &names[index]).collect::<Vec<_>>(),
+            ["tail-await"]
+        );
     }
 }

@@ -19,6 +19,8 @@ use crate::code_rule_dsl::eval::{
     WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
+use crate::code_rule_dsl::import_target::ViewSlot;
+use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -32,6 +34,7 @@ use crate::code_rule_dsl::model::{
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -40,7 +43,7 @@ use ast_grep_core::AstGrep as Root;
 use ast_grep_language::LanguageExt;
 use napi::Result;
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -186,6 +189,10 @@ pub(super) struct JobContext<'a> {
     /// P's anchor corpus (the `p-anchor-corpus` path, open item O20).
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
+    /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
+    pub(super) import_view: Option<&'a Arc<View>>,
+    /// The clauses that read import targets: their results are never stored.
+    pub(super) import_clauses: &'a HashSet<ClauseId>,
 }
 
 type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
@@ -298,6 +305,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 )
             });
             let _consumer = CrossFileScheduler::install(crossfile);
+            let _view = ViewSlot::install(context.import_view.cloned());
             let mut restored = None;
             let evaluated = evaluate_file(
                 &mut file,
@@ -313,6 +321,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 super::TEST_CLAUSE_WORK_BUDGET.set(previous);
             }
             let mut metrics = evaluated?;
+            // What a target resolves to depends on more than the file: no store may answer it.
+            for id in &file.candidates.ast {
+                if context.import_clauses.contains(id) {
+                    file.unstored.insert(*id);
+                }
+            }
             // A consumers' pass after a transient evaluation of the file stays transient.
             file.transient_failure |= transient;
             if context.summarize {
@@ -612,16 +626,36 @@ pub(super) fn evaluate_file(
     for &id in &file.candidates.regex {
         let code_rule = &code_rules[id.0];
         let clause = &code_rule.clauses[id.1];
-        let ClauseKind::Forbid(Query::Regex {
-            regex,
-            source,
-            options,
-        }) = &clause.kind
-        else {
-            unreachable!()
-        };
         let witnesses = file.witnesses.entry(id).or_default();
         witnesses.clear();
+        let limits = &code_rule.capabilities.limits;
+        let (regex, source, options) = match &clause.kind {
+            ClauseKind::Forbid(Query::Regex {
+                regex,
+                source,
+                options,
+            }) => (regex, source, options),
+            // The file itself is the witness: no content is read, so no source cap applies.
+            ClauseKind::Forbid(Query::File) => {
+                if limits.max_files == 0 {
+                    file.failures
+                        .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
+                } else if !file.failures.contains_key(&id) {
+                    witnesses.push(Witness {
+                        sql_violation: None,
+                        path: file.input.path.clone(),
+                        span: None,
+                        captures: Captures::default(),
+                        message: None,
+                        fix: None,
+                        ignored: false,
+                    });
+                    metrics.witnesses += 1;
+                }
+                continue;
+            }
+            _ => unreachable!("a regex candidate is a regex or file forbid"),
+        };
         if options
             .paths
             .as_ref()
@@ -629,7 +663,6 @@ pub(super) fn evaluate_file(
         {
             continue;
         }
-        let limits = &code_rule.capabilities.limits;
         if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
             file.failures
                 .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
@@ -638,23 +671,23 @@ pub(super) fn evaluate_file(
         if file.failures.contains_key(&id) {
             continue;
         }
-        let haystack: &str = match source {
-            RegexSource::Content => &file.input.source,
-            RegexSource::Path => &file.input.path,
-        };
-        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-        let span = |start, end| match source {
-            RegexSource::Content => lines
-                .as_ref()
-                .expect("eligible content has line table")
-                .span(start, end),
-            RegexSource::Path => path_lines.span(start, end),
+        let (haystack, offset) = query::regex_haystack(source, &file.input);
+        // A path match lies in no source text: its witness has no span.
+        let span = |start: usize, end: usize| match source {
+            RegexSource::Content => Some(
+                lines
+                    .as_ref()
+                    .expect("eligible content has line table")
+                    .span(start + offset, end + offset),
+            ),
+            RegexSource::Path => None,
         };
         // Each clause scans under its own allowance, so one clause's matches spend none of
         // another's; the file's clause-work ceiling bounds them together.
         let Some(((matches, complete), ran)) = work.run(haystack.len(), || {
             query::regex_query_matches(
                 regex,
+                source,
                 haystack,
                 options,
                 limits.max_witnesses.saturating_add(1),
@@ -674,7 +707,7 @@ pub(super) fn evaluate_file(
             let context = &haystack[matched.context];
             let span = |start, end| {
                 let mut result = span(offset + start, offset + end);
-                if let Some(line) = matched.line {
+                if let (Some(line), Some(result)) = (matched.line, result.as_mut()) {
                     result.start_line = line;
                     result.end_line = line;
                     result.start_column = start;
@@ -1420,6 +1453,7 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
+            names::take_unavailable();
             let Some((result, ran)) = work.run(file.input.source.len(), || {
                 let roots = select(position);
                 // An anchor selection of no roots leaves nothing for the clause to match.
@@ -1572,6 +1606,13 @@ fn evaluate_clauses(
                         .entry(id)
                         .or_insert(("budget-exceeded", CLAUSE_WORK_BUDGET_EXCEEDED));
                 }
+            }
+            // A `\N{...}` escape the malformed names table could not answer read as unknown: the
+            // clause has no verdict of its own, and the engine's build is at fault, not the file.
+            if names::take_unavailable() {
+                file.failures
+                    .insert(id, ("adapter-error", names::TABLE_UNAVAILABLE));
+                file.unstored.insert(id);
             }
         }
         Ok(())

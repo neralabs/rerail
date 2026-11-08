@@ -993,7 +993,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
                 continue;
             }
         };
-        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let hash = crate::lower_hex(&Sha256::digest(&bytes));
         let reason = if bytes.is_empty() {
             Some("empty")
         } else if bytes.len() > 4_000_000 {
@@ -1168,7 +1168,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             "nodes": node_count,
             "tapeBytes": tape_bytes,
             "filesWithSyntaxErrors": syntax_error_files,
-            "manifestSha256": format!("{:x}", manifest_digest.finalize()),
+            "manifestSha256": crate::lower_hex(&manifest_digest.finalize()),
             "sourceIdentity": "SHA-256 over the ordered (relative path, file SHA-256) pairs of eligible files",
             "excluded": excluded,
             "largest": largest,
@@ -1178,7 +1178,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         "encodeMs": encode_ms,
         "restoreMs": restore_ms,
         "serializeDecodeMs": serialize_ms,
-        "orderedResultSha256": format!("{:x}", result_digest.finalize()),
+        "orderedResultSha256": crate::lower_hex(&result_digest.finalize()),
         "wallMs": started.elapsed().as_secs_f64() * 1000.0,
         "kindQueries": queries.iter().enumerate().map(|(i, (kind, _, _))| json!({"query":format!("({kind}) @root"),"matches":counts[i],"nativeMs":native_ms[i],"rerailMs":tape_ms[i]})).collect::<Vec<_>>(),
         "structuralPatterns": corpus.patterns.iter().enumerate().map(|(i, p)| json!({"pattern":p,"matches":pattern_counts[i],"nativeMs":pattern_native_ms[i],"rerailMs":pattern_tape_ms[i]})).collect::<Vec<_>>(),

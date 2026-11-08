@@ -1170,6 +1170,7 @@ fn semantic_name(s: &Semantic) -> &'static str {
         Semantic::Layout(_) => "layout",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
+        Semantic::ImportTarget(_) => "importTarget",
     }
 }
 

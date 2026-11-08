@@ -35,7 +35,7 @@ function repositoryItems() {
   ];
 }
 
-/** A sidebar item; its tooltip is the full label, which a long pack name truncates ("JavaScript an…"). */
+/** A sidebar item; a long pack name wraps to a second line, its icon and count staying on the first. */
 function item(hash, label, glyph, { current = ui.view === hash, n = null, cls = "", title = label } = {}) {
   return h(`button.sn-item${cls}`, { "data-act": "nav", "data-i": hash, "aria-current": current ? "page" : "false", title },
     glyph, h("span.t", null, label), n === null ? null : h("span.n", { title: n.long, "aria-label": n.long }, n.short));
@@ -47,7 +47,7 @@ export function renderSidenav(root) {
   const items = setUp ? repositoryItems() : [];
   const note = !scoped ? null
     : !setUp ? `${repoName()} is not set up.`
-      : items.length === 0 && data.loaded ? "No rules added yet. Add a pack or create a rule." : null;
+      : items.length === 0 && data.loaded ? "No rule packs yet." : null;
   const signature = JSON.stringify([ui.view, ui.pack, setUp, note, items.map(i => [i.hash, i.label, i.n?.short, i.current])]);
   setContent(root, signature, () => [
     item("overview", "Overview", icon("overview", 14)),
