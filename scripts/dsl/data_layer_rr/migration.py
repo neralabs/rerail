@@ -15,6 +15,19 @@ PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
 MANIFEST = Path('gate/data-layer/packs/data-layer/candidates/rr/migration.json')
 DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
+# Generic compatibility extensions only. Runtime architecture comes from Final shape.
+ENGINE_EXTENSION_BOUNDARIES = (
+    'Cargo.lock', 'native/Cargo.toml',
+    'native/src/code_rule_dsl/facts/repository.rs',
+    'native/src/code_rule_dsl/facts/vtab/syntax.rs',
+    'native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs',
+    'native/src/code_rule_dsl/facts/vtab/syntax/python_',
+    'native/src/code_rule_dsl/logic/plan.rs',
+    'native/src/code_rule_dsl/logic/rr/tests.rs',
+    'native/src/code_rule_dsl/logic/sql/select.rs',
+    'native/src/code_rule_dsl/logic/strings.rs',
+    'native/src/code_rule_dsl/value/python.rs',
+)
 
 
 def sha(data):
@@ -198,6 +211,7 @@ def adopt(root, source):
 
 def verify(root):
     manifest = read_json(root / MANIFEST)
+    verify_engine_alignment(root, manifest['engineSource'])
     actual = targets(root)
     fields = ['check', 'batch', 'legacyPath', 'legacySha256']
     if [{k: e[k] for k in fields} for e in manifest['rules']] != actual:
@@ -207,6 +221,30 @@ def verify(root):
         if not path.exists() or sha(path.read_bytes()) != item['sha256']:
             raise ValueError(f'{path}: imported source changed; record and validate the repair')
     return manifest
+
+
+def verify_engine_alignment(root, source):
+    """Reject a detached engine or native edits outside the reviewed modern extensions."""
+    if source.get('checkout') != '.':
+        raise ValueError('Build and develop the engine in the repository root')
+    upstream = source['upstreamCommit']
+    try:
+        git(root, 'merge-base', '--is-ancestor', upstream, 'HEAD')
+    except subprocess.CalledProcessError as error:
+        raise ValueError('The engine does not include the adopted Final shape commit') from error
+    reviewed = {item['path']: item['sha256'] for item in source['nativeExtensions']}
+    for name in reviewed:
+        if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)
+                   for boundary in ENGINE_EXTENSION_BOUNDARIES):
+            raise ValueError(f'{name}: outside the generic extension boundary')
+    changed = set(git(root, 'diff', '--name-only', upstream, '--', 'native', 'Cargo.toml', 'Cargo.lock').splitlines())
+    changed.update(git(root, 'ls-files', '--others', '--exclude-standard', '--', 'native').splitlines())
+    if changed != set(reviewed):
+        raise ValueError('Unreviewed engine changes: ' + repr(sorted(changed ^ set(reviewed))))
+    for name, digest in reviewed.items():
+        path = root / name
+        if not path.is_file() or sha(path.read_bytes()) != digest:
+            raise ValueError(f'{name}: engine bytes differ from the reviewed extension')
 
 
 def repair(root, paths, reason):

@@ -2413,8 +2413,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "824c0793537599d862709d7882ccde35626349d9",
-    "status": "Root Final shape engine with generic Boolean-context, Python diagnostic/traversal, canonical expression text, and run-root metadata extensions",
+    "upstreamCommit": "b10c6c996ab4efcf99906f347d0a3d1da576d642",
+    "status": "Root Final shape engine through b10c6c996; reviewed generic compatibility extensions only",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2434,6 +2434,80 @@
       "native/src/code_rule_dsl/logic/strings.rs"
     ],
     "rootMetadataCommit": "7b44f4813",
-    "canonicalCallTextCommit": "eea5ed2da"
+    "canonicalCallTextCommit": "eea5ed2da",
+    "nativeExtensions": [
+      {
+        "path": "Cargo.lock",
+        "sha256": "52a8ba030db7d50f557bb01c344739e74a84a203447533a603a2af789642615a"
+      },
+      {
+        "path": "native/Cargo.toml",
+        "sha256": "150cb430abd63a416091e2edf35223320e908906317254eea9c8ffa751205b93"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/repository.rs",
+        "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+        "sha256": "a84a0a7e472c72e35724b59525927b4ea5290a11e5db4d25de9686296ca4e6a3"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+        "sha256": "8c1e886f1f95587d7c91f0c62f969bfdb47cd66fb87439d2f488caca9411f82f"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
+        "sha256": "387a57f02a15ed421338608244cae27f480d4de6565179dfe0ca26e4da4f3ad1"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+        "sha256": "1f99945fc4b821b4821a0d34cdbf037b9a45d98bf199c7bb916a7daa69d329d0"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
+        "sha256": "53b84a07eb9d5073c8e434effe627808318fadee769cb1617465bc25253be213"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
+        "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
+        "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+        "sha256": "cad0d536546ee5bfdfb055ea7409d9277010941516fcd756b5ea55b8be00147b"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+        "sha256": "57d6fde4a113d12208c0eb1fc3779448edbc1a856d562e036b067fc786231bd9"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
+        "sha256": "680ae1afd7c274895609a1c81af94083c42d9f77ebb2471e4edb84222cddc254"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan.rs",
+        "sha256": "fc53677409ec8a135e072a52c821b2f70e60a89bc0f3d04558f2870b5383c39d"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
+        "sha256": "bbce6d191b33e0a4c866bf22cbe0e5830a3078f3b3ef9a272430dad61e542ca4"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/sql/select.rs",
+        "sha256": "4ba17d77f0e303a28658f35010257ef0d28f0371096f203ca6be5cb22862b454"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/strings.rs",
+        "sha256": "257708953496c38f0980af4356d2cfdef3a1aa834437e7f04f747d6f4839661b"
+      },
+      {
+        "path": "native/src/code_rule_dsl/value/python.rs",
+        "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+      }
+    ]
   }
 }
