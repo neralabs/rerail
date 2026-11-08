@@ -2778,6 +2778,35 @@ file's memo rows per unit; staged, each stage measured here.
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
 
+## O136. `calls_cx` with both memos off grew past 10 GB (fixed)
+
+**Seen (2026-11-08, t22).** A cold run of `calls_cx` over the 84 files ran with `RERAIL_CORPUS_MEMO=off` and
+`RERAIL_CROSS_MEMO=off`. It reached 10.5 GB RSS and took 416 s of CPU on the main thread, 385 s of it in the cross
+part. The answers were still right (6,299 agree).
+
+**Cause.** Demand (decision 0048) cut the positive read `uinst(t, c)` out of the rule
+`bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), uinst(t, c), anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9)`.
+- `uinst` is the only link between `t` and `c`. What was left in `pre_<i>` joined only through documents: 4,719
+  `anc` rows, against every annotation of every document they reach. That gave 47M rows in and 24M out.
+- Four rules shared that body, and each made its own copy of it (`pre_566`, `pre_590`, `pre_796`, `pre_819`). Each
+  copy allocated 6.8 GB.
+- The reader then looked up only 9,319 `(t, c)` keys in it.
+- `disconnected`, the guard against exactly this product, counted a shared document as a join.
+- With the cross memo on, the run is planned per component, and the split does not arise.
+
+**Fix.** In `demand::disconnected`, a document variable does not connect atoms. Those are column 1 of `docof` and
+the columns of `rr_cx_*`. The test is `atoms_joined_only_by_their_documents_are_disconnected`.
+
+| both memos off | CPU main thread | cross part | peak RSS | agree |
+|---|---|---|---|---|
+| before | 415.9 s | 384.8 s | 10,468 MB | 6,299 |
+| after | 87.3 s | 51.4 s | 846 MB | 6,299 |
+
+**Left.**
+- Identical `pre_<i>` bodies could share one relation. It does not matter once the product is refused.
+- The memo-on prime's cross part takes 81.7 s, against 51.4 s here. That 30 s is the cost of splitting by import
+  component (0076).
+
 ## O137. Two departures of delete-and-rederive from a full run (spike O125)
 
 Two runs of `spike_o125_replay` keep rows a full run does not have. Both are in `calls.rr`'s points-to component,
