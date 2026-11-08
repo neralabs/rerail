@@ -62,7 +62,24 @@ def main():
         'last-zero':[[dict(variable_name='ALLOWLISTED_CLASSES',path='scripts/a.py',count=2),dict(variable_name='ALLOWLISTED_CLASSES',path='scripts/b.py',count=0)]],
         'empty':[], 'non-owner':[[dict(variable_name='ALLOWLISTED_CLASSES',path='scripts/other.py',count=3)]],
     }.items():add('ordered-facts-'+name,'reporter_facts',[],dict(root=dict(path='.'),files=raw))
-    for filename,cases in [('rr-fresh-grammar-allowlist-burndown-cases.json',api),('rr-grammar-allowlist-burndown-reporter-cases.json',reporters)]:
+    for filename,cases in [('rr-fresh-grammar-allowlist-burndown-cases.json',api),('rr-grammar-allowlist-burndown-reporter-cases.json',reporters),('rr-fresh-grammar-allowlist-burndown-report-aggregation-cases.json',report_aggregation_cases())]:
         (FIXTURES/filename).write_text(json.dumps(dict(cases=cases),indent=2)+'\n');print(filename,len(cases))
+
+
+
+def report_aggregation_cases():
+    result=[]
+    def add(name,sources):
+        files=[dict(path='scripts/'+owner,source=''.join(sources.get(owner,[]))) for owner in ['lint_grammar_render_methods.py','lint_sql_grammar_escape_hatches.py']]
+        result.append(dict(id=name,check=CHECK,entry='cli',files=files,arguments=dict(root=dict(path='.'),args=['--verbose'])))
+    shared={}
+    for i,(name,owner) in enumerate(zip(VARS,OWNERS)):shared.setdefault(owner,[]).append(name+f" = {{'common', 'unique-{i}'}}\n")
+    add('all-five-share-an-entry',shared)
+    varying={}
+    for i,(name,owner) in enumerate(zip(VARS,OWNERS)):varying.setdefault(owner,[]).append(name+' = frozenset({'+','.join(repr(str(j)) for j in range(i))+'})\n')
+    add('all-five-have-different-counts',varying)
+    add('overlapping-assignment-union',{'lint_grammar_render_methods.py':["ALLOWLISTED_STATIC_CLASSES = {'a', 'b'}\nALLOWLISTED_STATIC_CLASSES = {'b', 'c'}\n"]})
+    add('repeated-target-deduplication',{'lint_grammar_render_methods.py':["ALLOWLISTED_STATIC_CLASSES = ALLOWLISTED_STATIC_CLASSES = {'a', 'b'}\n"]})
+    return result
 
 if __name__=='__main__':main()

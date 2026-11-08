@@ -1,0 +1,96 @@
+{
+  "cases": [
+    {
+      "id": "all-five-share-an-entry",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'common', 'unique-0'}\nLEGACY_ALLOWLISTED_CLASSES = {'common', 'unique-1'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = {'common', 'unique-2'}\nDATA_VALUE_PARAMS = {'common', 'unique-3'}\nOPERATOR_PARAMS = {'common', 'unique-4'}\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ]
+      }
+    },
+    {
+      "id": "all-five-have-different-counts",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = frozenset({})\nLEGACY_ALLOWLISTED_CLASSES = frozenset({'0'})\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": "ALLOWLISTED_CLASSES = frozenset({'0','1'})\nDATA_VALUE_PARAMS = frozenset({'0','1','2'})\nOPERATOR_PARAMS = frozenset({'0','1','2','3'})\n"
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ]
+      }
+    },
+    {
+      "id": "overlapping-assignment-union",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = {'a', 'b'}\nALLOWLISTED_STATIC_CLASSES = {'b', 'c'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ]
+      }
+    },
+    {
+      "id": "repeated-target-deduplication",
+      "check": "grammar_allowlist_burndown",
+      "entry": "cli",
+      "files": [
+        {
+          "path": "scripts/lint_grammar_render_methods.py",
+          "source": "ALLOWLISTED_STATIC_CLASSES = ALLOWLISTED_STATIC_CLASSES = {'a', 'b'}\n"
+        },
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        },
+        "args": [
+          "--verbose"
+        ]
+      }
+    }
+  ]
+}
