@@ -117,7 +117,7 @@ pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
 /// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
 pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
-    let filter = ["rr_scope_drop", "rr_scope_in"];
+    let filter = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
     program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
     for r in &mut program.rules {
         r.body.retain(|l| !l.atom().is_some_and(|a| filter.contains(&a.rel.as_str())));

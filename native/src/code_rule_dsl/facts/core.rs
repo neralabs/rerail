@@ -99,6 +99,35 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
     Ok(Built::Facts(facts))
 }
 
+/// A document read as text only (`.scope text`): its source and lines, and no tree. Its `doc`, `source` and
+/// `src_line` rows are a file's; no node rule matches it, whatever the run's grammar.
+pub(crate) fn text_only(source: Arc<String>) -> Facts {
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines));
+    Facts {
+        source,
+        lines,
+        kind: Vec::new(),
+        parent: Vec::new(),
+        start: Vec::new(),
+        end: Vec::new(),
+        start_line: Vec::new(),
+        end_line: Vec::new(),
+        subtree_end: Vec::new(),
+        flags: Vec::new(),
+        field: Vec::new(),
+        child_offsets: vec![0],
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: vec![0],
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: vec![0],
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+        python_syntax: Default::default(),
+    }
+}
+
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
 /// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
 /// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.

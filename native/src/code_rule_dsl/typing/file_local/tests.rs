@@ -335,7 +335,20 @@ hit(n, l) :- pick(n), line(n, l).
     // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
     let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    assert_eq!(semijoin_bases(&parts.cross, &parts.base), None);
+    assert!(!semijoin_bases(&parts.cross, &parts.base).unwrap().contains("line"));
     let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap());
-    assert_eq!(semijoin_bases(&parts.cross, &parts.base), None);
+    let held = semijoin_bases(&parts.cross, &parts.base).unwrap();
+    assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
+    // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
+    let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), line(p, l).\n.output kid, kidline"));
+    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
+    let held = semijoin_bases(&parts.cross, &parts.base).unwrap();
+    assert!(held.contains("line"), "{held:?}");
+    // A tainted output's findings are decoded through `node`: kept whole.
+    assert!(!held.contains("node"), "{held:?}");
+    // `tape(n, par, ..)`'s parent is a node though a number: a walk up it reaches nodes no export holds.
+    let parts = split(&source(".decl tape(n: node, par: number, size: number, depth: number)\n.input tape\n.decl up(n: node, p: number)\nup(n, p) :- hit(n, _), names(_), tape(n, p, _, _).\nup(n, q) :- up(n, p), names(_), tape(p, q, _, _).\n.output up"));
+    if parts.base.iter().any(|b| b == "tape") {
+        assert!(!semijoin_bases(&parts.cross, &parts.base).unwrap().contains("tape"));
+    }
 }

@@ -398,6 +398,11 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
             _ => None,
         };
+        for g in std::mem::take(&mut prog.text_globs) {
+            if !all.text_globs.contains(&g) {
+                all.text_globs.push(g);
+            }
+        }
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
@@ -641,6 +646,12 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
 const PROBE_NODES: usize = 65_536;
 /// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
 const CHUNK_MB: f64 = 384.0;
+/// The run's whole footprint budget (`RERAIL_RUN_MB`): a chunk adds at most three quarters of what is left of it
+/// above the footprint the chunk starts at (the program, its plans, the cross part's rows), so the run stays within
+/// it however large the program is.
+const RUN_MB: f64 = 1024.0;
+/// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
+const MIN_CHUNK_NODES: usize = 8_192;
 
 pub(crate) fn run_with_options(
     programs: &[&str],
@@ -736,7 +747,7 @@ pub(crate) fn run_with_options(
                 };
                 (files, label)
             } else {
-                let found = scoped(corpus_files(root)?, &prog);
+                let found = scoped(corpus_files(root)?, &prog, options);
                 let label = corpus_language(language.as_deref(), typing, &found);
                 (found.of(label), label)
             };
@@ -875,8 +886,8 @@ pub(crate) fn run_with_options(
         (Some(p), _) => (Some(p), "memory"),
         (None, Some(source)) => {
             let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
-            (found.map(|(p, document)| {
-                program_sources.push(document);
+            (found.map(|(p, documents)| {
+                program_sources.extend(documents);
                 p
             }), "store")
         }
@@ -934,8 +945,8 @@ pub(crate) fn run_with_options(
             if let Some(source) = durable {
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
                 match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
-                    Some(document) => program_sources.push(document),
-                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned()),
+                    Some(documents) => program_sources.extend(documents),
+                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: a part's tape does not give back its facts (decision 0074)".to_owned()),
                 }
             }
             prepared
@@ -976,7 +987,12 @@ pub(crate) fn run_with_options(
         crate::code_rule_dsl::logic::profile::decision("merged after the joins were pushed", || format!("{remerged} relations merged into an identical one ({reshared} classes shared across programs)"));
     }
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
-    let memo_program = memo::program_digest(&split.local);
+    // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
+    let memo_program = {
+        let digest = memo::program_digest(&split.local);
+        let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
+        if reads_options { memo::with_options(digest, options) } else { digest }
+    };
     let cross_plan = match &cross_declared {
         Some(declared) => cross_memo::split(&mut split.cross, declared, &memo_program)?,
         None => None,
@@ -1337,6 +1353,12 @@ pub(crate) fn run_with_options(
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             // Its own work: the file's input made from its source (the build's parts charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
+            // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree.
+            if crate::code_rule_dsl::language::label_of_path(path).is_none() {
+                let facts = Arc::new(core::text_only(Arc::new(source)));
+                let digest = core::digest(&facts);
+                return Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module })));
+            }
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
                 // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
@@ -1672,10 +1694,13 @@ pub(crate) fn run_with_options(
             let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
             let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
             let per_node = added as f64 * 1048576.0 / chunk_nodes_built as f64;
-            let budget = std::env::var("RERAIL_CHUNK_MB").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(CHUNK_MB);
-            let next = ((budget * 1048576.0 / per_node) as usize).clamp(PROBE_NODES.min(chunk_nodes), chunk_nodes);
+            let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
+            let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
+            let budget = env("RERAIL_CHUNK_MB", CHUNK_MB).min(headroom).round();
+            let next = ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes);
+            let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
-            crate::code_rule_dsl::logic::profile::decision("chunk size", || format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({per_node:.0} bytes a node); the next are about {next} nodes ({budget} MB a chunk, at most {chunk_nodes})"));
+            crate::code_rule_dsl::logic::profile::decision("chunk size", || format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({per_node:.0} bytes a node); the next are about {next} nodes ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB; at most {chunk_nodes})"));
         }
         let handed = got.handed.clone();
         let kept = got.kept.clone();
@@ -2142,8 +2167,7 @@ pub(crate) fn run_with_options(
     // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
     let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules.iter()).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
     for rel in &split.exports {
-        // A session binds every export now: it digests each input, and its maintained strata read them whole (0077).
-        if one_fixpoint && session.is_none() && !eager.contains(rel.as_str()) {
+        if one_fixpoint && !eager.contains(rel.as_str()) {
             let width = lowered.program.decls[rel].len();
             let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
             modules.bind(&db, rel, empty)?;
@@ -2262,10 +2286,7 @@ pub(crate) fn run_with_options(
                 Some(cell) => {
                     let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
                     let ckey = retain::key(&prepared_key, &cross.program);
-                    let mut cells = cell.lock().expect("the session's cross-file part");
-                    // One kept part per cross-file program: a run's passes (each over the documents loaded so far)
-                    // are programs of their own, and would otherwise take each other's place.
-                    let mut cell = cells.remove(&ckey);
+                    let mut cell = cell.lock().expect("the session's cross-file part");
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // The O125 spike's progress: each step of a session's run, with this thread's CPU.
                     let trace = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
@@ -2345,19 +2366,6 @@ pub(crate) fn run_with_options(
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
                         .collect::<Result<Vec<_>>>()?;
-                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
-                    // and hold after the run, for measuring delete-and-rederive (spike O125).
-                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
-                        let mut counts = [0usize; 3];
-                        for (rel, cols) in &part.program.decls {
-                            if !part.program.rules.iter().any(|r| &r.head.rel == rel) || cols.is_empty() {
-                                continue;
-                            }
-                            let at = if rel.ends_with("__del") { 0 } else if rel.ends_with("__ins") { 1 } else if part.program.decls.contains_key(&format!("{rel}__del")) { 2 } else { continue };
-                            counts[at] += held_rows(&db, &got, rel, cols.len()).map_or(0, |r| r.len());
-                        }
-                        cross_delta_counts = counts;
-                    }
                     let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
                     let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -2383,8 +2391,6 @@ pub(crate) fn run_with_options(
                     });
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
-                    cross_changed = cut.changed.clone();
-                    cross_again = maintained.again.clone();
                     cross_recursive = maintained.recursive;
                     cross_again = maintained.derived_again;
                     *cell = Some(next);
@@ -3053,15 +3059,21 @@ struct CorpusFiles {
     python: Vec<String>,
     rust: Vec<String>,
     rr: Vec<String>,
+    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
+    text: Vec<String>,
 }
 
 impl CorpusFiles {
+    /// The run's documents: the language's files, then the text ones, in path order.
     fn of(self, label: &str) -> Vec<String> {
-        match label {
+        let mut files = match label {
             "rust" => self.rust,
             "rr" => self.rr,
             _ => self.python,
-        }
+        };
+        files.extend(self.text);
+        files.sort();
+        files
     }
 }
 
@@ -3079,16 +3091,21 @@ fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles)
 
 /// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
-fn scoped(mut found: CorpusFiles, prog: &front::Program) -> CorpusFiles {
+/// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
+/// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
+fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
+    let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
+    found.text.retain(text_glob);
     if prog.doc_scopes.is_none() {
         return found;
     }
+    let scopes = front::resolve_scopes(&prog.doc_scopes, options);
     let before = found.python.len() + found.rust.len() + found.rr.len();
-    for files in [&mut found.python, &mut found.rust, &mut found.rr] {
-        files.retain(|p| front::in_doc_scopes(&prog.doc_scopes, p));
+    for files in [&mut found.python, &mut found.rust, &mut found.rr, &mut found.text] {
+        files.retain(|p| front::in_doc_scopes(&scopes, p));
     }
     crate::code_rule_dsl::logic::profile::decision("documents", || {
-        format!("{} of {before} files, by the policies' `.scope`", found.python.len() + found.rust.len() + found.rr.len())
+        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.python.len() + found.rust.len() + found.rr.len(), found.text.len())
     });
     found
 }
@@ -3096,7 +3113,7 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program) -> CorpusFiles {
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut python, mut rust, mut rr) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
@@ -3114,20 +3131,21 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
                 Some("python") => python.push(relative),
                 Some("rust") => rust.push(relative),
                 Some("rr") => rr.push(relative),
-                _ => {}
+                _ => text.push(relative),
             }
         }
     }
     python.sort();
     rust.sort();
     rr.sort();
+    text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
         for files in [&mut python, &mut rust, &mut rr] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { python, rust, rr })
+    Ok(CorpusFiles { python, rust, rr, text })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to

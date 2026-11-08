@@ -2342,6 +2342,33 @@ to run (an empty demand split); both are fixed (`77762bf31`).
 **Closure:** the full tree runs within the 1 GB budget by the OS's measure, at no more than a few times the
 script's CPU, with its findings equal to the script's; the s200 pack runs within 1 GB.
 
+**Pack memory, after the merge (2026-11-08).** The merge took the s200 pack from 1,257 MB to 2.6–3.0 GB. The cause
+was not the memo: the prepared 66-rule program is 775k fact rows (32 MB of `.rr`), stored as one document and read
+back off one tape for its check (decision 0074), and that parse peaked at about 1.5 GB in the stats phase. A
+stored program is now documents of at most 20,000 rows, each its own tape (`9298b00aa`): 1.56 GB peak, the same 61
+findings, and a warm run reads the parts back. Then (`42c30725a`):
+
+- *Semi-joins per relation.* `semijoin_bases` was all-or-nothing, so one cross-file walk in the pack held every
+  attribute whole. It is now a taint fixpoint per attribute. It also found that `tape(n, par, …)` is no attribute:
+  `par` is a parent node typed as a number, and the `rr_up` walks climb it.
+- *Options are constants.* `option`/`option_item` rows are the same in every chunk, so a relation built from them is
+  file-local (`bootstrap-engine-invariants`: 143 to 100 cross-file rules); the memo key folds in the options.
+- *Chunks sized to the run's budget.* A chunk adds at most three quarters of what is left of 1 GB
+  (`RERAIL_RUN_MB`), not a fixed 384 MB.
+
+Now: 61 findings, 861G instructions, 1,530 MB peak (`time -l`: 1.71 GB), load average 65–106. Where it goes, measured
+by live heap at each chunk: 374 MB before the first chunk (the prepared program, its plans and automata), then about
+50 MB more with each chunk, kept for the cross part. At the end that is 15.2M base values (`node`, `docof`, `line`,
+`text`, `child`, `field`, about 120 MB raw) and 1.5M per-value statistics (`Totals.vals`, about 60 MB). A chunk adds
+200–490 MB at its peak (4.4–7.7 KB a node). The base rows stay whole because cross-file rules reach nodes no export
+holds: `authentication-plan-purity` walks `field(x, f, v)` from a cross-file relation's nodes (so `node` and `text`
+stay whole), the pack's eleventh policy walks `child` (`docof`, `visit_index`), and a diagnostic decodes a tainted
+finding (`line`). Before options were constants, `bootstrap-engine-invariants` also enumerated every node of its
+documents cross-file (`bei_node(n, d) :- docof(n, d), bei_doc(d)`); it no longer does.
+
+**Next:** hold those base rows on disk (`x`, as the exports are), or keep, for a walk from held nodes, the rows of
+their children too; and bound the per-value statistics (a sketch, not a map).
+
 ## O117. `.scope` forms the run does not read
 
 The run now reads only the documents the policies' `.scope` globs (`dirs`, `include`, `exclude`, `tests false`)
@@ -2351,6 +2378,38 @@ documents are the union of their scopes. Each policy's facts are not yet limited
 
 **Closure:** each `.scope` form is applied or refused by name, and in a combined pack each policy reads only its
 scope's facts.
+
+**The forms, done (2026-11-08, `58ae86df3`).**
+
+- `text "…"`: a file with no grammar of the run that matches a text glob, and that a scope selects, is read as
+  text only (`core::text_only`): `doc`, `source` and `src_line`, no nodes. Before this the corpus walked only
+  `.py`, `.rs` and `.rr` files, so `bounded-composed-graph-paths`' BCGP011 documentation check never saw its
+  `.rst` files. On the full tree, 1,070 documents are read as text.
+- `dirs | include | exclude option("…")`: kept by name (`front::OPTION_GLOB`) until the run's options are known,
+  then resolved both for the documents read and for the findings filter (through `option_item`). An option the
+  run does not set adds nothing. `matching-architecture`'s `--application-root` now reads its roots.
+- `report dirs "…"`: findings outside these directories are dropped; facts still come from the whole scope.
+- `embedded false | true`: `.guests off | on`.
+
+Test: `scope_takes_option_dirs_text_documents_and_report_dirs`.
+
+Reading the text documents also exposed a rule cost: `bounded-composed-graph-paths` counted the lines between
+every decorator and every later def. That passed 3 GB on a quarter of the full tree, with or without the text
+documents. Its line rules now read Python files only, and a decorator's run of `@` lines is walked. Full tree:
+0 findings, as the script; 10 s CPU, 535 MB footprint (`time -l`: 1.1 GB). The script takes 0.08 s.
+
+**Each policy's own facts: measured, not yet guaranteed by structure.** On s200, the 66-rule pack's findings are
+exactly the union of each rule's run alone (61 and 61, none on either side only). A policy's findings outside
+its scope are dropped (`rr_scope_drop`). Its file-local relations, though, are made over every document the pack
+reads, so a cross-file rule can join rows from documents outside its own scope. Filtering each policy's exports
+by its scope would make this exact. One case blocks the simple version of that filter: `merge_identical` merges
+equal relations across policies, and a merged relation has two owners with different scopes. So the merge would
+have to keep policies with different scopes apart. A doc-level guard (each policy's `doc` atoms read a
+`doc` restricted to its scope) is cheap, but does not cover node-level rows.
+
+**Closure (what remains):** a policy's exports, and its reads of `doc`, are restricted to its scope, with
+`merge_identical` keeping policies of different scopes apart; the pack's findings still equal the union of the
+rules' runs alone.
 
 ## O118. A grep reader for files that are not documents
 
@@ -2369,7 +2428,7 @@ pytest's settings, and findings in one scope with names resolved across the whol
 
 **Closure:** the model is written in `.rr`, checked against the per-file counts, and test-budget reports it.
 
-## O120. A regex group over a span binds a span where rules compare text
+## O120. A regex group over a span binds a span where rules compare text (closed 2026-11-08)
 
 Since `5e026dcfa` (merged from the final-shape branch), `match("…(?<x>…)", sp)` over a span `sp` binds `x` to the
 group's span (`rx_span`'s `m`), not its text. `bounded-composed-graph-paths` compares such an `x` with strings
@@ -2379,6 +2438,11 @@ integer goes`. The rule is skipped in the s200 pack run.
 **Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
 the pack runs the rule again.
 
+**Closed.** The engine is right: `core.rr` says a capture over a node or span is a span. The rule was wrong.
+Each capture in `bounded-composed-graph-paths.rr` now names a span (`(?<xs>…)`) and reads its text with
+`text(xs, x)`. On s50 the rule alone gives 26 findings at 77 MB, most of them BCGP001 (a required file is not in
+the 50-file subset). Back in the s200 pack: 66 rules, 61 findings, 52.7 s CPU (load average 36–90), 2,652 MB
+peak, with no lowering error.
 
 ## O121. A fact or empty-body rule whose node column is `unset` has no row
 
