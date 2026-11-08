@@ -67,6 +67,7 @@ per-process reading.
 - **The lowered program is not stored.** Lowering, prune, demand and the split still run per process (decision
   0060's caches). Storing the lowered program as facts derived from the tape, memoised per source, is the next step.
   It needs the lowered program's atoms to be the store's, which decision 0060's prepared cache already checks.
+  Decision 0073 takes that step: the prepared program is a facts-memo entry under its text's source.
 - **Lowering itself is not a rule program.** `lower` is Rust over statements. Making it rules over the tape's facts
   would let a rule be checked against what it compiles to. That is not needed for the cache, and it is not done.
 
