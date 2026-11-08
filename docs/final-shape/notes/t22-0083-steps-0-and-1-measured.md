@@ -69,7 +69,7 @@ The 16 files touched (8 edited, 8 new) miss the memo, as they should. But the mo
 components, a third of the cross part, though no answer changes. Under 0083's symbol keys the moved definitions
 keep their keys, so this move would be a delta of spans and paths only.
 
-**Work, cold.** These runs had both memos off, after the O135 fix; the load was 30–77.
+**Work, cold.** These runs had both memos off, after the O136 fix; the load was 30–77.
 
 | | typeshed | answers (differ) | CPU main thread | local | cross | user + sys | RSS |
 |---|---|---|---|---|---|---|---|

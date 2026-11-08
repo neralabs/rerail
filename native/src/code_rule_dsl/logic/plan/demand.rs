@@ -156,7 +156,7 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
 fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
     // A document variable does not connect: a document has a row for each of its nodes, so atoms joined only by
     // their documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of
-    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O135).
+    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
     let documents: BTreeSet<String> = rule
         .body
         .iter()
@@ -456,7 +456,7 @@ mod tests {
         }
     }
 
-    /// Atoms joined only through their documents are apart (O135): cutting `uinst` would leave every annotation of
+    /// Atoms joined only through their documents are apart (O136): cutting `uinst` would leave every annotation of
     /// every reached document against every `anc` row.
     #[test]
     fn atoms_joined_only_by_their_documents_are_disconnected() {

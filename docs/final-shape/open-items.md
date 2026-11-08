@@ -2487,7 +2487,7 @@ probe's component, head and planned joins, and `RERAIL_DUMP_STATS` prints what t
 **Closure:** met. Still open: storing exact per-file counts in the memo entry, in place of a mix's scaled ones.
 
 
-## O135. `calls_cx` with both memos off grew past 10 GB (fixed)
+## O136. `calls_cx` with both memos off grew past 10 GB (fixed)
 
 **Seen (2026-11-08, t22).** A cold run of `calls_cx` over the 84 files ran with `RERAIL_CORPUS_MEMO=off` and
 `RERAIL_CROSS_MEMO=off`. It reached 10.5 GB RSS and took 416 s of CPU on the main thread, 385 s of it in the cross
