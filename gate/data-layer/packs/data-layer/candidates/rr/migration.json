@@ -2582,8 +2582,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "066ab66ad61aafb4652fed852464235ae9f6eee9",
-    "status": "Root Final shape through 066ab66ad with reviewed generic syntax capabilities and planner repairs",
+    "upstreamCommit": "3de761e188d7a64404c2f73232d53745c6ec560f",
+    "status": "Root Final shape through 3de761e18 with reviewed generic syntax capabilities and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
