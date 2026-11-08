@@ -2031,7 +2031,7 @@ impl Fx<'_> {
 }
 
 /// A run's evaluation state on its connection.
-struct Run<'a> {
+struct Run<'a, 'b> {
     prog: &'a Program,
     db: &'a Connection,
     model: Model,
@@ -2054,6 +2054,40 @@ struct Run<'a> {
     /// Each rule's number in the program, by address: for spans, EXPLAIN and the engine's reasons. Made once per
     /// program (a map of every rule per stratum cost more than the stratum's own planning).
     numbers: rustc_hash::FxHashMap<*const Rule, usize>,
+    /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
+    /// rows. A component with a request pauses for it (`setfix`'s `request`).
+    answer: Option<Answer<'b>>,
+    /// Each produced relation's rows answered so far, for a stratum above its request's (its table's rows).
+    answered: BTreeMap<String, Vec<Vec<i64>>>,
+}
+
+/// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
+/// rows each produced relation gains.
+pub(in crate::code_rule_dsl) type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
+
+/// Answers a paused component's requests and adds the answers to its produced relations (decision 0065 §2a).
+/// Rows for a produced relation outside it are kept for the stratum that holds that relation.
+fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, name: &str, scc: &BTreeSet<String>) -> Result<()> {
+    if !direct {
+        return Err(Error::Plan(format!("{name}: requests are answered only over atoms (the in-process engine)")));
+    }
+    let asked = super::native::component::pending(db, name)?;
+    let answer = answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{name}: a request, and no one to answer it")))?;
+    let mut by: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    for (rel, rows) in &asked {
+        let _span = super::profile::span(|| format!("answer {rel} ({} rows)", rows.len()));
+        for (p, got) in answer(rel, rows)? {
+            by.entry(p).or_default().extend(got);
+        }
+    }
+    for (p, rows) in by {
+        if scc.contains(&p) {
+            super::native::component::add(db, name, &p, &rows)?;
+        } else {
+            answered.entry(p).or_default().extend(rows);
+        }
+    }
+    Ok(())
 }
 
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
@@ -2076,7 +2110,7 @@ fn projections(prog: &Program) -> HashSet<String> {
 
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
     fn ensure_indexes(&mut self, order: &[Step]) -> Result<()> {
         let mut bound = BTreeSet::new();
@@ -2525,7 +2559,7 @@ fn const_tok(t: &Term) -> Option<String> {
     }
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     fn fx(&self) -> Fx<'_> {
         Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
     }
@@ -2907,8 +2941,28 @@ impl Run<'_> {
         let spec_span = super::profile::span(|| "spec".into());
         let mut lines = vec![format!("name {name}")];
         // A stratum's relations were made empty by `run` unless the program states facts of them.
-        lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
+        // A produced input (decision 0065 §2a) starts from its rows where it is.
+        let produced_inputs: BTreeSet<&str> = super::answers::produced(prog).into_keys().filter(|p| prog.inputs.iter().any(|i| i == p)).collect();
+        for r in &rels {
+            if produced_inputs.contains(r.as_str()) {
+                let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
+                let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
+                lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
+            } else {
+                lines.push(format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" }));
+            }
+        }
         lines.push("nowrite".to_owned());
+        // Requests and what answers them (decision 0065 §2a): the run pauses for the first, and adds to the second.
+        let produced = super::answers::produced(prog);
+        for r in &rels {
+            if prog.answers.contains_key(*r) && scc.iter().any(|x| produced.get(x.as_str()) == Some(&r.as_str())) {
+                lines.push(format!("request {}", ri[*r]));
+            }
+            if produced.contains_key(r.as_str()) {
+                lines.push(format!("produced {}", ri[*r]));
+            }
+        }
         let mut est: HashMap<&str, f64> = HashMap::new();
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
@@ -2999,6 +3053,10 @@ impl Run<'_> {
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
+            if f.last() == Some(&"2") {
+                answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
+                continue;
+            }
             let steps = self.fx().steps(&name)?;
             for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&steps) {
                 observe(&mut self.model.stats, o, line);
@@ -3465,7 +3523,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(prog, &db, Inputs::file(), None, None)
+    run(prog, &db, Inputs::file(), None, None, None)
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
@@ -3480,7 +3538,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, None)
+    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, None, None)
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -3499,7 +3557,7 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&lowered.program, db, inputs, Some(lowered), None);
+    let out = run(&lowered.program, db, inputs, Some(lowered), None, None);
     super::native::flush_symbols(db)?;
     out
 }
@@ -3555,12 +3613,33 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_handing(
     run_native_inputs(lowered, db, inputs, Some(hand_off))
 }
 
+/// `run_atoms_native_over`, with requests answered by `answer` inside the fixpoint (decision 0065 §2a).
+pub(in crate::code_rule_dsl) fn run_atoms_native_answering(
+    lowered: &lower::Lowered,
+    db: &Connection,
+    facts: &str,
+    given: Stats,
+    kept: BTreeSet<String>,
+    modes: &str,
+    answer: Answer<'_>,
+) -> Result<Outcome> {
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
+    run_native_answering(lowered, db, inputs, None, Some(answer))
+}
+
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
+    run_native_answering(lowered, db, inputs, hand_off, None)
+}
+
+fn run_native_answering(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>, answer: Option<Answer<'_>>) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    let out = run(&lowered.program, db, inputs, Some(lowered), hand_off);
+    let out = run(&lowered.program, db, inputs, Some(lowered), hand_off, answer);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());
@@ -3638,7 +3717,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
-fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
+fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>, answer: Option<Answer<'_>>) -> Result<Outcome> {
     let (normalized,sentinels)=sql_kernel::normalize(prog)?;
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
@@ -3711,7 +3790,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -3825,6 +3904,42 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
+        // A produced relation above its request (decision 0065 §2a): its request is whole, so it is answered once, or
+        // holds what a component's pauses answered. An input's rows are the caller's to write.
+        let produced = super::answers::produced(prog);
+        if scc.iter().all(|r| produced.contains_key(r.as_str())) {
+            for rel in scc {
+                let rows = match run.answered.remove(rel) {
+                    Some(rows) => rows,
+                    None => {
+                        let req = produced[rel.as_str()].to_owned();
+                        run.materialize(std::slice::from_ref(&req))?;
+                        let width = prog.decls[&req].len();
+                        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+                        let asked: Vec<Vec<i64>> = db
+                            .prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
+                            .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())?
+                            .collect::<rusqlite::Result<_>>()?;
+                        let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
+                        let mut mine = Vec::new();
+                        for (p, got) in answer(&req, &asked)? {
+                            if p == *rel { mine.extend(got) } else { run.answered.entry(p).or_default().extend(got) }
+                        }
+                        mine
+                    }
+                };
+                if prog.inputs.contains(rel) || rows.is_empty() {
+                    continue;
+                }
+                let width = prog.decls[rel].len();
+                let marks = vec!["?"; width].join(", ");
+                let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
+                for row in &rows {
+                    insert.execute(rusqlite::params_from_iter(row.iter()))?;
+                }
+            }
+            continue;
+        }
         let rule_no = |r: &Rule| prog.rules.iter().position(|x| std::ptr::eq(x, r)).expect("a rule of the program");
         let skey = stratum_key(scc);
         let mut why = if native.contains("program") { String::new() } else { format!("the native engine is off (modes: {native:?})") };
@@ -3844,6 +3959,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             why = format!("the native engine declined: {}", run.why_not.take().unwrap_or_else(|| "no reason given".into()));
             if prog.gates.iter().any(|(g, _)| scc.contains(g)) {
                 return Err(Error::Plan(format!("gated negations in {scc:?} need native steps for every rule")));
+            }
+            if scc.iter().any(|r| prog.answers.contains_key(r)) && scc.iter().any(|r| super::answers::produced(prog).contains_key(r.as_str())) {
+                return Err(Error::Plan(format!("requests in {scc:?} are answered only inside the native fixpoint: {why}")));
             }
             // This stratum runs in SQL, which reads the native relations it joins from their tables.
             let read: Vec<String> = rules

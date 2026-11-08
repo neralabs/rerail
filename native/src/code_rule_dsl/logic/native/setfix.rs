@@ -326,7 +326,12 @@ use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
 
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
-    let mut st = conn.prepare(&format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
+    read_sql(conn, &format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)), types, syms).map_err(|e| err(format!("{table}: {e}")))
+}
+
+fn read_sql(conn: &Connection, sql: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
+    let table = sql;
+    let mut st = conn.prepare(sql)?;
     let mut rows = st.query([])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -357,15 +362,20 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "rel" => {
                 let mut rel = Rel::new(toks[1], toks[2].as_bytes());
                 let mut empty = false;
+                let mut from = None;
                 let mut t = 3;
                 while t < toks.len() {
                     match toks[t] {
                         "empty" => { empty = true; t += 1; }
+                        "from" => { from = Some(unhex(toks.get(t + 1).ok_or_else(|| err("rel: from needs SQL"))?)?); t += 2; }
                         other => return Err(err(format!("rel: unknown token {other}"))),
                     }
                 }
-                // `empty`: the table was made this run and nothing wrote it (no statement).
-                if !empty {
+                // `empty`: the table was made this run and nothing wrote it (no statement). `from`: its rows are a
+                // query's (an input's, read where it is).
+                if let Some(sql) = from {
+                    for row in read_sql(conn, &sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                } else if !empty {
                     for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                 }
                 rel.stored = rel.n;

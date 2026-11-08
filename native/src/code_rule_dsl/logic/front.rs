@@ -349,6 +349,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+    /// Requests the runner answers inside the fixpoint (decision 0065 §2a), by request relation: the relations an
+    /// answer adds rows to. Each produced relation depends on its request (`strata`), and has no rules.
+    pub(in crate::code_rule_dsl) answers: BTreeMap<String, Vec<String>>,
 }
 
 /// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
@@ -869,8 +872,15 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 /// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
 /// `max` lattice, `min` into a `min` lattice).
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
-    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut edges = Edges::new();
+    // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
+    for (request, produced) in &prog.answers {
+        for p in produced {
+            derived.insert(p.clone());
+            edges.entry(p.clone()).or_default().insert((request.clone(), false));
+        }
+    }
     for (rel, native) in &prog.natives {
         if !derived.contains(rel) { continue; }
         edges.entry(rel.clone()).or_default().extend(native.reads().into_iter()
