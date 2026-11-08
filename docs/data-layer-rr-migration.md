@@ -23,6 +23,10 @@ The upstream library stage and replay are withdrawn. Decision 0065 describes typ
 The frontend, executor, corpus scheduler, typing, transducer, residency, and content-store code retain the upstream resolutions.
 Older transaction and alignment receipts remain historical evidence for their stated binaries.
 
+The native planner also maps extrema to their projected input columns (`c45450e23`).
+Constant filters remove columns from a native input. The aggregate now uses the same mapping as its atom tokens.
+A generic regression reproduces the earlier panic and verifies both minimum and maximum values after the repair.
+
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
 The canonical printer also supplies call-receiver text for `async_patterns`.
@@ -88,7 +92,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **85 target drafts and 15 absent translations**. None has full acceptance yet.
+The current inventory contains **86 target drafts and 14 absent translations**. None has full acceptance yet.
+The 86th draft, `grammar_fragment_usage`, preserves import resets, sticky alias eligibility, captured strings, unsafe constructor values, and reachable render returns.
+All 39 original tests pass, including 31 positive file checks and the FactEngine integration assertion.
+Its 165 supplemental API cases include 111 positive finding lists. All 172 reporter cases pass, including 112 positives.
+Twenty-one disabled-path controls reject missing behavior. Legacy helper domains and global migration acceptance remain open.
 The 85th draft, `grammar_callable_constructors`, preserves cross-file class membership, source function-scope rules, and breadth-first field assignment selection.
 All three original tests pass, including two positives. Its 124 supplemental API/protocol cases include 84 positive finding lists.
 All 119 reporter cases pass, including 84 positives. Twenty-two disabled-path controls reject missing semantic behavior.
@@ -1099,3 +1107,60 @@ The unfinished `grammar_fragment_usage` source recorder also has one remaining r
 
 The [alignment recheck](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-alignment-recheck.json.gz) records the exact engine differences, build provenance, reader results, and native test output.
 The inventory remains 85 drafts and 15 absent translations. Full migration acceptance remains pending.
+
+
+## 2026-11-08 — Fragment aliases, captured strings, and reachable render returns
+
+The native rule preserves the source collector's ordered alias behavior without a new runtime.
+Imports reset aliases. Only assignments of qualifying grammar values write aliases.
+Grammar eligibility grows between import barriers. A second stage copies fragment identity along the fixed, earlier assignment edges.
+The stages preserve aliases imported inside classes and assignments inside functions outside classes.
+Known grammar classes and captured string names retain the source's sticky state.
+
+Constructor capture follows `ast.walk` breadth-first order, including assignments inside nested bodies.
+Class capture uses module string state at class entry. Class-level annotations and constructor parameters retain their different exemptions.
+The rule checks unsafe direct passthrough separately from captured SQL strings.
+Reachability follows `self` and `cls` method calls, including cycles. The first render method starts the walk; other duplicate methods use their last definition.
+Diagnostics retain duplicates and parameter order on one line.
+
+The source recorder initially changed collector dispatch through lost signatures and unsupported traversal-context serialization.
+The repaired recorder preserves signatures and recursively transports AST values.
+It records the complete integration call before internal collector callbacks, including all stable result fields.
+Runtime timing fields are excluded from deterministic comparison.
+All 39 original tests pass in the source recording. Independent collection confirms the same 39 case identities.
+
+The empty native detector failed 31 original tests and passed eight.
+The annotation stage passed 22 tests. Capture execution then exposed a modern planner defect.
+Constant-filtered native inputs drop columns, but extrema retained the original aggregate column number.
+The reduced regression panicked with a two-column row and column index three.
+Repair `c45450e23` returns the input projection mapping with the atom and maps the aggregate column through it.
+The regression fails before the repair and passes after it. No executor change or alternate engine was added.
+
+All 39 original tests now pass with all 41 recorded observations and no semantic fallback.
+They include 31 positive file checks and the FactEngine integration assertion, which executes the native policy without a test entry override.
+The worker transport has a separate red/green test for production requests without `entryPoint`.
+The preceding callable-constructor suite also passes all three original cases on the repaired engine.
+
+The first supplemental runs passed 161 API cases and 168 reporter cases.
+An added Unicode method case then exposed a missing positive: CPython normalizes fullwidth method identifiers.
+The Datalog predicate now normalizes those names. The retained red case proves the earlier miss.
+The final corpus passes 165 API cases, including 111 positive finding lists, and 172 reporter cases, including 112 positives.
+It also checks Unicode aliases, ASCII word boundaries, and diagnostic order for several parameters on one line.
+All 21 mutations that disable or alter required behavior produce observable parity failures through successful native execution.
+
+All 96 tooling tests and 97 policy/table readers pass. Thirteen focused native unit tests pass.
+The prepared-program roundtrip test still fails on the known-empty `input_error` table. Its complete failure remains in the receipt.
+No full engine-suite success is claimed.
+The frozen root CLI build took 9.472 seconds; the unit build took 19.273 seconds. These are separate compilation wall times.
+Final shape remains merged through the unchanged fetched tip `07a6b4171`.
+
+The [native contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-fragment-usage-native-contracts.json.gz) retains source oracles, complete native shards, controls, builds, the planner repair, and its validator.
+Earlier receipts retain the [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-fragment-usage-original-source.json.gz),
+[empty-detector failures](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-fragment-usage-detector-red.json.gz),
+and [Unicode positive failure](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-fragment-usage-unicode-method-red.json.gz).
+
+Legacy visitor callbacks, private AST-object helpers, and direct legacy fact-view reporter compatibility remain outside this snapshot's complete coverage.
+The integration adapter supports the default production policy; arbitrary custom legacy file scopes remain unsupported.
+The original missing-path CLI assertion retains host argument and I/O protocol. The `.rr` rule invokes no Python.
+Full shared registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance remain open.
+The inventory is 86 drafts and 14 absent translations. Full migration acceptance remains pending.
