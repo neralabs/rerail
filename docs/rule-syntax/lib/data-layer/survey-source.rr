@@ -3,6 +3,7 @@
 // records classes inside functions, omits nested functions, and hoists every import.
 // Rows retain occurrences. Graph construction later replaces duplicate symbol IDs.
 #include "python/ast.rr"
+#include "python/print.rr"
 
 .decl sgs_module(d: number, path: symbol, module: symbol)
 sgs_module(d, path, @replace_all(@replace_all(path, "(?:/)?__init__\\.py$", ""), "/", ".")) :- doc(d, path, _), suffix("__init__.py", path), (path = "__init__.py" ; suffix("/__init__.py", path)).
@@ -38,3 +39,32 @@ sgs_import_candidate(a, d, "import_module", @head(@nfkc(module)), @nfkc(module))
 sgs_import_candidate(a, d, "import_module", @nfkc(local), @nfkc(module)) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n), text(n, module), field(a, "alias", al), text(al, local), docof(i, d).
 .decl sgs_import(d: number, k: symbol, name: symbol, target: symbol)
 sgs_import(d, k, name, target) :- sgs_import_candidate(a, d, k, name, target), count : { sgs_import_candidate(later, d, k, name, _), earlier(a, later) } = 0.
+
+// The survey keeps only args.args and args.kwonlyargs. Positional-only and
+// variadic parameters still bind body locals but are absent from this inventory.
+.decl sgs_parameter_site(f: node, p: node, name: symbol, index: number, annotation: loc)
+sgs_parameter_site(f, p, @nfkc(name), i, a) :- sgs_definition(f, _, _, _, k, owner), k != "class", sig_param(f, p, nm, i, "pos", a, _), text(nm, name), (owner = "" ; (@nfkc(name) != "self", @nfkc(name) != "cls")).
+sgs_parameter_site(f, p, @nfkc(name), i, a) :- sgs_definition(f, _, _, _, k, _), k != "class", sig_param(f, p, nm, i, "kwonly", a, _), text(nm, name).
+.decl sgs_parameter(f: node, ordinal: number, name: symbol, has_annotation: number, value: symbol)
+sgs_parameter(f, ordinal, name, 0, "") :- sgs_parameter_site(f, _, name, i, a), unset(a), ordinal = count : { sgs_parameter_site(f, _, _, j, _), j < i }.
+sgs_parameter(f, ordinal, name, 1, text) :- sgs_parameter_site(f, _, name, i, a), annotation_text(a, text), ordinal = count : { sgs_parameter_site(f, _, _, j, _), j < i }.
+.decl sgs_return(f: node, has_annotation: number, value: symbol)
+sgs_return(f, 1, text) :- sgs_definition(f, _, _, _, k, _), k != "class", field(f, "return_type", a), annotation_text(a, text).
+sgs_return(f, 0, "") :- sgs_definition(f, _, _, _, k, _), k != "class", !field(f, "return_type", _).
+
+// _collect_module_level_names has a special case only for direct class/method
+// statements. Names under a conditional definition are collected recursively,
+// including its body. Class bases and top-level function decorators are omitted.
+.decl sgs_statement(wrapper: node, statement: node)
+sgs_statement(s, s) :- body_stmt(_, s, _), !kind(s, "decorated_definition").
+sgs_statement(s, f) :- body_stmt(_, s, _), kind(s, "decorated_definition"), field(s, "definition", f).
+.decl sgs_module_expression(d: number, e: node)
+sgs_module_expression(d, s) :- kind(m, "module"), docof(m, d), body_stmt(m, wrapped, _), sgs_statement(wrapped, s), !kind(s, "class_definition"), !kind(s, "function_definition"), !import_stmt(s), !kind(s, "future_import_statement").
+sgs_module_expression(d, s) :- kind(m, "module"), docof(m, d), body_stmt(m, wrapped, _), sgs_statement(wrapped, c), kind(c, "class_definition"), field(c, "body", b), body_stmt(b, member, _), sgs_statement(member, s), !kind(s, "function_definition").
+.decl sgs_direct_module_method(d: number, f: node)
+sgs_direct_module_method(d, f) :- kind(m, "module"), docof(m, d), body_stmt(m, wrapped, _), sgs_statement(wrapped, c), kind(c, "class_definition"), field(c, "body", b), body_stmt(b, member, _), sgs_statement(member, f), kind(f, "function_definition").
+sgs_module_expression(d, e) :- sgs_direct_module_method(d, f), decorator(f, e).
+sgs_module_expression(d, e) :- sgs_direct_module_method(d, f), sig_param(f, _, _, _, _, _, e), kind(e, _).
+.decl sgs_module_ref(d: number, name: symbol)
+sgs_module_ref(d, @nfkc(name)) :- sgs_module_expression(d, e), ast_name(e, name).
+sgs_module_ref(d, @nfkc(name)) :- sgs_module_expression(d, e), ast_name(n, name), within(n, e).

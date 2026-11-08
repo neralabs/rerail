@@ -12,3 +12,9 @@ Symbol(@place(path, 0), "symbol", path, module, ordinal, sid, fq, name, qual, k,
 Defined(@place(path, 0), "defined", path, module, name, sid, ordinal) :- sgs_defined(d, name, sid, ordinal), sgs_module(d, path, module).
 .violation Imported(at: span, kind: symbol, path: symbol, module: symbol, name: symbol, target: symbol) code "SURVEY_IMPORTED" "import"
 Imported(@place(path, 0), k, path, module, name, target) :- sgs_import(d, k, name, target), sgs_module(d, path, module).
+.violation Parameter(at: span, kind: symbol, path: symbol, symbol_ordinal: number, ordinal: number, name: symbol, has_annotation: number, text: symbol) code "SURVEY_PARAMETER" "parameter"
+Parameter(@place(path, 0), "parameter", path, s, i, name, has, text) :- sgs_parameter(f, i, name, has, text), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
+.violation Return(at: span, kind: symbol, path: symbol, symbol_ordinal: number, has_annotation: number, text: symbol) code "SURVEY_RETURN" "return"
+Return(@place(path, 0), "return", path, s, has, text) :- sgs_return(f, has, text), sgs_symbol(f, d, s, _, _, _, _, _, _, _, _), sgs_module(d, path, _).
+.violation ModuleRef(at: span, kind: symbol, path: symbol, module: symbol, name: symbol) code "SURVEY_MODULE_REF" "module reference"
+ModuleRef(@place(path, 0), "module_ref", path, module, name) :- sgs_module_ref(d, name), sgs_module(d, path, module).

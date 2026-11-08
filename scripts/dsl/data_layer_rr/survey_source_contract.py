@@ -86,9 +86,14 @@ def main():
     else:
         from replay import execute_native
         baseline = json.loads(args.baseline.read_text())
-        if baseline['sourcePin'] != PIN:
-            parser.error('The source recording pin differs')
+        required = [(label, [dict(path=p, source=t) for p,t in files.items()]) for label,files in CASES]
+        recorded = [(case['id'], case['files']) for case in baseline['cases']]
+        if baseline['sourcePin'] != PIN or baseline['format'] != evidence['format']:
+            parser.error('The source recording identity differs')
+        if recorded != required or any(not case['expected'] for case in baseline['cases']):
+            parser.error('The complete source fixture recording is required')
         evidence['baselineSha256'] = sha(args.baseline.read_bytes())
+        evidence['engineSha256'] = sha(args.engine.read_bytes())
         for case in baseline['cases']:
             native = execute_native(args.engine, args.rule, case['files'], {})
             rows = ordered([dict(r['parameters']) for r in native['diagnostics']])

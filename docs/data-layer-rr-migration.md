@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`65d78128c`. It also adopts Final's 64-bit boundary for corpus row bindings.
+`066ab66ad`. Merge `13874e415` adopts Final's regex scans over node kinds and captures.
+It also adopts Final's 64-bit boundary for corpus row bindings.
 Earlier merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
 Earlier merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
 Earlier merge `43e884a18` adopts retained SQL waves and recursive SQL iterations across updates.
@@ -1467,3 +1468,19 @@ All fifteen focused guard and alignment tests pass, including four subtests.
 
 This producer has no Python dependency at execution time. Its contract command reads the earlier source recording.
 No native engine code changed. Full graph construction, consumer integration, and production acceptance remain incomplete.
+
+The next TDD rung expands the source corpus to nineteen cases and adds signature and module-reference rows (`c7e30f209`).
+Fifteen comparisons fail against the earlier producer. The first implementation still misses seven unannotated parameter rows across four cases.
+The missing rows come from an equality join on an unset annotation. The repair tests `unset` directly in the parameter rule.
+All nineteen complete row comparisons then pass, including canonical annotations and the source's unusual parameter exclusions.
+Module-reference checks retain names from conditional function bodies while omitting direct function bodies, class bases, and direct method annotations.
+
+Final shape advanced during these checks. The guard stopped acceptance before further native requests.
+Merge `13874e415` adopts committed tip `066ab66ad` with no conflicts. The root rebuild takes 241.078 seconds, recorded separately from execution.
+The frozen CLI is `010f545ea8fab01c`. It passes all four original dead-code tests and all thirty-six supplied-graph cases.
+All 104 tooling tests, 34 subtests, and 100 policy readers pass.
+Two new tooling tests reject incomplete recordings and prove that native mismatches cannot pass through source fallback or expected-value reuse.
+
+The [source producer receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-inventory.json.gz) contains recordings, failing stages, passing stages, consumed program bytes, and build identity.
+These checks cover inventory, imports, signatures, and module references. Decorators, bases, body references, graph construction, and roots remain incomplete.
+The production consumer still refuses source-only execution. This checkpoint does not complete `internal_dead_code` or global migration acceptance.

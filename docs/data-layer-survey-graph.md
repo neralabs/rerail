@@ -46,10 +46,12 @@ Do not widen their scopes to a union to force sharing.
 Keep graph relations narrow. Materialize shared rows only when they have a demonstrated second consumer.
 
 The source inventory lives in `docs/rule-syntax/lib/data-layer/survey-source.rr`.
-Thirteen source fixtures compare symbol occurrences, definition lists, module names, and final import maps with the pinned `_ModuleVisitor`.
+Nineteen source fixtures compare symbol occurrences, definition lists, module names, imports, signatures, and module references with the pinned `_ModuleVisitor`.
 They include nested classes, omitted nested functions, duplicate definitions, Unicode names, package paths, and imports from nested scopes.
 The native command reads an offline source recording. It does not import the Python scanner.
-These checks do not certify annotations, call edges, roots, findings, or production integration.
+Signature annotations use the shared native canonical printer.
+The checks retain the source's positional-only and variadic parameter exclusions, plus its different treatment of direct and conditional function bodies.
+These checks do not certify decorators, bases, body references, call edges, roots, findings, or production integration.
 
 ## Ordered class accessors
 
