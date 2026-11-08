@@ -252,8 +252,47 @@ No rule passes argument values into parameters: an unannotated parameter is open
 read a call site (`retparam`, `rpvar`, `fbind`) apply the callee's summary to the caller's arguments. That is
 instantiation, and it belongs in P3.
 
-**Measured (pending).** Each flow is cut to one document, and the run is scored against Jedi 0.19.2 on the 84
-files. The results go here.
+**Measured** (2026-11-08). The 84 files of the data layer, scored against Jedi 0.19.2 (8,882 calls), debug build
+of `65d78128c`, load 26–41.
+
+Each variant edits `calls.rr` only. Each cut adds `docof(c, d9), docof(f, d9)`, or the equivalent, so that the
+flow reaches only readers in its own document:
+
+| Variant | Flow cut | Agree | Unknown, Jedi decided | No edge | CPU (main thread) |
+|---|---|---|---|---|---|
+| base | none | 6,096 | 927 | 412 | 27.3 s |
+| a1 | returns inferred from bodies (`fret`), decorator returns (`decval`), across documents | 6,096 | 927 | 412 | 26.4 s |
+| a2 | a module's computed values (not alias assignments) for its importers | 6,095 | 928 | 412 | 29.2 s |
+| a3 | subclasses across documents (`sub`) | 6,096 | 927 | 412 | 19.3 s |
+| a123 | a1, a2 and a3 | 6,095 | 928 | 412 | 29.2 s |
+| a1234 | a123, and an unannotated callee in another document is open (`vopen`) | 6,095 | 928 | 412 | 18.6 s |
+| k1 | control: no inferred returns at all | 6,096 | 927 | 412 | 19.9 s |
+| k3 | control: no subclasses at all | 6,099 | 924 | 412 | 26.8 s |
+
+These runs had no typeshed, so that each took 20–35 s. With typeshed, the base run is 6,299 agree, 722 unknown and 414
+no edge, at 138.7 s user CPU and 625 MB. Typeshed's flows are declared (stubs), so the cuts do not touch them.
+A run of a1234 with typeshed has not been made yet.
+
+The dumps per call show what changed:
+- a1234 against base: one call. `l2050_transaction/tests/test_legacy_wrappers_runtime.py:116` reaches
+  `_resolve_legacy_result_async` through a module's computed value. It goes from agree to unknown.
+- k3 against base: three calls in `transaction.py` go from unknown to agree. Closed-world subclasses made them open.
+
+**What this shows.**
+- On this corpus, the analysis phase needs no flow from one file's bodies to another's. With every such flow cut,
+  6,095 of 6,096 calls still agree. Declared types, structure and resolution through lower phases carry the rest.
+- So P3 can be file-local over `types.`, and an inferred-interface phase is not needed for call resolution here.
+  If a later corpus needs one, it goes between P2 and P3, keyed by symbol (an inferred return per function), and
+  reaches its own fixed point.
+- The closed-world subclass closure costs about a third of the CPU (27.3 to 19.3 s), and on this corpus it decides
+  nothing. Removing it decides three more calls. It is a search (§4), asked only by the readers that need it.
+- What these runs do not show: rules other than call resolution may read inferred values (`pv` of an expression).
+  The cuts were scored only on call targets.
+
+Library code needs a fixed point too, over declared facts only: chains of re-exports and aliases, star imports, the
+method resolution order across files, overloads. That fixed point is P2. The phase order means it settles before P3
+reads it. In a session, delete-and-rederive maintains it as P1's delta arrives. Untyped library `.py` files are read
+only with `python.untyped=read`, and then only by P1.
 
 ## Order of work
 
