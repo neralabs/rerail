@@ -155,6 +155,7 @@ def main():
     from data_layer_rr_plan_ownership import plan_scope_ownership
     from data_layer_rr_transaction_closures import transaction_closures
     from data_layer_rr_callback_wrappers import transaction_callback_wrappers
+    from data_layer_rr_transaction_patterns import transaction_patterns
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -184,6 +185,7 @@ def main():
                   ('plan_scope_ownership', lambda s, t: plan_scope_ownership(s, t, header)),
                   ('transaction_closures', lambda s, t: transaction_closures(s, t, header)),
                   ('transaction_callback_wrappers', lambda s, t: transaction_callback_wrappers(s, t, header)),
+                  ('transaction_patterns', lambda s, t: transaction_patterns(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]
