@@ -387,9 +387,9 @@ pub(in crate::code_rule_dsl) fn globals(settings: &[(String, String)]) -> (BTree
     (named, library)
 }
 
-/// A policy's documents (`.scope`'s `dirs`, `include`, `exclude`), as lowering derives them: `rr_scope_doc(d)`. In a
-/// combined run, the guards on the policy's reads test it (decision 0089).
-pub(in crate::code_rule_dsl) const SCOPE_DOC: &str = "rr_scope_doc";
+/// The documents out of a policy's scope (`.scope`'s `dirs`, `include`, `exclude`), as lowering derives them:
+/// `rr_scope_not(d)`. In a combined run, the guards on the policy's reads negate it (decision 0089).
+pub(in crate::code_rule_dsl) const SCOPE_NOT: &str = "rr_scope_not";
 
 /// `scopes` with each option entry's values (`OPTION_GLOB`) added beside it, from the run's `options` as
 /// `option`/`option_item` read them: a directory under `dirs`, a glob under `include` or `exclude`. An option the run

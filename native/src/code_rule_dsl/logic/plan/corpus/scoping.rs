@@ -10,7 +10,7 @@
 //!   policy changed (it adds rules, or the library reads a relation the policy defines) stays each policy's own.
 //! - Canonical relations, and every relation of a policy they read, are *shared*: computed over every document.
 //! - Each other rule of a policy whose scope reads fewer documents than the run has a *guard* on each read of a base or
-//!   shared relation whose location no read of its own relations already gives: `rr_scope_doc(d)` of the read's
+//!   shared relation whose location no read of its own relations already gives: `!rr_scope_not(d)` of the read's
 //!   document (its document column, or `@doc(n)` of its node, a shift of the node id: no rows). A policy's own
 //!   relations are then made from its documents' rows only, by induction, so their locations need no guard.
 //!
@@ -40,11 +40,6 @@ pub(in crate::code_rule_dsl) struct Report {
     pub demoted: Vec<String>,
     /// Policies whose rules got guards, and the guards added.
     pub guarded: Vec<(String, usize)>,
-}
-
-/// The documents read that are out of a scope relation's (`rr_scope_doc…` to `rr_scope_not…`), which a guard negates.
-fn complement(scope_doc: &str) -> String {
-    scope_doc.replacen(front::SCOPE_DOC, "rr_scope_not", 1)
 }
 
 /// The guards and the canonical relations of `all`, the policies combined (see the module).
@@ -108,9 +103,9 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     // run's: ast-index-spike T2, union-scoped sharing loses to scope inflation).
     let n = policies.len();
     let scope_of = |i: usize| policies[i].scope.as_ref().map(|s| s.iter().cloned().collect::<BTreeSet<_>>());
-    let scope_doc_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_DOC);
+    let outside_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_NOT);
     let narrows = |set: &BTreeSet<usize>| {
-        set.iter().all(|&i| scope_of(i).is_some() && policies[i].own.contains(&scope_doc_of(i)))
+        set.iter().all(|&i| scope_of(i).is_some() && policies[i].own.contains(&outside_of(i)))
             && (0..n).any(|j| !set.contains(&j) && !set.iter().any(|&i| scope_of(i) == scope_of(j)))
     };
     let owners: BTreeMap<&str, usize> = policies.iter().enumerate().flat_map(|(i, p)| p.own.iter().map(move |r| (r.as_str(), i))).collect();
@@ -124,7 +119,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     for i in 0..n {
         if narrows(&BTreeSet::from([i])) {
             let heads = policies[i].own.iter().filter(|r| !shared.contains(*r) && !machinery(r)).cloned().collect();
-            groups.push((heads, scope_doc_of(i)));
+            groups.push((heads, outside_of(i)));
         }
     }
     let mut by_users: BTreeMap<BTreeSet<usize>, BTreeSet<String>> = BTreeMap::new();
@@ -140,10 +135,10 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
             continue;
         }
         let scope = match users.iter().next() {
-            Some(&i) if users.len() == 1 => scope_doc_of(i),
+            Some(&i) if users.len() == 1 => outside_of(i),
             _ => {
                 let k = unions.len();
-                unions.entry(users).or_insert_with(|| format!("{}_any{k}", front::SCOPE_DOC)).clone()
+                unions.entry(users).or_insert_with(|| format!("{}_all{k}", front::SCOPE_NOT)).clone()
             }
         };
         groups.push((heads, scope));
@@ -169,7 +164,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         }
     };
     // One rule's guards: on each read whose location no read of `covers` gives. Returns the guards added.
-    let guard_rule = |rule: &mut front::Rule, covers: &BTreeSet<String>, scope_doc: &str| -> usize {
+    let guard_rule = |rule: &mut front::Rule, covers: &BTreeSet<String>, outside: &str| -> usize {
         let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.clone()) } else { None };
         let mut covered: BTreeSet<String> = BTreeSet::new();
         for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(&a.rel)) {
@@ -179,14 +174,14 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
-        let at = |d: &str| Literal::Atom(Atom { rel: complement(scope_doc), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
+        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned(), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
-            let g = format!("rr_sd{}", *fresh);
+            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(n.to_owned())]) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Literal> {
-            let g = format!("rr_sd{}", *fresh);
+            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(g.clone())], neg: false, gated: false }), at(&g)]
         };
@@ -201,9 +196,11 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
                     if !derived.contains(&a.rel) {
                         // A base row is one document's: one guard, unless a location of it is covered.
                         if !dvs.iter().chain(&nvs).chain(&svs).any(|v| covered.contains(v)) {
-                            g = match (dvs.first(), nvs.first(), svs.first()) {
-                                (Some(d), ..) => vec![at(d)],
-                                (None, Some(n), _) => of_node(n, &mut fresh),
+                            // By the node where there is one (a shift: the read stays a test of that node, which
+                            // `simplify` inlines), else the document column, else a span's `docof`.
+                            g = match (nvs.first(), dvs.first(), svs.first()) {
+                                (Some(n), ..) => of_node(n, &mut fresh),
+                                (None, Some(d), _) => vec![at(d)],
                                 (None, None, Some(n)) => of_span(n, &mut fresh),
                                 (None, None, None) => Vec::new(),
                             };
@@ -243,38 +240,20 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         added
     };
     let mut rules = all.rules.clone();
-    for (heads, scope_doc) in &groups {
-        let added: usize = rules.iter_mut().filter(|r| heads.contains(&r.head.rel)).map(|r| guard_rule(r, heads, scope_doc)).sum();
-        report.guarded.push((scope_doc.clone(), added));
+    for (heads, outside) in &groups {
+        let added: usize = rules.iter_mut().filter(|r| heads.contains(&r.head.rel)).map(|r| guard_rule(r, heads, outside)).sum();
+        report.guarded.push((outside.clone(), added));
     }
     drop(place);
     all.rules = rules;
-    // Each scope's complement among the documents read: `rr_scope_not…(d) :- doc(d, _, _), !rr_scope_doc…(d)`.
-    for (_, scope_doc) in groups.iter().filter(|(_, s)| report.guarded.iter().any(|(g, n)| g == s && *n > 0)) {
-        let name = complement(scope_doc);
-        if all.decls.contains_key(&name) {
-            continue;
-        }
+    // Out of a union of scopes: out of each of them.
+    for (users, name) in unions {
         all.decls.insert(name.clone(), vec![("d".to_owned(), "int".to_owned())]);
         let d = Term::Var("d".to_owned());
         all.rules.push(front::Rule {
             head: Atom { rel: name, args: vec![d.clone()], neg: false, gated: false },
-            body: vec![
-                Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![d.clone(), Term::Wild, Term::Wild], neg: false, gated: false }),
-                Literal::Atom(Atom { rel: scope_doc.clone(), args: vec![d], neg: true, gated: false }),
-            ],
+            body: users.into_iter().map(|i| Literal::Atom(Atom { rel: outside_of(i), args: vec![d.clone()], neg: false, gated: false })).collect(),
         });
-    }
-    // A union of scopes: a document of any of them.
-    for (users, name) in unions {
-        all.decls.insert(name.clone(), vec![("d".to_owned(), "int".to_owned())]);
-        for i in users {
-            let d = Term::Var("d".to_owned());
-            all.rules.push(front::Rule {
-                head: Atom { rel: name.clone(), args: vec![d.clone()], neg: false, gated: false },
-                body: vec![Literal::Atom(Atom { rel: scope_doc_of(i), args: vec![d], neg: false, gated: false })],
-            });
-        }
     }
     Ok(report)
 }

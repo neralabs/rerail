@@ -31,7 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, SCOPE_DOC, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, SCOPE_NOT, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 mod findings;
@@ -714,22 +714,16 @@ impl Lowerer {
         for g in &out {
             self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
         }
-        // rr_scope_doc(d): a document of the scope, which a combined run's guards read (decision 0089): in a pack that
-        // reads more documents than this policy's scope, the policy's rules see only these documents' rows.
+        // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0089): in a
+        // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
         if !within.is_empty() || !out.is_empty() {
-            self.prog.decls.insert(SCOPE_DOC.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
-            let mut body = vec![doc.clone()];
+            self.prog.decls.insert(SCOPE_NOT.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
             if !within.is_empty() {
-                body.push(atom("rr_scope_in", vec![v("d")], false));
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
             }
-            if !out.is_empty() {
-                self.prog.decls.insert("rr_scope_out".to_owned(), vec![("p".to_owned(), "sym".to_owned())]);
-                for g in &out {
-                    self.prog.rules.push(Rule { head: head("rr_scope_out", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
-                }
-                body.push(atom("rr_scope_out", vec![v("p")], true));
+            for g in &out {
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
-            self.prog.rules.push(Rule { head: head(SCOPE_DOC, "d"), body });
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {

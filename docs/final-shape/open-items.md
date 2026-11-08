@@ -2330,6 +2330,15 @@ have to keep policies with different scopes apart. A doc-level guard (each polic
 `merge_identical` keeping policies of different scopes apart; the pack's findings still equal the union of the
 rules' runs alone.
 
+**Each policy's own facts, by structure (2026-11-08, decision 0089, `096d34181`, `cd59cb78b` and the commit after
+them).** Library relations are canonical (one copy for the run, made over their readers' scopes), and each
+policy's rules read base and shared rows only of its scope's documents, through `!rr_scope_not(@doc(n))` guards.
+`.global` shares a policy's own relation when every copy is alike. The structure is tested
+(`library_relations_are_shared_and_each_policy_reads_its_own_scope`, which fails without the guards). On s200 the
+pack's findings are still the union of the rules' runs alone (61). Cost: +6.6% instructions (893.0G against
+837.9G without guards), peak 1,319 against 1,350 MB. The 6.6% is the planning of about 800 scope strata in every
+chunk; giving `rr_scope_not` as base rows of the batch would remove it. O114 is closed.
+
 ## O115. A grep reader for files that are not documents
 
 t11 specifies `.input r(IO=grep, glob=…, re=…)`: one walk and one multi-pattern scan per file for all grep inputs,
