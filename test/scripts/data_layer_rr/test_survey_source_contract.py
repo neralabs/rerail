@@ -102,6 +102,22 @@ class SurveySourceContractTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.run_native(Path(directory),value,lambda *args:self.fail('Native must not start'))
 
+    def test_interrupted_native_run_retains_an_explicit_incomplete_receipt(self):
+        value=self.recording();calls=0
+        def native(*args):
+            nonlocal calls
+            calls+=1
+            if calls==2:raise TimeoutError('interrupted second case')
+            return dict(diagnostics=[dict(parameters=r) for r in value['cases'][0]['expected']],programInputs=[])
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with self.assertRaisesRegex(TimeoutError,'second case'):
+                self.run_native(root,value,native)
+            saved=json.loads((root/'result.json').read_text())
+        self.assertFalse(saved['complete']);self.assertFalse(saved['passed'])
+        self.assertEqual(len(saved['cases']),1)
+        self.assertTrue(saved['cases'][0]['passed'])
+
     def test_shards_partition_full_validated_corpus_without_dropping_or_repeating_cases(self):
         seen=[]
         for part in range(3):

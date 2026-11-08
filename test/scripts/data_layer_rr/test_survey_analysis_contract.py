@@ -71,3 +71,20 @@ class SurveyAnalysisContractTests(unittest.TestCase):
                 else:baseline['cases'][0]['files'][0]['source']='different'
                 with self.assertRaises(SystemExit):
                     self.run_native(Path(temporary),baseline,lambda *args:self.fail('Execution must not start'))
+
+    def test_interrupted_run_keeps_completed_cases_but_cannot_claim_completion(self):
+        baseline=self.recording();calls=0
+        def native(*args):
+            nonlocal calls
+            calls+=1
+            if calls==2:raise TimeoutError('interrupted second case')
+            return dict(diagnostics=[dict(code='IDC_GROUP',parameters=dict(category=name,ordinal=i))
+                                     for i,name in enumerate(baseline['cases'][0]['expected'])],programInputs=[])
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            with self.assertRaisesRegex(TimeoutError,'second case'):
+                self.run_native(root,baseline,native)
+            saved=json.loads((root/'result.json').read_text())
+        self.assertFalse(saved['complete']);self.assertFalse(saved['passed'])
+        self.assertEqual(len(saved['cases']),1)
+        self.assertTrue(saved['cases'][0]['passed'])
