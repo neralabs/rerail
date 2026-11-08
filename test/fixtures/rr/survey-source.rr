@@ -4,6 +4,7 @@
 .scope include "**/*.py"
 .scope exclude
 #include "data-layer/survey-exports.rr"
+sgs_scan_file(d) :- option_item("inputFiles", _, path), sgs_path(d, path).
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"

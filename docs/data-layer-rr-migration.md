@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`79fabb23d`. The latest merge adds cross-file rows memoized by import component.
+`0f0049ec7`. Merge `7a846bfca` adopts Final's parser-generator updates and its proposed library-module decision.
+The preceding merge adds cross-file rows memoized by import component.
 The preceding merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
 The preceding merge adopts SQL execution phases, fused reductions, and the phased-facts direction.
 Merge `16e572605` adopts in-fixpoint request answers, retained cross-file session strata, bulk memo replay, and span/grammar updates.
@@ -1839,6 +1840,7 @@ The named directory producer works through existing generic engine capabilities.
 The [scope-transport receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-workspace-transport.json.gz) retains exact programs, outputs, and the failing/working request shapes.
 The [scope target](data-layer-survey-graph.md#discovery-and-facade-scope-target) defines the next implementation boundary.
 Rule 89's production default still refuses execution until that boundary and its acceptance tests are complete.
+
 ## 2026-11-08 — Workspace scope regression before repair
 
 Merge `7a846bfca` adopts committed Final `0f0049ec7` without conflicts.
@@ -1856,4 +1858,41 @@ and [native failure](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-
 Seventeen harness tests pass, with 41 subtests.
 Their guards reject lost positives, resource leakage, changed scan scope, incomplete records, and source execution during native comparisons.
 The new cases supply ordered scan paths. They do not certify production discovery or persistent workspace updates.
+
+### Workspace resource boundary repaired
+
+The source inventory now requires explicit graph membership.
+Native load labels retain logical paths even when the engine reports canonical absolute paths.
+The facade reader uses resource metadata and direct definition names independently of graph membership.
+Graph assembly retains the caller's scan order. Overlapping graph and facade demands use one load label.
+The implementation uses shared `.rr` libraries and the existing native loader. It adds no engine mode or Python rule execution.
+
+All fifteen workspace cases pass in both producer and analysis layers.
+They cover positive exports, unreachable functions, unscanned definitions, empty graphs, relative imports, duplicate exports, and module collisions in both orders.
+One additional positive checks a facade definition that resolves to a scanned package's matching fqname.
+All six scope mutations cause complete-row mismatches through successful native execution.
+
+The same Final `0f0049ec7` cohort also passes:
+
+- All 106 existing producer comparisons and 130 complete source analyses, in disjoint bounded shards.
+- All 28 producer controls and twelve analysis controls.
+- All four original rule assertions, 36 supplied-graph cases, and twelve raw-helper cases.
+- Six focused native tests, including the randomized batched BFS comparison.
+- All 100 existing policy and table readers. Reader acceptance does not prove rule execution parity.
+- All 129 tooling tests and 74 subtests.
+
+One raw-helper invocation omitted `PYTHONHASHSEED=0` and selected a different missing-symbol error first.
+Its twelve-case rerun with the recorded oracle's seed passes without a rule change.
+The receipt retains both runs. This preserves the supplied order contract; it does not promise a fixed answer across arbitrary Python hash seeds.
+An initial reader summary also treated array output as an object. All 100 successful reader responses passed after their arrays were combined.
+
+The standard unit-test build took 127.351 seconds, separately from execution. Its SHA starts `0bc3afd0e4266045`.
+The CLI and unit binaries use identical committed engine source trees.
+The [scope acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-acceptance.json.gz)
+contains complete comparisons, controls, builds, native test logs, 97 consumed program snapshots, and harness bytes.
+Its earlier fourteen-case recording matches the failing run's recorded SHA exactly.
+
+Rule 89 still needs production directory discovery, reporting, CLI and registry acceptance, and persistent workspace updates.
+Its production default continues to refuse execution. No incomplete rule is marked accepted.
+The migration inventory remains eighty-nine drafts and eleven absent translations.
 

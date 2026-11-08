@@ -47,6 +47,8 @@ CASES=[
          {'data_layer/api.py':'from impl.a import K\n@decorate\ndef ﬁeld(): pass\n'}),
     case('facades-path-order', IMPLEMENTATION,
          {'data_layer/z.py':'from impl.a import dead as Zed\n', 'data_layer/a.py':'from impl.a import exported as Alpha\n'}),
+    case('unscanned-local-definition-fq', {'data_layer/api/__init__.py':'def exported(): pass\n'},
+         {'data_layer/api.py':'def exported(): pass\n'}),
 ]
 FORMAT='rerail.survey-workspace-scopes/v1'
 
@@ -78,6 +80,9 @@ def check_positives(cases):
     if not any(r['kind']=='graph_symbol' and r['sid']=='data_layer.api::facade_only'
                for r in by_id['facade-in-scan']['producer']):
         raise ValueError('Explicitly scanned facade lost its definitions')
+    if not any(r['kind']=='graph_export' and r['sid']=='data_layer.api::exported'
+               for r in by_id['unscanned-local-definition-fq']['producer']):
+        raise ValueError('Unscanned facade definitions must resolve against scanned fqnames')
 
 
 def main():

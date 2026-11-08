@@ -9,4 +9,5 @@ sgs_facade_directory("data_layer").
 sgs_facade_path(cat(directory, "/", name)) :- sgs_facade_directory(directory), dir_entry(directory, name, 0), suffix(".py", name).
 load(path, cat("survey:", path), "python") :- sgs_scan_path(path, _).
 load(path, cat("survey:", path), "python") :- sgs_facade_path(path).
+sgs_scan_file(d) :- sgs_scan_path(path, _), sgs_path(d, path).
 sgc_file(d, i) :- sgs_scan_path(path, i), sgs_module(d, path, _).

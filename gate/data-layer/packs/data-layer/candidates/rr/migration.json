@@ -1661,11 +1661,19 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-exports.rr",
-      "sha256": "502aaec544a2ff1cccc500a837d2f691d6f41fe48a378ee4e84f7ff1863aac2c",
+      "sha256": "e7c9fa9dd60a260ca0902ece6ea4dd5cbb070701c6b6f3e0c351192da394a0ac",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz",
+      "importedSha256": "502aaec544a2ff1cccc500a837d2f691d6f41fe48a378ee4e84f7ff1863aac2c",
+      "repairs": [
+        {
+          "before": "502aaec544a2ff1cccc500a837d2f691d6f41fe48a378ee4e84f7ff1863aac2c",
+          "after": "e7c9fa9dd60a260ca0902ece6ea4dd5cbb070701c6b6f3e0c351192da394a0ac",
+          "reason": "Keep ordered graph membership separate from loaded facade resources; recover logical paths and extract facade names independently"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-members.rr",
@@ -1693,11 +1701,19 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-source.rr",
-      "sha256": "10b2c246f9c6a3a16c9be87d4f1d664b4d1120282b90f520d45114542b52e95b",
+      "sha256": "01380b6d012c4f00fc50e035ad450a6aac943f5f7a41c097b8bb4d9ef7562ac5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz",
+      "importedSha256": "10b2c246f9c6a3a16c9be87d4f1d664b4d1120282b90f520d45114542b52e95b",
+      "repairs": [
+        {
+          "before": "10b2c246f9c6a3a16c9be87d4f1d664b4d1120282b90f520d45114542b52e95b",
+          "after": "01380b6d012c4f00fc50e035ad450a6aac943f5f7a41c097b8bb4d9ef7562ac5",
+          "reason": "Keep ordered graph membership separate from loaded facade resources; recover logical paths and extract facade names independently"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/ordered-class-members.rr",
@@ -1709,11 +1725,27 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-produced-graph.rr",
-      "sha256": "beb9f20e76755413e06f0c96c4e702457bfb52fb6d90785a2c7ad5c2c9fcc7ba",
+      "sha256": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-analysis.json.gz",
+      "importedSha256": "beb9f20e76755413e06f0c96c4e702457bfb52fb6d90785a2c7ad5c2c9fcc7ba",
+      "repairs": [
+        {
+          "before": "beb9f20e76755413e06f0c96c4e702457bfb52fb6d90785a2c7ad5c2c9fcc7ba",
+          "after": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
+          "reason": "Keep ordered graph membership separate from loaded facade resources; recover logical paths and extract facade names independently"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-scope.rr",
+      "sha256": "ed90f3155fa06bdba063509ab92d43eb3004b1f7d4c547397171e0b5d3ac2579",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/symbol_graph.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-acceptance.json.gz"
     }
   ],
   "rules": [

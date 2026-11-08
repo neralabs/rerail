@@ -3,7 +3,7 @@
 #include "data-layer/survey-edges.rr"
 
 .decl sgx_file(d: number, path: symbol, module: symbol)
-sgx_file(d, path, module) :- sgs_module(d, path, module), match_all("\\Adata_layer/[^/]+\\.py\\z", path).
+sgx_file(d, path, module) :- sgs_resource_module(d, path, module), match_all("\\Adata_layer/[^/]+\\.py\\z", path).
 .decl sgx_top(d: number, statement: node)
 sgx_top(d, statement) :- sgx_file(d, _, _), kind(m, "module"), docof(m, d), body_stmt(m, wrapper, _), sgs_statement(wrapper, statement).
 .decl sgx_all_candidate(d: number, a: node)
@@ -17,7 +17,7 @@ sgx_import_candidate(d, a, name, fq) :- sgx_top(d, i), sgs_from(i, _), sgs_impor
 .decl sgx_import(d: number, name: symbol, fq: symbol)
 sgx_import(d, name, fq) :- sgx_import_candidate(d, a, name, fq), count : { sgx_import_candidate(d, other, name, _), earlier(a, other) } = 0.
 .decl sgx_defined(d: number, name: symbol, fq: symbol)
-sgx_defined(d, name, cat(module, ".", name)) :- sgx_top(d, n), sgx_file(d, _, module), sgs_definition(n, d, name, _, _, _).
+sgx_defined(d, @nfkc(name), cat(module, ".", @nfkc(name))) :- sgx_top(d, n), sgx_file(d, _, module), (kind(n, "class_definition") ; kind(n, "function_definition")), def_name(n, name).
 .decl sgx_name(d: number, name: symbol)
 sgx_name(d, name) :- sgx_import(d, name, _), !prefix("_", name).
 sgx_name(d, name) :- sgx_defined(d, name, _), !prefix("_", name).

@@ -5,9 +5,17 @@
 #include "python/ast.rr"
 #include "python/print.rr"
 
+// A parsed resource is not automatically a graph input. Callers must supply
+// sgs_scan_file. Native load labels recover logical paths from canonical paths.
+.decl sgs_scan_file(d: number)
+.decl sgs_path(d: number, path: symbol)
+sgs_path(d, path) :- doc(d, path, label), !prefix("survey:", label).
+sgs_path(d, @slice(label, 7, strlen(label))) :- doc(d, physical, label), prefix("survey:", label), loaded(physical, label, "python").
+.decl sgs_resource_module(d: number, path: symbol, module: symbol)
+sgs_resource_module(d, path, @replace_all(@replace_all(path, "(?:/)?__init__\\.py$", ""), "/", ".")) :- sgs_path(d, path), suffix("__init__.py", path), (path = "__init__.py" ; suffix("/__init__.py", path)).
+sgs_resource_module(d, path, @replace_all(@slice(path, 0, strlen(path)-3), "/", ".")) :- sgs_path(d, path), suffix(".py", path), path != "__init__.py", !suffix("/__init__.py", path).
 .decl sgs_module(d: number, path: symbol, module: symbol)
-sgs_module(d, path, @replace_all(@replace_all(path, "(?:/)?__init__\\.py$", ""), "/", ".")) :- doc(d, path, _), suffix("__init__.py", path), (path = "__init__.py" ; suffix("/__init__.py", path)).
-sgs_module(d, path, @replace_all(@slice(path, 0, strlen(path)-3), "/", ".")) :- doc(d, path, _), suffix(".py", path), path != "__init__.py", !suffix("/__init__.py", path).
+sgs_module(d, path, module) :- sgs_scan_file(d), sgs_resource_module(d, path, module).
 .decl sgs_definition(n: node, d: number, name: symbol, qual: symbol, k: symbol, owner: symbol)
 sgs_definition(n, d, @nfkc(name), @nfkc(name), "class", "") :- kind(n, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).
 sgs_definition(n, d, @nfkc(name), @nfkc(name), "function", "") :- kind(n, "function_definition"), !nearest(n, _, "function_definition"), !nearest(n, _, "class_definition"), def_name(n, name), docof(n, d), sgs_module(d, _, _).
@@ -23,8 +31,8 @@ sgs_defined(d, name, sid, ordinal) :- sgs_symbol(n, d, _, sid, _, name, _, _, _,
 // Relative imports are clamped at the root by the original visitor, even when
 // Python execution would reject them. Keep module and symbol namespaces separate.
 .decl sgs_package(d: number, package: symbol)
-sgs_package(d, module) :- sgs_module(d, path, module), (path = "__init__.py" ; suffix("/__init__.py", path)).
-sgs_package(d, @pkg_up(module, 1)) :- sgs_module(d, path, module), path != "__init__.py", !suffix("/__init__.py", path).
+sgs_package(d, module) :- sgs_resource_module(d, path, module), (path = "__init__.py" ; suffix("/__init__.py", path)).
+sgs_package(d, @pkg_up(module, 1)) :- sgs_resource_module(d, path, module), path != "__init__.py", !suffix("/__init__.py", path).
 .decl sgs_from(i: node, module: symbol)
 sgs_from(i, @nfkc(module)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, module).
 sgs_from(i, @pkg_up(package, strlen(dots)-1)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), child(mn, pre, 0), text(pre, dots), !child(mn, _, 1), docof(i, d), sgs_package(d, package).

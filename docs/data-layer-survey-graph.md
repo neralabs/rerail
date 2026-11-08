@@ -151,6 +151,23 @@ Add positive cases where an unscanned facade defines a dead-looking function: th
 Include empty graph scopes, nested facade directories, duplicate module paths, renamed files, deletions, and incremental updates before production acceptance.
 The [scope-transport receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-workspace-transport.json.gz) retains the executable probes and transport tests.
 
+### Implemented resource boundary
+
+`survey-scope.rr` takes ordered `sgs_scan_path(path, ordinal)` rows from its caller.
+It requests these graph files and direct facade resources through the same native loader.
+Both requests use `survey:<logical-path>` labels, so overlapping demands share one physical document.
+`survey-source.rr` recovers logical paths from those labels and keeps package metadata for every resource.
+Only explicit `sgs_scan_file(document)` membership admits a document to the graph inventory.
+The direct scanner API supplies membership from its explicit input batch.
+
+The facade producer reads direct definition names independently of graph membership.
+It resolves those names against the scanned graph. It does not add resource definitions to that graph.
+The ordered assembly receives the caller's scan ordinals, rather than canonical path order or loader completion order.
+
+The workspace contract supplies scan paths as producer inputs. It leaves file loading to the native engine.
+This tests the resource boundary independently of production directory discovery.
+Persistent update, deletion, and rename contracts remain required. The production default remains an explicit refusal.
+
 The `survey-exports.rr` library now constructs facade export rows, exported root sets, and exported class sets.
 It follows direct `data_layer/*.py` paths, sorted filenames, direct imports and definitions, and import precedence over local definitions.
 The first ordinary `__all__` assignment controls explicit exports. An empty or unsupported value suppresses implicit exports.
