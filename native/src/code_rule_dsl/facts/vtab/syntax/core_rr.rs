@@ -625,8 +625,8 @@ impl CoreRows {
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
+    /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -657,9 +657,7 @@ impl CoreRows {
                 }
             }
         }
-        if !wants_tokens {
-            return;
-        }
+        let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
         let mut toks: Vec<(u32, u32, i64)> = (0..p.len())
             .filter_map(|l| {

@@ -453,8 +453,8 @@ pub(in crate::code_rule_dsl) struct Model {
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
     inputs: Inputs,
-    /// The relations the program's rules derive. Their columns are `c0`, `c1`, … even where an input of the
-    /// same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
+    /// The relations the program's rules derive or its facts state. Their columns are `c0`, `c1`, … even where an
+    /// input of the same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
     derived: HashSet<String>,
 }
 
@@ -1302,7 +1302,9 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
-    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    // A relation of the program's facts is its table too (`run`: `c0`, `c1`, …), though an input of that name has
+    // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).
+    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).chain(prog.facts.keys().filter(|rel| !prog.inputs.contains(*rel)).cloned()).collect();
     let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {

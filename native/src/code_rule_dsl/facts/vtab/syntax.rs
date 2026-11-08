@@ -1468,11 +1468,15 @@ impl Batch {
                     let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                     c.withheld(&p, &(line, msg.clone()), &mut string);
                 }
-                if core && (!withheld || guest.is_none()) {
-                    c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
-                    if wants_digests && !withheld {
-                        c.digests(&p, dialect, &mut string);
-                    }
+            }
+            // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
+            if core && (!withheld || guest.is_none()) {
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
+                if let Some(dialect) = dialect
+                    && wants_digests
+                    && !withheld
+                {
+                    c.digests(&p, dialect, &mut string);
                 }
             }
             if d.guest.is_none() {
