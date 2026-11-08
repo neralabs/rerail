@@ -633,7 +633,7 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        let created = retry_busy(&mut BusyRetries::default(), || {
+        let identity = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
         drop(connection);
@@ -641,6 +641,7 @@ impl ContentStore {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {
                 database_path: path.to_path_buf(),
+                identity,
             },
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
@@ -649,8 +650,8 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store just created replaces any atoms this process held for a file at its path.
-            atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
+            // A store created again at its path, by this process or another, has atoms of its own.
+            atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
             #[cfg(test)]

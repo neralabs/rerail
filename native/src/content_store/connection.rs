@@ -236,7 +236,8 @@ fn jittered(backoff: Duration) -> Duration {
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
 thread_local! {
-    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, SharedConnection>> =
+    /// By database path: the store's identity (`store_identity`) and the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, (i64, SharedConnection)>> =
         RefCell::new(HashMap::new());
 }
 
@@ -248,6 +249,9 @@ static ALL_CONNECTIONS: std::sync::LazyLock<ParkingMutex<ConnectionRegistry>> =
 
 pub(super) struct ThreadConnection {
     pub(super) database_path: PathBuf,
+    /// The store's identity when opened: a thread's connection to a store since created again at the path is not
+    /// this store's.
+    pub(super) identity: i64,
 }
 
 /// A locked thread connection, reopened if an idle release closed it.
@@ -270,17 +274,17 @@ impl ThreadConnection {
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
-            Arc::clone(
-                connections
-                    .entry(self.database_path.clone())
-                    .or_insert_with(|| {
-                        let connection = SharedConnection::default();
-                        ALL_CONNECTIONS
-                            .lock()
-                            .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                        connection
-                    }),
-            )
+            match connections.get(&self.database_path) {
+                Some((identity, connection)) if *identity == self.identity => Arc::clone(connection),
+                _ => {
+                    let connection = SharedConnection::default();
+                    ALL_CONNECTIONS
+                        .lock()
+                        .push((self.database_path.clone(), Arc::downgrade(&connection)));
+                    connections.insert(self.database_path.clone(), (self.identity, Arc::clone(&connection)));
+                    connection
+                }
+            }
         });
         let mut guard = connection.lock_arc();
         if guard.is_none() {
