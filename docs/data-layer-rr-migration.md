@@ -1817,3 +1817,9 @@ A scope probe initially collides with the built-in `loaded` relation because its
 Renaming the probe removes that collision. It does not justify a missing-feature ticket.
 The API replay transport also supplies `inputFiles`, which deliberately bypasses discovery scope.
 Production-scope acceptance needs a workspace runner without that explicit input batch.
+
+The next rule's original assertions are also recorded before native authoring.
+All four `raw_execute_regression` tests pass in the pinned source suite, with five complete observations.
+They include two positive findings, a clean materializer, a clean raising compatibility stub, and a relative-path result.
+The [raw-execute source receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-original-source.json.gz) preserves every assertion and observation.
+This source recording does not implement or certify the native rule. Its translation remains absent in the inventory.
