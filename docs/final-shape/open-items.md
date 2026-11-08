@@ -2861,6 +2861,14 @@ checks taken before this was found are inflated by it.
 
 **Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
 
+**Found and fixed 2026-11-08.** The cost was the roofline's calibration (`profile/roofline.rs`): before writing
+each report, about ten micro-benchmarks of 1–64 M iterations, five times over, 7.25 s in a debug build at load 33.
+The report now measures only the kinds of work the run charged, and keeps the roofs per engine binary (its path, size
+and modification time) for a day in `<temp>/rerail-roofs/`. The report says where they came from and how long it
+took ("read from the roof cache in 0.00 s"). data-layer-compat-aliases: 0.25 s with the profile, the same as without;
+the first profiled run of a new binary still pays the calibration once. Test:
+`the_roof_cache_reads_back_what_it_wrote`. Profiled timings taken before this are inflated by 5–9 s each.
+
 ## O140. Engine rules that make per-file facts look global
 
 Found 2026-11-08 by `RERAIL_SPLIT_DUMP` (decision 0093 §4). After a30c360ee fixed the demand context, the data-layer
