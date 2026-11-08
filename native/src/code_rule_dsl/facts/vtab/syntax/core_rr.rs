@@ -696,12 +696,15 @@ impl CoreRows {
         }
     }
 
-    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
-    /// one of its lines (`src_line`) or a comment node, is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
-    /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
-    /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
+    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c` is span `m`, made here past
+    /// the lines (`Extra::matched`). `c` is a document's `source`, one of its lines (`src_line`), a comment node, a
+    /// node of the kinds the rules bind it to, or a span another pattern's group captured (decision 0081). Group ""
+    /// is the whole match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all`
+    /// says; a `match` pattern is anchored (`rr::lower`), so it has one. Each regex runs once over the file, or once
+    /// per distinct text of its containers (decisions 0042 §3, 0081): containers with the same text share the scan.
     pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
         use crate::code_rule_dsl::logic::front::SpanIn;
+        use std::collections::{BTreeSet, HashMap};
         let facts = std::sync::Arc::clone(&p.facts);
         let src = facts.source.as_str();
         let base = p.len();
@@ -711,33 +714,87 @@ impl CoreRows {
         } else {
             Vec::new()
         };
+        // The nodes of each kind a pattern runs over, by local id, read off the tree once.
+        let wanted: BTreeSet<&str> = patterns.iter().filter_map(|(w, _, _)| match w { SpanIn::Kinds(k) => Some(k), _ => None }).flatten().map(String::as_str).collect();
+        let mut of_kind: HashMap<&str, Vec<([u32; 2], u32)>> = HashMap::new();
+        if !wanted.is_empty() {
+            for l in 0..base {
+                if let Some(k) = wanted.get(dialect.name(&facts, p.core[l as usize])) {
+                    of_kind.entry(k).or_default().push((p.span(l), l));
+                }
+            }
+        }
+        // A pattern over another's captures runs after it: in rounds, each taking the patterns whose sources ran.
+        let mut order: Vec<usize> = Vec::with_capacity(patterns.len());
+        let mut ran: BTreeSet<&str> = BTreeSet::new();
+        while order.len() < patterns.len() {
+            let ready: Vec<usize> = (0..patterns.len())
+                .filter(|i| !order.contains(i))
+                .filter(|&i| match &patterns[i].0 {
+                    SpanIn::Capture(source, _) => ran.contains(source.as_str()) || !patterns.iter().any(|(w, q, _)| q == source && !matches!(w, SpanIn::Capture(..))),
+                    _ => true,
+                })
+                .collect();
+            // A cycle of captures (none in a lowered program) runs in plan order.
+            let ready = if ready.is_empty() { (0..patterns.len()).filter(|i| !order.contains(i)).collect() } else { ready };
+            for i in ready {
+                ran.insert(patterns[i].1);
+                order.push(i);
+            }
+        }
+        // Each pattern's captured spans by group, for the patterns over them: their spans and ids.
+        let mut captured: HashMap<(&str, &str), Vec<([u32; 2], u32)>> = HashMap::new();
         let x = p.extra.as_mut().expect("core.rr's spans");
         let source = x.tokens;
-        for &(within, pattern, ref re) in patterns {
+        let mut scanned = 0u64;
+        for i in order {
+            let (within, pattern, re) = (&patterns[i].0, patterns[i].1, &patterns[i].2);
             let pat = string(pattern) as i64;
             // Each container's text and its local id.
             let containers: Vec<([u32; 2], u32)> = match within {
                 SpanIn::Source => vec![(x.spans[source as usize], base + source)],
                 SpanIn::Line => (1..=x.lines.count() as u32).map(|l| (x.spans[(source + l) as usize], base + source + l)).collect(),
                 SpanIn::Comment => comments.clone(),
+                SpanIn::Kinds(kinds) => {
+                    let mut all: Vec<([u32; 2], u32)> = kinds.iter().filter_map(|k| of_kind.get(k.as_str())).flatten().copied().collect();
+                    all.sort_unstable_by_key(|&(_, l)| l);
+                    all.dedup();
+                    all
+                }
+                SpanIn::Capture(source, group) => captured.get(&(source.as_str(), group.as_str())).cloned().unwrap_or_default(),
             };
+            let names: Vec<(usize, &str)> = re.capture_names().enumerate().filter_map(|(g, name)| match (g, name) {
+                (0, _) => Some((0, "")),
+                (_, Some(name)) => Some((g, name)),
+                (_, None) => None,
+            }).collect();
+            let ids: Vec<i64> = names.iter().map(|(_, name)| string(name) as i64).collect();
+            // The matches of one distinct text: (match, group, start, end), offsets in the text.
+            let mut by_text: HashMap<&str, Vec<(usize, usize, u32, u32)>> = HashMap::new();
             for ([a, b], c) in containers {
-                let cid = i64::from(p.key) << 32 | i64::from(c);
-                for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
-                    for (g, name) in re.capture_names().enumerate() {
-                        let name = match (g, name) {
-                            (0, _) => "",
-                            (_, Some(name)) => name,
-                            (_, None) => continue,
-                        };
-                        let Some(m) = caps.get(g) else { continue };
-                        let id = base + x.spans.len() as u32;
-                        x.spans.push([a + m.start() as u32, a + m.end() as u32]);
-                        self.rx_span.push([pat, cid, j as i64, string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
+                let text = &src[a as usize..b as usize];
+                let found = by_text.entry(text).or_insert_with(|| {
+                    scanned += text.len() as u64;
+                    let mut found = Vec::new();
+                    for (j, caps) in re.captures_iter(text).enumerate() {
+                        for (k, &(g, _)) in names.iter().enumerate() {
+                            if let Some(m) = caps.get(g) {
+                                found.push((j, k, m.start() as u32, m.end() as u32));
+                            }
+                        }
                     }
+                    found
+                });
+                let cid = i64::from(p.key) << 32 | i64::from(c);
+                for &(j, k, start, end) in found.iter() {
+                    let id = base + x.spans.len() as u32;
+                    x.spans.push([a + start, a + end]);
+                    self.rx_span.push([pat, cid, j as i64, ids[k], i64::from(p.key) << 32 | i64::from(id)]);
+                    captured.entry((pattern, names[k].1)).or_default().push(([a + start, a + end], id));
                 }
             }
         }
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
     }
 
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable

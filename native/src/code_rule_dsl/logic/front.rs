@@ -364,13 +364,18 @@ pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, 
     scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
 }
 
-/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), or each
-/// comment node (`kind(c, "comment")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), each line (`src_line`), each
+/// comment node (`kind(c, "comment")`), each node of some kinds (`kind(c, "string")`, through derived columns too),
+/// or each span another pattern's group captured (decision 0081).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::code_rule_dsl) enum SpanIn {
     Source,
     Line,
     Comment,
+    /// The nodes of these kinds.
+    Kinds(std::collections::BTreeSet<String>),
+    /// The spans group `.1` of pattern `.0` captured (as `rx_span` names them).
+    Capture(String, String),
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
