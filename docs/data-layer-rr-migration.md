@@ -1401,7 +1401,7 @@ Those contracts remain required for global acceptance. The inventory remains 88 
 ## 2026-11-08 — Next source contract: internal dead code
 
 The next missing translation is `internal_dead_code`, followed by `imperative_private_functions`.
-Its four unchanged original tests pass in 0.43 seconds. The recording retains four complete, nonempty helper results.
+Its four unchanged original tests pass. The recording retains four complete, nonempty helper results.
 It records supplied graph state before and after each call, including restoration of exported roots.
 The suite imports the script by its plain module name; the recorder binds that name and its package alias to one module.
 The [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-internal-dead-code-original-source.json.gz) is an offline oracle, not native acceptance.
