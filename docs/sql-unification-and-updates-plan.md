@@ -830,3 +830,106 @@ The next performance changes remain substantial:
    CPU improvements alone do not meet the shared complete-job execution allowance.
 4. Add a SQL-session parity adapter to the existing acceptance report.
    Keep diagnostic reports distinct from accepted benchmark evidence until that adapter verifies complete outputs and failures.
+
+
+### Single initial schedule, bulk roots, and helper statements
+
+This work merges Final rerail shape at `9993e7e5f`, through merge commit `e830fafae`.
+The changes below supersede the preceding initial-execution follow-ups for supported recursive programs.
+
+The executor previously ran the cold kernel, then evaluated a second retained trace.
+The new path constructs retained state and produces the initial answer through one global wave schedule.
+A global schedule is necessary because dependency gates cross component boundaries.
+Constants, pending frontiers, widening counters, and the closing empty frame retain their original timing.
+Unsupported mixed programs keep the explicit cold fallback. They can still incur separate retained preparation.
+The preparation report identifies the selected path through `initial_execution`.
+
+Dense initial joins previously inserted persistent rows and indexes individually.
+Bulk loaders now construct complete-row, primary-key, row-id, and required secondary trees from sorted entries.
+Unchanged rows and branches retain their shared pointers. Row IDs and frozen cursors remain stable.
+Initial join caches derive their results from retained heads, so they avoid another complete result query.
+The initial dense path does not replace sparse maintenance on edits.
+
+Small native lookups also copied version metadata and repeated tree traversal.
+Frozen readers now share an immutable version pointer. Point probes return shared cells directly.
+Large contiguous scans use a frozen iterator.
+Scratch snapshots share roots without a scope change. Delta indexes initialize only when a lookup needs them.
+
+Native journals compose set changes directly. Empty keys, folds, and unchanged caches avoid redundant SQL.
+Candidate queries and wave statistics publish in batches.
+A warm-walk regression exposed a missing index on a nonleading bound column.
+The emitter now prepares that access path. The regression returns to zero full-scan steps.
+
+An upstream edit can shorten a gate and activate an earlier frame that never initialized its operator cache.
+Initial templates retain the operator roots for this case.
+The frame preserves its external journals and reconciles all edits against the template before evaluation.
+Nested native and SQL savepoints restore failed initial attempts without scanning existing sessions.
+
+#### Measurements
+
+The workload contains independent cyclic paths, a distance lattice, and six edits across repeated change shapes.
+Both sizes validate initial answers, each output delta, unaffected regions, and scratch reuse.
+`benchmark/sql-executor.py` generates these cases with `--only update-recursive-lattice --repeats 3`.
+The runner is the `sql-executor-bench` example.
+The optimized `profiling` build runs on macOS arm64.
+Each value below is the median of three fresh processes. Other compiler jobs ran concurrently.
+The baseline is `ddf330ef8`, with the preceding index and profiling changes already present.
+
+| Regions / edges | Initial CPU before | Initial CPU after | Peak RSS before | Peak RSS after |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 / 5,000 | 0.419 s | 0.254 s | 86.6 MiB | 87.0 MiB |
+| 10,000 / 50,000 | 5.180 s | 2.876 s | 700.6 MiB | 692.2 MiB |
+
+The larger case uses 44% less initial CPU. Peak memory remains close to the baseline.
+Retained wave versions still dominate memory. Bulk construction reduces write cost but does not remove that history.
+
+| Counter | Before | After |
+| --- | ---: | ---: |
+| Initial SQL, 5,000 edges | 740 | 198 |
+| Initial SQL, 50,000 edges | 764 | 198 |
+| Initial VM instructions, 5,000 edges | 10,579,437 | 3,341,880 |
+| Initial VM instructions, 50,000 edges | 104,701,629 | 32,375,880 |
+| Statements per edit | 563–732 | 121–197 |
+| VM instructions per edit | 9,754–17,397 | 4,351–9,177 |
+| Complete shared capture, 5,000 edges | 4,494 | 1,173 |
+| Complete shared capture, 50,000 edges | 4,518 | 1,173 |
+
+The shared captures include session setup, initial execution, edits, queries, and teardown.
+Both captures have complete receipts, no running statements, no unexpected explanation failures, and no incomplete native operations.
+The larger capture contains 97 setup statements, 18 transaction statements, and 1,058 remaining statements.
+The fixed complete-job allowance remains 100. Both captures still fail that allowance.
+The diagnostic report also lacks a framework parity adapter, despite the separate benchmark answer checks.
+These results demonstrate improvement. They do not grant framework performance acceptance.
+
+The large request has SHA-256 `fc49371c11f55f9abc96d7a437426bff9055fba993eb7aa66457449043c7d5e8`.
+The baseline binary has SHA-256 `557a2e649dce57bf787045162dbe327e7d11d34342abc99d6d5e1767c40938f2`.
+The measured binary has SHA-256 `6e6f2b233adfb4b516c149c82bbfbd06ffcdd6e7d4189132349422da480bd5eb`.
+The final source additionally checks that bulk expressions reject noninteger values, matching row insertion through the virtual table.
+
+#### Validation
+
+The final source passes 125 SQL-related Rust tests, with one child-process test ignored by design.
+The focused storage, initial schedule, and profiling selection also passes all 22 tests.
+Separate optimized runs pass the recursive count case and the 100,000-edge recursive lattice case.
+All 15 report tests pass. The library compiles with `code-rule-profile` enabled.
+The structure gate retains 10 passing metrics and 15 existing failures, with no new findings.
+
+The independent cold oracle compares values, wave counts, positive frontiers, and widening counters.
+A two-batch edit checks scalar journals before an upstream deletion activates an earlier frame.
+Other regressions cover native savepoints, stable row IDs, shared roots, frozen cursors, and integer type errors.
+Sparse work limits, failure recovery, projection views, and session reset also pass.
+
+#### Remaining work
+
+1. Fuse the context, contribution, head, and fold queries within each operator phase.
+   The remaining fixed overhead repeats across rules and frames, even when deltas contain few rows.
+   Preserve SQL expressions and native function semantics. Do not replace rule execution with an opaque native evaluator.
+2. Reduce private schema and control setup. Setup alone consumes almost the complete allowance in the larger capture.
+   Reuse fixed slots and publish control records in batches. Include cleanup in each complete measurement.
+3. Add a SQL-session parity adapter to the shared acceptance report.
+   The adapter must verify complete outputs, edit deltas, and failure behavior before acceptance.
+4. Extend the single initial schedule to unsupported mixed shapes, with cold-oracle comparisons for each new shape.
+   Keep the fallback visible until those checks pass.
+
+The task-owned build targets and `/tmp/rerail-sql-*` artifacts are removed at the user's request after validation.
+This includes the historical artifact paths above. The measurements and identities remain in this plan.

@@ -439,13 +439,14 @@ impl Reducer {
             Kind::Max => format!("max({value})"),
             Kind::Join => self.join.as_ref().unwrap().render(),
         };
-        execute(
+        insert(
             db,
+            &self.groups,
             &format!(
-                "INSERT INTO {} SELECT {cols},count(*),{reduction} FROM ({}) rr_join_values GROUP BY {cols}",
-                self.groups,
+                "SELECT {cols},count(*),{reduction} FROM ({}) rr_join_values GROUP BY {cols}",
                 self.projection.render()
             ),
+            storage,
         )?;
         if matches!(self.kind, Kind::Min | Kind::Max | Kind::Join) {
             owned(
@@ -459,15 +460,16 @@ impl Reducer {
                 ),
                 storage,
             )?;
-            execute(
+            insert(
                 db,
+                &self.values,
                 &format!(
-                    "INSERT INTO {} SELECT {},count(*) FROM ({}) GROUP BY {}",
-                    self.values,
+                    "SELECT {},count(*) FROM ({}) GROUP BY {}",
                     names("", self.width()),
                     self.projection.render(),
                     names("", self.width())
                 ),
+                storage,
             )?;
         }
         Ok(())

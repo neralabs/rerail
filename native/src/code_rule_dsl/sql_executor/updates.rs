@@ -186,22 +186,27 @@ impl CodeRuleSqlExecutor {
             }
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
             {
-                let mut stats = self
-                    .db
-                    .prepare_cached("INSERT OR REPLACE INTO wave_stats(tbl,rows) VALUES (?1,?2)")
-                    .map_err(error)?;
+                let mut rows = Vec::new();
                 for run in &executions {
                     for (name, count) in &run.counts {
-                        stats
-                            .execute(rusqlite::params![name, *count as i64])
-                            .map_err(error)?;
+                        rows.push(vec![
+                            SqlValue::Text(name.clone()),
+                            SqlValue::Integer(*count as i64),
+                        ]);
                     }
                 }
                 for p in &prepared {
-                    stats
-                        .execute(rusqlite::params![p.name, p.source.estimated_len() as i64])
-                        .map_err(error)?;
+                    rows.push(vec![
+                        SqlValue::Text(p.name.clone()),
+                        SqlValue::Integer(p.source.estimated_len() as i64),
+                    ]);
                 }
+                plan::insert_many(
+                    &self.db,
+                    "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
+                    rows,
+                )
+                .map_err(error)?;
             }
             work.cleanup()?;
             self.db

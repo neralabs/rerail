@@ -22,6 +22,7 @@ fn initial() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
 }
 fn check(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
     let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
     for (name, columns) in inputs {
         bind(
             &mut fresh,
@@ -334,6 +335,7 @@ fn recursive_registered_joins_retract_unsupported_cycles_and_keep_empty_keys_abs
     ] {
         change(&mut e, patch);
         let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
         super::registered_joins::register_bits(&mut fresh);
         bind(
             &mut fresh,
@@ -397,6 +399,7 @@ fn recursive_splitters_retain_the_immutable_integer_domain() {
     ] {
         change(&mut e, patch);
         let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
         bind(&mut fresh, "owner", &["n"], rows(&e, "SELECT * FROM owner"));
         bind(
             &mut fresh,

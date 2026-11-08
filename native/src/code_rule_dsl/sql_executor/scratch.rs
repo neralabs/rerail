@@ -16,6 +16,7 @@ pub(super) struct Work<'a> {
     positions: BTreeMap<(String, bool), usize>,
     pub created: usize,
     pub version_nodes: usize,
+    pub preparing: bool,
 }
 pub(super) struct Mark {
     used: usize,
@@ -23,8 +24,12 @@ pub(super) struct Mark {
 }
 
 impl Pool {
-    pub fn clear(&mut self, db: &rusqlite::Connection) -> Result<()> {
+    pub fn clear(&mut self, db: &rusqlite::Connection, store: &versions::Store) -> Result<()> {
         for name in self.tables.values().flatten() {
+            if store.owns(name) {
+                store.remove_all(db, name)?;
+                continue;
+            }
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}", quote(name)))
                 .map_err(error)?;
         }
@@ -34,7 +39,10 @@ impl Pool {
 }
 
 impl<'a> Work<'a> {
-    pub fn profile_scope(&self, fields: impl FnOnce()->Value) -> Option<super::super::sql_profile::Context> {
+    pub fn profile_scope(
+        &self,
+        fields: impl FnOnce() -> Value,
+    ) -> Option<super::super::sql_profile::Context> {
         self.profiler.map(|p| p.scope(fields()))
     }
     /// Sequential temporal operators reuse scratch slots while the caller's deltas stay live.
@@ -46,6 +54,10 @@ impl<'a> Work<'a> {
     }
     pub fn rewind(&mut self, mark: Mark) -> Result<()> {
         for name in &self.used[mark.used..] {
+            if let Some(store) = self.versions.filter(|s| s.owns(name)) {
+                store.clear_scratch(name)?;
+                continue;
+            }
             self.db
                 .execute(&format!("DELETE FROM {}", quote(name)), [])
                 .map_err(error)?;
@@ -64,6 +76,7 @@ impl<'a> Work<'a> {
             positions: BTreeMap::new(),
             created: 0,
             version_nodes: 0,
+            preparing: false,
         }
     }
     pub fn allocate(&mut self, definition: String, without_rowid: bool) -> Result<String> {
@@ -73,14 +86,18 @@ impl<'a> Work<'a> {
         if *position == tables.len() {
             let name = format!("__rr_update_{}", self.pool.next);
             self.pool.next += 1;
-            self.db
-                .execute_batch(&format!(
-                    "CREATE TEMP TABLE {}({}){}",
-                    quote(&name),
-                    shape.0,
-                    if without_rowid { " WITHOUT ROWID" } else { "" }
-                ))
-                .map_err(error)?;
+            if let Some(store) = self.versions.filter(|_| shape.1) {
+                store.create_scratch(self.db, &name, versions::Schema::generated(&shape.0)?)?;
+            } else {
+                self.db
+                    .execute_batch(&format!(
+                        "CREATE TEMP TABLE {}({}){}",
+                        quote(&name),
+                        shape.0,
+                        if without_rowid { " WITHOUT ROWID" } else { "" }
+                    ))
+                    .map_err(error)?;
+            }
             tables.push(name);
             self.created += 1;
         }
@@ -91,6 +108,10 @@ impl<'a> Work<'a> {
     }
     pub fn cleanup(&self) -> Result<()> {
         for name in &self.used {
+            if let Some(store) = self.versions.filter(|s| s.owns(name)) {
+                store.clear_scratch(name)?;
+                continue;
+            }
             self.db
                 .execute(&format!("DELETE FROM {}", quote(name)), [])
                 .map_err(error)?;

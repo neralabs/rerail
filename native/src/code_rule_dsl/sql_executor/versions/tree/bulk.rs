@@ -3,6 +3,14 @@ use super::*;
 
 impl<V: Clone> Node<V> {
     pub fn bulk(entries: Vec<(Key, V)>, hashed: bool) -> Link<V> {
+        Self::bulk_reuse(entries, hashed, &None, &|_, _| false)
+    }
+    pub fn bulk_reuse<F: Fn(&V, &V) -> bool>(
+        entries: Vec<(Key, V)>,
+        hashed: bool,
+        old: &Link<V>,
+        same: &F,
+    ) -> Link<V> {
         if entries.is_empty() {
             return None;
         }
@@ -23,23 +31,56 @@ impl<V: Clone> Node<V> {
             left[i] = previous;
             stack.push(i);
         }
-        fn build<V: Clone>(
+        fn build<V: Clone, F: Fn(&V, &V) -> bool>(
             at: Option<usize>,
             entries: &[(Key, V)],
             left: &[Option<usize>],
             right: &[Option<usize>],
             hashed: bool,
+            old: &Link<V>,
+            same: &F,
         ) -> Link<V> {
-            at.map(|i| {
-                Node::make(
-                    entries[i].0.clone(),
-                    entries[i].1.clone(),
-                    build(left[i], entries, left, right, hashed),
-                    build(right[i], entries, left, right, hashed),
-                    hashed,
-                )
-            })
+            let Some(i) = at else {
+                return None;
+            };
+            let matched = old.as_ref().filter(|n| n.key == entries[i].0);
+            let (before, after) = if let Some(n) = matched {
+                (n.left.clone(), n.right.clone())
+            } else {
+                let (l, _, r) = Node::split(old, &entries[i].0);
+                (l, r)
+            };
+            let l = build(left[i], entries, left, right, hashed, &before, same);
+            let r = build(right[i], entries, left, right, hashed, &after, same);
+            if let Some(n) = matched {
+                let identical = |a: &Link<V>, b: &Link<V>| match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    _ => false,
+                };
+                if identical(&l, &n.left)
+                    && identical(&r, &n.right)
+                    && same(&entries[i].1, &n.value)
+                {
+                    return Some(n.clone());
+                }
+            }
+            Some(Node::make(
+                matched.map_or_else(|| entries[i].0.clone(), |n| n.key.clone()),
+                entries[i].1.clone(),
+                l,
+                r,
+                hashed,
+            ))
         }
-        build(stack.first().copied(), &entries, &left, &right, hashed)
+        build(
+            stack.first().copied(),
+            &entries,
+            &left,
+            &right,
+            hashed,
+            old,
+            same,
+        )
     }
 }

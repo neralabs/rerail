@@ -183,5 +183,6 @@ fn profiled_session_child() {
     versions.close(&e.db).unwrap();
     drop(e);
     let store = tempfile::tempdir().unwrap();
+    super::super::super::tools::sql(&store.path().join("constant.sqlite"),&json!({"program":".decl answer(n:number)\nanswer(7).\n.output answer\n","queries":[{"sql":"SELECT * FROM answer"}]}).to_string()).unwrap();
     super::super::super::tools::sql(&store.path().join("store.sqlite"), &json!({"relations":[{"name":"edge","columns":["a","b","w"],"rows":[[0,1,2],[1,0,1]]},{"name":"root","columns":["n"],"rows":[[0]]}],"program":PROGRAM,"queries":[{"sql":"SELECT * FROM distance"}]}).to_string()).unwrap();
 }

@@ -119,8 +119,16 @@ pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32
             });
         }
         for (table, cols) in columns {
-            if !cols.contains(&0) {
-                indexes.insert((table, cols.into_iter().collect()));
+            let prefix = cols.iter().copied().eq(0..cols.len() as u32);
+            if !prefix {
+                indexes.insert((table.clone(), cols.iter().copied().collect()));
+            }
+            // Delta variants can bind a later field before the composite index's
+            // leading field. They need that access path without an automatic index.
+            for &c in &cols {
+                if c > 0 && (prefix || Some(&c) != cols.first()) {
+                    indexes.insert((table.clone(), vec![c]));
+                }
             }
         }
         for e in block

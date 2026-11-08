@@ -352,6 +352,12 @@ fn waves(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves
 pub(in crate::code_rule_dsl) fn execute_sql(db: &Database, program: &Program, max_waves: u32) -> StoreResult<u32> {
     execute_sql_with(db, program, max_waves, || Ok(()))
 }
+pub(in crate::code_rule_dsl) fn declare_sql(db:&Database,program:&Program)->StoreResult<()> {
+    declare(db,program,false)?;Ok(())
+}
+pub(in crate::code_rule_dsl) fn execute_declared(db:&Database,program:&Program,max_waves:u32)->StoreResult<u32> {
+    waves(db,program,None,max_waves,false)
+}
 
 pub(in crate::code_rule_dsl) fn execute_sql_with(db: &Database, program: &Program, max_waves: u32, setup: impl FnOnce() -> rusqlite::Result<()>) -> StoreResult<u32> {
     declare(db, program,false)?;

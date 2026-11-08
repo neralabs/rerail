@@ -8,7 +8,6 @@ pub(super) struct Operator {
     pub improvements: String,
     pub active: bool,
     pub comparison: versions::Version,
-    spec: Relation,
     ready: bool,
     pub(super) seen: BTreeMap<String, versions::Version>,
     pub(super) pending: BTreeMap<String, Pending>,
@@ -21,6 +20,11 @@ pub(super) struct Pending {
 }
 impl Pending {
     fn add(&self, w: &mut Work<'_>, d: &Delta) -> Result<()> {
+        if let Some(store) = w.versions {
+            if store.compose(&self.plus, &self.minus, &d.plus, &d.minus)? {
+                return Ok(());
+            }
+        }
         let cols = names("", self.width);
         // Compose actual set transitions. Opposite changes cancel before evaluation.
         for (incoming, keep, cancel) in [
@@ -116,6 +120,17 @@ fn order(query: &mut Query, db: &rusqlite::Connection) {
     }
 }
 impl Operator {
+    pub fn ready(&self) -> bool {
+        self.ready
+    }
+    pub fn adopt(&mut self, template: &Self) {
+        // Preserve this frame's journals: they contain all external edits since the
+        // initial facts used by the immutable template. Native input roots reconcile
+        // through `seen`. Improvements are rebuilt from the previously empty result.
+        self.run = template.run.clone();
+        self.seen = template.seen.clone();
+        self.ready = true;
+    }
     pub fn create(
         w: &mut Work<'_>,
         store: &versions::Store,
@@ -228,7 +243,6 @@ impl Operator {
             improvements,
             active: false,
             comparison: store.version(&inputs[&step.output]),
-            spec: spec.clone(),
             ready: false,
             seen,
             pending,
@@ -240,27 +254,6 @@ impl Operator {
                 .as_mut()
                 .unwrap(),
             w.db,
-        );
-        let query = self.run.emitted.queries[0].as_ref().unwrap();
-        let sql = if self.spec.lattice {
-            let keys = names("", self.spec.keys);
-            let value = format!("c{}", self.spec.width - 1);
-            format!(
-                "SELECT {keys},{} FROM ({}) GROUP BY {keys}",
-                self.spec.aggregate(&value),
-                query.render()
-            )
-        } else {
-            query.render()
-        };
-        w.db.execute(
-            &format!("INSERT OR IGNORE INTO {} {sql}", quote(&self.result)),
-            [],
-        )
-        .map_err(|e| error(format!("{}: initial temporal result: {e}", self.result)))?;
-        self.run.counts.insert(
-            self.result.clone(),
-            store.version(&self.result).len() as u64,
         );
         walks::prepare(w, &mut self.run, Some(store))
             .map_err(|e| error(format!("{}: temporal walks: {e}", self.result)))?;
@@ -304,6 +297,10 @@ impl Operator {
                 ));
             }
         }
+        let state = &self.run.reductions.as_ref().unwrap()[&self.result];
+        let sql = state.initial_result();
+        let n = store.load_select(w.db, &self.result, &sql, true)?;
+        self.run.counts.insert(self.result.clone(), n as u64);
         self.ready = true;
         Ok(())
     }
@@ -360,9 +357,32 @@ impl Operator {
                 }
             }
             if !changes.is_empty() {
-                let report = maintenance::maintain(w, &mut self.run, &mut changes, limit)?;
-                if report["refreshed_strata"] != json!([]) {
-                    return Err(error("temporal operator unexpectedly refreshed a stratum"));
+                let dense = w.preparing
+                    && changes.values().any(|d| {
+                        d.inserted + d.deleted >= 512
+                            && (d.inserted + d.deleted)
+                                >= (self.run.counts.get(&self.result).copied().unwrap_or(0) / 2)
+                    })
+                    && self.run.emitted.program.relations.len() == 1
+                    && self
+                        .run
+                        .reductions
+                        .as_ref()
+                        .is_some_and(|r| r.values().all(|s| s.rebuildable()));
+                if dense {
+                    let _reuse = store.reuse_owned(&self.run.objects);
+                    for (name, _) in &self.run.objects {
+                        let old = store.version(name);
+                        store.replace(name, old.empty_like())?;
+                    }
+                    self.run.objects.truncate(3);
+                    self.run.reductions = None;
+                    self.initialize(w, store)?;
+                } else {
+                    let report = maintenance::maintain(w, &mut self.run, &mut changes, limit)?;
+                    if report["refreshed_strata"] != json!([]) {
+                        return Err(error("temporal operator unexpectedly refreshed a stratum"));
+                    }
                 }
             }
         }

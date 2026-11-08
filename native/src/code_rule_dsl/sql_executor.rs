@@ -72,6 +72,8 @@ pub struct CodeRuleSqlExecutor {
     scratch: scratch::Pool,
     versions: versions::Store,
     next_trace: usize,
+    #[cfg(test)]
+    cold_oracle: bool,
 }
 
 #[napi]
@@ -100,6 +102,8 @@ impl CodeRuleSqlExecutor {
             scratch: scratch::Pool::default(),
             versions: versions::Store::default(),
             next_trace: 0,
+            #[cfg(test)]
+            cold_oracle: false,
         })
     }
 
@@ -807,36 +811,17 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            let cold_scope = profiling::scope(&self.db, "cold execution");
-            let waves = schedule::execute_sql_with(&self.db, &emitted.program, max_waves, || {
-                for (table, columns) in &indexes {
-                    session::index(&self.db, table, columns)?;
-                }
-                Ok(())
-            })
-            .map_err(error)?;
-            drop(cold_scope);
-            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
-            let mut counts: BTreeMap<String, u64> = emitted
+            schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            for (table, columns) in &indexes {
+                session::index(&self.db, table, columns).map_err(error)?;
+            }
+            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY,rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
+            let counts = emitted
                 .program
                 .relations
                 .iter()
                 .map(|(r, _)| (r.clone(), 0))
                 .collect();
-            for row in self
-                .db
-                .prepare("SELECT tbl,rows FROM wave_stats")
-                .map_err(error)?
-                .query_map([], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
-                })
-                .map_err(error)?
-            {
-                let (name, n) = row.map_err(error)?;
-                if counts.contains_key(&name) {
-                    counts.insert(name, n);
-                }
-            }
             let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
             let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
             for q in emitted
@@ -868,6 +853,7 @@ impl CodeRuleSqlExecutor {
             work.versions = Some(&self.versions);
             work.profiler = self.db.profiler();
             let projections_scope = profiling::scope(&self.db, "projection preparation");
+            let projection_mark = work.mark();
             let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
             let constant_tables = constants::prepare(&self.db, &mut execution)?;
             // These views used to inherit native estimates. Their retained SQL tables need
@@ -878,24 +864,82 @@ impl CodeRuleSqlExecutor {
                     .map_err(error)?;
             }
             drop(projections_scope);
-            let support_scope = profiling::scope(&self.db, "support preparation");
-            let mut initializations = walks::prepare(&mut work, &mut execution, None)?;
-            let mut potential = execution.inputs.clone();
-            initializations.extend(reductions::prepare(
+            work.rewind(projection_mark)?;
+            #[cfg(test)]
+            let native_initial = if self.cold_oracle {
+                None
+            } else {
+                temporal::initial::run(
+                    &mut work,
+                    &self.versions,
+                    &mut execution,
+                    trace_namespace,
+                    &emitted.program,
+                )?
+            };
+            #[cfg(not(test))]
+            let native_initial = temporal::initial::run(
                 &mut work,
+                &self.versions,
                 &mut execution,
-                &mut potential,
-                None,
-            )?);
-            initializations.sort();
-            initializations.dedup();
-            drop(support_scope);
-            let recursive_scope = profiling::scope(&self.db, "recursive preparation");
-            temporal::prepare(&mut work, &self.versions, &mut execution, trace_namespace)?;
-            recursive::prepare(&self.db, &mut execution)?;
-            drop(recursive_scope);
+                trace_namespace,
+                &emitted.program,
+            )?;
+            let mut initializations = Vec::new();
+            let waves = if let Some(waves) = native_initial {
+                waves
+            } else {
+                let _scope = profiling::scope(&self.db, "cold execution");
+                let waves = schedule::execute_declared(&self.db, &emitted.program, max_waves)
+                    .map_err(error)?;
+                let mut stats = self
+                    .db
+                    .prepare("SELECT tbl,rows FROM wave_stats")
+                    .map_err(error)?;
+                for row in stats
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                    .map_err(error)?
+                {
+                    let (r, n) = row.map_err(error)?;
+                    if execution.counts.contains_key(&r) {
+                        execution.counts.insert(r, n as u64);
+                    }
+                }
+                #[cfg(test)]
+                let retain = !self.cold_oracle;
+                #[cfg(not(test))]
+                let retain = true;
+                if retain {
+                    let _support = profiling::scope(&self.db, "support preparation");
+                    initializations = walks::prepare(&mut work, &mut execution, None)?;
+                    let mut potential = execution.inputs.clone();
+                    initializations.extend(reductions::prepare(
+                        &mut work,
+                        &mut execution,
+                        &mut potential,
+                        None,
+                    )?);
+                    initializations.sort();
+                    initializations.dedup();
+                    drop(_support);
+                    let _recursive = profiling::scope(&self.db, "recursive preparation");
+                    temporal::prepare(&mut work, &self.versions, &mut execution, trace_namespace)?;
+                    recursive::prepare(&self.db, &mut execution)?;
+                }
+                waves
+            };
+            plan::insert_many(
+                &self.db,
+                "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
+                execution
+                    .counts
+                    .iter()
+                    .map(|(r, n)| vec![SqlValue::Text(r.clone()), SqlValue::Integer(*n as i64)])
+                    .collect(),
+            )
+            .map_err(error)?;
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>()});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
@@ -950,7 +994,7 @@ impl CodeRuleSqlExecutor {
         self.clear_control()?;
         self.generated.clear();
         self.executions.clear();
-        self.scratch.clear(&self.db)?;
+        self.scratch.clear(&self.db, &self.versions)?;
         self.db.reset_execution();
         Ok(())
     }

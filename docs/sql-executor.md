@@ -422,7 +422,20 @@ The latter counts native version-diff traversal, which SQLite instruction counts
 Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
 Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
 Arbitrary checked CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
-Initial preparation builds and checks a separate trace, so its CPU and memory costs still need improvement.
+Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
+The schedule preserves dependency gates across components, constant seeds, frontiers, and widening counters.
+Preparation reports `initial_execution: "retained"` for this path and `"cold"` for the established fallback.
+Unsupported mixed programs can still use the cold kernel and separate retained preparation.
+
+Initial loads bulk-build complete-row, primary-key, row-id, and required secondary roots.
+Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep their delta path.
+Frozen lookups share an immutable version. Contiguous scans stream through that version without repeated rank lookups.
+Scratch deltas share roots and prepare secondary indexes only when a lookup needs them.
+Bulk loads preserve the integer checks of the writable virtual tables.
+
+An earlier frame can become active when an edit shortens an upstream dependency gate.
+Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.
+Native savepoints restore roots, bindings, and schemas if initial execution fails.
 See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.
 
 ## Explain and profiling
@@ -454,4 +467,4 @@ Leading prefixes use the complete-row tree. Required secondary indexes use bulk 
 Compound-key `IN` filters descend through existing prefixes without constructing the lists' Cartesian product.
 SQLite rechecks tuple correlation, affinity, and remaining predicates.
 Frozen cursors and transaction rollback preserve the previous rows and index configuration.
-This reduces initial CPU and memory. Initial execution still builds and verifies a separate retained trace.
+This reduces initial CPU and memory. Supported recursive programs use the single retained schedule described above.

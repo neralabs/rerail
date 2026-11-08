@@ -12,6 +12,100 @@ pub(super) struct Delta {
 }
 pub(super) use super::scratch::Work;
 impl Work<'_> {
+    pub fn insert(&self, table: &str, query: &str, ignore: bool) -> Result<usize> {
+        if let Some(store) = self.versions
+            && let Some(old) = store.available(table)
+        {
+            if old.len() == 0 {
+                let op = self.profiler.map(|p| {
+                    p.operation(
+                        "bulk relational storage",
+                        ("sql-extension", 0),
+                        0,
+                        vec![("old".into(), 0)],
+                    )
+                });
+                let n = store.select_available(self.db, table, query, ignore, false)?;
+                if let Some(op) = op {
+                    op.finish(n);
+                }
+                return Ok(n);
+            }
+            if self.preparing && ignore && old.len() >= 512 {
+                let op = self.profiler.map(|p| {
+                    p.operation(
+                        "bulk relational storage",
+                        ("sql-extension", 0),
+                        0,
+                        vec![("old".into(), old.len() as i64)],
+                    )
+                });
+                let n = store.select_available(
+                    self.db,
+                    table,
+                    &format!("SELECT * FROM {} UNION ALL {query}", quote(table)),
+                    true,
+                    true,
+                )?;
+                if let Some(op) = op {
+                    op.finish(n);
+                }
+                return Ok(n - old.len());
+            }
+        }
+        self.db
+            .execute(
+                &format!(
+                    "INSERT {}INTO {} {query}",
+                    if ignore { "OR IGNORE " } else { "" },
+                    quote(table)
+                ),
+                [],
+            )
+            .map_err(error)
+    }
+    pub fn replace_keys(&self, table: &str, keys: &str, width: usize, query: &str) -> Result<()> {
+        let equal = (0..width)
+            .map(|i| format!("r.c{i}=k.c{i}"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let cols = (0..width)
+            .map(|i| format!("c{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        if self.preparing
+            && let Some(store) = self.versions
+            && let Some(old) = store.available(table)
+            && old.len() >= 512
+            && store.scratch_len(keys) >= old.len().div_ceil(2)
+        {
+            let op = self.profiler.map(|p| {
+                p.operation(
+                    "bulk relational storage",
+                    ("sql-extension", 0),
+                    0,
+                    vec![("old".into(), old.len() as i64)],
+                )
+            });
+            store.select_available(self.db,table,&format!("SELECT r.* FROM {} r WHERE NOT EXISTS(SELECT 1 FROM {} k WHERE {equal}) UNION ALL {query}",quote(table),quote(keys)),false,true)?;
+            if let Some(op) = op {
+                op.finish_unobserved();
+            }
+            return Ok(());
+        }
+        self.db
+            .execute(
+                &format!(
+                    "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",
+                    quote(table),
+                    quote(keys)
+                ),
+                [],
+            )
+            .map_err(error)?;
+        self.insert(table, query, false)?;
+        Ok(())
+    }
     pub fn table(&mut self, width: usize) -> Result<String> {
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
         self.allocate(
@@ -28,6 +122,26 @@ impl Work<'_> {
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
+        if let Some(store) = self.versions.filter(|s| s.owns(&name)) {
+            let op = self.profiler.map(|p| {
+                p.operation(
+                    "bulk delta storage",
+                    ("sql-extension", 0),
+                    0,
+                    vec![("rows".into(), rows.len() as i64)],
+                )
+            });
+            store.load_scratch(
+                &name,
+                rows.iter()
+                    .map(|r| r.iter().copied().map(Some).collect())
+                    .collect(),
+            )?;
+            if let Some(op) = op {
+                op.finish(rows.len());
+            }
+            return Ok(name);
+        }
         plan::insert_many(
             self.db,
             &format!("INSERT OR IGNORE INTO {}", quote(&name)),
@@ -39,6 +153,11 @@ impl Work<'_> {
         Ok(name)
     }
     pub fn difference(&mut self, now: &str, old: &str, width: usize) -> Result<Delta> {
+        if let Some(store) = self.versions
+            && let Some((old, new)) = store.available(old).zip(store.available(now))
+        {
+            return temporal::delta(self, &old, &new);
+        }
         let plus = self.table(width)?;
         let minus = self.table(width)?;
         let inserted = self
@@ -72,6 +191,13 @@ impl Work<'_> {
     }
     pub fn snapshot(&mut self, rel: &str, width: usize) -> Result<(String, u64)> {
         let old = self.table(width)?;
+        if let Some(store) = self.versions
+            && let Some(source) = store.available(rel)
+        {
+            if store.clone_scratch(&old, &source)? {
+                return Ok((old, source.len() as u64));
+            }
+        }
         let n = self
             .db
             .execute(
@@ -319,6 +445,9 @@ pub(super) fn maintain(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
+    if run.temporal.contains_key(&0) {
+        return temporal::initial::apply(w, run, changes, limit);
+    }
     let e = Arc::clone(&run.emitted);
     let arities: BTreeMap<_, _> = e.program.relations.iter().cloned().collect();
     let mut positions = BTreeMap::<String, u32>::new();
@@ -405,21 +534,40 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
-            let stratum = e.program.steps.iter().filter(|s|group.contains(&s.output)).map(|s|s.stratum).max().unwrap_or(0);
+            let stratum = e
+                .program
+                .steps
+                .iter()
+                .filter(|s| group.contains(&s.output))
+                .map(|s| s.stratum)
+                .max()
+                .unwrap_or(0);
             if let Some(state) = run.temporal.get_mut(&stratum) {
-                let store = w.versions.ok_or_else(||error("temporal execution requires versioned storage"))?;
-                let (deltas,waves) = state.apply(w,store,changes,limit)?;
+                let store = w
+                    .versions
+                    .ok_or_else(|| error("temporal execution requires versioned storage"))?;
+                let (deltas, waves) = state.apply(w, store, changes, limit)?;
                 positives += u64::from(waves);
                 recursive_frames += u64::from(waves);
                 let objects = state.objects().collect::<Vec<_>>();
-                let owned = run.objects.iter().map(|(n,_)|n.clone()).collect::<BTreeSet<_>>();
-                run.objects.extend(objects.into_iter().filter(|(n,_)|!owned.contains(n)));
-                for (r,d) in deltas {
-                    let count = run.counts.get(&r).copied().unwrap_or(0)+d.inserted-d.deleted;
-                    run.counts.insert(r.clone(),count);
-                    if run.outputs.contains(&r) {outputs.insert(r.clone(),json!({"inserted":d.inserted,"deleted":d.deleted}));}
+                let owned = run
+                    .objects
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .collect::<BTreeSet<_>>();
+                run.objects
+                    .extend(objects.into_iter().filter(|(n, _)| !owned.contains(n)));
+                for (r, d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0) + d.inserted - d.deleted;
+                    run.counts.insert(r.clone(), count);
+                    if run.outputs.contains(&r) {
+                        outputs.insert(
+                            r.clone(),
+                            json!({"inserted":d.inserted,"deleted":d.deleted}),
+                        );
+                    }
                     incremental.push(r.clone());
-                    changes.insert(r,d);
+                    changes.insert(r, d);
                 }
                 continue;
             }

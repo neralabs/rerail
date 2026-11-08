@@ -9,13 +9,18 @@ pub(super) struct Frame {
     input_counters: BTreeMap<String, String>,
     pub published: BTreeMap<String, String>,
     pub frontiers: BTreeMap<String, String>,
-    counters: BTreeMap<String, String>,
+    pub(super) counters: BTreeMap<String, String>,
     operators: Vec<Operator>,
 }
 pub(super) struct Versions {
     pub published: BTreeMap<String, versions::Version>,
     pub frontiers: BTreeMap<String, versions::Version>,
     pub counters: BTreeMap<String, versions::Version>,
+}
+#[derive(Clone)]
+pub(super) struct Prepared {
+    operator: Operator,
+    roots: Vec<(String, versions::Version)>,
 }
 fn snapshot(
     store: &versions::Store,
@@ -29,20 +34,44 @@ fn snapshot(
 }
 pub(super) fn keys(w: &mut Work<'_>, target: &str, d: &Delta, width: usize) -> Result<()> {
     let cols = names("", width);
-    for table in [&d.plus, &d.minus] {
-        w.db.execute(
-            &format!(
-                "INSERT OR IGNORE INTO {target} SELECT {cols} FROM {}",
-                quote(table)
-            ),
-            [],
-        )
-        .map_err(error)?;
+    for (table, n) in [(&d.plus, d.inserted), (&d.minus, d.deleted)] {
+        if n == 0 {
+            continue;
+        }
+        w.insert(
+            target,
+            &format!("SELECT {cols} FROM {}", quote(table)),
+            true,
+        )?;
     }
     Ok(())
 }
 
 impl Frame {
+    pub fn prepared(&self, store: &versions::Store) -> Vec<(usize, Prepared)> {
+        self.operators
+            .iter()
+            .enumerate()
+            .filter(|(_, op)| op.ready())
+            .map(|(id, op)| {
+                (
+                    id,
+                    Prepared {
+                        operator: op.clone(),
+                        roots: op
+                            .run
+                            .objects
+                            .iter()
+                            .map(|(name, _)| (name.clone(), store.version_at(self.scope, name)))
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+    pub fn scope(&self) -> usize {
+        self.scope
+    }
     pub fn create(w: &mut Work<'_>, store: &versions::Store, trace: &Trace) -> Result<Self> {
         let prefix = format!("{}_f0", trace.prefix);
         let scope = store.new_scope()?;
@@ -153,6 +182,7 @@ impl Frame {
         external: &BTreeMap<String, Delta>,
         active: &BTreeSet<usize>,
         preparing: bool,
+        templates: &BTreeMap<usize, Prepared>,
         limit: u32,
     ) -> Result<()> {
         let _scope = store.activate(self.scope)?;
@@ -199,6 +229,19 @@ impl Frame {
             let spec = &relations[r];
             let cols = names("", spec.keys);
             let old_improvements = store.version(&op.improvements);
+            if enabled && !op.ready() && !preparing {
+                let template = templates
+                    .get(&id)
+                    .ok_or_else(|| error("missing initial cache for an earlier wave gate"))?;
+                for (name, version) in &template.roots {
+                    if store.contains(name) {
+                        store.replace(name, version.clone())?;
+                    } else {
+                        store.fork_version(w.db, name, version.clone())?;
+                    }
+                }
+                op.adopt(&template.operator);
+            }
             if op.update(w, store, external, enabled, preparing, limit)? {
                 if op.active && old_improvements.len() > 0 {
                     w.db.execute(
@@ -217,6 +260,18 @@ impl Frame {
                 w.rewind(mark)?;
                 continue;
             }
+            if !enabled && !op.active {
+                w.rewind(mark)?;
+                continue;
+            }
+            let current = store.version(&self.inputs[r]);
+            if before.same(&store.version(&op.result))
+                && op.comparison.same(&current)
+                && enabled == op.active
+            {
+                w.rewind(mark)?;
+                continue;
+            }
             let d = delta(w, &before, &store.version(&op.result))?;
             let affected = w.table(spec.keys)?;
             keys(w, &affected, &d, spec.keys)?;
@@ -227,14 +282,6 @@ impl Frame {
                 keys(w, &affected, &d, spec.keys)?;
             }
             op.comparison = current;
-            w.db.execute(
-                &format!(
-                    "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {affected})",
-                    quote(&op.improvements)
-                ),
-                [],
-            )
-            .map_err(error)?;
             let improve = if spec.lattice {
                 let value = format!("c{}", spec.width - 1);
                 format!(
@@ -244,25 +291,23 @@ impl Frame {
             } else {
                 "p.c0 IS NULL".into()
             };
-            w.db.execute(&format!("INSERT INTO {} SELECT c.* FROM {affected} k CROSS JOIN {} c LEFT JOIN {} p ON {} WHERE {} AND ({improve})",
-                quote(&op.improvements),quote(&op.result),quote(previous),same("p","c",spec.keys),same("c","k",spec.keys)),[]).map_err(error)?;
+            w.replace_keys(&op.improvements,&affected,spec.keys,&format!("SELECT c.* FROM {affected} k CROSS JOIN {} c LEFT JOIN {} p ON {} WHERE {} AND ({improve})",quote(&op.result),quote(previous),same("p","c",spec.keys),same("c","k",spec.keys)))?;
             let d = delta(w, &old_improvements, &store.version(&op.improvements))?;
             keys(w, &touched[r], &d, spec.keys)?;
-            if enabled != op.active {
-                w.db.execute(
-                    &format!(
-                        "INSERT OR IGNORE INTO {} SELECT {cols} FROM {}",
-                        touched[r],
-                        quote(&op.improvements)
-                    ),
-                    [],
-                )
-                .map_err(error)?;
+            if enabled != op.active && store.version(&op.improvements).len() > 0 {
+                w.insert(
+                    &touched[r],
+                    &format!("SELECT {cols} FROM {}", quote(&op.improvements)),
+                    true,
+                )?;
             }
             op.active = enabled;
             w.rewind(mark)?;
         }
         for (r, spec) in relations {
+            if store.scratch_len(&touched[r]) == 0 {
+                continue;
+            }
             let mark = w.mark();
             let _context = w.profile_scope(|| json!({"stage":"merge and widen","relation":r}));
             let _cpu = super::super::super::logic::profile::span(|| "merge and widen".into());

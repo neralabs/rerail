@@ -42,7 +42,18 @@ fn failure(message: &str) -> rusqlite::Error {
 /// A relation of integer columns, stable while SQL cursors read it.
 /// A mutable owner must close every reader before changing rows, then refresh its binding
 /// and planner estimates. Most producers expose immutable snapshots.
+pub(crate) trait RowCells: Send+Sync {
+    fn cell(&self,column:usize)->Value;
+}
+pub(crate) struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
+pub(crate) trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 pub(crate) trait Source: Send + Sync {
+    fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
+    fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
+    fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}
+    fn prepare_lookup(&self,_columns:&[usize]) {}
+    fn caches_rows(&self)->bool {false}
+    fn row_cells(&self,_row:usize)->Option<(i64,Arc<dyn RowCells>)> {None}
     fn prepare_index(&self, _columns:&[usize]) {}
     fn primary_key_len(&self)->Option<usize> {None}
     fn lookup_primary_batch(&self, _values:&[Vec<i64>])->Option<Vec<usize>> {None}
@@ -563,6 +574,11 @@ unsafe impl<'a> VTab<'a> for Table {
             position: 0,
             reverse:false,
             lazy:false,
+            cache_rows:false,
+            cached:RefCell::new(None),
+            direct:None,
+            stream:None,
+            stream_row:None,
         })
     }
 }
@@ -576,8 +592,34 @@ struct Cursor {
     position: usize,
     reverse: bool,
     lazy: bool,
+    cache_rows:bool,
+    cached:RefCell<Option<(usize,i64,Arc<dyn RowCells>)>>,
+    direct:Option<Vec<ReadRow>>,
+    stream:Option<Box<dyn RowStream>>,
+    stream_row:Option<ReadRow>,
 }
 impl Cursor {
+    fn start_stream(&mut self) {
+        if !self.cache_rows||self.direct.is_some() {return;}
+        if let Some(rows)=&self.selected {
+            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+                self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
+            }
+        }
+        if self.selected.is_none()&&self.range.len()>128 {
+            self.stream=self.source.row_stream(self.range.clone(),self.reverse);
+            if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
+        }
+    }
+    fn with_cells<T>(&self,f:impl FnOnce(i64,&dyn RowCells)->T)->T {
+        let row=self.row();
+        let mut cache=self.cached.borrow_mut();
+        if cache.as_ref().is_none_or(|(at,_,_)|*at!=row) {
+            let(id,cells)=self.source.row_cells(row).expect("source promised cached rows");
+            *cache=Some((row,id,cells));
+        }
+        let(_,id,cells)=cache.as_ref().unwrap();f(*id,cells.as_ref())
+    }
     fn row(&self) -> usize {
         self.selected.as_ref().map_or(if self.reverse {self.range.end.saturating_sub(1)}else{self.range.start}, |r| r[self.position])
     }
@@ -611,11 +653,26 @@ unsafe impl VTabCursor for Cursor {
         let stats = &self.binding.stats;
         stats.scans.fetch_add(1, Ordering::Relaxed);
         self.source = self.binding.current();
+        if index==MULTI {
+            if let Some(list)=list {
+                let(tag,cols)=list.split_at(1);
+                let columns=cols.split(',').filter_map(|c|c.parse::<usize>().ok()).collect::<Vec<_>>();
+                let full=self.source.primary_key_len().is_some_and(|n|(0..n).all(|c|columns.contains(&c)));
+                let mut sorted=columns.clone();sorted.sort_unstable();sorted.dedup();
+                if matches!(tag,"p"|"b") {self.source.prepare_lookup(&columns[..1]);}
+                else if !full&&!sorted.iter().copied().eq(0..sorted.len()) {self.source.prepare_lookup(&columns);}
+
+            }
+        } else if index>0&&index< (1<<20) {self.source.prepare_lookup(&[(index/2-1) as usize]);}
         if let Some(version)=self.source.frozen() {self.source=version;}
+        self.cache_rows=self.source.caches_rows();
+        *self.cached.get_mut()=None;
         self.position = 0;
         self.reverse=false;
         self.lazy=false;
         self.selected = None;
+        self.direct=None;
+        self.stream=None;self.stream_row=None;
         self.range = 0..self.source.len();
         if index==ORDERED {
             self.lazy=true;
@@ -628,6 +685,7 @@ unsafe impl VTabCursor for Cursor {
             self.range=self.source.ordered_range(&equal).ok_or_else(||failure("ordered source lost its index"))?;
             self.reverse=direction=="d";
             if !self.range.is_empty(){stats.candidates.fetch_add(1,Ordering::Relaxed);}
+            self.start_stream();
             return Ok(());
         }
         if index == PRIMARY_BATCH {
@@ -675,7 +733,10 @@ unsafe impl VTabCursor for Cursor {
                     "c" => {
                         let mut by = equal.clone();
                         by.sort_unstable();
-                        source.lookup_all(&by).or_else(|| source.lookup(by[0].0, &[by[0].1]).map(|r| r.into_iter().filter(keep).collect()))
+                        self.direct=source.direct_all(&by);
+                        if self.direct.is_some() {Some(Vec::new())} else {
+                            source.lookup_all(&by).or_else(|| source.lookup(by[0].0, &[by[0].1]).map(|r| r.into_iter().filter(keep).collect()))
+                        }
                     }
                     // A probe over a column that spans the documents (a kind), where the document is bound as
                     // well: kept to that document, rather than every document's rows rechecked against it.
@@ -719,15 +780,18 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 values.extend(integer(&args.get::<Value>(0)?));
             }
-            self.selected = self.source.lookup(column, &values);
+            self.direct=self.source.direct_one(column,&values);
+            if self.direct.is_none() {self.selected = self.source.lookup(column, &values);}
         }
-        let count = self.selected.as_ref().map_or(self.range.len(), Vec::len);
+        let count = self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.len(), Vec::len),Vec::len);
         stats.candidates.fetch_add(count as u64, Ordering::Relaxed);
+        self.start_stream();
         Ok(())
     }
     fn next(&mut self) -> Result<()> {
+        if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
         crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Next,1);
-        if self.selected.is_some() {
+        if self.selected.is_some()||self.direct.is_some() {
             self.position += 1;
         } else {
             if self.reverse {self.range.end-=1;}else{self.range.start+=1;}
@@ -736,15 +800,16 @@ unsafe impl VTabCursor for Cursor {
         Ok(())
     }
     fn eof(&self) -> bool {
-        self.selected.as_ref().map_or(self.range.is_empty(), |r| self.position >= r.len())
+        self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.is_empty(), |r| self.position >= r.len()),|r|self.position>=r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Column,1);
         self.binding.stats.columns.fetch_add(1, Ordering::Relaxed);
-        ctx.set_result(&self.source.cell(self.row(), col as usize))
+        let value=if let Some(row)=&self.stream_row {row.cells.cell(col as usize)} else if let Some(rows)=&self.direct {rows[self.position].cells.cell(col as usize)} else if self.cache_rows {self.with_cells(|_,cells|cells.cell(col as usize))} else {self.source.cell(self.row(),col as usize)};
+        ctx.set_result(&value)
     }
     fn rowid(&self) -> Result<i64> {
-        Ok(self.source.row_id(self.row()))
+        Ok(if let Some(row)=&self.stream_row {row.id} else if let Some(rows)=&self.direct {rows[self.position].id} else if self.cache_rows {self.with_cells(|id,_|id)} else {self.source.row_id(self.row())})
     }
 }
 

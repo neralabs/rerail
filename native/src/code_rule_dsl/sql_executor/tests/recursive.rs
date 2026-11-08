@@ -31,6 +31,7 @@ fn nonrecursive_lattice_walks_keep_aggregate_and_negative_blocks_incremental() {
             "{report}"
         );
         let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
         fresh.bind_snapshot(files.clone()).unwrap();
         bind(
             &mut fresh,
@@ -122,6 +123,7 @@ fn recursive_iterations_restore_simultaneous_sql_changes_and_retry_atomically() 
             "{report}"
         );
         let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
         bind(
             &mut fresh,
             "source",
@@ -270,6 +272,7 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
 const PATHS: &str = ".decl root(g:number)\n.decl weighted(g:number,a:number,b:number,w:number)\n.input root,weighted\n.decl distance(g:number,n:number,v:min<>) widen 100\ndistance(g,0,0) :- root(g).\ndistance(g,b,d+w) :- distance(g,a,d), weighted(g,a,b,w).\n.output distance\n";
 fn compare(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], query: &str) {
     let (_d, mut fresh) = executor();
+    fresh.cold_oracle=true;
     for (name, columns) in inputs {
         bind(
             &mut fresh,

@@ -3,8 +3,10 @@ use super::super::facts::vtab::Modules;
 use super::*;
 use parking_lot::RwLock;
 use std::cell::RefCell;
+mod bulk;
 pub(super) mod fork;
 mod probes;
+mod scan;
 mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
@@ -98,6 +100,7 @@ pub(super) struct Version {
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
     secondary: Arc<[bool]>,
+    lazy: bool,
     distinct: Vec<usize>,
     next: i64,
 }
@@ -108,10 +111,12 @@ impl Version {
     pub fn empty_like(&self) -> Self {
         let mut empty = Self::empty(self.schema.clone());
         empty.secondary = self.secondary.clone();
+        empty.lazy = self.lazy;
         empty
     }
     pub fn empty(schema: Arc<Schema>) -> Self {
         Self {
+            lazy: false,
             secondary: (0..schema.columns.len()).map(|c| c > 0).collect(),
             indexes: vec![None; schema.columns.len()],
             distinct: vec![0; schema.columns.len()],
@@ -194,6 +199,66 @@ impl Version {
     }
 }
 impl Source for Version {
+    fn row_stream(
+        &self,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+    ) -> Option<Box<dyn super::super::facts::vtab::RowStream>> {
+        Some(self.stream(range, reverse))
+    }
+    fn direct_all(
+        &self,
+        equal: &[(usize, i64)],
+    ) -> Option<Vec<super::super::facts::vtab::ReadRow>> {
+        if !(0..self.schema.keys).all(|c| equal.iter().any(|&(k, _)| k == c)) {
+            return None;
+        }
+        let pk = (0..self.schema.keys)
+            .map(|c| Some(equal.iter().find(|(k, _)| *k == c).unwrap().1))
+            .collect::<Vec<_>>();
+        Some(
+            Node::get(&self.primary, &pk)
+                .filter(|r| equal.iter().all(|&(c, v)| r.values[c] == Some(v)))
+                .map(|r| super::super::facts::vtab::ReadRow {
+                    id: r.id,
+                    cells: r.values.clone(),
+                })
+                .into_iter()
+                .collect(),
+        )
+    }
+    fn direct_one(
+        &self,
+        column: usize,
+        values: &[i64],
+    ) -> Option<Vec<super::super::facts::vtab::ReadRow>> {
+        if self.schema.keys != 1 || column != 0 {
+            return None;
+        }
+        Some(
+            values
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter_map(|v| {
+                    Node::get(&self.primary, &[Some(v)]).map(|r| {
+                        super::super::facts::vtab::ReadRow {
+                            id: r.id,
+                            cells: r.values.clone(),
+                        }
+                    })
+                })
+                .collect(),
+        )
+    }
+    fn caches_rows(&self) -> bool {
+        true
+    }
+    fn row_cells(&self, row: usize) -> Option<(i64, Arc<dyn super::super::facts::vtab::RowCells>)> {
+        let row = Node::nth(&self.full, row);
+        Some((row.id, row.values.clone()))
+    }
     fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
         let mut wanted = 0;
         for &(column, reverse) in order {
@@ -228,6 +293,13 @@ impl Source for Version {
         tree::size(&self.full)
     }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        if self.lazy && c > 0 && !self.secondary[c] {
+            return self
+                .len()
+                .div_ceil(100)
+                .max(1)
+                .saturating_mul(if batch { 8 } else { 1 });
+        }
         if !self.indexed(c) {
             return self.len().max(1);
         }
@@ -236,7 +308,7 @@ impl Source for Version {
             .saturating_mul(if batch { 8 } else { 1 })
     }
     fn indexed(&self, c: usize) -> bool {
-        c == 0 || self.secondary[c]
+        c == 0 || self.secondary[c] || self.lazy
     }
     fn primary_key_len(&self) -> Option<usize> {
         Some(self.schema.keys)
@@ -313,7 +385,7 @@ impl Source for Version {
                     .collect(),
             );
         }
-        if !self.indexed(c) {
+        if !self.secondary[c] {
             return None;
         }
         let mut found = Vec::new();
@@ -339,10 +411,15 @@ impl Source for Version {
         Node::nth(&self.full, row).id
     }
 }
+impl super::super::facts::vtab::RowCells for tree::Cells {
+    fn cell(&self, column: usize) -> SqlValue {
+        self[column].map_or(SqlValue::Null, SqlValue::Integer)
+    }
+}
 struct Mutable {
     id: usize,
-    state: RwLock<Version>,
-    undo: Arc<RwLock<Option<Undo>>>,
+    state: RwLock<Arc<Version>>,
+    undo: Arc<RwLock<Vec<Undo>>>,
 }
 fn constraint(code: i32, message: &str) -> rusqlite::Error {
     rusqlite::Error::SqliteFailure(
@@ -355,6 +432,12 @@ fn constraint(code: i32, message: &str) -> rusqlite::Error {
     )
 }
 impl Source for Mutable {
+    fn prepare_lookup(&self, columns: &[usize]) {
+        let lazy = self.state.read().lazy;
+        if lazy {
+            self.prepare_index(columns);
+        }
+    }
     fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
         self.state.read().ordered(equal, order)
     }
@@ -362,7 +445,7 @@ impl Source for Mutable {
         self.state.read().ordered_range(equal)
     }
     fn frozen(&self) -> Option<Arc<dyn Source>> {
-        Some(Arc::new(self.state.read().clone()))
+        Some(self.state.read().clone())
     }
     fn columns(&self) -> Vec<String> {
         self.state.read().columns()
@@ -378,11 +461,11 @@ impl Source for Mutable {
     }
     fn prepare_index(&self, columns: &[usize]) {
         let mut state = self.state.write();
-        if columns.iter().any(|&c| !state.indexed(c)) {
-            if let Some(log) = self.undo.write().as_mut() {
+        if columns.iter().any(|&c| c > 0 && !state.secondary[c]) {
+            for log in self.undo.write().iter_mut() {
                 log.versions.entry(self.id).or_insert_with(|| state.clone());
             }
-            state.ensure_indexes(columns);
+            Arc::make_mut(&mut state).ensure_indexes(columns);
         }
     }
     fn primary_key_len(&self) -> Option<usize> {
@@ -428,10 +511,10 @@ impl Source for Mutable {
         let previous = old.and_then(|id| Node::get(&state.ids, &[Some(id)]).cloned());
         let Some(values) = values else {
             if let Some(row) = previous {
-                if let Some(log) = self.undo.write().as_mut() {
+                for log in self.undo.write().iter_mut() {
                     log.versions.entry(self.id).or_insert_with(|| state.clone());
                 }
-                state.remove(&row);
+                Arc::make_mut(&mut state).remove(&row);
             }
             return Ok(old.unwrap_or(0));
         };
@@ -485,9 +568,10 @@ impl Source for Mutable {
         {
             return Ok(id);
         }
-        if let Some(log) = self.undo.write().as_mut() {
+        for log in self.undo.write().iter_mut() {
             log.versions.entry(self.id).or_insert_with(|| state.clone());
         }
+        let state = Arc::make_mut(&mut state);
         if let Some(row) = previous {
             state.remove(&row);
         }
@@ -509,7 +593,7 @@ impl Source for Mutable {
 type TableKey = (usize, String);
 #[derive(Default)]
 struct Undo {
-    versions: BTreeMap<usize, Version>,
+    versions: BTreeMap<usize, Arc<Version>>,
     created: Vec<(TableKey, usize)>,
     removed: BTreeMap<TableKey, Arc<Mutable>>,
     bindings: BTreeMap<String, super::super::facts::vtab::Binding>,
@@ -520,19 +604,20 @@ struct Slot {
 }
 #[derive(Default)]
 pub(super) struct Store {
+    reuse: RefCell<BTreeMap<TableKey, Version>>,
     modules: Modules,
     tables: RefCell<BTreeMap<TableKey, Arc<Mutable>>>,
     slots: RefCell<BTreeMap<String, Slot>>,
     scope: std::cell::Cell<usize>,
     next_scope: std::cell::Cell<usize>,
     next: std::cell::Cell<usize>,
-    undo: Arc<RwLock<Option<Undo>>>,
+    undo: Arc<RwLock<Vec<Undo>>>,
 }
 impl Drop for Store {
     fn drop(&mut self) {
         // Removed tables retain the shared undo log. Break that ownership cycle
         // even if unwinding skips the session's explicit rollback.
-        self.undo.write().take();
+        self.undo.write().clear();
     }
 }
 pub(super) struct Scope<'a> {
@@ -606,7 +691,7 @@ impl Store {
     pub fn fork_scope(&self, old: usize) -> Result<usize> {
         let new = self.new_scope()?;
         for (name, table) in self.scope_tables(old) {
-            let version = table.state.read().clone();
+            let version = table.state.read().as_ref().clone();
             let fork = self.allocate((new, name.clone()), version);
             self.tables.borrow_mut().insert((new, name.clone()), fork);
             self.slots
@@ -621,12 +706,12 @@ impl Store {
     fn allocate(&self, key: TableKey, version: Version) -> Arc<Mutable> {
         let id = self.next.get();
         self.next.set(id + 1);
-        if let Some(undo) = self.undo.write().as_mut() {
-            undo.created.push((key, id));
+        for undo in self.undo.write().iter_mut() {
+            undo.created.push((key.clone(), id));
         }
         Arc::new(Mutable {
             id,
-            state: RwLock::new(version),
+            state: RwLock::new(Arc::new(version)),
             undo: self.undo.clone(),
         })
     }
@@ -660,18 +745,21 @@ impl Store {
     }
     pub fn begin(&self) -> Result<()> {
         let mut undo = self.undo.write();
-        if undo.is_some() {
+        if !undo.is_empty() {
             return Err(error("nested native version transaction"));
         }
-        *undo = Some(Undo::default());
+        undo.push(Undo::default());
         Ok(())
     }
+    pub fn savepoint(&self) {
+        self.undo.write().push(Undo::default());
+    }
     pub fn commit(&self) {
-        self.undo.write().take();
+        self.undo.write().pop();
     }
     /// Restore roots and binding cells, including after SQLite's automatic rollback.
     pub fn rollback(&self, db: &rusqlite::Connection) -> Result<()> {
-        let Some(undo) = self.undo.write().take() else {
+        let Some(undo) = self.undo.write().pop() else {
             return Ok(());
         };
         for (key, id) in &undo.created {
@@ -720,23 +808,27 @@ impl Store {
         self.tables.borrow()[&(scope, name.into())]
             .state
             .read()
+            .as_ref()
             .clone()
     }
     pub fn replace(&self, name: &str, version: Version) -> Result<()> {
+        self.replace_at(self.scope.get(), name, version)
+    }
+    fn replace_at(&self, scope: usize, name: &str, version: Version) -> Result<()> {
         let tables = self.tables.borrow();
         let table = tables
-            .get(&(self.scope.get(), name.into()))
+            .get(&(scope, name.into()))
             .ok_or_else(|| error("missing versioned relation"))?;
         let mut state = table.state.write();
         if *state.schema != *version.schema {
             return Err(error("versioned replacement changed schema"));
         }
-        if let Some(undo) = self.undo.write().as_mut() {
+        for undo in self.undo.write().iter_mut() {
             undo.versions
                 .entry(table.id)
                 .or_insert_with(|| state.clone());
         }
-        *state = version;
+        *state = Arc::new(version);
         Ok(())
     }
     pub fn create(&self, db: &rusqlite::Connection, name: &str, mut schema: Schema) -> Result<()> {
@@ -814,12 +906,14 @@ impl Store {
         let (scope, name) = key;
         let owners = self.slots.borrow()[name].owners.clone();
         if owners.len() == 1 {
-            if let Some(undo) = self.undo.write().as_mut() {
+            for undo in self.undo.write().iter_mut() {
                 let existing = !undo.created.iter().any(|(_, id)| *id == table.id)
                     || undo.removed.keys().any(|(_, n)| n == name);
                 if existing {
                     if let Some(binding) = self.modules.get(name) {
-                        undo.bindings.entry(name.clone()).or_insert(binding);
+                        undo.bindings
+                            .entry(name.clone())
+                            .or_insert_with(|| binding.clone());
                     }
                 }
             }
@@ -840,9 +934,11 @@ impl Store {
                 .remove(scope);
         }
         self.tables.borrow_mut().remove(key);
-        if let Some(undo) = self.undo.write().as_mut() {
+        for undo in self.undo.write().iter_mut() {
             if !undo.created.iter().any(|(_, id)| *id == table.id) {
-                undo.removed.entry(key.clone()).or_insert(table);
+                undo.removed
+                    .entry(key.clone())
+                    .or_insert_with(|| table.clone());
             }
         }
         Ok(())
@@ -869,6 +965,8 @@ impl Drop for Transaction<'_> {
     }
 }
 
+#[cfg(test)]
+mod bulk_tests;
 #[cfg(test)]
 mod operators;
 #[cfg(test)]

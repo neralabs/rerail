@@ -4,6 +4,7 @@ use super::maintenance::{Delta, Work};
 use super::*;
 mod fold;
 mod frame;
+pub(super) mod initial;
 mod operator;
 mod quiescent;
 use frame::Frame;
@@ -68,7 +69,11 @@ fn read(r: &Rel) -> Option<String> {
         _ => r.program_relation().map(str::to_owned),
     }
 }
-fn delta(w: &mut Work<'_>, old: &versions::Version, new: &versions::Version) -> Result<Delta> {
+pub(super) fn delta(
+    w: &mut Work<'_>,
+    old: &versions::Version,
+    new: &versions::Version,
+) -> Result<Delta> {
     let operation = w.profiler.map(|p| {
         p.operation(
             "native version difference",
@@ -107,6 +112,8 @@ fn delta(w: &mut Work<'_>, old: &versions::Version, new: &versions::Version) -> 
 
 #[derive(Clone)]
 pub(super) struct Trace {
+    whole: bool,
+    templates: Arc<BTreeMap<usize, frame::Prepared>>,
     prefix: String,
     emitted: Arc<plan::emit::Emitted>,
     relations: BTreeMap<String, Relation>,
@@ -178,6 +185,20 @@ impl Trace {
             } else {
                 Some(self.frames[at - 1].versions(store))
             };
+            let had = if preparing && self.whole {
+                desired
+                    .as_ref()
+                    .map(|d| {
+                        d.frontiers
+                            .iter()
+                            .filter(|(_, v)| v.len() > 0)
+                            .map(|(r, _)| r.clone())
+                            .collect::<BTreeSet<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                BTreeSet::new()
+            };
             let mark = w.mark();
             let frame = &mut self.frames[at];
             frame
@@ -190,9 +211,17 @@ impl Trace {
                     if fresh { &no_external_changes } else { changes },
                     &active,
                     preparing,
+                    &self.templates,
                     limit,
                 )
                 .map_err(|e| Error::new(e.status, format!("{} frame {at}: {e}", self.prefix)))?;
+            if preparing {
+                for (id, template) in frame.prepared(store) {
+                    Arc::make_mut(&mut self.templates)
+                        .entry(id)
+                        .or_insert(template);
+                }
+            }
             if !active.is_empty() {
                 for r in frame.frontiers.keys() {
                     if frame.has_frontier(store, r) {
@@ -203,6 +232,28 @@ impl Trace {
                         }
                     }
                 }
+            }
+            if preparing && self.whole && !active.is_empty() {
+                let written = active
+                    .iter()
+                    .map(|&id| self.steps[id].0.output.as_str())
+                    .collect::<BTreeSet<_>>();
+                let rows = self
+                    .relations
+                    .keys()
+                    .filter(|r| written.contains(r.as_str()) || had.contains(*r))
+                    .map(|r| {
+                        vec![
+                            SqlValue::Integer(waves as i64),
+                            SqlValue::Text(r.clone()),
+                            SqlValue::Integer(
+                                store.version_at(frame.scope(), &frame.frontiers[r]).len() as i64,
+                            ),
+                        ]
+                    })
+                    .collect();
+                plan::insert_many(w.db, "INSERT INTO temp.wave_delta(wave,rel,rows)", rows)
+                    .map_err(error)?;
             }
             w.rewind(mark)?;
             needs_close = !active.is_empty();
@@ -230,6 +281,10 @@ impl Trace {
         let mut outputs = BTreeMap::new();
         for (r, spec) in &self.relations {
             let d = delta(w, &before.published[r], &after.published[r])?;
+            if d.inserted + d.deleted == 0 && !spec.widening() {
+                outputs.insert(r.clone(), d);
+                continue;
+            }
             let cols = names("", spec.width);
             w.db.execute(
                 &format!(
@@ -368,6 +423,8 @@ pub(super) fn prepare(
             }
         }
         let mut trace = Trace {
+            whole: false,
+            templates: Arc::new(BTreeMap::new()),
             prefix: format!("__it{namespace}_s{stratum}"),
             emitted: e.clone(),
             relations,
