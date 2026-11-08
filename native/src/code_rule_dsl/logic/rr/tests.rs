@@ -6,6 +6,45 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn balanced_rows_batches_tasks_and_preserves_occurrences_and_program_facts() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("balanced-rows");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("balanced.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl work(task: symbol, row: number, key: symbol, weight: number)
+work("first",0,"z",9). work("first",1,"a",5). work("first",2,"b",4).
+work("first",3,"same",0). work("first",4,"same",0).
+work("second",0,"x",0). work("second",1,"x",0).
+work("unrequested",0,"ignored",1).
+.decl limits(task: symbol, bins: number)
+limits("first",2). limits("second",9). limits("empty",2).
+.violation Assigned(at: span, task: symbol, row: number, bin: number, ordinal: number) code "ASSIGNED" "assigned"
+Assigned(@place("",0), t, r, b, i) :- balanced_rows(t,r,b,i,work,limits).
+"#).unwrap();
+    let (program, _) = read_file(&rule).unwrap();
+    let mut facts = super::super::program_facts::Facts::new();
+    super::super::program_facts::write(&mut facts, "balanced", &program);
+    let decoded = super::super::program_facts::decode(&super::super::program_facts::encode(&facts)).unwrap();
+    let restored = super::super::program_facts::program(&decoded, "balanced").unwrap();
+    assert_eq!(restored.natives, program.natives);
+    let printed = print(&restored).unwrap();
+    assert_eq!(parse(&printed).unwrap().natives, restored.natives);
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"inputFiles": []})).unwrap();
+    for rows in [report["diagnostics"].as_array().unwrap().clone(), lowered_findings(&printed)] {
+        let mut actual: Vec<_> = rows.iter().map(|r| (
+            r["parameters"]["task"].as_str().unwrap().to_owned(), r["parameters"]["row"].as_i64().unwrap(),
+            r["parameters"]["bin"].as_i64().unwrap(), r["parameters"]["ordinal"].as_i64().unwrap(),
+        )).collect();
+        actual.sort_by_key(|r| (r.0.clone(),r.3));
+        assert_eq!(actual, vec![("first".into(),0,0,0),("first".into(),3,0,1),("first".into(),4,0,2),
+            ("first".into(),1,1,3),("first".into(),2,1,4),("second".into(),0,0,0),("second".into(),1,0,1)]);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ordered_rows_rejects_nonbinary_inputs() {
     for declaration in [".decl rows(x: symbol)", ".decl rows(x: number, y: symbol, z: number)"] {
         let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ordered-invalid.rr");
