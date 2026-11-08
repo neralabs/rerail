@@ -2298,6 +2298,38 @@ documents are the union of their scopes. Each policy's facts are not yet limited
 **Closure:** each `.scope` form is applied or refused by name, and in a combined pack each policy reads only its
 scope's facts.
 
+**The forms, done (2026-11-08, `58ae86df3`).**
+
+- `text "…"`: a file with no grammar of the run that matches a text glob, and that a scope selects, is read as
+  text only (`core::text_only`): `doc`, `source` and `src_line`, no nodes. Before this the corpus walked only
+  `.py`, `.rs` and `.rr` files, so `bounded-composed-graph-paths`' BCGP011 documentation check never saw its
+  `.rst` files. On the full tree, 1,070 documents are read as text.
+- `dirs | include | exclude option("…")`: kept by name (`front::OPTION_GLOB`) until the run's options are known,
+  then resolved both for the documents read and for the findings filter (through `option_item`). An option the
+  run does not set adds nothing. `matching-architecture`'s `--application-root` now reads its roots.
+- `report dirs "…"`: findings outside these directories are dropped; facts still come from the whole scope.
+- `embedded false | true`: `.guests off | on`.
+
+Test: `scope_takes_option_dirs_text_documents_and_report_dirs`.
+
+Reading the text documents also exposed a rule cost: `bounded-composed-graph-paths` counted the lines between
+every decorator and every later def. That passed 3 GB on a quarter of the full tree, with or without the text
+documents. Its line rules now read Python files only, and a decorator's run of `@` lines is walked. Full tree:
+0 findings, as the script; 10 s CPU, 535 MB footprint (`time -l`: 1.1 GB). The script takes 0.08 s.
+
+**Each policy's own facts: measured, not yet guaranteed by structure.** On s200, the 66-rule pack's findings are
+exactly the union of each rule's run alone (61 and 61, none on either side only). A policy's findings outside
+its scope are dropped (`rr_scope_drop`). Its file-local relations, though, are made over every document the pack
+reads, so a cross-file rule can join rows from documents outside its own scope. Filtering each policy's exports
+by its scope would make this exact. One case blocks the simple version of that filter: `merge_identical` merges
+equal relations across policies, and a merged relation has two owners with different scopes. So the merge would
+have to keep policies with different scopes apart. A doc-level guard (each policy's `doc` atoms read a
+`doc` restricted to its scope) is cheap, but does not cover node-level rows.
+
+**Closure (what remains):** a policy's exports, and its reads of `doc`, are restricted to its scope, with
+`merge_identical` keeping policies of different scopes apart; the pack's findings still equal the union of the
+rules' runs alone.
+
 ## O115. A grep reader for files that are not documents
 
 t11 specifies `.input r(IO=grep, glob=…, re=…)`: one walk and one multi-pattern scan per file for all grep inputs,
