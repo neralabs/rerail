@@ -801,7 +801,8 @@ impl Plan {
     /// Words per group of the exchanges' records: three per halo, one per scan, and one per
     /// counted output for the counts' exchange.
     fn record_words(&self, native: &BlockNative) -> usize {
-        3 * self.halos.len() + self.scanned.len() + super::native_cpu_block::counted(native).len()
+        // The extracts' counts; a total is a flag, set without an exchange (`totals_or`).
+        3 * self.halos.len() + self.scanned.len() + native.extracts.len()
     }
 }
 
@@ -816,13 +817,14 @@ pub(in crate::code_rule_dsl) fn kernel_report(native: &BlockNative, width: LaneW
     let source = generate_forms(&[&form], width);
     let pipeline = pipeline_named(&source, "tempo_batch")?;
     Ok(format!(
-        "{} instructions; {} windowed prevs, {} halos, {} scans; exchanges [{}] + counts {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
+        "{} instructions; {} windowed prevs, {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),
         plan.windowed.len(),
         plan.halos.len(),
         plan.scanned.len(),
         exchanges.join(", "),
-        super::native_cpu_block::counted(&form).len(),
+        form.extracts.len(),
+        form.totals.len(),
         plan.record_words(&form),
         source.lines().count(),
         pipeline.max_total_threads_per_threadgroup(),
@@ -1006,10 +1008,15 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, v{v});\n")),
         }
     }
-    let counted = super::native_cpu_block::counted(native);
-    if !counted.is_empty() {
+    // A total is a flag (`BlockProgram::totals`): a group with a bit sets it, in any order and
+    // again on a relaunch, so it waits on no other group.
+    let extracts = native.extracts.len();
+    for (t, &k) in native.totals.iter().enumerate() {
+        out.push_str(&format!("  totals_or(stream_cut(v{}, gl, len, {}u), l, counts + f.tot_base + {}u);\n", native.outputs[k], native.output_delays[k], extracts + t));
+    }
+    if extracts > 0 {
         let mut words = Vec::new();
-        for (c, &k) in counted.iter().enumerate() {
+        for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
                 "  const {m} cw{c} = stream_cut(v{}, gl, len, {}u);\n  const uint cn{c} = uint(popcount(lane_bits(cw{c})));\n  const uint ca{c} = simd_sum(cn{c});\n",
                 native.outputs[k], native.output_delays[k]
@@ -1017,14 +1024,11 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             words.push(format!("ca{c}"));
         }
         let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record);
-        for (c, &k) in counted.iter().enumerate() {
-            let e = (c < native.extracts.len()).then_some(c);
+        for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
-                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {}u * max(len, 1u), max(len, 1u), {}, counts + f.tot_base + {c}u);\n",
+                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * max(len, 1u), max(len, 1u), true, counts + f.tot_base + {c}u);\n",
                 got[c],
                 native.output_delays[k],
-                e.unwrap_or(0),
-                e.is_some(),
             ));
         }
     }

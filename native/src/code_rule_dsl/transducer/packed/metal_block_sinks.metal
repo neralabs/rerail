@@ -61,7 +61,8 @@ inline bool count_sink(M v, uint gl, uint g, uint l, uint groups, uint len, uint
     if ((st >> 30u) == 2u) break;
   }
   if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | (prefix + agg), memory_order_relaxed);
-  if (l == 0u && g + 1u == groups) *total = prefix + agg;
+  // An extract's count; a total's flag: whether the output has a bit (`BlockProgram::totals`).
+  if (l == 0u && g + 1u == groups) *total = write ? prefix + agg : uint(prefix + agg != 0u);
   if (write) {
     const uint at = prefix + simd_prefix_exclusive_sum(n);
     for (uint j = 0u; j < W && w != M(0); j++) {
@@ -70,6 +71,14 @@ inline bool count_sink(M v, uint gl, uint g, uint l, uint groups, uint len, uint
     }
   }
   return true;
+}
+
+// A total's flag: set when any lane of the group has a bit of `w`. Every group that sets it
+// writes the same 1, so no group waits on another.
+template <typename M>
+inline void totals_or(M w, uint l, device uint* total) {
+  const bool any = simd_any(lane_bits(w) != 0ul);
+  if (l == 0u && any) atomic_fetch_or_explicit((device atomic_uint*)total, 1u, memory_order_relaxed);
 }
 
 // A counted output once its count before the group is known (`prefix`, from generated MSL's

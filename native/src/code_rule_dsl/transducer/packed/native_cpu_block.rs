@@ -980,7 +980,11 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                         heads.push((more, Step::Bits));
                         cnt
                     }
-                    None => f.ins().popcnt(words[k]),
+                    // A total only tests for a bit (`BlockProgram::totals`): its words OR-ed.
+                    None => {
+                        counts_out.push(f.ins().bor(n, words[k]));
+                        continue;
+                    }
                 };
                 counts_out.push(f.ins().iadd(n, cnt));
             }
@@ -1010,7 +1014,12 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             f.ins().store(stores, p[3 + carried + counted.len() + h], dst, 8 * k as i32 - stride as i32);
         }
         for c in 0..counted.len() {
-            f.ins().store(stores, p[3 + carried + c], counts_at, 8 * c as i32);
+            let mut v = p[3 + carried + c];
+            if c >= native.extracts.len() {
+                let any = f.ins().icmp_imm(IntCC::NotEqual, v, 0);
+                v = f.ins().uextend(types::I64, any);
+            }
+            f.ins().store(stores, v, counts_at, 8 * c as i32);
         }
         f.ins().jump(exit, &[]);
 

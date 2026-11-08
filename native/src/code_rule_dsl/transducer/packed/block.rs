@@ -296,9 +296,10 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
-    /// Values, each also an output, whose set bits each executor counts over the whole stream:
-    /// a total per file (`BlockRun::totals`). Tier 2 reads them (`EMPTY`): the fallback's
-    /// masks are totals, and a file with any bit goes to tree-sitter.
+    /// Values, each also an output, that each executor tests over the whole stream: a total per
+    /// file (`BlockRun::totals`), 1 when the output has any bit and 0 when it has none. Tier 2
+    /// reads them (`EMPTY`): the fallback's masks are totals, and a file with any bit goes to
+    /// tree-sitter. Only whether there is a bit is wanted, so no executor counts them.
     pub(super) totals: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
@@ -319,7 +320,7 @@ pub(in crate::code_rule_dsl) struct BatchFile<'a> {
 }
 
 /// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
-/// order), and each total's count.
+/// order), and each total: 1 when its output has a bit, else 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BlockRun {
     pub(super) outputs: Vec<Vec<u64>>,
@@ -440,7 +441,7 @@ impl BlockProgram {
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
-                let totals = totals.iter().map(|&k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()).collect();
+                let totals = totals.iter().map(|&k| u64::from(outputs[k].iter().any(|&w| w != 0))).collect();
                 let positions = extracts
                     .iter()
                     .map(|&k| {
