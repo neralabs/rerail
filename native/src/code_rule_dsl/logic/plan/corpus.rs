@@ -910,7 +910,10 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    let before = observe(|o| o.counts);
+    let before = observe(|o| {
+        o.begin();
+        o.counts
+    });
     let report = run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = observe(|o| {
@@ -3600,6 +3603,37 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
+        Some("python") => python.push(relative),
+        Some("rust") => rust.push(relative),
+        Some("rr") => rr.push(relative),
+        _ => text.push(relative),
+    };
+    // `RERAIL_FILES=git`: the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
+    // does not ignore), with no walk; the same directories skipped. Elsewhere, or outside a Git work tree, the walk.
+    let git = std::env::var("RERAIL_FILES").is_ok_and(|v| v == "git").then(|| observe(|o| o.git(root))).flatten();
+    if let Some(g) = git {
+        let canonical = std::fs::canonicalize(root).map_err(|e| Error::Plan(format!("{}: {e}", root.display())))?;
+        let prefix = canonical.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut listed = 0;
+        for file in g.worktree_files() {
+            let relative = if prefix.is_empty() {
+                file.as_str()
+            } else {
+                match file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')) {
+                    Some(f) => f,
+                    None => continue,
+                }
+            };
+            let dirs: Vec<&str> = relative.split('/').collect();
+            if dirs[..dirs.len() - 1].iter().any(|d| d.starts_with('.') || *d == "target") {
+                continue;
+            }
+            listed += 1;
+            classify(relative.to_owned());
+        }
+        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({} overlays: changed, staged or untracked), no walk", g.overlays.len()));
+    } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
     observe(|o| o.preload(root));
@@ -3615,13 +3649,9 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
             // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            match crate::code_rule_dsl::language::label_of_path(&relative) {
-                Some("python") => python.push(relative),
-                Some("rust") => rust.push(relative),
-                Some("rr") => rr.push(relative),
-                _ => text.push(relative),
-            }
+            classify(relative);
         }
+    }
     }
     python.sort();
     rust.sort();

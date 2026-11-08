@@ -177,6 +177,8 @@ pub(crate) struct Observer {
     pub(crate) counts: Counts,
     /// The working directory, for relative paths: an entry is kept by its absolute path.
     cwd: PathBuf,
+    /// The Git work trees this run has discovered (`git`): a clean file's digest may come from its blob.
+    git: Vec<Arc<crate::git_workspace::GitWorkspace>>,
 }
 
 fn now_ns() -> i64 {
@@ -236,7 +238,7 @@ impl Observer {
             })
             .unwrap_or(0) as u64;
         let validate_every = std::env::var("RERAIL_VALIDATE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(VALIDATE_EVERY);
-        Observer { db, entries: HashMap::new(), dirty: Vec::new(), aliases: HashMap::new(), new_aliases: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default() }
+        Observer { db, entries: HashMap::new(), dirty: Vec::new(), aliases: HashMap::new(), new_aliases: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new() }
     }
 
     /// `path` made absolute, as entries are kept.
@@ -349,7 +351,44 @@ impl Observer {
             }
             return Some(digest);
         }
+        // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
+        // that blob, unread; or read once, and the blob remembered.
+        // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
+        let canonical = if self.git.is_empty() { None } else { std::fs::canonicalize(path).ok() };
+        let blob = canonical.as_ref().and_then(|c| {
+            self.git.iter().find_map(|g| {
+                let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
+                g.clean_blob_unread(relative)
+            })
+        });
+        if let Some(blob) = blob {
+            let key = blob.key_bytes();
+            if let Some(d) = self.alias(&key) {
+                self.counts.git += 1;
+                self.remember(path, Entry { kind: Kind::File, stat: now, digest: d, listing: None, recorded_ns: started });
+                return Some(d);
+            }
+            let (_, d) = self.hash(path, now, started)?;
+            self.record_alias(&key, d);
+            return Some(d);
+        }
         self.hash(path, now, started).map(|(_, d)| d)
+    }
+
+    /// Starts a run: the Git work trees are discovered again, as they may have changed since.
+    pub(crate) fn begin(&mut self) {
+        self.git.clear();
+    }
+
+    /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
+    pub(crate) fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
+        let root = std::fs::canonicalize(self.abs(root)).ok()?;
+        if let Some(g) = self.git.iter().find(|g| root.starts_with(&g.worktree_root)) {
+            return Some(Arc::clone(g));
+        }
+        let g = Arc::new(crate::git_workspace::discover(&root).ok()?);
+        self.git.push(Arc::clone(&g));
+        Some(g)
     }
 
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
@@ -438,14 +477,6 @@ impl Observer {
         if self.aliases.insert(blob.to_owned(), digest) != Some(digest) {
             self.new_aliases.push((blob.to_owned(), digest));
         }
-    }
-
-    /// A clean Git file's digest, unread: its stat is its index entry's (the caller checked), and `blob` its blob.
-    pub(crate) fn git_digest(&mut self, path: &Path, blob: &[u8]) -> Option<[u8; 32]> {
-        let d = self.alias(blob)?;
-        self.counts.git += 1;
-        let _ = path;
-        Some(d)
     }
 
     /// Writes what changed since the last flush to the store, in one transaction.
@@ -594,6 +625,78 @@ mod tests {
         let l = o.listing(&sub).unwrap();
         assert_eq!(l.len(), 3);
         assert_eq!(o.counts.listed, 2);
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    fn age_all(dir: &Path) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            if e.file_name() == ".git" {
+                continue;
+            }
+            if e.path().is_dir() {
+                age_all(&e.path());
+            } else {
+                aged(&e.path());
+            }
+        }
+    }
+
+    /// Git's view: the files it sees (ignored ones left out, untracked ones in, deleted ones out), and a clean
+    /// file's digest from its blob in another clone, unread.
+    #[test]
+    fn git_lists_the_worktree_and_a_clone_reads_no_clean_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("pkg")).unwrap();
+        git(&repo, &["init", "--initial-branch=main"]);
+        git(&repo, &["config", "user.email", "t@example.com"]);
+        git(&repo, &["config", "user.name", "t"]);
+        std::fs::write(repo.join("a.py"), "x = 1\n").unwrap();
+        std::fs::write(repo.join("pkg/b.rr"), "r(1).\n").unwrap();
+        std::fs::write(repo.join("gone.py"), "").unwrap();
+        std::fs::write(repo.join(".gitignore"), "*.log\n").unwrap();
+        git(&repo, &["add", "--", "a.py", "pkg/b.rr", "gone.py", ".gitignore"]);
+        git(&repo, &["commit", "-m", "one"]);
+        std::fs::remove_file(repo.join("gone.py")).unwrap();
+        std::fs::write(repo.join("new.py"), "").unwrap();
+        std::fs::write(repo.join("noise.log"), "").unwrap();
+        let g = crate::git_workspace::discover(&repo).unwrap();
+        assert_eq!(g.worktree_files(), vec![".gitignore", "a.py", "new.py", "pkg/b.rr"]);
+
+        // A clone whose index stats are settled (mtimes before the index): its clean files are proven by stat.
+        let clone = dir.path().join("clone");
+        git(dir.path(), &["clone", "-q", repo.to_str().unwrap(), clone.to_str().unwrap()]);
+        age_all(&repo);
+        age_all(&clone);
+        // The index is written after a later tick than the files' ctimes: its entries are not racy.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        git(&repo, &["update-index", "--ignore-missing", "--refresh"]);
+        git(&clone, &["update-index", "--refresh"]);
+        for root in [&repo, &clone] {
+            assert!(crate::git_workspace::discover(root).unwrap().clean_blob_unread("a.py").is_some(), "{}: a.py proven clean by its stat", root.display());
+        }
+        let store = dir.path().join("p0.files");
+        let mut o = Observer::open(Some(&store));
+        o.validate_every = 0;
+        o.git(&repo).unwrap();
+        let d = o.digest(&repo.join("a.py")).unwrap();
+        assert_eq!((o.counts.hashed, o.counts.git), (1, 0), "first sight of the blob: read once, remembered");
+        o.flush();
+        let mut fresh = Observer::open(Some(&store));
+        fresh.validate_every = 0;
+        fresh.git(&clone).unwrap();
+        assert_eq!(fresh.digest(&clone.join("a.py")), Some(d));
+        assert_eq!((fresh.counts.hashed, fresh.counts.git), (0, 1), "the clone's clean a.py: its blob's digest, unread");
+        // An edited file is not clean: hashed.
+        std::fs::write(clone.join("a.py"), "x = 2\n").unwrap();
+        fresh.begin();
+        fresh.git(&clone).unwrap();
+        assert_ne!(fresh.digest(&clone.join("a.py")), Some(d));
+        assert_eq!(fresh.counts.hashed, 1);
     }
 
     #[test]

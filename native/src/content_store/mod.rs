@@ -226,6 +226,16 @@ impl HashKey {
         })
     }
 
+    /// The key as bytes: its algorithm, then its lanes (an alias table's key).
+    pub(crate) fn key_bytes(self) -> [u8; 40] {
+        let mut out = [0_u8; 40];
+        out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
+        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
+            chunk.copy_from_slice(&lane.to_be_bytes());
+        }
+        out
+    }
+
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
         Self::from_padded(HASH_GIT_SHA256, bytes)
     }
