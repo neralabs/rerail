@@ -817,6 +817,22 @@
       }
     },
     {
+      "id": "postorder-same-end",
+      "check": "transaction_callback_wrappers",
+      "entry": "collector",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "source": "def outer(conn, fn: Callable[[ReadTransaction], T]):\n    conn.read(fn=fn)\n    def inner(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n",
+        "tree": {
+          "pythonAst": "def outer(conn, fn: Callable[[ReadTransaction], T]):\n    conn.read(fn=fn)\n    def inner(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
       "id": "named-versioned_read",
       "check": "transaction_callback_wrappers",
       "entry": "collector",

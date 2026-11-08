@@ -37,6 +37,7 @@ def main():
       ('class-in-function','def outer():\n    class C:\n        '+helper().replace('\n','\n        ').rstrip()+'\n'),
       ('boundary-nested','class SyncDatabaseConnection:\n    def outer(self):\n        '+helper(name='read').replace('\n','\n        ').rstrip()+'\n'),
       ('postorder','def outer(conn, fn: Callable[[ReadTransaction], T]):\n    '+helper(name='inner').replace('\n','\n    ').rstrip()+'\n    return conn.read(fn=fn)\n')]:add(tag,text)
+    add('postorder-same-end','def outer(conn, fn: Callable[[ReadTransaction], T]):\n    conn.read(fn=fn)\n    '+helper(name='inner').replace('\n','\n    ').rstrip()+'\n')
     def named(body='return txn.versioned_read(domain)',call='conn.read(fn=worker)',definition='def worker(txn)',outer_params='conn'):
         return f'def process({outer_params}):\n    {definition}:\n        '+body.replace('\n','\n        ')+f'\n    return {call}\n'
     for method in sorted(original.REENTRANT_VERSIONED_ENTRYPOINTS):
@@ -74,6 +75,7 @@ def main():
         add('outside-allowed-'+allowed,helper(),file=allowed)
     for where in ['impl/example.py','docs/example.py','conform/example.py','l5200_vector_index/tests/example.py','l5200_vector_index/test_example.py','data_layer/example.py','_internal/example.py']:
         reports.append(dict(id='scope-'+where,check='transaction_callback_wrappers',files=[dict(path=where,source=helper())]))
+    reports.append(dict(id='two-files',check='transaction_callback_wrappers',files=[dict(path='l5200_vector_index/b.py',source=reentrant),dict(path='l5200_vector_index/a.py',source=helper())]))
     for tag,text in [('helper',helper()),('inline',reentrant),('clean','pass\n'),('syntax','# .read\ndef f(:\n'),('null','# Callable\n\x00\n')]:
         api.append(dict(id='scan-file-'+tag,check='transaction_callback_wrappers',entry='scan_file',files=[dict(path='example.py',source=text)],arguments=dict(file_path=dict(path='example.py'))))
     for tag,provided,disk in [('provided-only','Callable', 'pass\n'),('disk-only','pass\n',helper()),('same',helper(),helper())]:

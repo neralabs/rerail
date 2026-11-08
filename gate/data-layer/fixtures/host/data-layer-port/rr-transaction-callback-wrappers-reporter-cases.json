@@ -511,6 +511,16 @@
       ]
     },
     {
+      "id": "postorder-same-end",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def outer(conn, fn: Callable[[ReadTransaction], T]):\n    conn.read(fn=fn)\n    def inner(conn, fn: Callable[[ReadTransaction], T]):\n        return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
       "id": "named-versioned_read",
       "check": "transaction_callback_wrappers",
       "files": [
@@ -1006,6 +1016,20 @@
       "files": [
         {
           "path": "_internal/example.py",
+          "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
+        }
+      ]
+    },
+    {
+      "id": "two-files",
+      "check": "transaction_callback_wrappers",
+      "files": [
+        {
+          "path": "l5200_vector_index/b.py",
+          "source": "def process(conn):\n    def worker(txn):\n        return txn.versioned_read(domain)\n    return conn.read(fn=worker)\n"
+        },
+        {
+          "path": "l5200_vector_index/a.py",
           "source": "def helper(conn, fn: Callable[[ReadTransaction], T]):\n    return conn.read(fn=fn)\n"
         }
       ]

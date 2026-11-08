@@ -83,6 +83,7 @@ class Contract:
         result=dict(format='rerail.collector-original-fact-contracts/v1',sourcePin=PIN,commit=PIN,pytest_exit_code=int(code),exitCode=int(code),
             source_mismatches=[],oracle=self.backend is None,fullMigrationAcceptance=False,check=self.args.check,collected=self.collected,cases=self.cases,
             part=self.args.part,parts=self.args.parts,events=self.events,missingResults=missing,semanticFallbacks=self.semantic_fallbacks,harnessFiles=self.harness)
+        result['sourceFiles']={name:sha((self.args.source/name).read_bytes()) for name in ['scripts/lint_'+self.args.check+'.py',self.args.tests]}
         if self.backend:result.update(engineSha256=sha(self.args.engine.read_bytes()),nativeCalls=self.backend.calls)
         write_json(self.args.out,result)
         if missing and not code:raise AssertionError('Original fact observations missing: '+repr(missing))
