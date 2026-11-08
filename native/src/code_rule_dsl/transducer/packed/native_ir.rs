@@ -476,6 +476,8 @@ pub(super) enum BlockInst {
     Fill(u16, u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
+    Phase(u8, u8),
 }
 
 impl BlockInst {
@@ -517,6 +519,7 @@ impl BlockNative {
                 BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
             })
             .collect();
         Self {

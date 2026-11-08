@@ -1,0 +1,17 @@
+# corpus: mix: seed 193
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = aligned(after(starts(digit)), 9)
+mask m1 = starts((escaped(high) | starts(high)))
+mask m2 = (high & ~alpha)
+mask m3 = lasts(aligned((m1 | bs), 8))
+mask m4 = after(((m2 ^ ~m2) & aligned(fill(m3, m1), 5)))

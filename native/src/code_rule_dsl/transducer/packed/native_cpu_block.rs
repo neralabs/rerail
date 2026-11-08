@@ -447,6 +447,17 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 // the bits below `len + d` and not below `d` (`block::within_at`).
                 // In a full block, all ones.
                 BlockInst::Within(_) if full => f.ins().iconst(types::I64, -1),
+                // The period's bits shifted up to the block's first byte of the residue:
+                // `(r + k - (64 i) % k) % k`, two remainders by a constant.
+                BlockInst::Phase(k, r) => {
+                    let at = f.ins().ishl_imm(i, 6);
+                    let m = f.ins().urem_imm(at, i64::from(k));
+                    let up = f.ins().iconst(types::I64, i64::from(r) + i64::from(k));
+                    let up = f.ins().isub(up, m);
+                    let first = f.ins().urem_imm(up, i64::from(k));
+                    let bits = f.ins().iconst(types::I64, super::block::period_bits(k) as i64);
+                    f.ins().ishl(bits, first)
+                }
                 BlockInst::Within(d) => {
                     let below = |f: &mut FunctionBuilder<'_>, end: Value| {
                         let start = f.ins().ishl_imm(i, 6);

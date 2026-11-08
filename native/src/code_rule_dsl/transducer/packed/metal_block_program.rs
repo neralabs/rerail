@@ -113,6 +113,11 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
+        // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
+        BlockInst::Phase(k, r) => {
+            let bits = super::block::period_bits(k);
+            [15, u32::from(k) | u32::from(r) << 8, bits as u32, (bits >> 32) as u32]
+        }
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
@@ -912,6 +917,11 @@ fn emit(
             // The bits of the word's bytes below the stream's end.
             BlockInst::Within(0) => format!("within_lane<{m}>(len, {offset})"),
             BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
+            // The period's bits shifted up to the word's first byte of the residue.
+            BlockInst::Phase(k, r) => {
+                let bits = super::block::period_bits(k);
+                format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
+            }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
