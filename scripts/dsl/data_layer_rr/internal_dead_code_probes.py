@@ -28,6 +28,8 @@ def graph_argument(module, root, values):
     for owner,bases in values.get('class_bases',{}).items():
         graph.class_bases[owner]=list(bases)
         for base in bases:graph.class_subclasses[base].add(owner)
+    if 'class_methods' in values:
+        graph.class_methods={owner:dict(methods) for owner,methods in values['class_methods'].items()}
     graph.exported_root_ids=set(values.get('roots',[]))
     return graph
 
@@ -36,3 +38,8 @@ def probe(module,root,values):
     graph=graph_argument(module,root,values['graph'])
     result=module.analyze_dead_code(graph,extra_root_ids=set(values.get('extra_roots',[])),excluded_paths=tuple(values.get('excluded_paths',[])))
     return dict(results=result,exported_roots=graph.exported_root_ids)
+
+
+def dynamic_roots_probe(module,root,values):
+    graph=graph_argument(module,root,values['graph'])
+    return module._resolve_dynamic_import_roots(graph,set(values['imported_fqnames']))
