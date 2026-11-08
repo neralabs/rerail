@@ -70,14 +70,27 @@ Generic types have the same shape of problem at a smaller scale. A binding is ma
 - Demand (0048) decides which facts a run derives, not whether a stored one holds. A fact derived under one run's
   demand is valid in any run that reads it.
 - A fact derived through negation records what it negated over, as 03 §14 requires of every derivation.
-- **Built first at the coarse grain 03 §14 defaults to** (step 2): three derivations, each keyed by what it read.
-  - A file's rows (0052's memo), now for typing runs too. The entry also holds the file's rows of the base
-    relations the cross-file part reads and its share of the tree statistics, so a memoised file hands on exactly
-    what an evaluated one does.
-  - The cross-file part's outputs, keyed by every document's path and content, the program (every fact included)
-    and the engine. Any edit derives the whole fixpoint again, over memoised files.
-  - Discovery's answers (which files to load), keyed by the corpus's contents, the program and the settings, and
-    valid while every directory, file and loaded document it read is unchanged.
+- **The shape, with nothing special about a library.** A library file is source code. The engine may need
+  something of its own to *find* a library's files and hash their content, because they are usually not in Git.
+  Nothing else differs.
+  - **Reading files and loading documents are facts of the fixpoint.** A rule derives a request: list a
+    directory, read a file, load a document. The engine answers it inside the same fixpoint. A loaded document's
+    facts come from the per-file memo by its content hash, or from parsing it, and enter as new rows of a wave.
+    There is no discovery pass before the run, and no request loop.
+  - **The wave is the invalidation mechanism.** A file's facts are keyed by its content (0052). Its cross-file
+    facts are keyed by its import component (0076): a Merkle key over the component's own digests and its imports'
+    keys, derived by `components.rr` from per-file exports. Hand-editing a library file changes its digest, its
+    component's key and its importers' keys, and nothing else. Every other component's rows are valid as found.
+  - **Valid rows are read in bulk, in place.** Stored rows are one table per relation, tagged by component key.
+    The fixpoint reads the valid keys' rows by one set join, as facts it already has. Nothing reads the store one
+    memo entry at a time, and nothing copies rows into `<rel>__cross` while the guarded rules still run their joins.
+  - **Every cross-file fact must be a function of its import closure.** 0076 measured that only 122 of `calls.rr`'s
+    234 cross-file relations are. The rest look names up over every document (`isqmod`, `qknown`, `qopen`,
+    `tsub`, `need_name`), often under negation. They must be rewritten to look names up through resolved import
+    edges. Until they are, no key over components is sound for them.
+- **Removed (2026-11-08):** step 2's two coarse derivations. One keyed the whole cross-file part by every
+  document; the other keyed discovery's answers by the corpus. Both were special mechanisms beside the wave, and
+  both replayed rows memo entry by memo entry. The per-file memo for typing runs stays: it is 0052's, unchanged.
 
 ### 3. Types are terms, and instantiation is a fact about a signature
 
@@ -113,10 +126,15 @@ next step.
 
 1. **One fixpoint** (done, measured above). Drop the pragma from `calls.rr` and `workload.rr`, and remove pending from the rules. Expected:
    chains no longer cut (`next(iter(xs))` decided), and the cost of one deep fixpoint compared with four rounds.
-2. **Stored cross-file facts** (built at the coarse grain, measured below). The store keeps them as derivations, and
-   a run reads the valid ones. The typing runs' per-file memo is turned on (0052 turns it off when a run uses typing). Measured: a second run of the same
-   workspace, a run after one file is edited, and a second workspace that imports the same modules. The engine
-   question answered here is how the native fixpoint takes in stored facts as facts it already has.
+2. **Stored cross-file facts.** Done: the typing runs' per-file memo (0052 had turned it off when a run used
+   typing). Then, in order:
+   1. requests and loads answered inside the fixpoint, replacing `world::discover`;
+   2. the by-name lookups rewritten to go through import edges, so that every cross-file relation can declare
+      `cross-memo` (0076 §4);
+   3. 0076's stored rows read in bulk, in place, replacing `<rel>__cross` replay.
+
+   Measured each time: a second run of the same workspace, a run after one workspace file is edited, a run after one
+   library file is edited by hand, and a second workspace that imports the same modules.
 3. **Type terms.** First interned terms from annotations (per file). Then `inst_ret` in place of the call-site
    bindings, with widening.
 
@@ -156,9 +174,9 @@ warm (nothing changed)                  8.0 s              386 MB   every file, 
 one workspace file edited              24.9 s              570 MB   the edited file, discovery and the cross part derived
 ```
 
-On the one-file probe the warm run is 3.7–4.0 s CPU against 17.7 s cold. What an edit still costs: discovery's
-rounds (each parses, lowers and measures its cut program again, about 0.8 s, over up to 15 rounds) and the whole
-cross-file fixpoint. A finer grain for either is the open question below; neither needs a library to be special.
+On the one-file probe the warm run is 3.7–4.0 s CPU against 17.7 s cold. These numbers came from the two coarse
+derivations, which are now removed (§2). They are kept as a bound: the wave-shaped version has to reach the warm
+figure without either one.
 
 ## What it reverses
 
@@ -189,9 +207,8 @@ cross-file fixpoint. A finer grain for either is the open question below; neithe
 
 ## Not decided here
 
-- A finer grain than the whole cross-file part (a fact, a relation per document, …), so an edit re-derives only
-  what it reaches. Step 2 built the coarse grain; it is the same grain for every file.
-- Loading a resolved file during the fixpoint, instead of in the request loop before it (`world::discover`).
+- How the engine answers a request inside the fixpoint: a native relation like `components`, or a source the
+  fixpoint pulls new rows from between waves.
 - Whether rounds are wanted anywhere. The case would be typing over files that are not loaded together (a
   package's summaries alone). None exists yet.
 - The term encoding: interned symbols built by `cat`, or a term constructor in the engine.

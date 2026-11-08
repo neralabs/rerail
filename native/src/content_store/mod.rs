@@ -309,18 +309,6 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
 
-impl SourceId {
-    /// The row id, to name a source across runs of one process (a run handing a source to the next to hold).
-    pub(crate) fn row(self) -> i64 {
-        self.0
-    }
-
-    /// The source a row id names (`row`).
-    pub(crate) fn from_row(row: i64) -> Self {
-        SourceId(row)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 
