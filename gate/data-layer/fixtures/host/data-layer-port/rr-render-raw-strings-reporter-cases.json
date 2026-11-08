@@ -1,0 +1,1703 @@
+{
+  "format": "rerail.render-raw-strings-contract-cases/v1",
+  "cases": [
+    {
+      "id": "literal",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):return 'SELECT value'\n"
+        }
+      ]
+    },
+    {
+      "id": "fragment",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n prefix=' WHERE '\n return prefix\n"
+        }
+      ]
+    },
+    {
+      "id": "docstring",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n 'function documentation'\n return 'SELECT value'\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-docstrings",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n 'outer documentation'\n def inner():\n  'inner documentation'\n  return 'SELECT inner'\n class Nested:\n  'class documentation'\n  def render_other(self):return 'SELECT method'\n return 'SELECT outer'\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-render",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):\n  def render_b():return 'SELECT nested'\n  return 'SELECT outer'\n"
+        }
+      ]
+    },
+    {
+      "id": "siblings",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):return 'SELECT A'\nclass B:\n async def render_b(self):return 'SELECT B'\n"
+        }
+      ]
+    },
+    {
+      "id": "decorators",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "@deco('SELECT deco')\ndef render(x='SELECT arg')->'SELECT annotation':return 'SELECT body'\n"
+        }
+      ]
+    },
+    {
+      "id": "docstring-parens",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n (\n # comment\n 'doc' 'string'\n )\n return 'SELECT value'\n"
+        }
+      ]
+    },
+    {
+      "id": "async",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "async def render_sql():return 'SELECT async'\n"
+        }
+      ]
+    },
+    {
+      "id": "prefix",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render_():return 'SELECT prefix'\n"
+        }
+      ]
+    },
+    {
+      "id": "nonrender",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def renderable():return 'SELECT outside'\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-raise",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():raise Error('SELECT raise', lambda:'SELECT lambda')\n"
+        }
+      ]
+    },
+    {
+      "id": "assert",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():\n assert x=='SELECT assert', 'SELECT message'\n"
+        }
+      ]
+    },
+    {
+      "id": "special-raise",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():raise Error(Template('SELECT raise'), SqlFragment.static('SELECT static'))\n"
+        }
+      ]
+    },
+    {
+      "id": "concat",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return 'SELECT ' + value + ' WHERE '\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return ('SELECT ' # comment\n 'value')\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return lambda:'SELECT lambda'\n"
+        }
+      ]
+    },
+    {
+      "id": "bytes",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return b'SELECT bytes'\n"
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return ''\n"
+        }
+      ]
+    },
+    {
+      "id": "one",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return 'x'\n"
+        }
+      ]
+    },
+    {
+      "id": "nul",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return '\\0SELECT value'\n"
+        }
+      ]
+    },
+    {
+      "id": "repr-quotes",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return \"it's a \\\"value\\\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "repr-named",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return '\\N{SNOWMAN}\\t\\u2028'\n"
+        }
+      ]
+    },
+    {
+      "id": "long-ascii",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n"
+        }
+      ]
+    },
+    {
+      "id": "long-unicode",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return '\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d'\n"
+        }
+      ]
+    },
+    {
+      "id": "pure-fstring",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'SELECT {value} WHERE x'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-format",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'SELECT {value:width>{width}}tail'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-debug",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'{ value = }tail'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-nested",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'prefix {Template(\"SELECT nested\")} suffix'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-call-context",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return repr(f'SELECT {value} suffix')\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-empty-adjacent",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return ('' f'SELECT {value}' ' tail')\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-multi-spec",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'{value:first>10}{other:second>10}'\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring-nested-string",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return f'prefix {\"SELECT inner\"} suffix'\n"
+        }
+      ]
+    },
+    {
+      "id": "clean",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return self.value.render()\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render(:\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-name",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class \uff21:\n def \uff52\uff45\uff4e\uff44\uff45\uff52(self):return 'SELECT canonical'\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-0-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-1-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.Template(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-2-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (Template)(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-3-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-4-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return (SqlFragment).static(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-5-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return pkg.SqlFragment.static(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-6-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SF.static(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other(b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other(f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-7-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.other(('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0]('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0]('')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0]('x')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0](b'SELECT bytes')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0](f'SELECT {value}')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0](1)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-8-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template[0](('SELECT ' 'value'))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(value='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(name, 'SELECT second')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(*['SELECT star'])\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlFragment.static('SELECT first', 'SELECT second')\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(('SELECT nested',))\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(**{'key':'SELECT mapping'})\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return Template(1, 'SELECT second')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-0-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return format('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-0-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.format('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-0-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return format(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-1-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return str('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-1-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.str('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-1-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return str(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-2-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return repr('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-2-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.repr('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-2-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return repr(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-3-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlAliasName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-3-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlAliasName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-3-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlAliasName(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-4-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlTableName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-4-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlTableName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-4-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlTableName(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-5-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlColumnName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-5-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlColumnName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-5-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlColumnName(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-6-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlIndexName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-6-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlIndexName('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-6-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlIndexName(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-7-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlQuotedIdentifier('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-7-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlQuotedIdentifier('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-7-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlQuotedIdentifier(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-8-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlQualifiedIdentifier('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-8-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlQualifiedIdentifier('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-8-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlQualifiedIdentifier(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-9-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlIntegerLiteral('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-9-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.SqlIntegerLiteral('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-9-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return SqlIntegerLiteral(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-10-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return append('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-10-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.append('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-10-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return append(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-11-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return join('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-11-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.join('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-11-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return join(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-12-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return replace('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-12-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.replace('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-12-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return replace(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-13-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return startswith('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-13-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.startswith('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-13-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return startswith(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-14-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return endswith('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-14-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.endswith('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-14-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return endswith(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-15-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return param('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-15-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.param('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-15-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return param(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-16-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return unknown('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-16-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return obj.unknown('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "allowed-16-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "def render():return unknown(key='SELECT keyword')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-0",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/example.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tests/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/test_a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/tmp/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/.venv/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-5",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/__pycache__/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-6",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/conform/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-7",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/other/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-8",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-9",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/a.txt",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        }
+      ]
+    },
+    {
+      "id": "multi-file",
+      "check": "render_raw_strings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/z.py",
+          "source": "class A:\n def render(self):\n  x=Template('SELECT template')\n  y=SqlFragment.static('WHERE static')\n  return 'SELECT literal'\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/a.py",
+          "source": "def render():return 'SELECT a'\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/empty.py",
+          "source": "x=1\n"
+        }
+      ]
+    }
+  ]
+}

@@ -111,6 +111,9 @@ def run(args):
         if 'lazy_result_usage' in modules:
             from lazy_results_port import install
             install(backend, modules['lazy_result_usage'])
+        if 'render_raw_strings' in modules:
+            from render_raw_strings_port import install
+            install(backend, modules['render_raw_strings'])
         if 'render_fstrings' in modules:
             from render_fstrings_port import install
             install(backend, modules['render_fstrings'])
@@ -143,7 +146,21 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='render_fstrings':
+                if case['check']=='render_raw_strings':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='format_supplied':
+                        def call():
+                            reports=[module.FileReport(path=v['path'],render_methods_scanned=v['methods'],violations=[module.RawStringViolation(**row) for row in v['violations']]) for v in values['reports']]
+                            return getattr(module,'format_'+values['mode'])(reports,values['root'])
+                    elif case['entry']=='formats':
+                        def call():
+                            reports=module.collect_reports(**values)
+                            return [module.format_summary(reports,values['root']),module.format_detailed(reports,values['root'])]
+                    elif case['entry']=='collector':
+                        from render_raw_strings_port import collector_result
+                        call=lambda:collector_result(module,values,backend if native else None)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='render_fstrings':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='format_supplied':
                         def call():

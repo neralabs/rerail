@@ -132,6 +132,7 @@ def install(suite,module):
     def is_render_method(name):return bool(suite.native('render_raw_strings','_is_render_method',[],dict(nameProbe=name)))
     for name,value in [('analyze_file',analyze_file),('analyze_source',analyze_source),('_reports_for_files',for_files),
             ('collect_reports',collect_reports),('_is_render_method',is_render_method)]:suite.replace(module,name,value)
+    suite.replace(module,'_autofix_hint_lines',lambda:[r['parameters']['value'] for r in ordered(suite.native('render_raw_strings','_autofix_hint_lines',[])) if r['code']=='RS_HINT'])
     suite.replace(module,'format_summary',lambda reports,root:formatted(suite,reports,root,'summary'))
     suite.replace(module,'format_detailed',lambda reports,root:formatted(suite,reports,root,'detailed'))
     suite.replace(module.FileReport,'violation_count',property(lambda self:self._native_count))

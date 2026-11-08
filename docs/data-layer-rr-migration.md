@@ -11,7 +11,9 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`f0571b1e7`. Merge `0ca019c6d` takes the cached matcher automata, guest specialization, and store resolutions.
+`07a6b4171`. Merge `0b094980e` takes the memo reuse and session resolutions.
+Merge `2ffa7a028` takes combined-rule planning and cycle analysis through `044449ca7`.
+Merge `0ca019c6d` takes the cached matcher automata, guest specialization, and store resolutions.
 Merge `57ad2b1ee` takes prepared-program facts and tapes through `6c22fca95` (decision 0074).
 Matcher automata compile once and persist in the content store (decision 0075).
 Merge `8f9f001a4` adopts persistent prepared-program storage (decision 0073).
@@ -32,7 +34,9 @@ The typed JSON reader preserves member order, exposes shape and JSON projections
 The decoded-literal producer also exposes `str_part_offset`, the existing piece start as an absolute UTF-8 byte offset.
 Rules can join those positions to format-specification spans. No additional parse or rule-specific detector is required.
 Valid scalar escapes use the shared Python value decoder, including Unicode character names.
-The manifest records all 20 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
+The `python_repr` text functor shares the native canonical printer's Python string quoting and Unicode escape rules.
+It takes text values, with no AST traversal or Python execution.
+The manifest records all 21 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
 If the local Final shape branch advances, the audit rejects acceptance until this branch includes its new commits.
@@ -77,7 +81,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **79 target drafts and 21 absent translations**. None has full acceptance yet.
+The current inventory contains **80 target drafts and 20 absent translations**. None has full acceptance yet.
+The 80th draft, `render_raw_strings`, covers literals, `Template` calls, and `SqlFragment.static` calls.
+All five unchanged original tests pass, including both positives and their ten API/property observations.
+Its 669 API cases include 285 detector positives and three expected exceptions.
+All 169 reporter cases pass, including 97 positives. Fifteen controls cover finding types, exemptions, counts, previews, and helper outputs.
+The rule preserves source traversal, literal suppression, exact previews, report formatting, and warning behavior.
+It uses the shared render-context generator. Regeneration preserves the earlier f-string rule's bytes.
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-render-raw-strings-native-contracts.json.gz) retains complete source/native values and engine provenance.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 79th draft, `render_fstrings`, passes all five unchanged original tests and their ten API/property observations.
 Its 165 supplemental API cases include 92 detector positives and three expected exceptions.
 All 44 reporter cases pass, including 33 positives. Eight independent controls cover detector and helper outputs.

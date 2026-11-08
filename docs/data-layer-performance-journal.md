@@ -8916,3 +8916,71 @@ These measurements establish recorded-input parity, not a performance improvemen
 The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-render-fstrings-native-contracts.json.gz) contains source/native observations, controls, failures, hashes, commands, and its validator.
 The inventory contains 79 drafts and 21 absent translations. Full migration acceptance remains false.
 Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+
+
+## 2026-11-08: Port raw render strings and take the current Final shape resolutions
+
+The 80th native draft is `render_raw_strings`. All five original tests run unchanged, including both finding positives.
+The direct harness retains ten complete API/property observations. The initial translation failed both finding positives and the render-method count.
+Commit `75b22f6cf` records that red stage. The final replay passes all five tests and all ten observations.
+
+The rule has three finding types: `string_literal`, `template_call`, and `static_call`.
+The source mentions `str_concat` in a DTO comment but never emits it. The translation does not add that finding type.
+The outermost active render function owns findings in nested functions and classes.
+Only that outer function's docstring is exempt. Nested function and class docstrings remain visible to the source collector.
+Raises and asserts suppress ordinary literals, while special constructor calls still report there.
+Allowed call names exempt direct positional literals. Keyword literals remain visible because their AST parent is a keyword node.
+`Template` requires a bare name. `SqlFragment.static` requires a bare `SqlFragment` receiver.
+Neither detector resolves aliases. The first special-call argument is suppressed as an ordinary literal, preserving the collector's identity and visit rules.
+
+Ordinary previews use Python string repr, sliced to fifty characters. Special-call previews use decoded text, truncated after forty characters.
+Commit `2e99c7aa8` exposes the existing native printer through the pure `python_repr` text functor.
+The function shares quote choice, printable-character tables, and control escapes with the canonical Python printer.
+It takes text, with no AST lookup or Python process. The engine probe and focused native test retain the missing-function failure and passing contract.
+The rule uses existing literal pieces, byte starts, visit ranks, and typed AST relations.
+Both render rules share their context generator. Regeneration preserves the earlier f-string rule's exact bytes.
+
+The first 669-case API replay passed. Reporter replay exposed a literal code label: `.rr` did not interpolate `{violation_type}`.
+Three clauses with fixed codes express the source behavior directly. No additional engine capability is required for that shape.
+The final reporter replay passes all 169 cases. The policy maps the source warning behavior to log mode and info findings.
+
+The supplemental corpus contains 669 API cases, including 285 detector positives and three expected exceptions.
+It covers 160 file analyses, 161 source analyses, 157 collectors, and 157 statistics collectors.
+It also covers fifteen directory scans, ten name probes, eight formatting cases, and the cleanup-hint helper.
+The reporter corpus contains 169 cases, including 97 positives.
+Every source/native comparison retains complete values, traversal order, duplicates, preview text, and exception arguments.
+The corpus covers all three finding types, special-call argument shapes, allowed names, nested scopes, adjacent literals, and f-string constant pieces.
+Both report formatters run in Datalog, including stable type-frequency ordering and cleanup hints.
+
+Fifteen controls independently disable finding types, statistics, count properties, repr, formatting, hints, source gates, names, or exemptions.
+Each enabled witness passes. Each disabled output fails the corresponding original, API, or reporter assertion through successful native execution.
+The exemption controls also reject added false positives on the source's clean cases.
+The host handles filesystem discovery, supplied AST columns, and passive DTO transport. Rule decisions execute in Datalog.
+
+Final shape advanced during this work. Merge `2ffa7a028` takes `044449ca7`, including combined-rule planning and cycle-analysis resolutions.
+Merge `0b094980e` takes `07a6b4171`, including renewed memo reuse and session behavior.
+The complete rule corpus, controls, and focused regressions were replayed after the second merge.
+The current reviewed native extension set has twenty-one files. The upstream executor, scheduler, typing, and content-store resolutions remain intact.
+
+An initial build receipt sampled a moving Final branch tip that its source commit did not yet contain.
+The corrected historical receipt records the actual adopted ancestor and preserves the original incorrect metadata separately.
+The build script now reads the adopted pin and requires both adoption and current local-tip ancestry before building.
+Acceptance uses the final frozen root binary. Earlier complete runs through `044449ca7` remain historical evidence.
+
+All 91 reader checks and 85 harness tests pass. The previous f-string rule passes its five original tests and a focused reporter shard.
+The focused native checks pass 101 test executions. They include the new repr contract and both upstream memo/session regressions.
+Two upstream rule-generation helper tests remain ignored.
+A function-test filter initially selected zero tests. The corrected filter executes all twelve string tests; only that nonempty run is counted.
+The prepared-program group failed both parallel and serial execution because its cache lookup can select another test's program.
+The comparison then differs by an empty `input_error` fact entry. Each of the three original tests passes in a separate process.
+The receipt retains both failed groups and all isolated passing executions. No runtime change suppresses the failure.
+
+The final CLI build took 28.885 seconds. The standard-feature unit build took 74.026 seconds, separately from execution.
+The CLI source commit is `4c1b6c82583fdd307ecbb9142eebaca259fe7d31`.
+Its SHA-256 is `6bf5243f886ed3c3ff03cd3e5fb1fcdbfba5691feafe43a0f4eb685ad8171e35`.
+Every acceptance command remains bounded at 115 seconds. No full-repository or whole-batch cold benchmark ran.
+These results establish recorded-input parity, not a performance improvement.
+
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-render-raw-strings-native-contracts.json.gz) contains source/native observations, controls, failures, commands, hashes, and its validator.
+The inventory now contains 80 drafts and 20 absent translations. Full migration acceptance remains false.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
