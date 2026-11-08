@@ -197,7 +197,8 @@ fn tree_sitter_error(source: &str) -> bool {
 }
 
 /// `syntax_error(d, l, msg)`: the verdict, the line and the message against `ast.parse`'s; and tree-sitter's verdict
-/// (the tape's `syntax_error(d)`) against it, for the choice between the two.
+/// (the tape's `syntax_error(d)`) against it, for the choice between the two. Another exception `ast.parse` raises
+/// is its class at line 1 on both sides (the oracle's `[None, class]`; the engine's `Raised`).
 #[test]
 #[ignore]
 fn syntax_error_parity() {
@@ -206,8 +207,11 @@ fn syntax_error_parity() {
         for corpus in corpora() {
             let want = oracle(&python, "syntax", &corpus.files);
             let texts = sources(&corpus.files);
+            let engine = |s: &str| {
+                super::syntax::syntax_error(s).unwrap_or_else(|r| Some(super::syntax::SyntaxError { line: 1, msg: r.class.to_owned() }))
+            };
             let got: Vec<Option<(Option<super::syntax::SyntaxError>, bool)>> =
-                texts.par_iter().map(|s| s.as_ref().map(|s| (super::syntax::syntax_error(s), tree_sitter_error(s)))).collect();
+                texts.par_iter().map(|s| s.as_ref().map(|s| (engine(s), tree_sitter_error(s)))).collect();
             let (mut verdict, mut line, mut msg, mut tree) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
             for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
                 let (Some(source), Some((got, ts)), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };

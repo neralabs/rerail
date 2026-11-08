@@ -56,9 +56,9 @@ pub(crate) struct Literal {
 }
 
 /// Every expression of `source` with a `literal_json`, in source order of their visit (outer before inner). None where
-/// `ast.parse` rejects the file.
+/// `ast.parse` rejects the file (or raises another exception).
 pub(crate) fn literals(source: &str) -> Vec<Literal> {
-    if syntax_error(source).is_some() {
+    if !matches!(syntax_error(source), Ok(None)) {
         return Vec::new();
     }
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));

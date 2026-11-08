@@ -78,8 +78,9 @@ pub(crate) struct Facts {
     pub class_offsets: Vec<u32>,
     pub class_nodes: Vec<u32>,
     pub syntax_errors: bool,
-    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
-    pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
+    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
+    /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
+    pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
 }
 
 pub(crate) enum Built {

@@ -115,9 +115,9 @@ fn bare(class: &'static str) -> F {
     node(Node::new(class, None, Vec::new()))
 }
 
-/// The CPython tree of `source`, `None` where `ast.parse` rejects it.
+/// The CPython tree of `source`, `None` where `ast.parse` rejects it (or raises another exception).
 pub(crate) fn module(source: &str) -> Option<Node> {
-    if super::syntax::syntax_error(source).is_some() {
+    if !matches!(super::syntax::syntax_error(source), Ok(None)) {
         return None;
     }
     let parsed = ruff_python_parser::parse_unchecked(source, ruff_python_parser::ParseOptions::from(ruff_python_parser::Mode::Module).with_target_version(super::VERSION));

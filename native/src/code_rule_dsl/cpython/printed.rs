@@ -18,7 +18,7 @@ pub(crate) struct Want {
 }
 
 impl Want {
-    fn any(self) -> bool {
+    pub(crate) fn any(self) -> bool {
         self.unparse || self.dump || self.dump_sha256 || self.body_sha256 || self.signature_sha256
     }
 }
