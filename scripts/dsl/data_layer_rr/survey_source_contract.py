@@ -33,6 +33,9 @@ CASES = [
     ('module-refs', {'a.py': 'import ignored\nvalue = target\ndef omitted(x=NoDefault) -> NoReturn:\n return NoBody\nclass C(NoBase):\n field: FieldType = DefaultValue\n @decorate(DecoratorArg)\n def m(self, x: NoParam = MethodDefault, *, y=KeywordDefault) -> NoResult:\n  return NoMethodBody\n'}),
     ('conditional-module-refs', {'a.py': 'if flag:\n def f(x=Default):\n  return IncludedBody\nclass C:\n if flag:\n  def m(self, x=OtherDefault):\n   return IncludedMethodBody\n class Nested(Base):\n  def n(self): return NestedBody\n'}),
     ('module-ref-bindings', {'a.py': 'values = [x for x in source if pred(x)]\na: Alias = factory()\nclass C:\n store = target\n def m(self, /, x=PosDefault, *, y=KwDefault): pass\n'}),
+    ('bases-and-fields', {'a.py': 'class C(pkg.ABC, Generic[A], metaclass=Meta):\n first: list[A]\n second: "B" = value\n first: C | None = None\n other.member: int = 0\n if flag:\n  hidden: int\n'}),
+    ('decorator-spelling', {'a.py': '@pkg.decorate(1)\n@((factory()))\nclass C:\n @pkg.abstractmethod\n @wrap(value="(")\n def f(self): pass\n @property\n def g(self): pass\n'}),
+    ('complex-decorators-and-bases', {'a.py': '@(lambda f: f)\n@(registry["key"])\nclass C(*bases, **keywords):\n @((make_decorator())(1))\n async def method(self): pass\nclass D(factory("ABC"), x if flag else y): pass\n'}),
 ]
 
 
@@ -46,7 +49,11 @@ def source_rows(source, files):
         for i, s in enumerate(symbols):
             rows.append(dict(kind='symbol', path=path, module=module, ordinal=i, sid=s.symbol_id,
                              fq=s.fqname, name=s.name, qual=s.qualname, symbol_kind=s.kind,
-                             line=s.line, owner=s.class_name or '', async_flag=int(s.is_async)))
+                             line=s.line, owner=s.class_name or '', async_flag=int(s.is_async), abstract_flag=int(s.is_abstract)))
+            for kind, values in [('decorator',s.decorators),('class_decorator',s.class_decorators),('base',s.bases)]:
+                rows.extend(dict(kind=kind,path=path,symbol_ordinal=i,ordinal=j,text=text) for j,text in enumerate(values))
+            rows.extend(dict(kind='class_attribute',path=path,symbol_ordinal=i,ordinal=j,name=name,text=text)
+                        for j,(name,text) in enumerate(s.class_attr_annotations))
             if s.kind != 'class':
                 rows.append(dict(kind='return', path=path, symbol_ordinal=i, has_annotation=int(s.return_annotation is not None), text=s.return_annotation or ''))
                 for j, (name, ann) in enumerate(zip(s.param_names, s.param_annotations)):
