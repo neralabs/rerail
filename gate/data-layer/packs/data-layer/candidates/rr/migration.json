@@ -1467,6 +1467,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/render-raw-strings.rr",
+      "sha256": "dcf8203f43c8f407430008a926a6c36e45aeadb02da40ccc0749335c4324ad62",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_render_raw_strings.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1759,8 +1766,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-render-raw-strings.json",
       "legacySha256": "bf6911d01528b8e06342a6a0094ade70ff3d6cd94bacba7d3958bb2d4a3c883b",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/render-raw-strings.rr",
+      "ruleSha256": "dcf8203f43c8f407430008a926a6c36e45aeadb02da40ccc0749335c4324ad62"
     },
     {
       "check": "regex_sql_parsing",
