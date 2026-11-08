@@ -88,9 +88,15 @@ fn reference_graphs(document: &serde_json::Value) -> Vec<serde_json::Map<String,
 #[derive(Default)]
 struct Adjust {
     scope: Option<(Vec<String>, Vec<String>)>,
-    keep: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
-    policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String> + Send + Sync>>,
+    keep: Option<Keep>,
+    policy: Option<PolicyEdit>,
 }
+
+/// Which clauses a replay event keeps, by id (`Adjust::keep`).
+type Keep = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// An edit of a policy document before it compiles (`Adjust::policy`).
+type PolicyEdit = Box<dyn Fn(&mut Json) -> Result<bool, String> + Send + Sync>;
 
 /// The leaves of a JSON value, each at its JSON pointer (RFC 6901: `/a/0`, `~` and `/` in keys as `~0`, `~1`).
 fn json_leaves(value: &Json, pointer: String, out: &mut Vec<(String, Json)>) {
@@ -874,7 +880,7 @@ fn api_want(check: &str, entry: &str, expected: &Json, files: &[(String, String)
 }
 
 /// The replay's clause filters (`replay.ts`), by check and entry.
-fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -> bool + Send + Sync>> {
+fn keep(check: &str, entry: &str, production: bool) -> Option<Keep> {
     let entry = entry.to_owned();
     match check {
         "no_blanket_grammar_bypass" if !production => {
@@ -1561,7 +1567,7 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
     assert!(gated.clauses.iter().all(|(c, r)| c == "usage-0" || r.is_err()), "{:?}", gated.clauses);
     assert_eq!(findings(&gated.program, &run).unwrap(), Vec::<String>::new());
     // As the escape-hatch analyzer calls run it, without the gate: the declaration and no row.
-    let drop: Box<dyn Fn(&mut Json) -> Result<bool, String> + Send + Sync> = Box::new(|document| {
+    let drop: PolicyEdit = Box::new(|document| {
         for clause in document["clauses"].as_array_mut().unwrap() {
             if let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) {
                 define.remove("report_when");
@@ -1616,7 +1622,7 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     assert!(!defaults.program.contains(r#"option_on("oracleAnalyzer")."#), "{}", defaults.program);
     assert_eq!(tests(&defaults.program, "defaults"), Vec::<String>::new());
     // As an analyzer event configures it: `oracleAnalyzer` on, the category one name.
-    let configure: Box<dyn Fn(&mut Json) -> Result<bool, String> + Send + Sync> = Box::new(|document| {
+    let configure: PolicyEdit = Box::new(|document| {
         for clause in document["clauses"].as_array_mut().unwrap() {
             let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
             if define.get("options").is_some_and(|o| o.get("oracleAnalyzer").is_some()) {
