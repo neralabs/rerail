@@ -852,8 +852,8 @@ pub(crate) fn run_with_options(
         (Some(p), _) => (Some(p), "memory"),
         (None, Some(source)) => {
             let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
-            (found.map(|(p, document)| {
-                program_sources.push(document);
+            (found.map(|(p, documents)| {
+                program_sources.extend(documents);
                 p
             }), "store")
         }
@@ -911,8 +911,8 @@ pub(crate) fn run_with_options(
             if let Some(source) = durable {
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
                 match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
-                    Some(document) => program_sources.push(document),
-                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned()),
+                    Some(documents) => program_sources.extend(documents),
+                    None => crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: a part's tape does not give back its facts (decision 0074)".to_owned()),
                 }
             }
             prepared

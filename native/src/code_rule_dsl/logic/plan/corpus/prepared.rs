@@ -281,34 +281,74 @@ fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) 
     Ok(Some(facts))
 }
 
+/// The most rows a part of a stored program's facts holds: each part is its own document, and its tape is parsed
+/// alone, so the parse's memory is bounded by the part, not the program (a 66-rule pack's program is 775k rows, 32 MB
+/// of text, whose one tape peaked at 1.5 GB).
+const PART_ROWS: usize = 20_000;
+
+/// `facts` in parts of at most `PART_ROWS` rows, in order: relations in their order, each one's rows in theirs.
+fn parts(facts: &Facts) -> Vec<Facts> {
+    let mut out: Vec<Facts> = vec![Facts::new()];
+    let mut held = 0;
+    for (rel, rows) in facts {
+        for row in rows {
+            if held == PART_ROWS {
+                out.push(Facts::new());
+                held = 0;
+            }
+            out.last_mut().expect("a part").entry(rel.clone()).or_default().push(row.clone());
+            held += 1;
+        }
+    }
+    out
+}
+
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
-/// did, or when what it stored no longer reads.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, SourceId)>> {
+/// did, or when what it stored no longer reads. With it, the sources of its parts' documents.
+pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
     super::memo::off();
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(digest) = <[u8; 32]>::try_from(result.entry.as_slice()) else { return Ok(None) };
-    let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
-    let Some(facts) = document_facts(store, document, None)? else { return Ok(None) };
-    Ok(prepared_of(&facts, dialect).ok().map(|p| (p, document)))
-}
-
-/// Stores `prepared` as the program `key` names under `source`: its document (and the document's tape), the facts read
-/// off that tape, and the pointer to the document. A document whose tape does not give back the facts written is not
-/// stored, and `None` says so; else the document's source, which the run's manifest names so collection keeps it.
-pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<SourceId>> {
-    super::memo::off();
-    let facts = facts_of(prepared);
-    let text = program_facts::document(&facts, &schema()).map_err(invalid)?;
-    let document = super::memo::source(store, &text)?;
-    if document_facts(store, document, Some(&text))?.as_ref() != Some(&facts) {
+    if result.entry.is_empty() || result.entry.len() % 32 != 0 {
         return Ok(None);
     }
+    let mut facts = Facts::new();
+    let mut documents = Vec::new();
+    for digest in result.entry.chunks(32) {
+        let digest: [u8; 32] = digest.try_into().expect("32 bytes");
+        let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
+        let Some(part) = document_facts(store, document, None)? else { return Ok(None) };
+        for (rel, rows) in part {
+            facts.entry(rel).or_default().extend(rows);
+        }
+        documents.push(document);
+    }
+    Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
+}
+
+/// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), and each
+/// one's tape, the facts read off those tapes, and the pointer to the documents. A program a part of whose tape does
+/// not give back the facts written is not stored, and `None` says so; else the documents' sources, which the run's
+/// manifest names so collection keeps them.
+pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
+    super::memo::off();
+    let facts = facts_of(prepared);
+    let mut documents = Vec::new();
+    let mut entry = Vec::new();
+    for part in parts(&facts) {
+        let text = program_facts::document(&part, &schema()).map_err(invalid)?;
+        let document = super::memo::source(store, &text)?;
+        if document_facts(store, document, Some(&text))?.as_ref() != Some(&part) {
+            return Ok(None);
+        }
+        let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        entry.extend_from_slice(&digest);
+        documents.push(document);
+    }
     let set = pointer_plan(key);
-    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: digest.to_vec() }], &[])?;
-    Ok(Some(document))
+    store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
+    Ok(Some(documents))
 }
 
 /// The compiled groups' schema (decision 0075).
@@ -422,6 +462,25 @@ mod tests {
         assert_eq!(read, facts, "the document's tape gives the facts written");
         assert_eq!(crate::code_rule_dsl::logic::program_facts::decode(&crate::code_rule_dsl::logic::program_facts::encode(&facts)).unwrap(), facts);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A program's facts are stored in parts of at most `PART_ROWS` rows, and the parts joined in order are the facts.
+    #[test]
+    fn a_programs_facts_are_stored_in_bounded_parts_that_join_back() {
+        use crate::code_rule_dsl::logic::{front::Value, program_facts::Facts};
+        let mut facts = Facts::new();
+        facts.insert("a".into(), (0..super::PART_ROWS as i64 + 7).map(|i| vec![Value::Int(i)]).collect());
+        facts.insert("b".into(), (0..super::PART_ROWS as i64 * 2).map(|i| vec![Value::Str(format!("s{i}"))]).collect());
+        let parts = super::parts(&facts);
+        assert_eq!(parts.len(), 4);
+        assert!(parts.iter().all(|p| p.values().map(Vec::len).sum::<usize>() <= super::PART_ROWS));
+        let mut joined = Facts::new();
+        for part in parts {
+            for (rel, rows) in part {
+                joined.entry(rel).or_default().extend(rows);
+            }
+        }
+        assert_eq!(joined, facts);
     }
 
     /// A rule about rules reads a program's facts: a document `#include`d, its atoms asked by relation (decision 0074).
