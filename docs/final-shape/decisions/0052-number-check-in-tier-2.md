@@ -25,10 +25,17 @@ operations to 95, its loop from 178 instructions to 450, and its carried state f
    section's notation, its names byte classes and its literals bytes. A token that fails it
    sends the file to tree-sitter.
 2. **The compiler makes a byte state machine** from it (Glushkov's positions, subset
-   construction, merged states), held in the block program as data (`CheckRow`): printed by
-   `rir`, checked by `validate`, in the digest. JSON's number check is 8 states, the steps of
-   `parse_number`.
-3. **Tier 2's arm for the token runs it,** lowered to the IR with the rest of tier 2. No Rust
-   validator, no call.
+   construction, merged states): for JSON's number, 8 states, the steps of `parse_number`.
+3. **The compiler turns that machine into straight-line operations** over the token's 64-byte
+   window: a `fill` per run of a self-loop (the integer, the fraction, the exponent), a shift
+   per arm, and logic. It is a block program (`CheckRow`): printed by `rir`, checked by
+   `validate`, in the digest. Tier 2's arm for the token runs it, lowered to the IR with the
+   rest of tier 2. No Rust validator, no call.
 4. **JSON's words are one token,** as stage 1 leaves them: `true`, `false` and `null` retype
    it, and any other word is a number, which the check refuses if it is not one.
+5. **No per-byte loop, blocked by the system** (user, 2026-11-07: "ANY PER BYTE LOOP IS
+   UNACCEPTABLE, and they should be caught and blocked by the system"):
+   - a machine with a cycle through two or more states would need one: the compiler refuses it;
+   - a check is a block program, whose operations have no loop;
+   - a token longer than the window (63 bytes) goes to tree-sitter, not to a loop;
+   - tier 2's IR has one loop, over the stream's entries; its verifier refuses any other.

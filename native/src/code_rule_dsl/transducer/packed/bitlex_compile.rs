@@ -259,7 +259,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         for (kind, g) in &low.checks {
             let token = token_specs.iter().position(|t| &t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))? as u16;
             let (accept, arms) = grammar::byte_check(g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
-            low.program.checks.push(CheckRow { token, accept, arms });
+            let program = grammar::check_program(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?;
+            low.program.checks.push(CheckRow { token, program });
         }
     }
     low.program.delay = delay;

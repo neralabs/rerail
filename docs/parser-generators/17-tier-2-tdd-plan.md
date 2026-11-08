@@ -61,7 +61,8 @@ the digest covers them. The old rows (`after`, `before`, `also`, `parent`, code 
 `json_number` validator) are deleted, with the Rust tape writer's leftovers.
 
 **Tests:** `json_tier2_states_print_as_designed` (19 states, pinned whole),
-`json_number_check_is_parse_numbers_steps` (8 states), `check_matches_a_tokens_bytes`,
+`json_number_check_is_straight_line`, `json_number_check_equals_the_reference`,
+`a_check_that_needs_a_byte_loop_is_refused`, `check_matches_a_tokens_bytes`,
 `rir::tests::block_tree_rows_round_trip`, `json_rows_equal_the_evaluator_on_every_executor`
 (the token rows), `only_the_compiler_reads_tier2s_states`.
 
@@ -106,12 +107,16 @@ body to it, lowered from the states and arms:
 - each arm's acts as straight-line stores to the tape's columns;
 - a call pushes the return state on a stack in memory; a state with `end` and no arms pops.
 
+Its verifier refuses any other loop (decision 0052): no loop over a token's bytes, ever. A
+token's check is a straight-line block program over its window; a token longer than the
+window goes to tree-sitter.
 The IR's interpreter, Cranelift (`native_cpu_block`) and later MSL all run that body.
 
 **5c. The kinds and checks.** A token row with a kind gives it; a keyword retypes it, read
 from the token's bytes: a punctuation byte, an escape's second byte, or one compare of a word
-(`true` is one 32-bit compare). A token with a `check` runs its byte state machine in its arm,
-as simdjson's `parse_number` (decision 0052): JSON's number is 8 states.
+(`true` is one 32-bit compare). A token with a `check` runs its straight-line program in its
+arm, as simdjson's `parse_number` (decision 0052): JSON's number is 100 operations, a `fill`
+per digit run.
 
 **5d. The stack.** simdjson's: one frame per nested open, in memory: the open's ord and the
 return state. A close writes the size into the open's slot. Its depth is the file's.
@@ -125,7 +130,8 @@ again at the known widths: at most one second pass.
 
 - `json_stream_is_one_extraction`: tier 1 extracts one mask, its entries per block next to
   simdjson's structurals per block.
-- `json_tier2_ir_is_one_loop`: the tier-2 body's only loop is over the stream, with no call.
+- `json_tier2_ir_is_one_loop`: the tier-2 body's only loop is over the stream, with no call. The
+  IR's verifier refuses a second loop, and a test shows it does.
 - `json_tapes_equal_tree_sitter_byte_for_byte` and the corpus, on the interpreter and Cranelift.
 - `json_widths_speculated_once`: a second pass only where the guess was wrong.
 - `json_cost_ratchet`: both tiers next to simdjson's full parse, and each next to its stage, in

@@ -582,3 +582,160 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
     }
     (order.iter().map(|&s| accept[s]).collect(), out)
 }
+
+/// The longest token a check reads: its 64-byte window, with a bit left for its end.
+pub(super) const CHECK_WINDOW: usize = 63;
+
+/// A check's byte machine as straight-line operations over the token's window (doc 18 §4,
+/// decision 0052): no loop over the bytes, as simdjson's `parse_number` has none. Bit `i` is the
+/// token's byte `i`; `within` is the token's bytes. The machine is on one path, so per state:
+///
+/// - `e`: where it enters the state (bit 0 for the start);
+/// - a self-loop on bytes `L` keeps it there over a run: `q = fill(e, ~prev(L, 1))`, and it
+///   leaves at `x = q & ~L`, the first byte not in `L` (or the token's end);
+/// - without one, `x = e`;
+/// - each other arm on bytes `B` enters its state at `prev(x & B, 1)`.
+///
+/// The output fails where some `x` has a byte no arm takes, or is the end outside an accepting
+/// state; it is one byte late (`delay 1`), so a failure at the end is the last byte's. A cycle through two or more states would need a loop over the bytes: refused.
+pub(super) fn check_program(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> Result<super::block::BlockProgram, String> {
+    use super::block::{BlockOp, BlockProgram, ClassTable};
+    let n = accept.len();
+    let mut p = BlockProgram::default();
+    let mut seen: HashMap<BlockOp, u16> = HashMap::new();
+    let mut op = |p: &mut BlockProgram, o: BlockOp| -> u16 {
+        *seen.entry(o).or_insert_with(|| {
+            p.ops.push(o);
+            (p.ops.len() - 1) as u16
+        })
+    };
+    // A byte set: one `eq`, or a class of its own table (products of nibble sets, eight a table).
+    let mut sets: HashMap<[u64; 4], u16> = HashMap::new();
+    let mut set_op = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, s: [u64; 4]| -> Result<u16, String> {
+        if let Some(&v) = sets.get(&s) {
+            return Ok(v);
+        }
+        let bytes: Vec<u8> = (0..=255u8).filter(|&b| s[usize::from(b / 64)] >> (b % 64) & 1 == 1).collect();
+        let v = if bytes.len() == 1 {
+            op(p, BlockOp::Eq(bytes[0]))
+        } else {
+            let mut products: Vec<(u16, u16)> = Vec::new();
+            for h in 0..16u8 {
+                let lo = bytes.iter().filter(|&&b| b >> 4 == h).fold(0u16, |a, &b| a | 1 << (b & 15));
+                if lo == 0 {
+                    continue;
+                }
+                match products.iter_mut().find(|x| x.1 == lo) {
+                    Some(x) => x.0 |= 1 << h,
+                    None => products.push((1 << h, lo)),
+                }
+            }
+            if products.len() > 8 {
+                return Err("a byte set of more than eight nibble products".into());
+            }
+            let mut t = ClassTable::default();
+            for (k, &(hi, lo)) in products.iter().enumerate() {
+                for i in 0..16 {
+                    if hi >> i & 1 == 1 {
+                        t.hi[i] |= 1 << k;
+                    }
+                    if lo >> i & 1 == 1 {
+                        t.lo[i] |= 1 << k;
+                    }
+                }
+            }
+            p.tables.push(t);
+            let bits = ((1u16 << products.len()) - 1) as u8;
+            op(p, BlockOp::Class { table: (p.tables.len() - 1) as u16, bits })
+        };
+        sets.insert(s, v);
+        Ok(v)
+    };
+    // The states in an order where every arm but a self-loop goes forward.
+    let mut order = Vec::new();
+    let mut indegree = vec![0usize; n];
+    for a in arms.iter().filter(|a| a.0 != a.2) {
+        indegree[usize::from(a.2)] += 1;
+    }
+    let mut ready: Vec<usize> = (0..n).filter(|&s| indegree[s] == 0).collect();
+    while let Some(s) = ready.pop() {
+        order.push(s);
+        for a in arms.iter().filter(|a| usize::from(a.0) == s && a.0 != a.2) {
+            let t = usize::from(a.2);
+            indegree[t] -= 1;
+            if indegree[t] == 0 {
+                ready.push(t);
+            }
+        }
+    }
+    if order.len() != n || order.first() != Some(&0) {
+        return Err("its state machine has a cycle through two or more states, which needs a loop over the bytes: refused".into());
+    }
+    let within = op(&mut p, BlockOp::Within(0));
+    let shifted_within = op(&mut p, BlockOp::Prev(within, 1));
+    let end = op(&mut p, BlockOp::AndNot(shifted_within, within));
+    let mut enter: Vec<Option<u16>> = vec![None; n];
+    enter[0] = Some(op(&mut p, BlockOp::Const(1)));
+    // Failures inside the token, and at its end; both brought to one byte late, so the end's is
+    // the last byte's (the output's delay is 1).
+    let mut fail_in: Option<u16> = None;
+    let mut fail_end: Option<u16> = None;
+    let mut join = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, acc: &mut Option<u16>, v: u16| {
+        *acc = Some(match *acc {
+            Some(a) => op(p, BlockOp::Or(a, v)),
+            None => v,
+        });
+    };
+    for &s in &order {
+        let Some(e) = enter[s] else { continue };
+        let own: Vec<&(u16, [u64; 4], u16)> = arms.iter().filter(|a| usize::from(a.0) == s).collect();
+        let x = match own.iter().find(|a| usize::from(a.2) == s) {
+            Some(lp) => {
+                let l = set_op(&mut p, &mut op, lp.1)?;
+                let l = op(&mut p, BlockOp::And(l, within));
+                let stay = op(&mut p, BlockOp::Prev(l, 1));
+                let leave = op(&mut p, BlockOp::Not(stay));
+                let q = op(&mut p, BlockOp::Fill(e, leave));
+                op(&mut p, BlockOp::AndNot(q, l))
+            }
+            None => e,
+        };
+        let mut taken: Option<u16> = None;
+        for a in own.iter().filter(|a| usize::from(a.2) != s) {
+            let b = set_op(&mut p, &mut op, a.1)?;
+            let at = op(&mut p, BlockOp::And(x, b));
+            let at = op(&mut p, BlockOp::And(at, within));
+            let next = op(&mut p, BlockOp::Prev(at, 1));
+            let t = usize::from(a.2);
+            enter[t] = Some(match enter[t] {
+                Some(v) => op(&mut p, BlockOp::Or(v, next)),
+                None => next,
+            });
+            taken = Some(match taken {
+                Some(v) => op(&mut p, BlockOp::Or(v, b)),
+                None => b,
+            });
+        }
+        // A byte no arm takes, inside the token; the end, outside an accepting state.
+        let inside = op(&mut p, BlockOp::And(x, within));
+        let bad = match taken {
+            Some(t) => op(&mut p, BlockOp::AndNot(inside, t)),
+            None => inside,
+        };
+        join(&mut p, &mut op, &mut fail_in, bad);
+        if !accept[s] {
+            let at_end = op(&mut p, BlockOp::And(x, end));
+            join(&mut p, &mut op, &mut fail_end, at_end);
+        }
+    }
+    let late = op(&mut p, BlockOp::Prev(fail_in.expect("the start state"), 1));
+    let fail = match fail_end {
+        Some(e) => op(&mut p, BlockOp::Or(late, e)),
+        None => late,
+    };
+    p.outputs = vec![fail];
+    p.delay = 1;
+    p.output_delays = vec![1];
+    p.verify().map_err(|_| "its operations do not verify".to_owned())?;
+    Ok(p)
+}

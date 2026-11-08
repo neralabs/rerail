@@ -851,33 +851,66 @@ fn only_the_compiler_reads_tier2s_states() {
     assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
 }
 
-/// JSON's number check (doc 18 §4), the steps of simdjson's `parse_number`: 0 the start, 1 after
-/// `-`, 2 after a leading `0`, 3 in the integer, 4 after `.` and in the fraction, 5 after `e`,
-/// 6 after `e-`, 7 in the exponent; 2, 3, 4 and 7 accept. Bytes as 64 hex digits, byte 0 last:
-/// `-` 0x2d, `0` 0x30, `1`..`9`, `.` 0x2e, `e` `E`.
+/// JSON's number check (doc 18 §4, decision 0052): simdjson's `parse_number` steps as
+/// straight-line operations over the token's window. One `fill` per run (the integer, the
+/// fraction, the exponent), shifts by one byte, and logic; no loop, no other carry. Its size is a
+/// ratchet: lower it as the compiler improves.
 #[test]
-fn json_number_check_is_parse_numbers_steps() {
-    let text = rir::disassemble(&json_program(), None);
-    let got: String = text.lines().filter(|l| l.starts_with("  block 0 check ")).map(|l| format!("{}\n", &l[10..])).collect();
-    assert_eq!(got, JSON_NUMBER_CHECK, "\n{got}");
+fn json_number_check_is_straight_line() {
+    use super::block::BlockOp::*;
+    let program = json_program();
+    let check = &program.block_programs()[0].checks[0].program;
+    let fills = check.ops.iter().filter(|op| matches!(op, Fill(..))).count();
+    let other: Vec<&block::BlockOp> = check.ops.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(0) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
+    eprintln!("json number check: {} operations, {fills} fills", check.ops.len());
+    assert_eq!((fills, other.len()), (3, 0), "{other:?}");
+    assert!(check.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", check.ops.len());
 }
 
-const JSON_NUMBER_CHECK: &str = "\
-check 0 token 4 accept 2 3 4 7\n\
-check 0 arm 0 on 0000000000000000000000000000000000000000000000000000200000000000 to 1\n\
-check 0 arm 0 on 0000000000000000000000000000000000000000000000000001000000000000 to 2\n\
-check 0 arm 0 on 00000000000000000000000000000000000000000000000003fe000000000000 to 3\n\
-check 0 arm 1 on 0000000000000000000000000000000000000000000000000001000000000000 to 2\n\
-check 0 arm 1 on 00000000000000000000000000000000000000000000000003fe000000000000 to 3\n\
-check 0 arm 2 on 0000000000000000000000000000000000000000000000000000400000000000 to 4\n\
-check 0 arm 2 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
-check 0 arm 3 on 0000000000000000000000000000000000000000000000000000400000000000 to 4\n\
-check 0 arm 3 on 00000000000000000000000000000000000000000000000003ff000000000000 to 3\n\
-check 0 arm 3 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
-check 0 arm 4 on 00000000000000000000000000000000000000000000000003ff000000000000 to 4\n\
-check 0 arm 4 on 0000000000000000000000000000000000000020000000200000000000000000 to 5\n\
-check 0 arm 5 on 0000000000000000000000000000000000000000000000000000200000000000 to 6\n\
-check 0 arm 5 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
-check 0 arm 6 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
-check 0 arm 7 on 00000000000000000000000000000000000000000000000003ff000000000000 to 7\n\
-";
+const JSON_NUMBER_CHECK_OPS: usize = 100;
+
+/// JSON's number check, as straight-line operations, equals the reference's grammar on every
+/// word of up to five bytes over `-01.eEx`, and on longer ones: run on the block interpreter over
+/// the token's bytes, it fails exactly the words the reference refuses.
+#[test]
+fn json_number_check_equals_the_reference() {
+    let program = json_program();
+    let check = &program.block_programs()[0].checks[0].program;
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let tables = std::collections::HashMap::new();
+    let alphabet = b"-01.eEx";
+    let mut words: Vec<Vec<u8>> = vec![];
+    let mut frontier: Vec<Vec<u8>> = vec![vec![]];
+    for _ in 0..5 {
+        frontier = frontier.iter().flat_map(|w| alphabet.iter().map(move |&b| [w.as_slice(), &[b]].concat())).collect();
+        words.extend(frontier.iter().cloned());
+    }
+    words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5"].map(<[u8]>::to_vec));
+    let mut refused = 0;
+    for w in &words {
+        // The word alone is a file of one number token (or a keyword, which no word here is).
+        let out = ::bitlex::eval::Ev::run(&stmts, w, &tables).expect("evaluates");
+        let want = out.errors.iter().any(|e| e.contains("fails its check"));
+        let got = check.interpret(w)[0].iter().any(|&x| x != 0);
+        assert_eq!(got, want, "{:?}", String::from_utf8_lossy(w));
+        refused += usize::from(want);
+    }
+    assert!(refused > 0 && refused < words.len());
+}
+
+/// A check whose byte machine cycles through two or more states (`('a' 'b')*`) would need a loop
+/// over the token's bytes: the compiler refuses it. One whose only cycles are runs (`digit+`,
+/// `'-' digit* '.'`) compiles to straight-line operations.
+#[test]
+fn a_check_that_needs_a_byte_loop_is_refused() {
+    use ::bitlex::syntax::Gram;
+    let classes = std::collections::HashMap::from([("digit".to_owned(), vec![(0x30, 0x39)])]);
+    let lit = |s: &str| Gram::Lit(s.to_owned());
+    let compile = |g: Gram| super::grammar::byte_check(&g, &classes).and_then(|(accept, arms)| super::grammar::check_program(&accept, &arms));
+    let cycle = compile(Gram::Star(Box::new(Gram::Seq(vec![lit("a"), lit("b")])))).expect_err("a two-state cycle");
+    assert!(cycle.contains("loop over the bytes"), "{cycle}");
+    for g in [Gram::Plus(Box::new(Gram::Sym("digit".into()))), Gram::Seq(vec![lit("-"), Gram::Star(Box::new(Gram::Sym("digit".into()))), lit(".")])] {
+        let p = compile(g).expect("runs only");
+        assert!(p.ops.iter().all(|op| !matches!(op, block::BlockOp::Toggle(_) | block::BlockOp::Escaped(_))), "{:?}", p.ops);
+    }
+}

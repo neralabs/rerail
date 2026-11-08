@@ -376,7 +376,7 @@ fn the_frontends_dumps_are_the_goldens() {
 /// states and arms; each mask an output, each arm between states, one arm per state and token.
 #[test]
 fn block_tree_rows_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 token 0 kind 0 start %0 end %0\n  block 0 token 1 kind 9 start %2 end %1 extra\n  block 0 keyword 0 7b 1\n  block 0 keyword 0 7d 2\n  block 0 skip %1\n  block 0 state 0 level 15\n  block 0 state 1 level 3\n  block 0 state 2 level 15 end 0\n  block 0 arm 0 token 1 to 1 push 2 do open 15 open 3 f 4 s 12 s 13 leaf\n  block 0 arm 1 token 2 to 2 do leaf f 2 close\n  block 0 check 0 token 1 accept 1\n  block 0 check 0 arm 0 on 00000000000000000000000000000000000000000000000003ff000000000000 to 1\n  block 0 check 0 arm 1 on 00000000000000000000000000000000000000000000000003ff000000000000 to 1\n  0000 STOP 0\n";
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 token 0 kind 0 start %0 end %0\n  block 0 token 1 kind 9 start %2 end %1 extra\n  block 0 keyword 0 7b 1\n  block 0 keyword 0 7d 2\n  block 0 skip %1\n  block 0 state 0 level 15\n  block 0 state 1 level 3\n  block 0 state 2 level 15 end 0\n  block 0 arm 0 token 1 to 1 push 2 do open 15 open 3 f 4 s 12 s 13 leaf\n  block 0 arm 1 token 2 to 2 do leaf f 2 close\n  block 0 check 0 token 1\n  block 0 check 0 table 0 lo=ffff0000000000000000000000000000 hi=00000001000000000000000000000000\n  block 0 check 0 %0 = within\n  block 0 check 0 %1 = class t0 0x01\n  block 0 check 0 %2 = andnot %0, %1\n  block 0 check 0 fail %2\n  0000 STOP 0\n";
     let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
     let block = &program.block_programs()[0];
     assert_eq!((block.tokens.len(), block.states.len(), block.arms.len()), (2, 3, 2));
@@ -384,12 +384,12 @@ fn block_tree_rows_round_trip() {
     assert_eq!((block.states[2].end, block.arms[0].push), (Some(0), Some(2)));
     assert_eq!(block.arms[0].acts[1], block::Act::Open { kind: 3, field: 4, supers: vec![12, 13] });
     assert_eq!(block.arms[1].acts, [block::Act::Leaf { field: 2, supers: vec![] }, block::Act::Close]);
-    assert_eq!((block.checks[0].accept.clone(), block.checks[0].arms.len()), (vec![false, true], 2));
+    assert_eq!((block.checks[0].program.ops.len(), block.checks[0].program.outputs.clone()), (3, vec![2]));
     assert_eq!(block.skip, Some(1));
     let text = round_trip(&program, None);
-    assert!(text.contains("check 0 arm 1 on 00000000000000000000000000000000000000000000000003ff000000000000 to 1"), "{text}");
+    assert!(text.contains("check 0 %2 = andnot %0, %1\n  block 0 check 0 fail %2"), "{text}");
     assert!(text.contains("arm 0 token 1 to 1 push 2 do open 15 open 3 f 4 s 12 s 13 leaf"), "{text}");
-    for (from, to, what) in [("  block 0 keyword 0 7d 2\n", "", "keywords"), (" level 15 end 0", " level 15", "states"), ("  block 0 arm 1 token 2 to 2 do leaf f 2 close\n", "", "arms"), ("03ff000000000000 to 1\n  0000", "03fe000000000000 to 1\n  0000", "checks")] {
+    for (from, to, what) in [("  block 0 keyword 0 7d 2\n", "", "keywords"), (" level 15 end 0", " level 15", "states"), ("  block 0 arm 1 token 2 to 2 do leaf f 2 close\n", "", "arms"), ("check 0 %1 = class t0 0x01", "check 0 %1 = eq 0x30", "checks")] {
         let other = assemble(&rows.replace(from, to)).unwrap_or_else(|e| panic!("{what}: {e}"));
         assert_ne!(other.plain_digest(), program.plain_digest(), "the {what} are in the digest");
     }
@@ -402,5 +402,6 @@ fn block_tree_rows_round_trip() {
     assert!(!refused(&rows.replace("open 3 f 4", "open 0 f 4")).is_empty(), "an open of kind 0");
     assert!(refused(&rows.replace("do leaf f 2 close", "do leaf f 2 shut")).contains("shut"));
     assert!(!refused(&rows.replace("check 0 token 1", "check 0 token 9")).is_empty(), "a check of a token row");
-    assert!(!refused(&rows.replace("arm 1 on 0000000000000000000000000000000000000000000000000", "arm 0 on 0000000000000000000000000000000000000000000000000")).is_empty(), "disjoint arms from one state");
+    assert!(!refused(&rows.replace("check 0 %2 = andnot %0, %1", "check 0 %2 = andnot %0, %7")).is_empty(), "a check's operand is an earlier value");
+    assert!(!refused(&rows.replace("  block 0 check 0 fail %2\n", "")).is_empty(), "a check has one output");
 }

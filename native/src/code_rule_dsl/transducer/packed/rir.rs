@@ -331,13 +331,22 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
         let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
         let _ = writeln!(out, "  block {at} arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
     }
-    // A check's arms take a byte set: 256 bits as 64 hex digits, byte 0 last.
+    // A check: its straight-line program over the token's window, as a block program's rows.
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (c, check) in block.checks.iter().enumerate() {
-        let accept: String = check.accept.iter().enumerate().filter(|a| *a.1).map(|(s, _)| format!(" {s}")).collect();
-        let _ = writeln!(out, "  block {at} check {c} token {} accept{accept}", check.token);
-        for (from, bytes, to) in &check.arms {
-            let hex: String = bytes.iter().rev().map(|w| format!("{w:016x}")).collect();
-            let _ = writeln!(out, "  block {at} check {c} arm {from} on {hex} to {to}");
+        let q = &check.program;
+        let _ = writeln!(out, "  block {at} check {c} token {}", check.token);
+        for (t, table) in q.tables.iter().enumerate() {
+            let _ = writeln!(out, "  block {at} check {c} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+        }
+        for (value, op) in q.ops.iter().enumerate() {
+            let _ = writeln!(out, "  block {at} check {c} %{value} = {}", op.text());
+        }
+        for value in &q.outputs {
+            let _ = writeln!(out, "  block {at} check {c} fail %{value}");
+        }
+        if q.delay != 0 {
+            let _ = writeln!(out, "  block {at} check {c} delay {}", q.delay);
         }
     }
 }
@@ -887,44 +896,49 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 }
                 program.arms.push(block::ArmRow { from, token, acts, to, push });
             } else if first == "check" {
-                // `block N check C token R accept Sâ¦` then its arms, `block N check C arm S on HEX to T`.
+                // `block N check C token R`, then its program's rows (`tree_rows`), in order.
                 let c: usize = line.number("")?;
-                match line.word()?.as_str() {
-                    "token" if c == program.checks.len() => {
-                        let token = line.number("")?;
-                        line.want("accept")?;
-                        let mut accepting = Vec::new();
-                        while line.peek_word().is_some() {
-                            accepting.push(line.number::<usize>("")?);
-                        }
-                        let states = accepting.iter().max().map_or(1, |m| m + 1);
-                        let mut accept = vec![false; states];
-                        accepting.iter().for_each(|&s| accept[s] = true);
-                        program.checks.push(block::CheckRow { token, accept, arms: Vec::new() });
+                let word = line.word()?;
+                if word == "token" {
+                    if c != program.checks.len() {
+                        return Err(format!("block {at} check {c} out of order (expected {})", program.checks.len()));
                     }
-                    "token" => return Err(format!("block {at} check {c} out of order (expected {})", program.checks.len())),
-                    "arm" if c + 1 == program.checks.len() => {
-                        let from: u16 = line.number("")?;
-                        line.want("on")?;
-                        let hex = line.word()?;
-                        if hex.len() != 64 {
-                            return Err(format!("a check's byte set is 64 hex digits, not `{hex}`"));
-                        }
-                        let mut bytes = [0u64; 4];
-                        for w in 0..4 {
-                            bytes[3 - w] = u64::from_str_radix(&hex[16 * w..16 * w + 16], 16).map_err(|_| format!("a bad byte set `{hex}`"))?;
-                        }
-                        line.want("to")?;
-                        let to: u16 = line.number("")?;
-                        let check = program.checks.last_mut().expect("a check");
-                        // The states are as many as the arms name.
-                        let n = usize::from(from.max(to)) + 1;
-                        if check.accept.len() < n {
-                            check.accept.resize(n, false);
-                        }
-                        check.arms.push((from, bytes, to));
+                    let token = line.number("")?;
+                    program.checks.push(block::CheckRow { token, program: block::BlockProgram::default() });
+                    return line.end();
+                }
+                if c + 1 != program.checks.len() {
+                    return Err(format!("block {at} check {c}: a row of a check not started last"));
+                }
+                let q = &mut program.checks.last_mut().expect("a check").program;
+                if word == "table" {
+                    let t: usize = line.number("")?;
+                    if t != q.tables.len() || !q.ops.is_empty() {
+                        return Err(format!("block {at} check {c} table {t} out of order"));
                     }
-                    other => return Err(format!("block {at} check {c}: `{other}` is not `token` or an arm of the last check")),
+                    let lo = table_half(line, "lo=")?;
+                    let hi = table_half(line, "hi=")?;
+                    q.tables.push(block::ClassTable { lo, hi });
+                } else if word == "fail" {
+                    q.outputs.push(line.number("%")?);
+                } else if word == "delay" {
+                    // The output's delay, the program's: a check has one output.
+                    let d: u8 = line.number("")?;
+                    q.delay = d;
+                    q.output_delays = vec![d; q.outputs.len()];
+                } else {
+                    let value: usize = word.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad check row `{word}`"))?;
+                    if value != q.ops.len() || !q.outputs.is_empty() {
+                        return Err(format!("block {at} check {c} value %{value} out of order"));
+                    }
+                    if line.word()? != "=" {
+                        return Err("a check row is `%i = op …`".into());
+                    }
+                    let mut words = Vec::new();
+                    while line.tokens.peek().is_some() {
+                        words.push(line.word()?);
+                    }
+                    q.ops.push(block::BlockOp::parse(&words)?);
                 }
             } else if first == "keyword" {
                 let node = line.number("")?;
@@ -948,20 +962,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 if t != program.tables.len() || !program.ops.is_empty() {
                     return Err(format!("block {at} table {t} out of order (expected {}, before the operations)", program.tables.len()));
                 }
-                let nibbles = |line: &mut Line<'_>, key: &str| -> Result<[u8; 16], String> {
-                    let word = line.word()?;
-                    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
-                    let mut out = [0u8; 16];
-                    if hex.len() != 32 {
-                        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
-                    }
-                    for (i, o) in out.iter_mut().enumerate() {
-                        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
-                    }
-                    Ok(out)
-                };
-                let lo = nibbles(line, "lo=")?;
-                let hi = nibbles(line, "hi=")?;
+                let lo = table_half(line, "lo=")?;
+                let hi = table_half(line, "hi=")?;
                 program.tables.push(block::ClassTable { lo, hi });
             } else {
                 let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
@@ -1208,3 +1210,17 @@ pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&P
 #[cfg(test)]
 #[path = "rir_tests.rs"]
 mod tests;
+
+/// A class table's half, `lo=HEX` or `hi=HEX`: 16 bytes of hex.
+fn table_half(line: &mut Line<'_>, key: &str) -> Result<[u8; 16], String> {
+    let word = line.word()?;
+    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
+    let mut out = [0u8; 16];
+    if hex.len() != 32 {
+        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
+    }
+    Ok(out)
+}

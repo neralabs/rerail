@@ -109,8 +109,9 @@ arm 18 token 2 to 17 do close close leaf                # `,` after a string val
   starting `t`, `f` or `n` is compared once with `true`, `false`, `null` (one 32-bit compare,
   and its length from the end entry); an escape's second byte picks its kind or refuses.
 - **A number's syntax** is tier 2's, as simdjson's `parse_number` (decision 0052): `check number = G`
-  is a grammar over the token's bytes, compiled to a byte state machine of 8 states, which the
-  number's arm runs. Tier 1 finds only the word; `true`, `false` and `null` retype it, and any
+  is a grammar over the token's bytes. The compiler makes it a byte state machine (8 states,
+  `parse_number`'s steps), then straight-line operations over the token's window, a `fill`
+  per digit run; the number's arm runs them. No loop over the bytes. Tier 1 finds only the word; `true`, `false` and `null` retype it, and any
   other word is a number the check refuses.
 
 ## 5. What it replaces
