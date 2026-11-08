@@ -401,6 +401,8 @@
 // @json_str(s): s as a JSON string literal, quotes included, escaped as Python's json.dumps does by default
 // (non-ASCII as \uXXXX, surrogate pairs above U+FFFF), so rebuilt messages match the bytes that were signed.
 .functor json_str(s: symbol): symbol
+// Python 3.13 repr of scalar Unicode text: quote choice and printable/control character escapes.
+.functor python_repr(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its

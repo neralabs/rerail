@@ -147,6 +147,23 @@ Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, 
     assert_eq!(rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["column"].as_i64().unwrap())).collect::<Vec<_>>(), [(1, 8), (2, 3)]);
 }
 
+/// Python string repr shares the native printer's quote and Unicode escape rules.
+#[test]
+fn python_repr_is_a_native_text_function() {
+    let rows = finding_contract("values = ['plain', \"a'b\", 'a\\n\\x00', '漢🐍', '\\u2028']\n", r#"
+.language python
+#include "python/ast.rr"
+.violation Repr(at: node, value: symbol, printed: symbol) "{printed}"
+Repr(n, value, @python_repr(value)) :- str_const(n, value).
+"#);
+    let values: std::collections::BTreeMap<_, _> = rows.iter().map(|r| (r["parameters"]["value"].as_str().unwrap(), r["parameters"]["printed"].as_str().unwrap())).collect();
+    assert_eq!(values["plain"], "'plain'");
+    assert_eq!(values["a'b"], "\"a'b\"");
+    assert_eq!(values["a\n\0"], "'a\\n\\x00'");
+    assert_eq!(values["漢🐍"], "'漢🐍'");
+    assert_eq!(values["\u{2028}"], "'\\u2028'");
+}
+
 /// Literal pieces use source byte offsets, including non-ASCII constants and format specifications.
 #[test]
 fn decoded_constant_offsets_join_to_source_byte_ranges() {

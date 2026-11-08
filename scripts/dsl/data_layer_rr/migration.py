@@ -28,6 +28,7 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/sql/select.rs',
     'native/src/code_rule_dsl/sql_executor/documents/shards.rs',
     'native/src/code_rule_dsl/logic/strings.rs',
+    'native/src/code_rule_dsl/logic/strings/functions.rs',
     'native/src/code_rule_dsl/value/python.rs',
 )
 

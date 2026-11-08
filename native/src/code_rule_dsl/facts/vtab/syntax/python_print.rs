@@ -28,6 +28,11 @@ fn escaped(cp: u32) -> String {
         _ => format!("\\U{cp:08x}"),
     }
 }
+/// Python 3.13 repr of scalar Unicode text, shared by the printer and text functors.
+pub(in crate::code_rule_dsl) fn string_repr(value: &str) -> String {
+    repr(&value.chars().map(u32::from).collect::<Vec<_>>(), false)
+}
+
 fn repr(points: &[u32], bytes: bool) -> String {
     let quote = if points.contains(&39) && !points.contains(&34) {
         '"'

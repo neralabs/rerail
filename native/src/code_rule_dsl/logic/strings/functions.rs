@@ -35,6 +35,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sha256", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
     ("json_str", &[Text], Text),
+    ("python_repr", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
@@ -172,6 +173,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
         }
         "json_str" => Some(json_str(t(0))),
+        "python_repr" => Some(crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr(t(0))),
         "lower" => Some(t(0).to_lowercase()),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;

@@ -47,7 +47,7 @@ pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
 mod python_parts;
-mod python_print;
+pub(in crate::code_rule_dsl) mod python_print;
 use core_rr::Family;
 mod guests;
 use guests::GuestRows;

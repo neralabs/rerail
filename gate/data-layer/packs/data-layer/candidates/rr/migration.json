@@ -478,7 +478,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "4423a4cd57d2405766329e3a3fc5156523ccd8e7c5bd89a4971e73c225cb8fc6",
+      "sha256": "9a3897be7c674051e17badd73dc37b156c2f9f84419308e71d0b88e8adcc96b0",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -557,6 +557,11 @@
           "before": "f1521d93c38e8474a01633c4714e26f76f66b2adb5e0f2fa86c3c437fc90ee80",
           "after": "4423a4cd57d2405766329e3a3fc5156523ccd8e7c5bd89a4971e73c225cb8fc6",
           "reason": "Expose the existing literal producer absolute byte starts for joins to format-specification spans; preserve line/column API"
+        },
+        {
+          "before": "4423a4cd57d2405766329e3a3fc5156523ccd8e7c5bd89a4971e73c225cb8fc6",
+          "after": "9a3897be7c674051e17badd73dc37b156c2f9f84419308e71d0b88e8adcc96b0",
+          "reason": "Expose the existing native Python string printer as a pure text functor for literal previews"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2505,7 +2510,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "124696c49dcfc8bb1f889eca85c17217d3c0f3fc700859ece6d795db006101b5"
+        "sha256": "9cfdb4256d174f21f0c11017707205403fbb0165abfc3ab6934f2e892f5db523"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -2517,7 +2522,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "1f99945fc4b821b4821a0d34cdbf037b9a45d98bf199c7bb916a7daa69d329d0"
+        "sha256": "10e3a228f92e042cd8465606404b2481a91f73ae42e5c6e3b82d1590e700d06d"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
@@ -2553,7 +2558,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "238d0744b0130dad06083f147dc4b9d7843e3755aedd1c9a0334e1af8aa51a0e"
+        "sha256": "a14cfee68314b94a790442046e8d0f70fd4df0be5252cc92461576ebc33d96a4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2562,6 +2567,10 @@
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
         "sha256": "a3ee5521ae63cdb8b18f209542157ab88336103a661b56fffde91cd763e66cd3"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+        "sha256": "5c743cd45f0c2f9b1a61c04aa9e8163727edf3dcb120c0ccea9ed9acf40ce22d"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
