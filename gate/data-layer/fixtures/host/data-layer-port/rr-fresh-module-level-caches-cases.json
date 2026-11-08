@@ -4091,6 +4091,94 @@
           "path": "scripts/allowlists/lint_module_level_caches_allowlist.json"
         }
       }
+    },
+    {
+      "id": "format-0",
+      "check": "module_level_caches",
+      "entry": "scan_and_format",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "# cache\na={}\nb=[]\nc=set()\n"
+      }
+    },
+    {
+      "id": "format-1",
+      "check": "module_level_caches",
+      "entry": "scan_and_format",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "a=CustomCache()\n"
+      }
+    },
+    {
+      "id": "format-2",
+      "check": "module_level_caches",
+      "entry": "scan_and_format",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "@cache\ndef f(): pass\n"
+      }
+    },
+    {
+      "id": "format-3",
+      "check": "module_level_caches",
+      "entry": "scan_and_format",
+      "files": [],
+      "arguments": {
+        "rel_path": "l1000_schema/sample.py",
+        "abs_path": {
+          "path": "l1000_schema/sample.py"
+        },
+        "source": "class C:\n    @cache\n    def f(self): pass\n"
+      }
+    },
+    {
+      "id": "counts-0",
+      "check": "module_level_caches",
+      "entry": "counts",
+      "files": [],
+      "arguments": {
+        "severities": []
+      }
+    },
+    {
+      "id": "counts-1",
+      "check": "module_level_caches",
+      "entry": "counts",
+      "files": [],
+      "arguments": {
+        "severities": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "counts-2",
+      "check": "module_level_caches",
+      "entry": "counts",
+      "files": [],
+      "arguments": {
+        "severities": [
+          2,
+          3,
+          2,
+          1,
+          3,
+          3
+        ]
+      }
     }
   ]
 }

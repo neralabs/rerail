@@ -89,6 +89,12 @@ def main():
         if identity!='missing-name':
             reporters.append(dict(id='allow-'+identity,check='module_level_caches',files=[
                 dict(path=path,source='# cache\n_holder={}\n'),*files]))
+    for i,source in enumerate(['# cache\na={}\nb=[]\nc=set()\n','a=CustomCache()\n',
+            '@cache\ndef f(): pass\n','class C:\n    @cache\n    def f(self): pass\n']):
+        api.append(dict(id='format-'+str(i),check='module_level_caches',entry='scan_and_format',files=[],
+            arguments=dict(rel_path=path,abs_path=dict(path=path),source=source)))
+    for i,severities in enumerate([[],[1],[2,3,2,1,3,3]]):
+        api.append(dict(id='counts-'+str(i),check='module_level_caches',entry='counts',files=[],arguments=dict(severities=severities)))
     for target,rows in [(args.api,api),(args.reporters,reporters)]:
         assert len({r['id'] for r in rows})==len(rows)
         target.parent.mkdir(parents=True,exist_ok=True)

@@ -52,7 +52,7 @@ def invoke(call, root):
         if isinstance(error, UnicodeError):
             return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
                                    args=canonical(error.args, root)))
-        if isinstance(error, ValueError):
+        if isinstance(error, (ValueError, KeyError)):
             return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
                                    args=canonical(error.args, root)))
         raise
@@ -145,6 +145,15 @@ def run(args):
                     if case['entry']=='collector':
                         from module_caches_port import collector_result
                         call=lambda:collector_result(module,values,backend if native else None)
+                    elif case['entry']=='scan_and_format':
+                        def call():
+                            return [dict(violation=v,key=v.allowlist_key,formatted=v.format())
+                                for v in module.scan_file_content(**values)]
+                    elif case['entry']=='counts':
+                        def call():
+                            rows=[module.Violation(path='a.py',line=1,col=0,severity=module.Severity(s),
+                                message='',pattern_type='',name='') for s in values['severities']]
+                            return module._counts_by_severity(rows)
                     elif case['entry']=='_load_allowlist_entries':
                         module.ALLOWLIST_FILE=values['allowlist_path']
                         call=lambda:module._load_allowlist_entries()
