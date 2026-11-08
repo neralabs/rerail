@@ -222,6 +222,64 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     split_located(prog).0
 }
 
+/// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
+/// reads only facts, other such relations and comparisons. They are constants to the split, like facts: a rule
+/// reading one joins no document by it, and both parts derive them.
+pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+    use crate::code_rule_dsl::logic::front::Literal;
+    let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let mut constant: std::collections::BTreeSet<String> =
+        derived.iter().filter(|r| !prog.natives.contains_key(**r) && !prog.lattice.contains_key(**r) && !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+    loop {
+        let kept: std::collections::BTreeSet<String> = constant
+            .iter()
+            .filter(|rel| {
+                prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
+                    r.body.iter().all(|l| match l {
+                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                            constant.contains(&a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                        }
+                        Literal::Cmp { .. } => true,
+                        _ => false,
+                    })
+                })
+            })
+            .cloned()
+            .collect();
+        if kept == constant {
+            return constant;
+        }
+        constant = kept;
+    }
+}
+
+/// The rule's `a = b` between two variables.
+fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(String, String)> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    rule.body
+        .iter()
+        .filter_map(|l| match l {
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Adds to `vars` every variable equal to one in it, to a fixpoint.
+fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, String)]) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (a, b) in equal {
+            if vars.contains(a) != vars.contains(b) {
+                vars.insert(a.clone());
+                vars.insert(b.clone());
+                changed = true;
+            }
+        }
+    }
+}
+
 /// A base relation's document column, including raw text views.
 pub(crate) fn document_column(relation: &str) -> Option<usize> {
     match relation {
@@ -345,6 +403,8 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     let mut locations: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let location_vars = |rule: &crate::code_rule_dsl::logic::front::Rule, locations: &BTreeMap<String, Vec<usize>>| -> BTreeSet<String> {
         let mut out = BTreeSet::new();
+        // `v = v0` (a disjunction's branch, as lowering leaves it): v is a location where v0 is.
+        let equal = var_equalities(rule);
         for literal in &rule.body {
             if let Some(a) = literal.atom().filter(|a| !a.neg) {
                 let columns = if derived.contains(a.rel.as_str()) { locations.get(&a.rel).cloned().unwrap_or_default() } else { base_locations(&a.rel) };
@@ -355,6 +415,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                 }
             }
         }
+        close_under(&mut out, &equal);
         out
     };
     // Location columns to a fixpoint (a column is one if every rule's head fills it from a location variable).
@@ -412,6 +473,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     }
     // A relation made natively (`dfs_first`) reads the whole program's rows: never file-local.
     let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
+    let constants = constant_relations(prog);
     let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| prog.natives.contains_key(**r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
@@ -432,7 +494,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     }
                     Literal::Cmp { .. } => continue,
                 };
-                let constant = !derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel);
+                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel);
                 // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
                 let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
                 if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
@@ -464,6 +526,11 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     return Err(format!("reads {} with no location", atom.rel));
                 }
                 groups.push(vars);
+            }
+            // `a = b` joins a's group and b's (it makes no group of its own: two symbols equal place nothing).
+            let equal = var_equalities(rule);
+            for g in &mut groups {
+                close_under(g, &equal);
             }
             // Merge groups sharing a variable; one group left is one document.
             let mut merged: Vec<BTreeSet<String>> = Vec::new();
@@ -554,7 +621,9 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
         }
     }
     let mut l = prog.clone();
-    l.rules.retain(|r| is_local(&r.head.rel));
+    // A relation of constants is derived in both parts (`constant_relations`).
+    let constants = constant_relations(prog);
+    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(&r.head.rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
     l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();

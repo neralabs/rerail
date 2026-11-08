@@ -749,7 +749,16 @@ pub(crate) fn run_with_options(
     // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them; a round of
     // `world` derives only its own requests.
     let discovering = world_round.as_deref() == Some("discover");
-    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| !discovering) {
+    // Only when a rule the outputs need reads a guest: a library's `parsed(…)` in rules nothing reads asks for no
+    // parse (lazy-architecture's included name rules asked for every string annotation of the corpus).
+    let roots: Vec<String> = prog.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).cloned().collect();
+    let reads_guests = front::needed(&prog, roots).iter().any(|rel| {
+        prog.rules.iter().filter(|r| &r.head.rel == rel).any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| guests::READS.contains(&a.rel.as_str())))
+    });
+    crate::code_rule_dsl::logic::profile::decision("guest requests", || {
+        if reads_guests { "made: a rule the outputs need reads guests".into() } else { "none: no rule the outputs need reads a guest".into() }
+    });
+    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| !discovering && reads_guests) {
         if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
             prog.outputs.push(rel.to_owned());
         }
