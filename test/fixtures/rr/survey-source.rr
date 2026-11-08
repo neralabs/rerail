@@ -3,7 +3,7 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "data-layer/survey-name-calls.rr"
+#include "data-layer/survey-members.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"
@@ -50,3 +50,11 @@ GraphSubclass(@place("", 0), "graph_subclass", owner, sid) :- sgc_subclass(owner
 GraphResolution(@place("", 0), "graph_resolution", name, sid) :- sgc_resolved(name, sid).
 .violation GraphNameCall(at: span, kind: symbol, owner: symbol, ordinal: number, name: symbol, has_target: number, target: symbol, target_kind: symbol) code "SURVEY_GRAPH_NAME_CALL" "name call"
 GraphNameCall(@place("", 0), "graph_name_call", sid, i, name, has, target, k) :- sgn_call(sid, i, name, has, target, k).
+.violation GraphAccessor(at: span, kind: symbol, owner: symbol) code "SURVEY_GRAPH_ACCESSOR" "accessor"
+GraphAccessor(@place("", 0), "graph_accessor", owner) :- cm_root(owner).
+.decl accessor_row(kind: symbol, owner: symbol, ordinal: number, sid: symbol)
+accessor_row("graph_walk", owner, i, sid) :- cm_walk(owner, sid, i).
+accessor_row("graph_public", owner, i, sid) :- cm_public(owner, i, sid).
+accessor_row("graph_dunder", owner, i, sid) :- cm_dunder(owner, i, sid).
+.violation GraphAccessorRow(at: span, kind: symbol, owner: symbol, ordinal: number, sid: symbol) code "SURVEY_GRAPH_ACCESSOR_ROW" "accessor row"
+GraphAccessorRow(@place("", 0), k, owner, i, sid) :- accessor_row(k, owner, i, sid).

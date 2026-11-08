@@ -47,10 +47,14 @@ def helper_relations():
 idc_import_root(sid) :- option_item("importedFqNames", _, fq), sg_resolved(fq, sid).
 .decl idc_public(c: symbol, sid: symbol)
 idc_public(c, sid) :- option_item("providedPublicClasses", i, c), option_item("providedPublicSymbols", i, sid).
+idc_public(c, sid) :- cm_public(c, _, sid).
 .decl idc_dunder(c: symbol, sid: symbol)
 idc_dunder(c, sid) :- option_item("providedDunderClasses", i, c), option_item("providedDunderSymbols", i, sid).
-.violation IDCGraphAccessorRequired(at: span, sid: symbol) code "IDC_GRAPH_ACCESSOR_REQUIRED" "Ordered class accessor facts are required for {sid}"
-IDCGraphAccessorRequired(@place("", 0), sid) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid), sg_class(sid), !option_item("providedClassAccessors", _, sid).
+idc_dunder(c, sid) :- cm_dunder(c, _, sid).
+.decl idc_missing_import(i: number, sid: symbol)
+idc_missing_import(i, missing) :- option_item("importedFqNames", i, fq), sg_resolved(fq, c), sg_class(c), cm_first_missing(c, missing).
+.violation IDCGraphMethodMissing(at: span, sid: symbol) code "IDC_GRAPH_METHOD_MISSING" "Missing class method symbol {sid}"
+IDCGraphMethodMissing(@place("", 0), sid) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_missing_import(i, sid), i = min j : { idc_missing_import(j, _) }.
 IDCValue(@place("", 0), sid) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid).
 IDCValue(@place("", 0), method) :- option("entryPoint", "_resolve_dynamic_import_roots"), idc_import_root(sid), sg_class(sid), (idc_public(sid, method) ; idc_dunder(sid, method)).
 .decl idc_excluded(sid: symbol)

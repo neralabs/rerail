@@ -1,0 +1,39 @@
+// Ordered class-member selection over a supplied graph. Producers populate the
+// narrow cm_* relations; the traversal is the engine's generic batched BFS.
+#include "data-layer/survey-constants.rr"
+.decl cm_root(owner: symbol)
+.decl cm_edge(owner: symbol, base: symbol, ordinal: number)
+.decl cm_method(owner: symbol, key: symbol, ordinal: number, sid: symbol)
+.decl cm_property(sid: symbol)
+.decl cm_name(sid: symbol, name: symbol)
+.decl cm_walk(owner: symbol, base: symbol, ordinal: number)
+cm_walk(owner, base, i) :- bfs_walk(owner, base, i, cm_edge, cm_root).
+.decl cm_visit(owner: symbol, current: symbol, ordinal: number)
+cm_visit(owner, owner, 0) :- cm_root(owner).
+cm_visit(owner, base, i+1) :- cm_walk(owner, base, i).
+.decl cm_public_candidate(owner: symbol, key: symbol, sid: symbol, visit: number, method: number)
+cm_public_candidate(owner, key, sid, visit, method) :- cm_visit(owner, current, visit), cm_method(current, key, method, sid), cm_name(sid, _), !prefix("_", key), !sgb_public_skip(key), !cm_property(sid).
+.decl cm_public_selected(owner: symbol, key: symbol, sid: symbol, visit: number, method: number)
+cm_public_selected(owner, key, sid, visit, method) :- cm_public_candidate(owner, key, sid, visit, method), visit = min v : { cm_public_candidate(owner, key, _, v, _) }.
+.decl cm_public_claimed_before(owner: symbol, key: symbol, visit: number)
+cm_public_claimed_before(owner, key, visit) :- cm_visit(owner, _, visit), cm_public_selected(owner, key, _, earlier, _), earlier < visit.
+// Source lookup checks the target before eligibility, unless an earlier public
+// method already claimed the name. Missing private/dunder targets also raise.
+.decl cm_public_missing(owner: symbol, sid: symbol, visit: number, method: number)
+cm_public_missing(owner, sid, visit, method) :- cm_visit(owner, current, visit), cm_method(current, key, method, sid), !cm_name(sid, _), !cm_public_claimed_before(owner, key, visit).
+.decl cm_first_missing(owner: symbol, sid: symbol)
+cm_first_missing(owner, sid) :- cm_public_missing(owner, sid, visit, method), visit = min v : { cm_public_missing(owner, _, v, _) }, method = min m : { cm_public_missing(owner, _, visit, m) }.
+.decl cm_public(owner: symbol, ordinal: number, sid: symbol)
+cm_public(owner, ordinal, sid) :- cm_public_selected(owner, _, sid, visit, method), cm_name(sid, name), ordinal = count : { cm_public_selected(owner, other_key, other, v, m), cm_name(other, other_name), (@str_cmp(other_name, name) < 0 ; (other_name = name, v < visit) ; (other_name = name, v = visit, m < method)) }.
+.decl cm_dunder_candidate(owner: symbol, sid: symbol, visit: number, method: number)
+cm_dunder_candidate(owner, sid, visit, method) :- cm_visit(owner, current, visit), cm_method(current, key, method, sid), sgb_class_dunder(key).
+.decl cm_dunder(owner: symbol, ordinal: number, sid: symbol)
+cm_dunder(owner, ordinal, sid) :- cm_dunder_candidate(owner, sid, visit, method), ordinal = count : { cm_dunder_candidate(owner, other, v, m), (v < visit ; (v = visit, m < method)) }.
+
+// Member resolution does not use public-method eligibility. Private methods and
+// properties participate, and a super lookup searches the base walk without the
+// separate initial owner visit (which a cycle can still reach).
+.decl cm_lookup(owner: symbol, key: symbol, sid: symbol)
+cm_lookup(owner, key, sid) :- cm_visit(owner, current, visit), cm_method(current, key, _, sid), visit = min v : { cm_visit(owner, c, v), cm_method(c, key, _, _) }.
+.decl cm_base_lookup(owner: symbol, key: symbol, sid: symbol)
+cm_base_lookup(owner, key, sid) :- cm_walk(owner, current, visit), cm_method(current, key, _, sid), visit = min v : { cm_walk(owner, c, v), cm_method(c, key, _, _) }.

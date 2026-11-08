@@ -66,7 +66,6 @@ def graph_columns(graph):
                 for target in graph.public_methods_of_class(sid):data['providedPublicClasses'].append(sid);data['providedPublicSymbols'].append(target)
                 for target in graph._class_dunder_methods(sid):data['providedDunderClasses'].append(sid);data['providedDunderSymbols'].append(target)
     data['exportedRoots']=list(graph.exported_root_ids)
-    data['providedClassAccessors']=[sid for sid,symbol in graph.symbols.items() if not hasattr(graph,'class_methods') and vars(symbol).get('is_class')]
     data['suppliedGraph']=True
     return data,documents
 
@@ -87,8 +86,8 @@ def install(suite,module):
     suite.replace(module,'_collect_literal_imported_fqnames',lambda source:values(native('_collect_literal_imported_fqnames',options=dict(source=source))))
     def dynamic_roots(graph,imported_fqnames):
         rows=native('_resolve_dynamic_import_roots',graph,dict(importedFqNames=list(imported_fqnames)))
-        if any(row['code']=='IDC_GRAPH_ACCESSOR_REQUIRED' for row in rows):
-            raise NotImplementedError('Native ordered class-accessor projection remains unimplemented')
+        missing=[row for row in rows if row['code']=='IDC_GRAPH_METHOD_MISSING']
+        if missing:raise KeyError(missing[0]['parameters']['sid'])
         return values(rows)
     suite.replace(module,'_resolve_dynamic_import_roots',dynamic_roots)
     def filtered(results,graph,excluded_paths):

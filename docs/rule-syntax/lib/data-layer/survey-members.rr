@@ -1,0 +1,9 @@
+#include "data-layer/survey-name-calls.rr"
+#include "data-layer/ordered-class-members.rr"
+
+cm_root(owner) :- sgc_kind(owner, "class").
+cm_root(owner) :- sgc_method(owner, _, _, _).
+cm_edge(owner, base, i) :- sgc_base(owner, i, base).
+cm_method(owner, name, i, sid) :- sgc_method(owner, name, i, sid).
+cm_name(sid, name) :- sgc_symbol(n, _, _, sid), sgs_definition(n, _, name, _, _, _).
+cm_property(sid) :- sgc_symbol(n, _, _, sid), sgs_decorator(n, _, d), (suffix("property", d) ; suffix(".setter", d) ; suffix(".deleter", d)).

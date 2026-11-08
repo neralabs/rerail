@@ -112,3 +112,27 @@ sgb_execution_literal("grammar_fetchone_async").
 sgb_execution_literal("grammar_row_lazy").
 sgb_execution_literal("grammar_rows_lazy").
 sgb_execution_literal("raw_execute").
+
+.decl sgb_public_skip(name: symbol)
+sgb_public_skip("__aenter__").
+sgb_public_skip("__aexit__").
+sgb_public_skip("__enter__").
+sgb_public_skip("__exit__").
+sgb_public_skip("__init__").
+sgb_public_skip("__repr__").
+sgb_public_skip("__str__").
+sgb_public_skip("authorize_internal_access").
+sgb_public_skip("disable_thread_affinity_checks").
+sgb_public_skip("get_thread_checks_disabled").
+sgb_public_skip("set_disable_thread_checks").
+sgb_public_skip("validate_legacy_delegates").
+sgb_public_skip("versioned_read").
+sgb_public_skip("versioned_write").
+
+.decl sgb_class_dunder(name: symbol)
+sgb_class_dunder("__class_getitem__").
+sgb_class_dunder("__init__").
+sgb_class_dunder("__init_subclass__").
+sgb_class_dunder("__new__").
+sgb_class_dunder("__post_init__").
+sgb_class_dunder("__set_name__").

@@ -1,6 +1,7 @@
 // Symbol-graph survey contract. Supplied graph arguments are typed columns, not
 // Python graph execution. A source producer must supply the same relations.
 #include "python/ast.rr"
+#include "data-layer/ordered-class-members.rr"
 
 .decl sg_symbol(i: number, sid: symbol, name: symbol, module: symbol, kind: symbol, path: symbol, line: number, owner: symbol, has_owner: number, abstract: number)
 sg_symbol(i, sid, name, module, k, path, to_number(line), owner, to_number(has_owner), to_number(abstract)) :- option_item("symbolIds", i, sid), option_item("symbolNames", i, name), option_item("symbolModules", i, module), option_item("symbolKinds", i, k), option_item("symbolPaths", i, path), option_item("symbolLines", i, line), option_item("symbolOwners", i, owner), option_item("symbolHasOwner", i, has_owner), option_item("symbolAbstract", i, abstract).
@@ -28,6 +29,12 @@ sg_ancestor(c, b) :- sg_ancestor(c, a), sg_base(a, b, _).
 sg_subclass(c, sub) :- option_item("subclassBases", i, c), option_item("subclassTargets", i, sub).
 .decl sg_method(c: symbol, name: symbol, sid: symbol)
 sg_method(c, name, sid) :- option_item("methodClasses", i, c), option_item("methodNames", i, name), option_item("methodSymbols", i, sid).
+cm_root(c) :- sg_class(c).
+cm_root(c) :- sg_method(c, _, _).
+cm_edge(c, b, i) :- sg_base(c, b, i).
+cm_method(c, name, i, sid) :- option_item("methodClasses", i, c), option_item("methodNames", i, name), option_item("methodSymbols", i, sid).
+cm_name(sid, name) :- sg_symbol(_, sid, name, _, _, _, _, _, _, _).
+cm_property(sid) :- sg_property(sid).
 .decl sg_fqname(name: symbol, sid: symbol)
 sg_fqname(name, sid) :- option_item("fqNames", i, name), option_item("fqSymbols", i, sid).
 .decl sg_module(module: symbol)

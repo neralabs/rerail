@@ -1578,10 +1578,18 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "sha256": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3",
+      "sha256": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
       "origin": "authored",
       "upstreamPath": "scripts/lint_internal_dead_code.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "importedSha256": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3",
+      "repairs": [
+        {
+          "before": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3",
+          "after": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38",
+          "reason": "Derive ordered class accessors natively and preserve missing-method KeyErrors"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-graph.rr",
@@ -2031,7 +2039,7 @@
       "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr",
-      "ruleSha256": "06e0718dded7b0f27cb52f4c3317c372782b89877ae6c588a764c34d94ad83d3"
+      "ruleSha256": "a71f3fc3022c0c33cc1677a4fa898289665b6644d214be12503f03c7bfd8bc38"
     },
     {
       "check": "imperative_private_functions",
@@ -2587,8 +2595,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "3de761e188d7a64404c2f73232d53745c6ec560f",
-    "status": "Root Final shape through 3de761e18 with reviewed generic syntax capabilities and planner repairs",
+    "upstreamCommit": "220a5d4f58cfa5daed5a2834490621fed8e48f37",
+    "status": "Root Final shape through 220a5d4f5 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
