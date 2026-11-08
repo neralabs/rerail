@@ -904,7 +904,8 @@ rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
 fn benchmark_python_calls_program_corpus() {
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
+    // `RERAIL_PYTHON_CALLS_OUT`: write the outputs there and keep them (the program's other `.output`s too, for counting).
+    let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi"));
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let mut text = format!("{}\n{JEDI_SPANS}", program("calls"));
@@ -949,7 +950,9 @@ fn benchmark_python_calls_program_corpus() {
         let t = target(&r[1]);
         classes.entry(key(&r[0])).or_default().insert(t);
     }
-    let _ = std::fs::remove_dir_all(&out);
+    if std::env::var_os("RERAIL_PYTHON_CALLS_OUT").is_none() {
+        let _ = std::fs::remove_dir_all(&out);
+    }
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     // `RERAIL_PYTHON_CALLS_DUMP`: each call's category, `path:line<TAB>category<TAB>jedi`, to compare two runs.
@@ -1080,6 +1083,13 @@ fn spike_o125_a_session_maintains_calls_rr() {
         let derived = dump();
         let differ: Vec<&String> = derived.keys().filter(|k| kept.get(*k) != derived.get(*k)).collect();
         println!("O125 {edit}: outputs {}", if differ.is_empty() { "equal".to_owned() } else { format!("DIFFER in {differ:?}") });
+        for k in &differ {
+            let a: BTreeSet<&String> = kept.get(*k).into_iter().flatten().collect();
+            let b: BTreeSet<&String> = derived.get(*k).into_iter().flatten().collect();
+            let only_kept: Vec<&&String> = a.difference(&b).collect();
+            let only_derived: Vec<&&String> = b.difference(&a).collect();
+            println!("O125 {edit} {k}: {} rows, {} only maintained, {} only derived; e.g. {:?} / {:?}", b.len(), only_kept.len(), only_derived.len(), only_kept.iter().take(3).collect::<Vec<_>>(), only_derived.iter().take(3).collect::<Vec<_>>());
+        }
     }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);

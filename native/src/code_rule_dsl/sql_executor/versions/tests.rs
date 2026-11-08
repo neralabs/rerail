@@ -1,4 +1,62 @@
 use super::*;
+
+#[test]
+fn diagnostic_aliases_share_roots_and_restore_publication_after_rollback() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    store
+        .create_readonly(&db, "counts", Schema::integers(2, 1))
+        .unwrap();
+    store
+        .load_rows("counts", vec![vec![Some(1), Some(3)]], false)
+        .unwrap();
+    let source = store.version("counts");
+    let columns = vec!["c0".into(), "changes".into()];
+    store
+        .alias_readonly(&db, "published_counts", source.clone(), columns.clone())
+        .unwrap();
+    let alias = store.version("published_counts");
+    assert!(Arc::ptr_eq(
+        source.full.as_ref().unwrap(),
+        alias.full.as_ref().unwrap()
+    ));
+    assert_eq!(source.row_id(0), alias.row_id(0));
+    assert_eq!(
+        db.query_row("SELECT changes FROM published_counts WHERE c0=1", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert!(db.execute("DELETE FROM published_counts", []).is_err());
+    super::super::super::facts::vtab::bound_source(&db, "published_counts")
+        .unwrap()
+        .prepare_index(&[1]);
+    assert!(store.version("published_counts").indexed(1));
+    let tx = store.transaction(&db).unwrap();
+    let changed = source
+        .patched_rows(vec![vec![Some(1)]], vec![vec![Some(1), Some(4)]], false)
+        .unwrap();
+    store
+        .alias_readonly(&db, "published_counts", changed, columns)
+        .unwrap();
+    assert!(store.version("published_counts").indexed(1));
+    assert_eq!(
+        db.query_row("SELECT changes FROM published_counts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    drop(tx);
+    assert!(alias.same(&store.version("published_counts")));
+    assert_eq!(
+        db.query_row("SELECT changes FROM published_counts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    store.close(&db).unwrap();
+}
+
 #[test]
 fn selective_indexes_keep_compound_batches_sparse_and_transactional() {
     let db = rusqlite::Connection::open_in_memory().unwrap();
@@ -295,6 +353,16 @@ fn native_versions_use_lazy_ordered_group_probes_and_recheck_other_filters() {
         .unwrap(),
         6
     );
+    let reads = store.columns_read();
+    let rows = db
+        .prepare("SELECT c0,c1 FROM version_extrema WHERE c1=17 UNION SELECT c0,c1 FROM version_extrema WHERE c1=18")
+        .unwrap()
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(rows, vec![(1, 17), (1, 18)]);
+    assert!(store.columns_read() - reads < 100);
     tx.commit();
     store.close(&db).unwrap();
 }

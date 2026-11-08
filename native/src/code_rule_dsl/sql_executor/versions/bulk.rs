@@ -18,7 +18,12 @@ impl Drop for Reuse<'_> {
 }
 
 impl Version {
-    fn loaded(&self, rows: Vec<Vec<Option<i64>>>, ignore: bool, replacing: bool) -> Result<Self> {
+    pub(in crate::code_rule_dsl::sql_executor) fn loaded(
+        &self,
+        rows: Vec<Vec<Option<i64>>>,
+        ignore: bool,
+        replacing: bool,
+    ) -> Result<Self> {
         if self.len() != 0 && !replacing {
             return Err(error("bulk construction requires an empty relation"));
         }
@@ -307,11 +312,12 @@ impl Store {
         self.replace_at(0, name, version)?;
         Ok(n)
     }
-    pub fn create_scratch(
+    pub fn create_scratch_access(
         &self,
         db: &rusqlite::Connection,
         name: &str,
         schema: Schema,
+        writable: bool,
     ) -> Result<()> {
         struct Restore<'a>(&'a std::cell::Cell<usize>, usize);
         impl Drop for Restore<'_> {
@@ -320,7 +326,11 @@ impl Store {
             }
         }
         let _restore = Restore(&self.scope, self.scope.replace(0));
-        self.create(db, name, schema)?;
+        if writable {
+            self.create(db, name, schema)?;
+        } else {
+            self.create_readonly(db, name, schema)?;
+        }
         self.restrict_indexes(name, &[])?;
         let mut version = self.version(name);
         version.lazy = true;

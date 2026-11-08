@@ -1,4 +1,5 @@
 //! Registered aggregate, merge, and widening functions for SQL lattice folds.
+use crate::code_rule_dsl::logic::native::aggregation::Reduction;
 use crate::code_rule_dsl::logic::plan;
 use crate::code_rule_dsl::waves::schedule::LatticeOperations;
 use napi::Result;
@@ -34,6 +35,11 @@ pub(in crate::code_rule_dsl) fn specification(name: &str) -> Option<LatticeOpera
     let top = crate::code_rule_dsl::logic::native::TOP;
     match name {
         "min" | "max" => Some(LatticeOperations {
+            reduction: if name == "min" {
+                Reduction::Min
+            } else {
+                Reduction::Max
+            },
             aggregate: name.into(),
             merge: name.into(),
             widen: Some(format!("rr_sql_{name}_widen")),
@@ -107,12 +113,18 @@ pub(in crate::code_rule_dsl) fn registered(
     )
     .map_err(error)?;
     Ok(LatticeOperations {
+        reduction: lattice.reduction(),
         aggregate,
         merge,
         widen: Some(widen),
         after: None,
         top: lattice.top(),
     })
+}
+
+/// Non-null flat values agree exactly when their extrema agree. Empty groups stay absent.
+pub(in crate::code_rule_dsl) fn flat_aggregate(value: &str, top: i64) -> String {
+    format!("CASE WHEN min({value})<>max({value}) THEN {top} ELSE min({value}) END")
 }
 
 pub(in crate::code_rule_dsl) fn validate(

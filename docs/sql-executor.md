@@ -191,6 +191,15 @@ A candidate support crossing zero changes only a logarithmic number of tree node
 The registered merge must obey the lattice laws: associativity, commutativity, idempotence, and an absorbing top.
 The declared aggregate and merge must compute the same join.
 
+Native builtin joins and SQL planning share a reduction descriptor and grouping compatibility rules.
+The descriptor identifies flat, min, max, or opaque operations. Flat descriptors include their top value.
+SQL wave folds reuse a single operator's grouped result when its reduction and prefix keys match.
+Multiple operators still need a fold. Builtin folds accept duplicate inputs, so their candidate unions use `UNION ALL`.
+Flat reductions detect conflicting values with min/max, without a separate distinct-value count.
+These changes preserve support multiplicities, empty groups, previous-wave merges, and widening order.
+External SQL callbacks remain opaque. JSON registration cannot supply the planner's builtin proof.
+Support counts group complete candidate tuples; lattice results group their key prefix. These groups still require separate work.
+
 Nonrecursive rules with generated tree walks retain their seed, walk, and result relations.
 Their fact changes use overdelete/rederive through indexed SQL relations. AST matching remains native.
 Walk seeds and outputs can contain supported scalar subqueries and negation.
@@ -397,8 +406,10 @@ A relation can take its rows from a SQL query:
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.
-SQL selects each wave's pending frontier from `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
-The scheduler folds new rows into completed relations and records their deltas in `wave_delta`.
+The cold kernel selects pending steps through `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
+Retained execution preserves those dependency gates across immutable wave versions.
+SQL evaluates rule expressions and folds candidate rows into completed relations.
+Both paths record initial wave deltas in `wave_delta`.
 Negation and aggregation wait for their input strata to finish.
 Derived columns use positional names: `c0`, `c1`, and so on.
 
@@ -460,7 +471,10 @@ The latter counts native version-diff traversal, which SQLite instruction counts
 
 Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
 Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
-Arbitrary checked CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
+Acyclic positive CTEs can use arbitrary names when the final SELECT uses DISTINCT.
+Their arms can use UNION or UNION ALL. The final DISTINCT makes duplicate derivations safe to retain as sets.
+This path currently excludes function calls, scalar subqueries, and aggregate consumers.
+Bag-sensitive CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
 Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
 The schedule preserves dependency gates across components, constant seeds, frontiers, and widening counters.
 Preparation reports `initial_execution: "retained"` for this path and `"cold"` for the established fallback.
@@ -471,6 +485,21 @@ Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep th
 Frozen lookups share an immutable version. Contiguous scans stream through that version without repeated rank lookups.
 Scratch deltas share roots and prepare secondary indexes only when a lookup needs them.
 Bulk loads preserve the integer checks of the writable virtual tables.
+
+Positive, call-free caches can combine contexts, contributions, support counts, improvements, and folds into one statement per wave.
+Materialized CTEs evaluate the expressions. A tagged result stream returns the affected rows and keys.
+Native code validates every replacement before publication and maintains persistent storage roots.
+Complete cache rebuilds use inline views for pure projections and set operations.
+They replace the full improvement relation and omit old rows that the rebuild already covers.
+Checked expressions and native functions retain materialization fences, so shared consumers do not repeat their evaluation.
+Sparse updates retain their existing materialization and prepared query shapes.
+Scalar reducers, registered lattice joins, and other checked shapes retain their existing SQL paths.
+Merge and widening functions still execute through SQLite.
+
+Private phase outputs and fact deltas use read-only native bindings, which avoid CREATE and DROP statements.
+Initial execution creates public results and wave diagnostics first. The cold fallback declares its remaining control tables when needed.
+Widening counters retain their `__sql_changes_RELATION` names and `changes` columns as read-only diagnostics.
+These diagnostics share retained roots. Additional indexes requested by extensions survive sparse publication and rollback.
 
 An earlier frame can become active when an edit shortens an upstream dependency gate.
 Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.
@@ -496,6 +525,34 @@ The benchmark probe reuses this profiler when capture is active, preserving SQLi
 
 The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
 The existing complete-job execution allowance and missing-parity checks remain visible in the report.
+
+The headless verifier supplies complete-state parity for explicit fact requests:
+
+```sh
+cargo build --profile profiling --no-default-features --features headless,lang-python,lang-rr --example sql-session-verify
+python3 benchmark/sql-executor.py --session-request 1000 /tmp/request.json
+node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/request.json /tmp/sql-session-1000
+```
+
+The output directory must be fresh. The command writes the report before it enforces acceptance.
+It exits unsuccessfully when parity, capture coverage, or the fixed 100-execution allowance fails.
+The independent cold kernel runs in a separate process without SQL capture.
+Every checkpoint includes all explicit facts, derived relations, and widening counters.
+The adapter also compares output deltas, failed-operation rollback, recovery, and final queries.
+Integer cells use decimal strings, so JavaScript does not round them.
+Snapshot and file publication need separate replay support. The verifier rejects those requests.
+
+`steps` supplies changes, optional limits, and an optional expected error class.
+The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.
+The report records verification reads in their own phase. Those reads still count against the complete-job allowance.
+The parity bundle pins the request, runner, observations, and SQL receipts through SHA-256 digests.
+
+An existing bundle can reproduce acceptance with this command:
+
+```sh
+node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-session-1000/raw /tmp/sql-session-report --parity /tmp/sql-session-1000/parity
+```
+
 
 `RERAIL_PROFILE=/tmp/logic-profile` also records compiler search, CPU spans, and the logical rule plans.
 The SQL request tool writes the standard logic reports and places shared SQL traces in the `sql` subdirectory.

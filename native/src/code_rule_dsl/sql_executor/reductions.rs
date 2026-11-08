@@ -6,6 +6,8 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
+mod compose;
+mod fused;
 mod join_tree;
 mod lattice;
 mod maintain;
@@ -27,23 +29,22 @@ pub(super) struct Retained {
 
 impl Retained {
     pub(super) fn initial_result(&self) -> String {
+        self.initial_result_from(&quote(&self.heads), "n")
+    }
+    fn initial_result_from(&self, heads: &str, count: &str) -> String {
         let cols = names("", self.width);
         match &self.lattice {
-            None => format!("SELECT {cols} FROM {} WHERE n>0", quote(&self.heads)),
+            None => format!("SELECT {cols} FROM {heads} WHERE {count}>0"),
             Some(lattice) => {
                 let key = names("", lattice.keys);
                 let v = format!("c{}", self.width - 1);
                 let folded = match &lattice.aggregate {
                     Some(aggregate) => format!("{aggregate}({v})"),
-                    None => format!(
-                        "CASE WHEN count(DISTINCT {v})>1 OR max({v})={} THEN {} ELSE min({v}) END",
-                        lattice.top, lattice.top
-                    ),
+                    None => {
+                        crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(&v, lattice.top)
+                    }
                 };
-                format!(
-                    "SELECT {key},{folded} FROM {} WHERE n>0 GROUP BY {key}",
-                    quote(&self.heads)
-                )
+                format!("SELECT {key},{folded} FROM {heads} WHERE {count}>0 GROUP BY {key}")
             }
         }
     }
@@ -91,6 +92,22 @@ pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
                 .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
         }
     }
+    db.create_scalar_function(
+        c"rr_nonnegative_count",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let count = ctx.get::<i64>(0)?;
+            if count < 0 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_CHECK),
+                    Some("negative retained support count".into()),
+                ));
+            }
+            Ok(count)
+        },
+    )
+    .map_err(error)?;
     db.create_aggregate_function(
         c"rr_update_sum",
         2,
@@ -120,6 +137,24 @@ fn owned(
     }
     objects.push((name.into(), true));
     Ok(())
+}
+fn owned_phase(
+    db: &rusqlite::Connection,
+    objects: &mut Vec<(String, bool)>,
+    name: &str,
+    definition: &str,
+    storage: Option<&versions::Store>,
+    readonly: bool,
+) -> Result<()> {
+    if readonly {
+        let storage = storage.unwrap();
+        storage.declare_readonly_empty(db, name, versions::Schema::generated(definition)?)?;
+        storage.restrict_indexes(name, &[])?;
+        objects.push((name.into(), true));
+        Ok(())
+    } else {
+        owned(db, objects, name, definition, storage)
+    }
 }
 fn insert(
     db: &rusqlite::Connection,
@@ -211,7 +246,7 @@ pub(super) fn prepare(
     }
     Ok(initialized)
 }
-fn planned(
+pub(super) fn planned(
     db: &rusqlite::Connection,
     run: &session::Execution,
     native: bool,
@@ -329,7 +364,8 @@ impl Retained {
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
     ) -> Result<()> {
-        owned(
+        let fused = self.can_fuse() && storage.is_some_and(|s| s.contains(&self.output));
+        owned_phase(
             db,
             objects,
             &self.heads,
@@ -339,12 +375,13 @@ impl Retained {
                 names("", self.width)
             ),
             storage,
+            fused,
         )?;
         for rule in &self.rules {
             for reducer in &rule.reducers {
                 reducer.initialize(db, objects, storage)?;
             }
-            owned(
+            owned_phase(
                 db,
                 objects,
                 &rule.contexts,
@@ -354,13 +391,14 @@ impl Retained {
                     names("", rule.width)
                 ),
                 storage,
+                fused,
             )?;
             insert(db, &rule.contexts, &rule.context_query.render(), storage)?;
             let hcols = (0..self.width)
                 .map(|i| format!("h{i} INTEGER NOT NULL"))
                 .collect::<Vec<_>>()
                 .join(",");
-            owned(
+            owned_phase(
                 db,
                 objects,
                 &rule.contributions,
@@ -370,6 +408,7 @@ impl Retained {
                     names("", rule.width)
                 ),
                 storage,
+                fused,
             )?;
             insert(
                 db,
@@ -404,6 +443,9 @@ impl Retained {
                 if let Some(table) = reducer.dependency_object() {
                     objects.push((table, true));
                 }
+            }
+            if fused {
+                continue;
             }
             if storage.is_some() {
                 let hjoin = (0..self.width)
@@ -441,6 +483,27 @@ impl Retained {
                 )?;
             }
         }
+        if fused && !self.rules.is_empty() {
+            let queries = self
+                .rules
+                .iter()
+                .map(|rule| {
+                    let columns = (0..self.width)
+                        .map(|i| format!("h{i} AS c{i}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("SELECT {columns} FROM {}", quote(&rule.contributions))
+                })
+                .collect::<Vec<_>>()
+                .join(" UNION ALL ");
+            let cols = names("", self.width);
+            insert(
+                db,
+                &self.heads,
+                &format!("SELECT {cols},count(*) FROM ({queries}) GROUP BY {cols}"),
+                storage,
+            )?;
+        }
         if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
             tree.initialize(db, &self.heads, objects, storage)?;
         }
@@ -451,6 +514,14 @@ impl Retained {
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
     ) -> Result<(Delta, u64, u64)> {
-        maintain::apply(self, w, changes)
+        if self.can_fuse()
+            && w.versions.is_some_and(|s| {
+                s.available(&self.output).is_some() && s.available(&self.heads).is_some()
+            })
+        {
+            fused::apply(self, w, changes)
+        } else {
+            maintain::apply(self, w, changes)
+        }
     }
 }

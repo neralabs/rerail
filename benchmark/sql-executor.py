@@ -8,6 +8,7 @@ from pathlib import Path
 import resource
 import re
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,28 +33,43 @@ def relation(name, columns, rows):
     return {"name": name, "columns": columns, "rows": rows}
 
 
+def recursive_lattice(groups):
+    if groups < 1:
+        raise ValueError("regions must be positive")
+    edges = [[g*10+a, g*10+b, w] for g in range(groups)
+             for a,b,w in [(0,1,5),(0,2,1),(2,1,1),(1,3,2),(3,2,1)]]
+    request = {
+        "relations": [relation("edge", ["a","b","w"], edges),
+                      relation("root", ["n"], [[g*10] for g in range(groups)])],
+        "program": SHORTEST,
+        "after_run_sql": [
+            "CREATE TEMP TRIGGER recursive_delete_guard BEFORE DELETE ON distance WHEN OLD.c0<170 OR OLD.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive delete'); END",
+            "CREATE TEMP TRIGGER recursive_insert_guard BEFORE INSERT ON distance WHEN NEW.c0<170 OR NEW.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive insert'); END"],
+        "changes": [[{"name":"edge","delete":[[172,171,1]]}],
+                    [{"name":"root","delete":[[170]]}],
+                    [{"name":"root","insert":[[170]]},
+                     {"name":"edge","insert":[[172,171,1]]}]],
+        "queries": ["SELECT * FROM distance WHERE c0>=170 AND c0<180 ORDER BY c0",
+                    "SELECT count(*) FROM distance"],
+    }
+    request["changes"] *= 2
+    return request
+
+
+def session_request(groups):
+    request = recursive_lattice(groups)
+    changes = request["changes"]
+    steps = [
+        {"changes": changes[0], "limits": {"max_steps": 1}, "expected_error": "execution-limit"},
+        {"changes": changes[0], "max_waves": 1, "expected_error": "wave-limit"},
+    ] + [{"changes": change} for change in changes]
+    # Complete-state observations replace the sampled queries and publication guards.
+    return {"program": request["program"], "relations": request["relations"], "steps": steps,
+            "queries": ["SELECT count(*) FROM distance"]}
+
+
 def cases(corpus):
-    result = []
-    for groups in [1000, 10000]:
-        edges = [[g*10+a, g*10+b, w] for g in range(groups)
-                 for a,b,w in [(0,1,5),(0,2,1),(2,1,1),(1,3,2),(3,2,1)]]
-        result.append((f"update-recursive-lattice-{groups}", {
-            "relations": [relation("edge", ["a","b","w"], edges),
-                          relation("root", ["n"], [[g*10] for g in range(groups)])],
-            "program": SHORTEST,
-            "after_run_sql": [
-                "CREATE TEMP TRIGGER recursive_delete_guard BEFORE DELETE ON distance WHEN OLD.c0<170 OR OLD.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive delete'); END",
-                "CREATE TEMP TRIGGER recursive_insert_guard BEFORE INSERT ON distance WHEN NEW.c0<170 OR NEW.c0>179 BEGIN SELECT RAISE(ABORT,'unrelated recursive insert'); END"],
-            "changes": [[{"name":"edge","delete":[[172,171,1]]}],
-                        [{"name":"root","delete":[[170]]}],
-                        [{"name":"root","insert":[[170]]},
-                         {"name":"edge","insert":[[172,171,1]]}]],
-            "queries": ["SELECT * FROM distance WHERE c0>=170 AND c0<180 ORDER BY c0",
-                        "SELECT count(*) FROM distance"],
-        }))
-        # The first cycle establishes pool capacity for each edit shape. Repeating
-        # the same cycle must reuse those schemas, including the retraction paths.
-        result[-1][1]["changes"] *= 2
+    result = [(f"update-recursive-lattice-{groups}", recursive_lattice(groups)) for groups in [1000, 10000]]
     for n in [64, 128, 256, 512, 1024]:
         result.append((f"closure-{n}", {
             "relations": [relation("edge", ["src", "dst"], [[i, i+1] for i in range(n-1)])],
@@ -406,4 +422,12 @@ def main():
     if failures: raise SystemExit(json.dumps(failures,indent=2))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--session-request"]:
+        parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
+        parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        args.output.write_text(json.dumps(session_request(args.session_request)))
+    else:
+        main()
