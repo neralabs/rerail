@@ -191,6 +191,15 @@ A candidate support crossing zero changes only a logarithmic number of tree node
 The registered merge must obey the lattice laws: associativity, commutativity, idempotence, and an absorbing top.
 The declared aggregate and merge must compute the same join.
 
+Native builtin joins and SQL planning share a reduction descriptor and grouping compatibility rules.
+The descriptor identifies flat, min, max, or opaque operations. Flat descriptors include their top value.
+SQL wave folds reuse a single operator's grouped result when its reduction and prefix keys match.
+Multiple operators still need a fold. Builtin folds accept duplicate inputs, so their candidate unions use `UNION ALL`.
+Flat reductions detect conflicting values with min/max, without a separate distinct-value count.
+These changes preserve support multiplicities, empty groups, previous-wave merges, and widening order.
+External SQL callbacks remain opaque. JSON registration cannot supply the planner's builtin proof.
+Support counts group complete candidate tuples; lattice results group their key prefix. These groups still require separate work.
+
 Nonrecursive rules with generated tree walks retain their seed, walk, and result relations.
 Their fact changes use overdelete/rederive through indexed SQL relations. AST matching remains native.
 Walk seeds and outputs can contain supported scalar subqueries and negation.

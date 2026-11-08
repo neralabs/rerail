@@ -2,6 +2,58 @@ use super::*;
 
 const SHORTEST: &str = ".decl edge(a:number,b:number,w:number)\n.decl root(n:number)\n.input edge,root\n.decl distance(n:number,d:min<>) widen 3\ndistance(n,0) :- root(n).\ndistance(b,d+w) :- distance(a,d), edge(a,b,w).\n.output distance\n";
 
+#[test]
+fn partial_lattice_folds_preserve_duplicate_support_composite_keys_and_retractions() {
+    for lattice in ["min", "max", "flat"] {
+        let (_directory, mut e) = executor();
+        bind(
+            &mut e,
+            "seed",
+            &["id", "g", "k", "v"],
+            json!([[1, 0, 0, 3], [2, 0, 0, 3], [3, 0, 0, 7], [4, 1, 0, 4]]),
+        );
+        bind(&mut e, "edge", &["a", "b"], json!([[0, 1], [1, 2], [2, 1]]));
+        bind(&mut e, "other", &["a", "b"], json!([[0, 1]]));
+        let p = format!(
+            ".decl seed(id:number,g:number,k:number,v:number)\n.decl edge(a:number,b:number)\n.decl other(a:number,b:number)\n.input seed,edge,other\n.decl item(g:number,k:number,v:{lattice}<>) widen 4\nitem(g,k,v) :- seed(_,g,k,v).\nitem(g,b,v) :- item(g,a,v),edge(a,b).\nitem(g,b,v) :- item(g,a,v),other(a,b).\n.output item\n"
+        );
+        e.run(p.clone(), "python".into(), None).unwrap();
+        let initial_value = match lattice {
+            "min" => 3,
+            "max" => 7,
+            _ => crate::code_rule_dsl::logic::native::TOP,
+        };
+        assert_eq!(
+            rows(&e, "SELECT c2 FROM item WHERE c0=0 AND c1=2"),
+            json!([[wire::integer(initial_value)]])
+        );
+        for patch in [
+            json!([{"name":"seed","delete":[[1,0,0,3]]}]),
+            json!([{"name":"seed","delete":[[2,0,0,3]]}]),
+            json!([{"name":"other","delete":[[0,1]]}]),
+            json!([{"name":"seed","delete":[[3,0,0,7],[4,1,0,4]]}]),
+            json!([{"name":"seed","insert":[[5,1,0,9],[6,0,0,2]]}]),
+            json!([{"name":"other","insert":[[0,1]]},{"name":"edge","delete":[[0,1]]}]),
+        ] {
+            change(&mut e, patch);
+            check(
+                &e,
+                &p,
+                &[
+                    ("seed", &["id", "g", "k", "v"]),
+                    ("edge", &["a", "b"]),
+                    ("other", &["a", "b"]),
+                ],
+                if lattice == "flat" {
+                    &["item"]
+                } else {
+                    &["item", "__sql_changes_item"]
+                },
+            );
+        }
+    }
+}
+
 fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], rows: Value) {
     e.bind_relation(json!({"name":name,"columns":columns,"rows":rows}).to_string())
         .unwrap();

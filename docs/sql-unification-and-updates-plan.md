@@ -1222,3 +1222,93 @@ The complete-session allowance has no guaranteed headroom after this change.
 Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cte-costs-20261108.tar.gz`.
 The archive contains both baseline and final reports, raw receipts, full-state parity bundles, CPU trials, source patches, and check logs.
 Task build and temporary directories are removed after archival.
+
+### Compatible aggregate composition (2026-11-08)
+
+This change starts from `61b5d995a`. The complete-job execution allowance remains 100.
+The phase builder aggregated operator outputs that already contained one lattice value per key.
+It also removed duplicate candidate rows before applying duplicate-insensitive builtin folds.
+Flat folds maintained a distinct-value count alongside extrema, although extrema already detect conflicts.
+
+#### Shared algebra and implementation
+
+`logic::native::aggregation` defines the shared reduction algebra and grouping compatibility check.
+Native flat, min, and max joins use this algebra. SQL planning uses its descriptors to select compatible compositions.
+Compatibility requires the same reduction, including flat's top, and the same prefix keys.
+The producer must supply at most one non-null value per key before merging previous values or applying widening.
+
+The wave builder supplies this proof when one active operator contributes an already grouped result.
+The fold then uses that result directly. With multiple operators, it retains the aggregate.
+Builtin candidate unions use `UNION ALL`, because repeated values cannot change these folds.
+Old and replacement branches from one operator cover disjoint keys.
+Support-count queries retain their multiplicities and original grouping.
+
+Flat SQL uses `CASE WHEN min(v)<>max(v) THEN top ELSE min(v) END`.
+This preserves concrete values, conflicting values, top, and the null result for an empty aggregate.
+The shared helper supplies both retained result queries and temporal folds.
+
+Registered callbacks default to opaque. They retain their aggregation and duplicate-removal behavior.
+The builtin proof is skipped during serialization and deserialization, so external JSON cannot claim it.
+Trusted native lattice implementations can expose their algebra through the lattice trait.
+This change adds no SQL statements or native rule-evaluation callbacks.
+
+#### Captures and CPU results
+
+All three workloads pass independent cold parity, failure rollback, recovery, and complete capture coverage.
+The shortest-path sessions include nine complete state checks and six successful edits at each size.
+The mixed workload has 256 regions, composite keys, duplicate supports, three contributing rules, and min/max/flat outputs.
+Its five edits include two expected failures and three successful deletions, including removal of all support for one region.
+
+| Initial work | 5,000 edges: before / after | 50,000 edges: before / after | Mixed lattices: before / after |
+| --- | ---: | ---: | ---: |
+| VM instructions | 4,929,092 / 4,741,001 | 49,254,092 / 47,374,001 | 3,088,884 / 3,028,470 |
+| Sorts | 39 / 33 | 39 / 33 | 197 / 170 |
+| Automatic-index rows | 11,992 / 11,992 | 119,992 / 119,992 | 5,865 / 5,865 |
+| Result-stream rows | 106,125 / 106,125 | 1,060,125 / 1,060,125 | 59,517 / 59,517 |
+| Complete-job SQL executions | 100 / 100 | 100 / 100 | 74 / 74 |
+
+Shortest-path initial VM work decreases by 3.8%. Initial sorts decrease by 15% there and 14% in the mixed case.
+The queries still publish the same support and result rows. They build the same automatic indexes.
+Both shortest-path sessions retain five initial phase statements and 16 initial SQL executions.
+The profile reports retain complete explanations, with two expected setup failures and no unexpected explanation failures.
+
+The CPU comparison uses three alternating baseline/final pairs per size, with fresh stores and profiling disabled.
+Both builds use Rust 1.95.0, development settings, no debug information, and no incremental compilation.
+Other compiler and test jobs ran concurrently on this macOS arm64 host.
+Every trial validates outputs, edit deltas, unrelated-region write guards, and scratch reuse.
+
+| Regions | Initial CPU before / after | Six edits CPU before / after | Peak RSS before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 | 1.113 / 1.129 s | 44.4 / 42.0 ms | 85.2 / 85.2 MiB |
+| 10,000 | 12.440 / 12.220 s | 56.8 / 51.6 ms | 639.7 / 637.9 MiB |
+
+Initial CPU remains close to baseline. These samples do not establish an initial speedup.
+Edit medians are lower, but the small sample and concurrent work limit that conclusion.
+The deterministic VM and sort reductions establish the work removed by this change.
+
+All 139 selected Rust tests pass, with one child-process test ignored by design.
+The checks cover native lattice joins, SQL folds, composite keys, duplicate support, top retractions, empty groups, and large recursive edits.
+The compatibility tests reject different key widths, different algebras, different flat tops, and opaque operations.
+They also check that external JSON cannot supply a builtin proof.
+The library compiles with `code-rule-profile` enabled.
+The structure check retains 10 passing metrics and 15 existing failures, with no added findings.
+
+#### Rejected combination and remaining work
+
+Support counts group complete tuples, while lattice values group a shorter key prefix.
+One ordinary `GROUP BY` cannot directly produce both retained outputs at their required granularities.
+A SQL experiment combined support counting with window functions for extrema and one representative row per key.
+It returned the same support total and lattice checksum for 60,000 contributions across 10,000 keys.
+It reduced sorts from two to one, but increased VM work from 2,830,083 to 5,220,105 instructions.
+One profiled observation also increased query CPU from 44.6 to 70.0 ms. The implementation therefore retains separate groups.
+
+Further work should propagate checked uniqueness through projections, then omit support grouping where every head has one producer.
+Scalar count, sum, extrema, and ordered string reducers still keep separate retained summaries.
+Combining them requires shared input, filter, key, null, overflow, and retraction semantics.
+Opaque callbacks need an explicit trusted contract before any change to evaluation order or multiplicity.
+Previous-wave merges and widening remain barriers to aggregate reuse.
+Neither shortest-path session gains execution-budget headroom from this change.
+
+The evidence archive is `/Users/jeremy/orca/artifacts/rerail-aggregation-20261108.tar.gz`.
+It contains full parity bundles, raw receipts, reports, CPU trials, the window experiment, source changes, and check logs.
+Task build and temporary directories are removed after archival.

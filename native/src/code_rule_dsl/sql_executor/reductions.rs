@@ -40,10 +40,9 @@ impl Retained {
                 let v = format!("c{}", self.width - 1);
                 let folded = match &lattice.aggregate {
                     Some(aggregate) => format!("{aggregate}({v})"),
-                    None => format!(
-                        "CASE WHEN count(DISTINCT {v})>1 OR max({v})={} THEN {} ELSE min({v}) END",
-                        lattice.top, lattice.top
-                    ),
+                    None => {
+                        crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(&v, lattice.top)
+                    }
                 };
                 format!("SELECT {key},{folded} FROM {heads} WHERE {count}>0 GROUP BY {key}")
             }

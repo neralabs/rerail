@@ -24,10 +24,15 @@ pub(super) fn apply(
             )
         })
         .collect::<Vec<_>>();
+    let grouping = (queries.len() == 1).then(|| spec.grouping());
     let candidates = if queries.is_empty() {
         format!("SELECT {} WHERE 0", vec!["NULL"; spec.width].join(","))
     } else {
-        queries.join(" UNION ")
+        queries.join(if spec.grouping().reduction.duplicate_insensitive() {
+            " UNION ALL "
+        } else {
+            " UNION "
+        })
     };
     append(
         w,
@@ -40,6 +45,7 @@ pub(super) fn apply(
         frontier,
         counts,
         &candidates,
+        grouping,
         false,
     )?;
     phase.execute(w).map(|_| ())
@@ -56,6 +62,7 @@ pub(super) fn append(
     frontier: &str,
     counts: Option<&str>,
     candidates: &str,
+    grouping: Option<Grouping>,
     computed: bool,
 ) -> Result<()> {
     let key = names("", spec.keys);
@@ -66,10 +73,14 @@ pub(super) fn append(
     };
     let next_query = if spec.lattice {
         let value = format!("c{}", spec.width - 1);
-        let proposed = format!(
-            "SELECT {key},{} AS {value} FROM {candidate} GROUP BY {key}",
-            spec.aggregate(&value)
-        );
+        let proposed = if grouping.is_some_and(|input| spec.grouping().accepts(input)) {
+            format!("SELECT * FROM {candidate}")
+        } else {
+            format!(
+                "SELECT {key},{} AS {value} FROM {candidate} GROUP BY {key}",
+                spec.aggregate(&value)
+            )
+        };
         let merged = spec.merge(&format!("p.{value}"), &format!("c.{value}"));
         let mut expression = format!(
             "CASE WHEN c.{value} IS NULL THEN p.{value} WHEN p.{value} IS NULL THEN c.{value} ELSE {merged} END"

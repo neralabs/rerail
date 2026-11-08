@@ -264,12 +264,14 @@ impl Frame {
             }
             let keys = phase.relation(spec.keys, &union(&touched[r], spec.keys));
             let mut candidates = vec![];
+            let mut contributors = 0;
             for (id, op) in self
                 .operators
                 .iter()
                 .enumerate()
                 .filter(|(id, op)| op.active && steps[*id].0.output == *r)
             {
+                contributors += 1;
                 let overlay = overlays.get(&id);
                 // Old improvements are a subset of the old result. A complete
                 // replacement excludes all of them without an anti-join.
@@ -290,6 +292,15 @@ impl Frame {
                     candidates.push(format!("SELECT * FROM {values}"));
                 }
             }
+            // Each operator is already folded by this relation's keys. Its old
+            // and replacement branches cover disjoint keys. Multiple operators
+            // still require a fold, but builtin joins do not need deduplication.
+            let candidates =
+                if spec.grouping().reduction.duplicate_insensitive() && !candidates.is_empty() {
+                    candidates.join(" UNION ALL ")
+                } else {
+                    union(&candidates, spec.width)
+                };
             fold::append(
                 w,
                 &mut phase,
@@ -300,7 +311,8 @@ impl Frame {
                 &self.published[r],
                 &self.frontiers[r],
                 self.counters.get(r).map(String::as_str),
-                &union(&candidates, spec.width),
+                &candidates,
+                (contributors == 1).then(|| spec.grouping()),
                 true,
             )?;
         }

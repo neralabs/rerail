@@ -19,6 +19,7 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
 pub(in crate::code_rule_dsl) mod match_all;
@@ -62,6 +63,8 @@ fn join(a: i64, b: i64) -> i64 { Flat.join(a, b) }
 /// A lattice over `i64` values (integers or atoms) under which `lattice_fixpoint` runs (§12 `.decl … merge @join
 /// widen k`). `BOT` is the absent value: `join` and `transfer` see it only through the provided methods.
 pub(in crate::code_rule_dsl) trait Lattice: Send + Sync {
+    /// Known algebra for composition. Registered callbacks are opaque by default.
+    fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Opaque }
     /// The least upper bound of two present values.
     fn lub(&self, a: i64, b: i64) -> i64;
     /// The greatest value, which absorbs every transfer.
@@ -93,7 +96,8 @@ pub(in crate::code_rule_dsl) trait Lattice: Send + Sync {
 /// T's flat lattice: one value, or TOP when two differ. Height 3.
 pub(in crate::code_rule_dsl) struct Flat;
 impl Lattice for Flat {
-    fn lub(&self, a: i64, b: i64) -> i64 { if a == b { a } else { TOP } }
+    fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Flat { top: TOP } }
+    fn lub(&self, a: i64, b: i64) -> i64 { self.reduction().combine(a, b).unwrap() }
     fn top(&self) -> i64 { TOP }
     fn finite(&self) -> bool { true }
 }
@@ -101,7 +105,8 @@ impl Lattice for Flat {
 /// The greatest value seen; unbounded, so it widens to TOP.
 pub(in crate::code_rule_dsl) struct Max;
 impl Lattice for Max {
-    fn lub(&self, a: i64, b: i64) -> i64 { a.max(b) }
+    fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Max }
+    fn lub(&self, a: i64, b: i64) -> i64 { self.reduction().combine(a, b).unwrap() }
     fn top(&self) -> i64 { TOP }
     fn finite(&self) -> bool { false }
     fn widen(&self, old: i64, new: i64) -> i64 { if new > old { TOP } else { new } }
@@ -110,7 +115,8 @@ impl Lattice for Max {
 /// The least value seen (the order is reversed: smaller is higher); unbounded, so it widens to its top, -TOP.
 pub(in crate::code_rule_dsl) struct Min;
 impl Lattice for Min {
-    fn lub(&self, a: i64, b: i64) -> i64 { a.min(b) }
+    fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Min }
+    fn lub(&self, a: i64, b: i64) -> i64 { self.reduction().combine(a, b).unwrap() }
     fn top(&self) -> i64 { -TOP }
     fn finite(&self) -> bool { false }
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }

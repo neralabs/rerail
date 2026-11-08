@@ -2,6 +2,7 @@
 use super::super::logic::sql::select::{Query, Relation as Rel};
 use super::maintenance::{Delta, Work};
 use super::*;
+use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
 mod compose;
 mod fold;
 mod frame;
@@ -21,13 +22,22 @@ struct Relation {
     ops: Option<schedule::LatticeOperations>,
 }
 impl Relation {
+    fn grouping(&self) -> Grouping {
+        Grouping {
+            keys: self.keys,
+            reduction: if !self.lattice {
+                Reduction::Opaque
+            } else {
+                self.ops
+                    .as_ref()
+                    .map_or(Reduction::Flat { top: self.top }, |ops| ops.reduction)
+            },
+        }
+    }
     fn aggregate(&self, value: &str) -> String {
         match &self.ops {
             Some(ops) => format!("{}({value})", ops.aggregate),
-            None => format!(
-                "CASE WHEN count(DISTINCT {value})>1 OR max({value})={} THEN {} ELSE min({value}) END",
-                self.top, self.top
-            ),
+            None => crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(value, self.top),
         }
     }
     fn merge(&self, old: &str, new: &str) -> String {
