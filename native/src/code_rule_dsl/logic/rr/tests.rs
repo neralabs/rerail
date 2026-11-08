@@ -6,6 +6,31 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn extrema_use_projected_columns_after_constant_filters() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("aggregate-projection");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl item(owner: number, label: symbol, rank: number)
+item(1, "keep", 4). item(1, "keep", 9). item(1, "skip", 100).
+.decl event(owner: number, name: symbol, label: symbol, rank: number)
+event(k, cat(name, "!"), label, rank) :- item(k, label, rank), option("name", name).
+.violation Minimum(at: span, rank: number) code "MIN" "minimum"
+Minimum(@place("a.py", 1), v) :- v = min rank : { event(1, _, "keep", rank) }.
+.violation Maximum(at: span, rank: number) code "MAX" "maximum"
+Maximum(@place("a.py", 1), v) :- v = max rank : { event(1, _, "keep", rank) }.
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"name": "x", "inputFiles": []})).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{report}");
+    assert_eq!(rows.iter().find(|r| r["code"] == "MIN").unwrap()["parameters"]["rank"], 4);
+    assert_eq!(rows.iter().find(|r| r["code"] == "MAX").unwrap()["parameters"]["rank"], 9);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn annotation_constants_keep_python_values_and_stay_inside_annotations() {
     let rows = finding_contract(r#"
 def f(a: 1_000.00, b: list[b'\xff'], c: 0x10,
