@@ -323,10 +323,10 @@ pub(in crate::code_rule_dsl) enum Act {
 }
 
 /// A token row's `check` (doc 18 §4, decision 0052): straight-line operations over the token's
-/// 64-byte window, which the token's arm runs, as simdjson's stage 2 parses a number. Bit `i` is
+/// bytes, 64 at a time with carries, which the token's arm runs, as simdjson's stage 2 parses a number. Bit `i` is
 /// the token's byte `i`, `within 0` its bytes; its one output fails the token where it has a bit.
-/// No loop over the bytes: the compiler refuses a check that would need one, and a token longer
-/// than the window (`grammar::CHECK_WINDOW`) goes to tree-sitter.
+/// No loop over the bytes: the compiler refuses a check that would need one. A token of any
+/// length is checked; none goes to tree-sitter.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct CheckRow {
     pub(super) token: u16,

@@ -107,9 +107,10 @@ body to it, lowered from the states and arms:
 - each arm's acts as straight-line stores to the tape's columns;
 - a call pushes the return state on a stack in memory; a state with `end` and no arms pops.
 
-Its verifier refuses any other loop (decision 0052): no loop over a token's bytes, ever. A
-token's check is a straight-line block program over its window; a token longer than the
-window goes to tree-sitter.
+Its verifier refuses any other loop but one over a checked token's 64-byte words (decision
+0052): no loop over bytes, ever. A check is a block program, run over the token as tier 1 runs
+over a file, its carries passed from word to word; tree-sitter is never the way out of a case
+simdjson handles.
 The IR's interpreter, Cranelift (`native_cpu_block`) and later MSL all run that body.
 
 **5c. The kinds and checks.** A token row with a kind gives it; a keyword retypes it, read

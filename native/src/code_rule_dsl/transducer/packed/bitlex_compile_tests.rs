@@ -886,6 +886,19 @@ fn json_number_check_equals_the_reference() {
         words.extend(frontier.iter().cloned());
     }
     words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5"].map(<[u8]>::to_vec));
+    // Tokens over 64 bytes: the check runs word by word, its carries passed on, as tier 1 runs
+    // over a file; never sent to tree-sitter (decision 0052). Lengths around the word's edges.
+    for n in [63, 64, 65, 127, 128, 129, 200, 1000] {
+        let digits = vec![b'7'; n];
+        words.push([&b"-1"[..], &digits].concat());
+        words.push([&b"1."[..], &digits, b"e-", &digits].concat());
+        words.push([&b"0"[..], &digits].concat());
+        words.push([&digits[..], b"."].concat());
+        words.push([&digits[..], b"e"].concat());
+        words.push([&digits[..], b"x", &digits].concat());
+        words.push([&digits[..], b"-"].concat());
+        words.push([&digits[..n - 1], b"-", &digits].concat());
+    }
     let mut refused = 0;
     for w in &words {
         // The word alone is a file of one number token (or a keyword, which no word here is).

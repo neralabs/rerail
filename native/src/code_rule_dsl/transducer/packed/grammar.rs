@@ -583,14 +583,12 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
     (order.iter().map(|&s| accept[s]).collect(), out)
 }
 
-/// The longest token a check reads: its 64-byte window, with a bit left for its end.
-pub(super) const CHECK_WINDOW: usize = 63;
-
-/// A check's byte machine as straight-line operations over the token's window (doc 18 §4,
+/// A check's byte machine as straight-line operations over the token's bytes (doc 18 §4,
 /// decision 0052): no loop over the bytes, as simdjson's `parse_number` has none. Bit `i` is the
-/// token's byte `i`; `within` is the token's bytes. The machine is on one path, so per state:
+/// token's byte `i`; `within` is the token's bytes. A token of any length runs it 64 bytes at a
+/// time, `prev` and `fill` carrying from word to word, as tier 1 runs over a file. The machine is on one path, so per state:
 ///
-/// - `e`: where it enters the state (bit 0 for the start);
+/// - `e`: where it enters the state (the token's first byte for the start);
 /// - a self-loop on bytes `L` keeps it there over a run: `q = fill(e, ~prev(L, 1))`, and it
 ///   leaves at `x = q & ~L`, the first byte not in `L` (or the token's end);
 /// - without one, `x = e`;
@@ -675,7 +673,8 @@ pub(super) fn check_program(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> R
     let shifted_within = op(&mut p, BlockOp::Prev(within, 1));
     let end = op(&mut p, BlockOp::AndNot(shifted_within, within));
     let mut enter: Vec<Option<u16>> = vec![None; n];
-    enter[0] = Some(op(&mut p, BlockOp::Const(1)));
+    // The token's first byte: not a `const`, which would start it again in every 64 bytes.
+    enter[0] = Some(op(&mut p, BlockOp::AndNot(within, shifted_within)));
     // Failures inside the token, and at its end; both brought to one byte late, so the end's is
     // the last byte's (the output's delay is 1).
     let mut fail_in: Option<u16> = None;

@@ -37,5 +37,8 @@ operations to 95, its loop from 178 instructions to 450, and its carried state f
    UNACCEPTABLE, and they should be caught and blocked by the system"):
    - a machine with a cycle through two or more states would need one: the compiler refuses it;
    - a check is a block program, whose operations have no loop;
-   - a token longer than the window (63 bytes) goes to tree-sitter, not to a loop;
-   - tier 2's IR has one loop, over the stream's entries; its verifier refuses any other.
+   - a token longer than 64 bytes is checked 64 bytes at a time, the check's carries passed from
+     word to word, as tier 1 runs over a file: a loop over words, never over bytes; tree-sitter
+     is never the way out of a case simdjson handles (user, 2026-11-07);
+   - tier 2's IR has two kinds of loop: over the stream's entries, and over a checked token's
+     64-byte words; its verifier refuses any other.
