@@ -1825,13 +1825,17 @@ exports read back from `x`).
 
 Left out, by cause (none of them is a quick fix):
 
-- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
-  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
-  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
-  one down), but `front::cycles` measures by preorder and has no depth count.
+- **lazy-architecture**: was refused as an unbounded value cycle (`la_cls` climbs `ast_parent`, whose decorator
+  rule moves to a later node in preorder). Runs since 2026-11-07: `front::cycles` also measures depth (t12). Its
+  speed and memory are O104.
 - **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
-  `artifact="test_collection"`). Stamped-artifact readers are not written.
-- **versioned-table-names**: `n ~ `pattern`` (O103).
+  `artifact="test_collection"`). Stamped-artifact readers are not written. A grep reader does not replace the
+  probes (t11, O106); test-budget can count tests statically instead (t13, O107).
+- **versioned-table-names**: runs since 2026-11-07 (O103).
+
+2026-11-07: `.scope` was not applied at all before then, so the pack's counts above included findings in test
+files and outside each policy's directories. With it, the 66 running rules give 32 findings on s50 and 58 on s200
+(637 and 2,960 before). Peak RSS on s200 is 1,463 MB, 1,163 MB without lazy-architecture.
 
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
@@ -1944,3 +1948,47 @@ facts database is built without the guest relations. Not caused by the quality b
 pattern, over the chunk, and give an input relation of its matches and captures, which the rule then joins.
 
 **Closure:** a pattern literal plans and runs, and versioned-table-names runs in the pack.
+
+Closed (2026-11-07): ``n ~ `pattern` `` lowers to `ast_match(p, n, g, c)` atoms (capture "" is n; each `$X` binds
+X; a negated pattern binds nothing). The batch compiles each pattern once per grammar with ast-grep, matches it over
+each document, and maps matches to projected nodes by kind and byte range (`core_rr::CoreRows::patterns`). Test:
+`rr::tests::pattern_literals_match_and_bind_their_metavariables`. versioned-table-names gives 0 findings on the
+1,000-file slice; the Python linter reports the full tree clean. `$$$X` captures nothing yet.
+
+## O104. lazy-architecture's speed and memory
+
+The rule runs and agrees with the Python linter (t12, Outcome), at about 52 ms a file on 1,000 files (52.5 s CPU),
+so the full tree takes over 8 minutes. The cost is spread over many strata. The largest are `fl633_la_native`, a
+seven-way join that runs in SQLite (3.4 s), and the exports of file-local relations to the cross part. In the pack
+on s200 the rule adds about 300 MB of peak RSS.
+
+**Closure:** the rule runs on the full tree within the time and memory budgets, with its findings equal to the
+script's.
+
+## O105. `.scope` forms the findings filter does not read
+
+`rr::lower`'s `scope_filter` reads `dirs`, `include`, `exclude` and `tests false`. It ignores `report dirs`,
+`text` and `embedded` (they say where findings land or how files are read), and `option("…")` entries, whose
+values come from policy options it does not see. A finding is dropped by its path, so facts still come from every
+file, whereas the scripts' discovery also leaves those files' facts out. A cross-file rule may therefore see
+callers or definitions the script does not.
+
+**Closure:** each `.scope` form is applied or refused by name, and whether facts outside the scope are read is
+decided.
+
+## O106. A grep reader for files that are not documents
+
+t11 specifies `.input r(IO=grep, glob=…, re=…)`: one walk and one multi-pattern scan per file for all grep inputs,
+rows memoised by content. It is for lock files, CI YAML and `.md` tables. It does not replace
+plan-composition-architecture's runtime probes, which hash objects the builder makes as it runs.
+
+**Closure:** decided (t11 §10), then built or dropped.
+
+## O107. test-budget from a static model of pytest's collection
+
+t13 counts tests from the trees: files, `Test*` classes and their bases across files, parametrize lists
+(constants resolved across files), fixtures with `params=`. A prototype gives 13,610 against pytest's 14,449 on
+the 9,010-file tree (−5.8%), and −5.9% on main. Missing in the engine: a `product` aggregate, a TOML reader for
+pytest's settings, and findings in one scope with names resolved across the whole workspace.
+
+**Closure:** the model is written in `.rr`, checked against the per-file counts, and test-budget reports it.
