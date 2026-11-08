@@ -42,9 +42,9 @@ bcgp_required("l9720_sparql/executor.py"). bcgp_required("l9720_sparql/ast.py").
 bcgp_required("docs/l9700_graph_query.rst"). bcgp_required("docs/l7200_versioned_transactions.rst").
 bcgp_required("docs/l9720_sparql.rst"). bcgp_required("scripts/lint_all.py").
 
-// bcgp_line(p, l, sp): line l of file p.
+// bcgp_line(p, l, sp): line l of Python file p (documents read as text are only searched whole, below).
 .decl bcgp_line(p: symbol, l: number, sp: span)
-bcgp_line(p, l, sp) :- doc(d, p, _), src_line(d, l, sp).
+bcgp_line(p, l, sp) :- doc(d, p, _), suffix(".py", p), src_line(d, l, sp).
 // bcgp_top(p, l): line l starts a top-level `class `, `def ` or `async def ` (what ends a class block).
 .decl bcgp_top(p: symbol, l: number)
 bcgp_top(p, l) :- bcgp_line(p, l, sp), match("(?:class |def |async def ).*", sp).
@@ -73,9 +73,12 @@ bcgp_def(p, l, m) :- bcgp_line(p, l, sp),
 bcgp_deco(p, a, k) :- bcgp_line(p, a, sp), match("    @(?<ks>[A-Za-z_][A-Za-z0-9_]*)(?:\\([^\\n]*\\))?", sp), text(ks, k).
 .decl bcgp_at_line(p: symbol, l: number)
 bcgp_at_line(p, l) :- bcgp_line(p, l, sp), match("    @.+", sp).
+// bcgp_deco_through(p, a, k, l): lines a..l are all `    @…` lines, line a `    @k`: the decorator's run so far.
+.decl bcgp_deco_through(p: symbol, a: number, k: symbol, l: number)
+bcgp_deco_through(p, a, k, a) :- bcgp_deco(p, a, k).
+bcgp_deco_through(p, a, k, l + 1) :- bcgp_deco_through(p, a, k, l), bcgp_at_line(p, l + 1).
 .decl bcgp_decorated(p: symbol, a: number, k: symbol, m: symbol)
-bcgp_decorated(p, a, k, m) :- bcgp_deco(p, a, k), bcgp_def(p, b, m), b > a,
-    count : { bcgp_line(p, l, _), l > a, l < b, !bcgp_at_line(p, l) } = 0.
+bcgp_decorated(p, a, k, m) :- bcgp_deco_through(p, a, k, l), bcgp_def(p, l + 1, m).
 // bcgp_has_decorated(p, x, m, k): class x's block holds method m decorated @k.
 .decl bcgp_has_decorated(p: symbol, x: symbol, m: symbol, k: symbol)
 bcgp_has_decorated(p, x, m, k) :- bcgp_in(p, x, _, a), bcgp_decorated(p, a, k, m).
