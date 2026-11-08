@@ -1943,6 +1943,52 @@ Call(c) :- node(_, c, "call", _, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The other `.scope` forms (O117): `dirs option("…")` takes its directories from the run's options, `text` reads
+/// documents of no grammar as text only (lines, no tree), `report dirs` drops findings outside its directories while
+/// facts still come from the whole scope, and `embedded false` is `.guests off`.
+#[test]
+fn scope_takes_option_dirs_text_documents_and_report_dirs() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope-forms");
+    for (p, text) in [("impl/a.py", "f()\n"), ("app/x/c.py", "g()\n"), ("other/b.py", "h()\n"), ("docs/d.md", "intro\nTODO one\n"), ("docs/e.txt", "TODO two\n"), ("tools/t.py", "k()\n")] {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(p), text).unwrap();
+    }
+    let program = r#"
+.policy "t:scope-forms" revision 1
+.language python
+#include "python/ast.rr"
+.scope include "impl/**", "docs/**", "tools/**"
+.scope dirs option("roots")
+.scope text "**/*.md"
+.scope report dirs "impl", "app", "docs"
+.violation Call(at: node) "a call"
+Call(c) :- kind(c, "call").
+.violation Todo(at: loc) "a todo"
+Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
+"#;
+    // The program with its includes, as the corpus reads it.
+    let rule = dir.with_extension("scope-forms.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let paths = |options: serde_json::Value| {
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[flat.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| format!("{}:{}", l.split('\t').nth(3).unwrap(), l.split('\t').nth(4).unwrap())).collect();
+        got.sort();
+        got
+    };
+    // `docs/d.md` is read as text (its TODO line); `docs/e.txt` matches no text glob; `tools/` is read but reports
+    // nothing; `app/` only with the option.
+    assert_eq!(paths(serde_json::json!({})), ["docs/d.md:2", "impl/a.py:1"]);
+    assert_eq!(paths(serde_json::json!({"roots": ["app"]})), ["app/x/c.py:1", "docs/d.md:2", "impl/a.py:1"]);
+    let lowered = crate::code_rule_dsl::logic::rr::parse(&format!("{flat}\n.scope embedded false\n")).unwrap();
+    assert_eq!(lowered.text_globs, ["**/*.md"]);
+    let off = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| r == &vec![crate::code_rule_dsl::logic::front::Value::Str("library".into()), crate::code_rule_dsl::logic::front::Value::Str("off".into())]);
+    assert!(off, "embedded false is guests off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An AST pattern literal (O103): ``n ~ `$O[:-$K]` `` holds at each match, and `$K` binds K to the node it captured;
 /// a slice with a start is another pattern's, and a negated pattern holds where none matches.
 #[test]

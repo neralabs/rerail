@@ -352,6 +352,38 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
     pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
     pub(in crate::code_rule_dsl) answers: BTreeMap<String, Vec<String>>,
+    /// `.scope text`'s globs: a document matching one that has no grammar of the run (`.md`, `.rst`) is read as text
+    /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
+    /// one.
+    pub(in crate::code_rule_dsl) text_globs: Vec<String>,
+}
+
+/// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
+/// until the run's options are known: `rr-option:<form>:<name>`, `form` one of `dirs`, `include`, `exclude`. As a glob
+/// it holds no path; `resolve_scopes` adds the option's values beside it.
+pub(in crate::code_rule_dsl) const OPTION_GLOB: &str = "rr-option:";
+
+/// `scopes` with each option entry's values (`OPTION_GLOB`) added beside it, from the run's `options` as
+/// `option`/`option_item` read them: a directory under `dirs`, a glob under `include` or `exclude`. An option the run
+/// does not set adds nothing, and its entry still holds no path (an entry whose only globs are such reads none).
+pub(in crate::code_rule_dsl) fn resolve_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, options: &serde_json::Value) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+    let mut rows = crate::code_rule_dsl::facts::repository::Rows::default();
+    crate::code_rule_dsl::facts::repository::options(options, &mut rows);
+    let values = |name: &str| -> Vec<String> {
+        rows.option_item.iter().filter(|(n, _, _)| n == name).map(|(_, _, v)| v.clone()).chain(rows.option.iter().filter(|(n, _)| n == name).map(|(_, v)| v.clone())).collect()
+    };
+    let resolve = |globs: &Vec<String>| -> Vec<String> {
+        let mut out = Vec::new();
+        for g in globs {
+            out.push(g.clone());
+            let Some((form, name)) = g.strip_prefix(OPTION_GLOB).and_then(|r| r.split_once(':')) else { continue };
+            for v in values(name) {
+                out.push(if form == "dirs" { format!("{}/**", v.trim_end_matches('/')) } else { v });
+            }
+        }
+        out
+    };
+    scopes.as_ref().map(|entries| entries.iter().map(|(within, out)| (resolve(within), resolve(out))).collect())
 }
 
 pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {

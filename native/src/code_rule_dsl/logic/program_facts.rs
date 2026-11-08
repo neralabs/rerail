@@ -81,6 +81,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("doc_scoped", &["p:sym"]),
         ("doc_scope", &["p:sym", "k:int"]),
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
+        // `text_globs`: `.scope text`'s, in order.
+        ("text_glob", &["p:sym", "i:int", "glob:sym"]),
     ];
     SCHEMA
         .iter()
@@ -303,6 +305,9 @@ impl Writer<'_> {
                     }
                 }
             }
+        }
+        for (i, g) in prog.text_globs.iter().enumerate() {
+            self.row("text_glob", vec![n(i), s(g)]);
         }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
@@ -596,6 +601,9 @@ impl<'a> Reader<'a> {
             };
             prog.doc_scopes = Some(scopes.into_values().map(|(w, o)| (ordered_globs(w), ordered_globs(o))).collect());
         }
+        let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
+        text_globs.sort();
+        prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
         Ok(prog)
     }
 
@@ -734,9 +742,12 @@ mod tests {
         let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
         for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
             prog.doc_scopes = scopes.clone();
+            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
             let mut facts = super::Facts::new();
             super::write(&mut facts, "p", &prog);
-            assert_eq!(super::program(&facts, "p").unwrap().doc_scopes, scopes);
+            let back = super::program(&facts, "p").unwrap();
+            assert_eq!(back.doc_scopes, scopes);
+            assert_eq!(back.text_globs, prog.text_globs);
         }
     }
 }

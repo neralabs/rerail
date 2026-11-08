@@ -175,7 +175,18 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
         let mut word = "";
         for (k, t) in tokens.iter().enumerate() {
             match t {
-                // `option("…")`: an entry from a policy option, not known here.
+                // `option("…")`: an entry from a policy option, kept by name until the run's options are known
+                // (`front::OPTION_GLOB`); the form before it (`dirs`, `include`, `exclude`) stays the word.
+                super::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => {
+                    if let Some(super::syntax::Tok::Str(name)) = tokens.get(k + 2) {
+                        let entry = format!("{}{word}:{name}", crate::code_rule_dsl::logic::front::OPTION_GLOB);
+                        match word {
+                            "dirs" | "include" => within.push(entry),
+                            "exclude" => out.push(entry),
+                            _ => {}
+                        }
+                    }
+                }
                 super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
                 super::syntax::Tok::Id(w) => {
                     if w == "false" && word == "tests" {
@@ -197,6 +208,31 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
         return None;
     }
     Some((within, out))
+}
+
+/// The globs a `.scope <form> "…", …` setting lists, for a form that is not about which documents are read (`text`,
+/// `report dirs`).
+fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
+        let Ok(tokens) = super::syntax::tokens(text) else { continue };
+        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let super::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
+        if words != form {
+            continue;
+        }
+        found.extend(tokens.iter().filter_map(|t| if let super::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
+    }
+    found
+}
+
+/// `.scope text "**/*.md", …`: documents read as text only (`front::Program::text_globs`).
+pub(super) fn scope_text_globs(settings: &[(String, String)]) -> Vec<String> {
+    scope_list(settings, &["text"])
+}
+
+/// `.scope report dirs "api", …`: where findings may land, as globs; facts still come from the whole scope.
+fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
+    scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -281,6 +317,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     lower_boolean_relations(&mut l.prog);
     // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
     // selects are the same.
+    l.prog.text_globs = scope_text_globs(&l.prog.settings);
     if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
@@ -629,13 +666,45 @@ impl Lowerer {
     /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
     /// `.scope given` program reads the files it is given, all in scope.
     fn scope_filter(&mut self) -> Vec<Literal> {
-        let Some((within, out)) = scope_globs(&self.prog.settings) else { return Vec::new() };
+        let report = scope_report_globs(&self.prog.settings);
+        let given = self.prog.settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given");
+        let (within, out) = match scope_globs(&self.prog.settings) {
+            Some(globs) => globs,
+            None if !report.is_empty() && !given => (Vec::new(), Vec::new()),
+            None => return Vec::new(),
+        };
         // The corpus reads only these documents (`front::Program::doc_scopes`): their facts are the policy's, as the
         // scripts' discovery has them; the drop below still holds for a combined run that reads more.
-        self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
+        }
         let v = |s: &str| Term::Var(s.to_owned());
         let doc = Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
         let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };
+        // An entry from a policy option (`front::OPTION_GLOB`): the option's values, as `option_item` holds them; a
+        // directory's documents are those under it.
+        let option_entry = |g: &str| g.strip_prefix(crate::code_rule_dsl::logic::front::OPTION_GLOB).and_then(|r| r.split_once(':')).map(|(f, n)| (f.to_owned(), n.to_owned()));
+        let by_option = |form: &str, name: &str| -> Vec<Literal> {
+            let item = Literal::Atom(Atom { rel: "option_item".to_owned(), args: vec![Term::Str(name.to_owned()), Term::Wild, v("rr_o")], neg: false, gated: false });
+            let test = if form == "dirs" {
+                Literal::Cmp { l: Term::Call("prefix".to_owned(), vec![v("p"), Term::Call("concat".to_owned(), vec![v("rr_o"), Term::Str("/".to_owned())])]), op: "=", r: Term::Int(1) }
+            } else {
+                Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), v("rr_o")]), op: "=", r: Term::Int(1) }
+            };
+            vec![item, test]
+        };
+        if within.iter().chain(&out).chain(&report).any(|g| option_entry(g).is_some()) {
+            self.prog.decls.entry("option_item".to_owned()).or_insert_with(|| [("name", "sym"), ("i", "int"), ("v", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+            if !self.prog.inputs.iter().any(|i| i == "option_item") {
+                self.prog.inputs.push("option_item".to_owned());
+            }
+        }
+        let test = |g: &str| -> Vec<Literal> {
+            match option_entry(g) {
+                Some((form, name)) => by_option(&form, &name),
+                None => vec![glob(g)],
+            }
+        };
         let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
         let head = |rel: &str, var: &str| Atom { rel: rel.to_owned(), args: vec![v(var)], neg: false, gated: false };
         self.prog.decls.entry("doc".to_owned()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
@@ -647,12 +716,20 @@ impl Lowerer {
         if !within.is_empty() {
             self.prog.decls.insert("rr_scope_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
             for g in &within {
-                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: vec![doc.clone(), glob(g)] });
+                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
             self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
         }
         for g in &out {
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), glob(g)] });
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+        }
+        // `.scope report dirs`: a finding in a document under none of them is dropped too.
+        if !report.is_empty() {
+            self.prog.decls.insert("rr_report_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            for g in &report {
+                self.prog.rules.push(Rule { head: head("rr_report_in", "d"), body: vec![doc.clone(), glob(g)] });
+            }
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), atom("rr_report_in", vec![v("d")], true)] });
         }
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
@@ -681,6 +758,13 @@ impl Lowerer {
             if key == "guests" {
                 if let [v @ ("on" | "off")] = words.as_slice() {
                     facts.push(("library".to_owned(), (*v).to_owned()));
+                }
+                continue;
+            }
+            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+            if key == "scope" {
+                if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
+                    facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
                 }
                 continue;
             }

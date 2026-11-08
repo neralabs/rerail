@@ -336,6 +336,10 @@ pub(crate) struct Document {
 /// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
 /// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
 pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+    // A document read as text only has no nodes.
+    if doc.facts.len() == 0 {
+        return Ok(Vec::new());
+    }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // A guest's nodes are its root's subtree.
@@ -835,8 +839,16 @@ impl Batch {
             k
         };
         let mut withheld_at = Vec::with_capacity(documents.len());
+        // A document of no nodes (one read as text only, `core::text_only`) has no tag of its own: it is read in the
+        // batch's dialect, its rows (`doc`, `source`, `src_line`) the same in any.
+        let batch_tag = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).find(|&t| t != 0)
+            .or_else(|| crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python))
+            .unwrap_or(0);
         for (j, d) in documents.iter().enumerate() {
-            let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+            let tag = match crate::code_rule_dsl::facts::core::facts_tag(&d.facts) {
+                0 if d.facts.len() == 0 => batch_tag,
+                t => t,
+            };
             if !dialects.contains_key(&tag) {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
