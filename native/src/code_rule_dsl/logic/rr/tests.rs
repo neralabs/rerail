@@ -15,7 +15,6 @@ fn host_info_answers_only_demanded_keys_without_primary_documents() {
 .scope dirs "__no_primary__"
 .decl wanted(key: symbol)
 wanted("cpu_count"). wanted("env:RERAIL_NONEXISTENT_HOST_TEST_5d381"). wanted("unknown").
-.decl host_info(key: symbol, value: symbol)
 .violation Host(at: span, key: symbol, value: symbol) code "HOST" "host"
 Host(@place("",0), k, v) :- wanted(k), host_info(k,v).
 "#).unwrap();

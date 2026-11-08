@@ -79,6 +79,10 @@ def native_results(records,diagnostics):
         rows=sorted(tasks[task])
         if [i for i,_,_ in rows]!=list(range(len(record['rows']))):raise ValueError('Missing or repeated occurrence ordinals')
         if sorted(r for _,_,r in rows)!=list(range(len(record['rows']))):raise ValueError('Missing or repeated input occurrences')
+        bins=[bin for _,bin,_ in rows]
+        if any(not 0<=bin<min(record['spec']['bins'],len(record['rows'])) for bin in bins):
+            raise ValueError('Partition bin outside the allocated range')
+        if bins!=sorted(bins):raise ValueError('Assembly ordinals must follow bin order')
         chunks=[];last=None
         for _,bin,row in rows:
             if bin!=last:chunks.append([]);last=bin

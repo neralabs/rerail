@@ -4,8 +4,10 @@ Native mode creates the physical fixture but supplies no selected paths to the
 engine. Directories, links, exclusions, ordering, and graph inputs come from .rr.
 """
 import argparse
+from contextlib import contextmanager
 import importlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -19,7 +21,9 @@ from survey_analysis_contract import native_result, same_result
 def file(path, source='def dead(): pass\n'):return dict(path=path,source=source)
 def directory(path):return dict(path=path,directory=True)
 def link(path,target):return dict(path=path,symlink=target)
-def case(name, files, dirs=None):return dict(id=name,files=files,directories=dirs)
+def case(name, files, dirs=None, process_env=None):
+    return dict(id=name,files=files,directories=dirs,
+                processEnv={'NERA_LINTER_WORKERS':None,'PYTHONINTMAXSTRDIGITS':None,**(process_env or {})})
 
 
 CASES=[
@@ -52,7 +56,38 @@ CASES=[
          file('data_layer/api.py','from impl.a import main\n'),
          *[file(f'impl/filler_{i:02}.py','value = 1\n') for i in range(49)]],['impl']),
 ]
-FORMAT='rerail.survey-production-discovery/v1'
+weighted = CASES[-1]
+for workers in ['1', '2', '8', '١_٢', '-999', 'invalid', '9' * 4301]:
+    label={'١_٢':'unicode-12','-999':'negative','9'*4301:'digit-limit'}.get(workers, workers)
+    item=dict(weighted,id='weighted-workers-'+label,processEnv=dict(weighted['processEnv']))
+    item['processEnv']['NERA_LINTER_WORKERS']=workers
+    CASES.append(item)
+CASES.append(dict(weighted,id='weighted-unlimited-digits',processEnv=dict(NERA_LINTER_WORKERS='9'*4301,PYTHONINTMAXSTRDIGITS='0')))
+for count in [50,51]:
+    CASES.append(case(f'worker-boundary-{count}',[file(f'impl/a{i:02}.py','value = 1\n') for i in range(count)],['impl'],dict(NERA_LINTER_WORKERS='2')))
+CASES.append(case('weighted-duplicates-and-zeros',
+    [file(f'impl/a{i:02}.py','' if i % 3 == 0 else 'def dead(): pass\n') for i in range(27)],['impl','impl'],dict(NERA_LINTER_WORKERS='2')))
+CASES.append(case('weighted-parse-failure-size',
+    [file('impl/broken.py','#'+'x'*1000+'\ndef invalid(\n'),*weighted['files']],['impl'],dict(NERA_LINTER_WORKERS='2')))
+FORMAT='rerail.survey-production-discovery/v2'
+
+
+@contextmanager
+def process_environment(item, *, python=False):
+    """The offline oracle and native subprocess receive the same host inputs."""
+    previous={key:os.environ.get(key) for key in item['processEnv']}
+    digit_limit=sys.get_int_max_str_digits()
+    try:
+        for key,value in item['processEnv'].items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+        if python:sys.set_int_max_str_digits(int(os.environ.get('PYTHONINTMAXSTRDIGITS','4300')))
+        yield
+    finally:
+        if python:sys.set_int_max_str_digits(digit_limit)
+        for key,value in previous.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
 
 
 def source_case(source,item):
@@ -60,14 +95,19 @@ def source_case(source,item):
     discovery=importlib.import_module('lint_lib.discovery')
     model=importlib.import_module('lint_lib.symbol_graph')
     linter=importlib.import_module('lint_internal_dead_code')
-    with tempfile.TemporaryDirectory(prefix='rerail-offline-discovery-') as temporary:
+    with process_environment(item,python=True),tempfile.TemporaryDirectory(prefix='rerail-offline-discovery-') as temporary:
         root=Path(temporary);write_fixture(root,item['files'])
         paths=discovery.discover_python_files(root,item['directories'] or ['public'],include_tests=False)
         graph=model.SymbolGraph(root,item['directories'])
+        ordered=paths
+        if len(paths)>50:
+            workers=model.linter_worker_count(default_cap=8)
+            chunks=model._partition_symbol_scan_files(paths,worker_count=max(workers,(len(paths)+15)//16))
+            ordered=[path for chunk in chunks for path in chunk]
         graph._scan(files=paths)
         graph._resolve_edges();graph._add_legacy_decorator_edges();graph._collect_data_layer_roots()
         selected=[p.relative_to(root).as_posix() for p in paths]
-        return dict(paths=selected,demandedPaths=sorted(set(selected)),analysis=linter.analyze_dead_code(graph))
+        return dict(paths=selected,demandedPaths=sorted(set(selected)),assemblyPaths=[p.relative_to(root).as_posix() for p in ordered],analysis=linter.analyze_dead_code(graph))
 
 
 def program():
@@ -79,6 +119,8 @@ def program():
 DiscoveredPath(@place("", 0), i, path) :- sgd_discovery_path(path, i).
 .violation DemandedPath(at: span, path: symbol) code "DEMANDED_PATH" "demanded"
 DemandedPath(@place("", 0), path) :- sgs_graph_path(path).
+.violation AssemblyPath(at: span, ordinal: number, path: symbol) code "ASSEMBLY_PATH" "assembly"
+AssemblyPath(@place("", 0), i, path) :- sgs_scan_path(path, i).
 '''
 
 
@@ -87,11 +129,13 @@ def native_case(engine,rule,item):
     options=dict(entryPoint='analyze_dead_code')
     if item['directories'] is not None:
         options['env']=[f'data-layer.scan.{i}={path}' for i,path in enumerate(item['directories'])]
-    native=execute_workspace(engine,rule,item['files'],options)
+    with process_environment(item):
+        native=execute_workspace(engine,rule,item['files'],options)
     discovered=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='DISCOVERED_PATH'),key=lambda r:r['ordinal'])
     demanded=sorted(r['parameters']['path'] for r in native['diagnostics'] if r['code']=='DEMANDED_PATH')
-    result=dict(paths=[r['path'] for r in discovered],demandedPaths=demanded,
-                analysis=native_result([r for r in native['diagnostics'] if r['code'] not in {'DISCOVERED_PATH','DEMANDED_PATH'}]))
+    assembly=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='ASSEMBLY_PATH'),key=lambda r:r['ordinal'])
+    result=dict(paths=[r['path'] for r in discovered],demandedPaths=demanded,assemblyPaths=[r['path'] for r in assembly],
+                analysis=native_result([r for r in native['diagnostics'] if r['code'] not in {'DISCOVERED_PATH','DEMANDED_PATH','ASSEMBLY_PATH'}]))
     return result,native['programInputs']
 
 
@@ -108,6 +152,17 @@ def check_positives(cases):
     weighted=by_id['weighted-worker-order']
     if len(weighted['paths'])!=52 or weighted['analysis']['unused_functions']!=['impl.helpers::helper_a']:
         raise ValueError('Missing size-balanced worker-order counterexample')
+    for item in cases:
+        expected=item['expected']
+        if sorted(expected['paths'])!=sorted(expected['assemblyPaths']):raise ValueError('Assembly order lost selected occurrences')
+    if by_id['weighted-workers-1']['assemblyPaths']==by_id['weighted-workers-8']['assemblyPaths']:
+        raise ValueError('Worker-count ordering counterexample lost')
+    for n in [50,51]:
+        expected=by_id[f'worker-boundary-{n}']
+        if len(expected['paths'])!=n:raise ValueError('Scanner threshold case lost')
+        if (expected['paths']==expected['assemblyPaths']) != (n==50):raise ValueError('Scanner threshold order lost')
+    duplicate=by_id['weighted-duplicates-and-zeros']
+    if len(duplicate['paths'])!=54 or len(set(duplicate['paths']))!=27:raise ValueError('Weighted occurrence multiplicity lost')
 
 
 def main():
@@ -134,7 +189,7 @@ def main():
         for item in baseline['cases'][args.part::args.parts]:
             actual,inputs=native_case(args.engine,rule,item)
             result['cases'].append(dict(id=item['id'],expected=item['expected'],actual=actual,programInputs=inputs,
-                                       passed=actual['paths']==item['expected']['paths'] and actual['demandedPaths']==item['expected']['demandedPaths'] and same_result(item['expected']['analysis'],actual['analysis'])))
+                                       passed=actual['paths']==item['expected']['paths'] and actual['demandedPaths']==item['expected']['demandedPaths'] and actual['assemblyPaths']==item['expected']['assemblyPaths'] and same_result(item['expected']['analysis'],actual['analysis'])))
             write_json(args.output,result)
     result.update(complete=True,passed=all(c.get('passed',True) for c in result['cases']))
     write_json(args.output,result)

@@ -1772,7 +1772,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
-      "sha256": "1ea98c7138d2a5bc1695ab83f6665c9abc7852e70e20bd345df2e216acf7e5a6",
+      "sha256": "a9508d467794f3c7c41b83f4c0b22f9e71e38406cba28d9b292e0dbedf7289a6",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/discovery.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1793,6 +1793,11 @@
           "before": "8d35fe4b9a7120fa78e1889efa0ea5be42b8595a730e0e4603a461116d58ff8a",
           "after": "1ea98c7138d2a5bc1695ab83f6665c9abc7852e70e20bd345df2e216acf7e5a6",
           "reason": "Separate discovery and assembly order and require the proven size-balanced worker-order regression"
+        },
+        {
+          "before": "1ea98c7138d2a5bc1695ab83f6665c9abc7852e70e20bd345df2e216acf7e5a6",
+          "after": "a9508d467794f3c7c41b83f4c0b22f9e71e38406cba28d9b292e0dbedf7289a6",
+          "reason": "Apply exact size-balanced partition order after discovery, preserving occurrence IDs and process worker settings"
         }
       ]
     }
@@ -2922,7 +2927,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "9e5299a4ac846aa719edb8f9884c48daa2803e2fddade6f39b2dfb59b8c04a8f"
+        "sha256": "4e8c2534449948776b4db5f2d1da8a298d7e75efd99548245aeb490d9df4d4c6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -2952,16 +2957,16 @@
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
     "upstreamMerge": "7a846bfcae740fd20390e1b490467d386982d2a0",
     "cliArtifact": {
-      "engineCommit": "4a160529499f20fe2a373ce420aefa17967d8b98",
+      "engineCommit": "d119705c164040f3bcb4ce93eb1a532a79b4e695",
       "upstreamCommit": "0f0049ec7f4e1ec8ba134fedb11f9eb29bf33e9a",
       "sourceTrees": {
-        "native": "88a751b8a62b89fe9aab93dc8784199e0abdf070",
+        "native": "586848fe5f1d0874b66751655450b7aa72505560",
         "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
       },
-      "path": ".rerail/modern-engine-alignment/cli-7b0ad5cfadf088ea",
-      "sha256": "7b0ad5cfadf088eae5e124e39594c4a9aac8abd83401d962187afedeb7bb830d",
+      "path": ".rerail/modern-engine-alignment/cli-14855320b96e269c",
+      "sha256": "14855320b96e269ca6979f7cb2e2ac08f46c653956bac138f3a2054aa03781bc",
       "command": [
         "cargo",
         "build",
@@ -2972,7 +2977,7 @@
         "--bin",
         "rerail-engine"
       ],
-      "seconds": 43.001
+      "seconds": 24.745
     }
   }
 }

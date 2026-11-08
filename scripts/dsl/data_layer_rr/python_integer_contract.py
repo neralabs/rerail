@@ -53,14 +53,18 @@ def program(records):
 .language python
 .mode log
 .scope dirs "__no_primary__"
-.decl inputs(row: number, text: symbol, lower: number, upper: number, digits: number)
+.decl inputs(row: number, text: symbol, lower: number, adjustment: number, upper: number, digits: number)
 '''
     for i, row in enumerate(records):
         p = row['input']
-        text += f'inputs({i}, {json.dumps(p["text"],ensure_ascii=False)}, {p["lower"]}, {p["upper"]}, {p["maxDigits"]}).\n'
+        # The language lexes the positive token before unary minus. Derive MIN
+        # arithmetically, so the fixture never needs an out-of-range token.
+        adjustment = int(p['lower'] == -(2**63))
+        literal = json.dumps(p['text'],ensure_ascii=False).replace('\\f','\\u000c')
+        text += f'inputs({i}, {literal}, {p["lower"] + adjustment}, {adjustment}, {p["upper"]}, {p["maxDigits"]}).\n'
     return text + '''
 .violation Parsed(at: span, row: number, value: number) code "PARSED_INTEGER" "parsed"
-Parsed(@place("",0), i, value) :- inputs(i,text,lo,hi,digits), value = @python_int_clamped(text,lo,hi,digits), value >= lo.
+Parsed(@place("",0), i, value) :- inputs(i,text,lo,adjustment,hi,digits), value = @python_int_clamped(text,lo-adjustment,hi,digits), value >= lo-adjustment.
 '''
 
 

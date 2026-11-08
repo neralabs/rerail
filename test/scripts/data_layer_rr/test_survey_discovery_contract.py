@@ -43,7 +43,7 @@ class SurveyDiscoveryContractTests(unittest.TestCase):
         baseline=self.recording();categories=list(baseline['cases'][0]['expected']['analysis'])
         with tempfile.TemporaryDirectory() as temporary:
             status,result=self.run_native(Path(temporary),baseline,
-                lambda *args:(dict(paths=[],demandedPaths=[],analysis={name:[] for name in categories}),[]))
+                lambda *args:(dict(paths=[],demandedPaths=[],assemblyPaths=[],analysis={name:[] for name in categories}),[]))
         self.assertEqual(status,1);self.assertTrue(result['complete']);self.assertFalse(result['passed'])
         self.assertEqual(len(result['cases']),len(contract.CASES))
         first=result['cases'][0]
@@ -68,3 +68,22 @@ class SurveyDiscoveryContractTests(unittest.TestCase):
                 self.run_native(root,self.recording(),lambda *args:(_ for _ in ()).throw(TimeoutError('interrupted')))
             result=json.loads((root/'native.json').read_text())
         self.assertFalse(result['passed']);self.assertFalse(result['complete']);self.assertEqual(result['cases'],[])
+
+    def test_matching_findings_cannot_hide_a_changed_assembly_order(self):
+        baseline=self.recording()
+        def execute(engine,rule,item):
+            actual=copy.deepcopy(item['expected'])
+            if item['id']=='weighted-worker-order':actual['assemblyPaths'].reverse()
+            return actual,[]
+        with tempfile.TemporaryDirectory() as temporary:
+            status,result=self.run_native(Path(temporary),baseline,execute)
+        self.assertEqual(status,1)
+        self.assertEqual([c['id'] for c in result['cases'] if not c['passed']],['weighted-worker-order'])
+
+    def test_guard_requires_full_weighted_occurrence_order(self):
+        for label in ['weighted-worker-order','weighted-duplicates-and-zeros']:
+            with self.subTest(label=label):
+                recording=self.recording()
+                case=next(c for c in recording['cases'] if c['id']==label)
+                case['expected']['assemblyPaths'].pop()
+                with self.assertRaises(ValueError):contract.check_positives(recording['cases'])

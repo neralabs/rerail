@@ -11,7 +11,7 @@ from survey_source_controls import inline
 SPECS=[
     ('modern-excludes-api','modern-base-and-layers','sgd_public_path("api") :-',', !sgd_modern()',''),
     ('layer-roots','modern-base-and-layers','sgd_public_path(path) :- sgd_layer',' :- ',' :- 1 = 0, '),
-    ('nested-link-pruning','nested-directory-link-pruned','sgd_walk(root, @replace_all',', dir_metadata(path, name, _, 0, _)',''),
+    ('nested-link-pruning','nested-directory-link-pruned','sgd_walk(root, @replace_all','dir_metadata(path, name, _, 0, _)','dir_metadata(path, name, _, _, _)'),
     ('explicit-link-root','explicit-directory-link-root','sgd_walk(root, root) :-',', !sgd_blocked(root)',', dir_metadata(parent, name, _, 0, _), !sgd_blocked(root)'),
     ('explicit-file-bypasses-exclusions','explicit-files-bypass-exclusions','sgd_file(path, path) :-',', suffix(".py", name)',', !sgd_blocked(path), suffix(".py", name)'),
     ('path-components','component-path-order','sgd_key(i, @replace_all', '@replace_all(path, "/", "\\u0000")','path'),
@@ -19,6 +19,10 @@ SPECS=[
     ('explicit-duplicates','explicit-repeated-root','sgd_chosen(i, j, path) :-','!sgd_has_public() ; ',''),
     ('dot-py-has-no-suffix','suffix-and-hidden-files','sgd_file(root, @replace_all',', name != ".py"',''),
     ('explicit-file-exists','broken-explicit-file-link','sgd_file(path, path) :-','dir_metadata(parent, name, 1, _, _)','dir_metadata(parent, name, _, _, _)'),
+    ('weighted-assembly-order','weighted-worker-order','sgs_scan_path(path, ordinal) :- balanced_rows','sgs_scan_path(path, ordinal)','sgs_scan_path(path, occurrence)'),
+    ('worker-setting','weighted-workers-1','sgd_worker_override(n) :-','@python_int_clamped(text, 1, total, limit)','@python_int_clamped("8", 1, total, limit)'),
+    ('file-size-weights','weighted-worker-order','sgd_work(0, i, @replace_all',', bytes) :-',', 0) :-'),
+    ('fifty-file-boundary','worker-boundary-51','sgs_scan_path(path, ordinal) :- sgd_count','total <= 50','total <= 51'),
 ]
 
 

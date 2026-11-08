@@ -70,7 +70,51 @@ sgd_file(root, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(ro
 sgd_key(i, @replace_all(path, "/", "\u0000")) :- sgd_root(i, root), sgd_file(root, path).
 .decl sgd_discovery_path(path: symbol, ordinal: number)
 sgd_discovery_path(@replace_all(key, "\u0000", "/"), ordinal) :- ordered_rows(_, key, ordinal, sgd_key).
-// The production scanner reorders more than fifty files into size-balanced
-// chunks. The mandatory weighted-worker-order regression records that gap.
-sgs_scan_path(path, ordinal) :- sgd_discovery_path(path, ordinal).
 sgs_graph_path(path) :- sgd_file(_, path).
+
+// Loading depends on unordered membership. Size and worker ordering are shared
+// consumers after discovery, outside the filesystem request cone's aggregates.
+.decl sgd_size_probe(path: symbol, parent: symbol, name: symbol)
+sgd_size_probe(path, ".", path) :- sgs_graph_path(path), !contains("/", path).
+sgd_size_probe(path, @replace_all(path, "/[^/]+\\z", ""), @replace_all(path, "(?s)\\A.*/", "")) :- sgs_graph_path(path), contains("/", path).
+.decl sgd_size_parent(path: symbol)
+sgd_size_parent(parent) :- sgd_size_probe(_, parent, _).
+.decl sgd_size(path: symbol, bytes: number)
+sgd_size(path, bytes) :- sgd_size_parent(parent), sgd_size_probe(path, parent, name), dir_metadata(parent, name, 1, _, bytes).
+
+// Host demands have no discovery/count dependency. A single execution caches
+// requested values; no file's parse result can alter worker count or weights.
+.decl sgd_host_key(key: symbol)
+sgd_host_key("cpu_count").
+sgd_host_key("env:NERA_LINTER_WORKERS").
+sgd_host_key("env:PYTHONINTMAXSTRDIGITS").
+.decl sgd_host(key: symbol, value: symbol)
+sgd_host(key, value) :- sgd_host_key(key), host_info(key, value).
+.decl sgd_count(n: number)
+sgd_count(n) :- n = count : { sgd_discovery_path(_, _) }.
+.decl sgd_digit_override(n: number)
+sgd_digit_override(n) :- sgd_host("env:PYTHONINTMAXSTRDIGITS", text), n = @python_int_clamped(text, 0, 9223372036854775807, 0), n >= 0.
+.decl sgd_digit_limit(n: number)
+sgd_digit_limit(n) :- sgd_digit_override(n).
+sgd_digit_limit(4300) :- !sgd_digit_override(_).
+.decl sgd_cpu(n: number)
+sgd_cpu(n) :- sgd_host("cpu_count", text), n = @python_int_clamped(text, 1, 8, 0), n >= 1.
+.decl sgd_default_workers(n: number)
+sgd_default_workers(n) :- sgd_cpu(n).
+sgd_default_workers(4) :- !sgd_cpu(_).
+.decl sgd_worker_override(n: number)
+// Clamp to selected occurrences: the source caps allocated bins there too.
+sgd_worker_override(n) :- sgd_count(total), total > 50, sgd_digit_limit(limit), sgd_host("env:NERA_LINTER_WORKERS", text), n = @python_int_clamped(text, 1, total, limit), n >= 1.
+.decl sgd_workers(n: number)
+sgd_workers(n) :- sgd_worker_override(n).
+sgd_workers(n) :- sgd_default_workers(n), !sgd_worker_override(_).
+.decl sgd_bins(task: number, bins: number)
+sgd_bins(0, workers) :- sgd_count(total), total > 50, sgd_workers(workers), workers >= (total + 15) / 16.
+sgd_bins(0, (total + 15) / 16) :- sgd_count(total), total > 50, sgd_workers(workers), workers < (total + 15) / 16.
+.decl sgd_work(task: number, occurrence: number, key: symbol, bytes: number)
+sgd_work(0, i, @replace_all(path, "/", "\u0000"), bytes) :- sgd_count(total), total > 50, sgd_discovery_path(path, i), sgd_size(path, bytes).
+// A selected path losing metadata must fail explicitly, never disappear from a
+// size-balanced batch. The partition operator rejects negative weights.
+sgd_work(0, i, path, -1) :- sgd_count(total), total > 50, sgd_discovery_path(path, i), !sgd_size(path, _).
+sgs_scan_path(path, ordinal) :- sgd_count(total), total <= 50, sgd_discovery_path(path, ordinal).
+sgs_scan_path(path, ordinal) :- balanced_rows(0, occurrence, _, ordinal, sgd_work, sgd_bins), sgd_discovery_path(path, occurrence).
