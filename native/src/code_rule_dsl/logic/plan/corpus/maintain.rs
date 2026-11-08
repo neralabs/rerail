@@ -56,6 +56,8 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) derived_again: usize,
     /// Of those maintained, strata that are recursive.
     pub(in crate::code_rule_dsl) recursive: usize,
+    /// Each stratum derived again, by one of its relations, and why (the O125 spike's report).
+    pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -93,8 +95,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut part = cut.program(cross);
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
+    let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0 });
+        let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
     };
     let old = |rel: &str| kept.old(rel).is_some();
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
@@ -102,11 +106,27 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut olds: BTreeSet<String> = BTreeSet::new();
     let mut deltas: BTreeSet<String> = BTreeSet::new();
     let (mut maintained, mut derived_again, mut recursive) = (0, 0, 0);
+    let mut again: Vec<(String, &'static str)> = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
     for scc in dirty {
         let mine: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         if !maintainable(&part.program, scc, &mine, &changed, &old) {
             derived_again += 1;
+            let name = scc.iter().max_by_key(|r| part.program.rules.iter().filter(|x| &x.head.rel == *r).count()).cloned().unwrap_or_default();
+            let reason = if !scc.iter().all(|r| old(r)) {
+                "its old rows were not kept"
+            } else if scc.iter().any(|r| part.program.natives.contains_key(r) || part.program.lattice.contains_key(r)) {
+                "a native or lattice relation"
+            } else if mine.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.gated))) {
+                "a gated atom"
+            } else if mine.iter().any(|r| r.body.iter().any(|l| !matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))) {
+                "an aggregate or other literal"
+            } else if mine.iter().any(|r| !r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)))) {
+                "a computed head"
+            } else {
+                "a changed read whose old rows were not kept"
+            };
+            again.push((format!("{name} ({} relations)", scc.len()), reason));
             rules.extend(mine.into_iter().cloned());
             changed.extend(scc.iter().cloned());
             continue;
@@ -229,7 +249,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut sources = Vec::new();
     for rel in &olds {
         let columns = kept.old(rel).expect("a maintained read's old rows");
-        let names = (0..columns.len()).map(|c| format!("c{c}")).collect();
+        // Named as the planner reads its statistics (`sql_col`).
+        let names = (0..columns.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&named(rel, "old"), c)).collect();
         sources.push((named(rel, "old"), crate::code_rule_dsl::logic::native::component::columns_source(names, columns.iter().cloned().map(Some).collect())));
         fresh.push((rel.clone(), named(rel, "old")));
         part.program.inputs.push(named(rel, "old"));
@@ -245,5 +266,5 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive })
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
 }

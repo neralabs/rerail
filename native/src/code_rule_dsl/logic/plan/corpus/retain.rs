@@ -147,7 +147,7 @@ impl Cut {
             .filter(|rel| program.inputs.contains(*rel))
             .filter_map(|rel| {
                 let k = kept.rels.get(rel)?;
-                let names = (0..k.columns.len()).map(|c| format!("c{c}")).collect();
+                let names = (0..k.columns.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(rel, c)).collect();
                 Some((rel.clone(), crate::code_rule_dsl::logic::native::component::columns_source(names, k.columns.iter().cloned().map(Some).collect())))
             })
             .collect()
