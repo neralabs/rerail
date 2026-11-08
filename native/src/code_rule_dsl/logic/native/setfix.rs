@@ -23,6 +23,9 @@
 //!   seed <head rel> <hex join>                 a native join run once, in the first wave
 //!   join <head rel> <delta rel> <hex join> [<hex join>]   a native probe; the second, if given, runs instead in the
 //!                                              wave whose delta is the whole relation (any order, read in full)
+//!   request <rel>                              a relation whose new rows the caller answers: a wave that adds to it
+//!                                              ends the run (done 2) before any gate opens (`pending`, `add`)
+//!   produced <rel>                             a relation only the caller adds to (`add`); not written
 //!   gate <done rel> <src rel|-> <quiet rels|-> <gates|->   after a wave in which no quiet relation changed and the
 //!                                              listed (earlier) gates have nothing left to pass, the src rows not yet
 //!                                              passed join done as its delta (`-`: one row, 0); comma lists
@@ -285,7 +288,10 @@ struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule
 pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
-struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool }
+/// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
+/// `produced`: relations only the caller adds to, which the fixpoint does not write.
+struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
+                   requests: Vec<(usize, usize)>, produced: Vec<usize> }
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -343,6 +349,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let mut syms = Interner::for_loading(&symbols);
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
+    let (mut requests, mut produced) = (Vec::new(), Vec::new());
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let toks: Vec<&str> = line.split_whitespace().collect();
         match toks[0] {
@@ -367,6 +374,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None, wkey: None }),
             "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None, wkey: None }),
             "nowrite" => write = false,
+            "request" => requests.push((num(toks[1])?, 0)),
+            "produced" => produced.push(num(toks[1])?),
             "gate" => {
                 let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
                 let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };
@@ -426,7 +435,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false }))));
+    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced }))));
     Ok(name)
 }
 
@@ -461,6 +470,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.prepare(sql)?), Body::Join(_) => None }); }
     let (mut waves, mut visits, mut runs, mut skips) = (0u32, 0u64, 0u64, 0u64);
     let mut done = false;
+    let mut paused = false;
     let mut seeded = comp.seeded;
     // Per probe: seconds spent in its statement and rows it returned.
     let mut per: Vec<(f64, u64)> = vec![(0.0, 0); comp.probes.len()];
@@ -581,6 +591,13 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; rel.set_delta(lo, hi); }
         }
+        // A request relation that gained rows pauses the run before any gate opens: the caller answers them
+        // (`pending`, `add`) and runs again. A gate opens only once no request is unanswered.
+        if comp.requests.iter().any(|&(r, answered)| store.rels[r].n > answered) {
+            for &r in &gates_done { let (lo, hi) = (lo_of[r], store.rels[r].n); store.rels[r].set_delta(lo, hi); }
+            paused = true;
+            break;
+        }
         // Gates, lowest first: one whose quiet relations got nothing this wave, and whose earlier gates have nothing
         // left to pass, passes its source's new rows. Its `done` relation's delta is set after, so they are this
         // wave's rows.
@@ -607,6 +624,9 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
     let per: Vec<String> = per.iter().map(|(t, n)| format!("{:.1}:{n}", t * 1e3)).collect();
+    if paused {
+        return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 2", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
+    }
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
@@ -615,7 +635,8 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     if comp.write {
         // Each relation's new rows into its table, many rows per statement (SQLite binds at most 32766 values).
         let store = comp.store.read().unwrap();
-        for rel in &store.rels {
+        for (ri, rel) in store.rels.iter().enumerate() {
+            if comp.produced.contains(&ri) { continue; }
             let per = (32000 / rel.k.max(1)).max(1);
             let mut id = rel.stored;
             while id < rel.n {
@@ -628,6 +649,40 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         }
     }
     Ok(format!("{new_rows} {waves} {visits} {runs} {skips} {:.1} {:.1} {} 1", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")))
+}
+
+/// The request rows not yet answered, per request relation (its table), now counted as answered.
+pub fn pending(conn: &Connection, name: &str) -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+    let comp = component(conn, name)?;
+    let mut comp = comp.lock().unwrap();
+    let store = Arc::clone(&comp.store);
+    let store = store.read().unwrap();
+    let mut out = Vec::new();
+    for (r, answered) in &mut comp.requests {
+        let rel = &store.rels[*r];
+        if rel.n > *answered {
+            out.push((rel.table.clone(), (*answered..rel.n).map(|i| rel.row(i).to_vec()).collect()));
+            *answered = rel.n;
+        }
+    }
+    Ok(out)
+}
+
+/// Adds an answer's rows to a produced relation (by table), as its delta for the next wave: once per relation per
+/// pause. Returns how many were new.
+pub fn add(conn: &Connection, name: &str, table: &str, rows: &[Vec<i64>]) -> Result<usize> {
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let mut store = comp.store.write().unwrap();
+    let r = store.rels.iter().position(|rel| rel.table == table).ok_or_else(|| err(format!("{name}: no relation {table}")))?;
+    if !comp.produced.contains(&r) { return Err(err(format!("{name}: {table} is not a produced relation"))); }
+    let rel = &mut store.rels[r];
+    if rel.lo != rel.hi { return Err(err(format!("{name}: {table} was added to twice in one pause"))); }
+    let lo = rel.n;
+    let new = rows.iter().filter(|row| rel.push(row)).count();
+    let hi = rel.n;
+    rel.set_delta(lo, hi);
+    Ok(new)
 }
 
 /// Live statistics of a component's relations, one line per relation in spec order: its row count, then each
