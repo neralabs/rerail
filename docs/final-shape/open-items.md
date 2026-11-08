@@ -2208,9 +2208,9 @@ the pruned program (`types-failed`), as a run does when it plans. Six rules stil
 - **A span where text is compared (O120):** `ruff-pgh004` (`noqa_all_tail`: `R = ""` over a capture of a comment)
   and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes).
 
-Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O133).
+Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O135).
 
-**Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O133's.
+**Closure (narrowed):** the six rules run, or are listed with their reason; the combined pack's cost is O135's.
 
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
@@ -2277,6 +2277,26 @@ Two steps would change that, in order:
    before its joins, not filtered after them.
 
 **Closure:** with both, a warm replaying run's cross part costs less than a derived one on this corpus, under 1 GB.
+
+**2026-11-08: met, with `calls_cx.rr` (decision 0076 §8).**
+- Step 1 is done in a parallel program, which `make_cx.py` writes from `calls.rr`. 280 of 283 cross-file relations
+  are declarable.
+- Verify over an edited corpus found four more kinds of importer-shaped rows, and they are fixed: generics, star
+  imports, instance attributes, and the benchmark's spans. After the fixes, all 82 found components matched.
+- Step 2 is done in part. The guard has a native step, and a run with every component found runs only the copies.
+- A replay's cross part is 7.8 s against 35.7 s for `calls.rr` derived, at 837 MB, with Jedi agreement 6,299 in
+  every run.
+
+Still open:
+- ~~Reading stored rows in place~~: done (0076 §9). The rows are in `cross_rows`, read by one query of key ranges, and only the
+  relations still read are loaded. A warm run's cross part is 2.3 s and the whole run is 13.2 s.
+- ~~Cutting a guarded rule before its joins~~: done in part (0076 §9). Each same-document node is guarded. The
+  edited corpus still costs more with the memo than without it (42.2 s against 29.9 s): the 41 components that
+  miss hold most of the work, and storing them costs 6.9 s. The next step is early cutoff, a component key made from
+  what the cross part reads of each file, not from its bytes.
+- Whether `calls.rr` itself becomes `calls_cx.rr`. That is Typing's to decide: the closed world shrinks to the
+  reader's closure, and the agreement is the same on both oracles.
+- Finding importer-shaped rows statically, so the check is not only `verify` over an edited corpus.
 
 
 ## O115. A prepared program read back from the store fails its run: "no such table: pre_85"
@@ -2632,7 +2652,50 @@ the vtabs without loading relations whole. The store layout (one table per relat
 site-packages file.
 
 **Closure:** an unchanged venv is verified in milliseconds, and the edit reaches P1 as a content delta.
-## O133. The Python pack does not finish within the run cap: its libraries are copied into every program
+## O133. `calls.rr`'s cross-file fixpoint grew threefold across the final-rerail-shape merge
+
+Measured 2026-11-08 on the 84-file Jedi corpus with the memo off. Before the merge (`da0a634c0`), the fixpoint
+stratum was 53 relations and 8.1 s of native joins. After it (`61dc0cd80` onward), it is 74 relations and 20.9 s,
+about three times the join work. The Jedi agreement is the same, 6,299. `calls.rr` did not change. The merge
+brought final-shape's guest hiding (O110) and lowering changes, which put more guest-annotation copies
+(`rr_in_annotation_*`) and `base` into that stratum. Not investigated further: the code is final-shape's.
+
+**Closure:** the cause is named, and the fixpoint's cost is back near 8 s or the growth is shown to be needed.
+
+**2026-11-08: the cause is named. The growth is O110's correctness fix, not a planner regression.**
+- Before O110, guest hiding read a reader's atom from the guest copy only (`rr_in_annotation_0_base`, …). A
+  derived column that may hold host nodes lost those rows. O110 splits such a rule into a host rule and a guest
+  clone, so the host relations are now derived too.
+- That puts `base`, `fcall`, `fgp`, `fret`, `pcall`, `rret`, `wbind` and `wcall` into the fixpoint. `base` is
+  recursive with `pv` through the guest clone of `sub`: `pv :- cret, rr_in_annotation_0_sub` and
+  `rr_in_annotation_0_sub :- sub, base`, where `base :- basex, pv(e, "cls", b)`. Join work rose from 16.2 M to
+  52.2 M steps. The largest new costs are the host and guest copies of one join (`ifn` over `icall` and over
+  `rr_in_annotation_0_icall`), each run over more waves.
+- The demand split choosing `ownvar` and `mro_dropped` (decision 0048) also changed: `demand_ownvar` is computed
+  from readers inside the fixpoint. Refusing a split that would make a demand relation recursive cut the stratum
+  from 74 to 58 relations but not its time (23.4 s, against 22.6 s, under load). It was not kept.
+- Whether every host copy is needed is final-shape's to judge (hiding.rs). A copy whose rows are all guest-only
+  could still be specialised. `RERAIL_DUMP_CROSS=<file>` writes the cross-file rules for that analysis.
+
+
+## O134. A run read wholly from the per-file memo planned its cross-file part with no tree counts
+
+Found 2026-11-08, once the per-file memo stored on the Jedi corpus. `calls.rr` read all 267 files from the memo
+and never finished (killed after 20 minutes). The cause: the planner's tree counts (kinds, edges, documents and
+constant postings) come only from evaluated chunks, so every `kind(n, "identifier")` looked empty, and `rpvar`'s
+cross-file join began with `kind($pr, 1025) , kind($r, 1025)`, a cross product. `RDL_WAVE_TRACE` now names each
+probe's component, head and planned joins, and `RERAIL_DUMP_STATS` prints what the cross part plans with. Those found it.
+
+**Fixed:**
+- Each chunk mix's measured counts are stored under the file-local program, named in the run's manifest.
+- Memo hits, grouped by file type, add their mix's counts scaled by their nodes (falling back to their types',
+  then the last measured mix).
+- On the fixture, a memo read plans with 52 kinds over 1,493 nodes, as the evaluated run does. On Jedi, every warm
+  and edited run finished, with answers equal to the evaluated runs.
+
+**Closure:** met. Still open: storing exact per-file counts in the memo entry, in place of a mix's scaled ones.
+
+## O135. The Python pack does not finish within the run cap: its libraries are copied into every program
 
 Measured 2026-11-08 with decision 0084's profile and dump, on 538 of the pack's programs (O111's six left out),
 over `fixtures/python/calls/project`, load 36 to 75. The run was stopped at 115 s, 116.4 s user CPU, before it

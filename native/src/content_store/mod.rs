@@ -15,6 +15,7 @@ mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) use connection::sqlite_on_jemalloc;
+mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;

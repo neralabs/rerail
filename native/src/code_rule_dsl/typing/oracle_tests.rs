@@ -66,7 +66,11 @@ rr_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
 fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) -> BTreeMap<(String, usize, usize), Answer> {
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score");
-    let src = format!("{program}\n{SPANS}");
+    let mut src = format!("{program}\n{SPANS}");
+    // `RERAIL_PYTHON_CROSS_MEMO`, as the corpus benchmark reads it.
+    if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
+        src.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
+    }
     let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     println!("cross-file rounds {:?}", report.rounds);
     assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
@@ -147,6 +151,12 @@ pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>
     (agree, departures, never_ran)
 }
 
+/// `RERAIL_PYTHON_PROGRAM`: the calls program the oracle tests score, `calls` unless it names another (`calls_cx`,
+/// the closure-local version; O114).
+fn calls_name() -> String {
+    std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls".to_owned())
+}
+
 fn program(name: &str) -> String {
     crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
@@ -171,7 +181,7 @@ const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
 /// (`calls::python_tests::python_calls_agree_with_the_runtime`) holds the same oracle to its own list.
 #[test]
 fn python_calls_program_agrees_with_the_runtime() {
-    let (agree, departures, never_ran) = score_python(&program("calls"));
+    let (agree, departures, never_ran) = score_python(&program(&calls_name()));
     println!("calls.rr: {agree} agree, {} depart", departures.len());
     assert!(never_ran.is_empty(), "{never_ran:#?}");
     let listed: BTreeMap<String, Departure> = PYTHON_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
@@ -883,14 +893,17 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
-/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`.
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
+/// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
+/// callers, which a run memoising per import component (decision 0076) needs.
 const JEDI_SPANS: &str = "
 .decl rr_jedi_cls(c: node, k: node)
 rr_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
 .decl rr_jedi_at(n: node, s: number, e: number)
 rr_jedi_at(n, s, e) :- kind(n, \"call\"), node(_, n, _, s, e).
-rr_jedi_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
-rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"function_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"class_definition\"), node(_, f, _, s, e).
+rr_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
 .output rr_jedi_cls, rr_jedi_at
 ";
 
@@ -908,7 +921,7 @@ fn benchmark_python_calls_program_corpus() {
     let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi"));
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let mut text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let mut text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
     // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
     if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
         text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
