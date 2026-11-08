@@ -2791,6 +2791,25 @@ with its libraries' declarations and kind sets only.
   - the footprint peak, 1,076 MB, against the 1 GB budget. The largest rises are evaluation (`local/run`, 365 MB)
     and "stats" (355 MB).
 
+**Before 0089 stage 3 (2026-11-08): what a per-unit memo could save.** This uses the profile of the same whole-pack
+run. Adding one rule changes the file-local digest, so every file is evaluated again. Of that work:
+
+| span | CPU | under stage 3 |
+|---|---|---|
+| `local/run` | 34.2 s | |
+| … library strata (unprefixed names) | 3.8 s | read from the library unit's rows |
+| … lowering helpers (`fl…`, `rr_in_annotation…`, not a program's) | 3.0 s | mostly the library's, so mostly read |
+| … programs' own and requests' strata | 6.8 s | made again |
+| … the rest (per chunk: opening, loading inputs, indexes) | about 20 s | made again |
+| `local/guests` | 18.1 s | unchanged (tape cache, already content-keyed) |
+| preparing (`stats`; `push_local_joins` is 13.2 s of it) | 24.3 s | unchanged: the prepared program is keyed by the whole pack |
+
+So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit costs. The larger costs are three:
+
+- the per-chunk overhead of `local/run`;
+- `push_local_joins`;
+- preparing the whole program again for one rule.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
