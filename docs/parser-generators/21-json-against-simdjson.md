@@ -26,51 +26,57 @@ Both our parsers and simdjson run in two passes: one over the bytes, one over th
 | | simdjson | ours, step 14 | ours, step 15 |
 |---|---|---|---|
 | pass 1 runs | hand-written NEON, per 64 bytes | a generated block program, per 64 bytes | the same |
-| pass 1 operations | (hand-written) | 143 operations | 197 operations |
-| pass 1 per 64 bytes | about 173 instructions, measured | 1,085 Cranelift instructions | 1,298 |
-| pass 1 branches | the loop, the flattening, a UTF-8 fast path | the loop and the flattening only | the same |
-| state carried per block | a few words | 26 words (47 bits) | 42 words (61 bits) |
+| pass 1 operations | (hand-written) | 205 operations | 259 operations |
+| pass 1 per 64 bytes | about 173 instructions, measured | 864 Cranelift instructions on an ASCII block, 1,186 on others | 1,069 and 1,376 |
+| pass 1 branches | the loop, the flattening, a UTF-8 fast path | the loop, the flattening, an ASCII test | the same |
 | pass 1 writes | structural positions | token starts and last bytes, fallback totals | the same |
-| pass 2 runs | hand-written C++, a state machine with a jump per state | 433 generated words, one function | 569 words |
-| pass 2 machine code | (hand-written) | 7,459 instructions | 10,200 |
-| pass 2 loops | one per token; numbers parsed in scalar code | one per token; inside a number's check, one per 64 bytes | the same |
-| numbers | converted to doubles and integers | checked against the grammar | the same |
+| pass 1 machine code | (hand-written) | 4,296 instructions | 4,896 |
+| pass 2 runs | hand-written C++, a state machine with a jump per state | 429 generated words, one function | 564 words |
+| pass 2 machine code | (hand-written) | 4,914 instructions | 6,458 |
+| pass 2 loops | one per token; numbers parsed in scalar code | one per token | the same |
+| numbers | converted to doubles and integers, in pass 2 | checked against the grammar, in pass 1, as masks | the same |
 | output | simdjson's tape | a node table: kind, field, start, end, size | the same, with comments |
 
 tree-sitter-json is a different shape. It is a table-driven LR parser with a lexer that steps
 one byte at a time. It builds a tree of allocated nodes, and it can recover from errors.
 
-Pass 1's 143 operations, by kind: 32 `and`, 21 `and not`, 26 `or`, 28 `prev`, 17 byte classes,
-10 single-byte tests, 1 `escaped`, 1 `toggle`, 5 `within`. Of its 27 classes and tests, 13 check
+Pass 1's 205 operations, by kind: 43 `and`, 29 `and not`, 36 `or`, 1 `xor`, 47 `prev`,
+24 byte classes, 13 single-byte tests, 4 `fill`, 1 `escaped`, 1 `toggle`, 5 `within`, 1
+constant. About 60 of them check numbers (doc 20 §3.4). Of the classes and tests, 13 check
 UTF-8.
 
-Pass 2's 433 words: 17 `TOKEN`, 21 `SWITCH`, 85 `SPAN`, 48 `WORD`, 85 `LEAF`, 23 `OPEN`,
-12 `CLOSE`, 28 `NODE_SUPER`, 9 `NODE_FIELD`, 8 `PUSH`, 2 `RETURN`, 4 `CHECK`, 4 `EMPTY`,
-85 `GOTO`, 2 `ACCEPT`.
+On Cranelift, the values that depend only on bytes stay in 16-byte vectors until something
+else reads them (doc 20 §6). So a `prev` of a class is a byte shift, and most UTF-8 values
+never become masks. An all-ASCII block runs a second body, with the UTF-8 values folded away.
+
+Pass 2's 429 words: 17 `TOKEN`, 21 `SWITCH`, 85 `SPAN`, 48 `WORD`, 85 `LEAF`, 23 `OPEN`,
+12 `CLOSE`, 28 `NODE_SUPER`, 9 `NODE_FIELD`, 8 `PUSH`, 2 `RETURN`, 4 `EMPTY`, 85 `GOTO`,
+2 `ACCEPT`.
 
 ## 2. Speed
 
 simdjson's 17 benchmark files, 15.5 MB, on an Apple M-series core. Each figure is the median
-CPU time of 20 runs or more. The machine had a load average of about 70 during the runs, so
-treat the figures as approximate.
+CPU time of 20 runs or more. The machine was loaded: a load average of about 70 for simdjson's
+and tree-sitter's runs, and 75 to 80 for ours. Treat the figures as approximate.
 
 | | GB/s, whole corpus | instructions per byte | cycles per byte |
 |---|---|---|---|
 | simdjson, stage 1 | 5.23 | 2.7 | 0.72 |
 | simdjson, whole parse | 1.64 | 10.1 | 2.05 |
-| ours 14, pass 1 | 0.98 | 15.3 | 2.98 |
-| ours 14, pass 2 | 0.63 | 29.5 | 4.23 |
-| ours 14, both | 0.38 | 44.9 | 7.21 |
-| ours 15, pass 1 | 0.82 | 18.7 | 3.16 |
-| ours 15, both | 0.35 | 48.3 | 8.35 |
+| ours 14, pass 1 | 1.21 | 16.2 | 2.64 |
+| ours 14, pass 2 | 2.88 | 9.1 | 1.14 |
+| ours 14, both | 0.85 | 25.3 | 3.78 |
+| ours 15, pass 1 | 1.07 | 19.3 | 2.88 |
+| ours 15, both | 0.78 | 28.5 | 4.00 |
 | tree-sitter-json | 0.028 | 550 | 121 |
 
 In ratios:
 
-- Our step 14 takes 4.3 times simdjson's time. Pass 1 takes 5.3 times stage 1's; pass 2 takes
-  3.8 times stage 2's.
-- tree-sitter-json takes 14 times ours, and 58 times simdjson's.
-- Comments cost step 15 about 8% more than step 14.
+- simdjson's whole parse takes about half of our step 14's time (0.52; by cycles, 0.54).
+- Our pass 1 takes about 4 times stage 1's. Our pass 2 is a little faster than simdjson's
+  stage 2 (1.14 cycles a byte against 1.33), but it does less: no number conversion.
+- tree-sitter-json takes 30 times ours, and 58 times simdjson's.
+- Comments cost step 15 about 9% more than step 14.
 
 The work is not quite the same:
 
@@ -78,23 +84,27 @@ The work is not quite the same:
 - We write a node per token, in tree-sitter-json's form (every `[` and `,` is a node).
   simdjson's tape has an entry per value.
 
-Per file, in GB/s:
+Before the last changes (the number check moved into pass 1, values kept in vectors, the
+ASCII test), step 14 ran at 0.38 GB/s: pass 1 at 0.98, pass 2 at 0.63.
+
+Per file, in GB/s (simdjson's columns are from the earlier runs):
 
 | file | KB | simdjson stage 1 | simdjson all | 14 pass 1 | 14 pass 2 | 14 both | 15 both | tree-sitter |
 |---|---|---|---|---|---|---|---|---|
-| apache_builds | 127 | 7.14 | 3.29 | 0.96 | 2.10 | 0.66 | 0.57 | 0.031 |
-| canada | 2,251 | 4.73 | 0.99 | 0.99 | 0.48 | 0.32 | 0.31 | 0.026 |
-| citm_catalog | 1,727 | 6.92 | 3.23 | 1.05 | 1.70 | 0.65 | 0.56 | 0.047 |
-| github_events | 65 | 7.11 | 3.15 | 1.14 | 2.35 | 0.77 | 0.58 | 0.037 |
-| gsoc-2018 | 3,328 | 6.52 | 3.50 | 1.01 | 6.70 | 0.88 | 0.75 | 0.074 |
-| marine_ik | 2,983 | 3.74 | 1.06 | 0.92 | 0.29 | 0.22 | 0.21 | 0.018 |
-| mesh | 724 | 4.63 | 1.03 | 0.95 | 0.25 | 0.20 | 0.19 | 0.015 |
-| numbers | 150 | 4.91 | 1.27 | 1.00 | 0.37 | 0.27 | 0.26 | 0.024 |
-| twitter | 632 | 6.01 | 2.90 | 1.00 | 1.97 | 0.66 | 0.56 | 0.037 |
-| twitterescaped | 562 | 6.17 | 2.07 | 0.91 | 1.03 | 0.48 | 0.43 | 0.018 |
+| apache_builds | 127 | 7.14 | 3.29 | 1.25 | 2.28 | 0.81 | 0.73 | 0.031 |
+| canada | 2,251 | 4.73 | 0.99 | 1.19 | 2.97 | 0.85 | 0.79 | 0.026 |
+| citm_catalog | 1,727 | 6.92 | 3.23 | 1.44 | 4.02 | 1.06 | 0.83 | 0.047 |
+| github_events | 65 | 7.11 | 3.15 | 1.20 | 3.36 | 0.89 | 0.77 | 0.037 |
+| gsoc-2018 | 3,328 | 6.52 | 3.50 | 1.22 | 7.66 | 1.05 | 0.99 | 0.074 |
+| marine_ik | 2,983 | 3.74 | 1.06 | 1.10 | 1.78 | 0.68 | 0.63 | 0.018 |
+| mesh | 724 | 4.63 | 1.03 | 1.13 | 2.27 | 0.76 | 0.74 | 0.015 |
+| numbers | 150 | 4.91 | 1.27 | 1.24 | 3.85 | 0.94 | 0.82 | 0.024 |
+| twitter | 632 | 6.01 | 2.90 | 1.20 | 3.06 | 0.86 | 0.79 | 0.037 |
+| twitterescaped | 562 | 6.17 | 2.07 | 1.23 | 1.43 | 0.66 | 0.58 | 0.018 |
 
-Pass 1 runs at about 1 GB/s on every file: it does the same work for every byte. simdjson's
-stage 1 is faster on files that are mostly ASCII, since its UTF-8 check has a fast path.
+On files of numbers (canada, marine_ik, mesh, numbers) we are now within 0.7 to 0.9 of
+simdjson's whole parse: simdjson converts each number there. Pass 2 is slowest on
+twitterescaped and marine_ik, which have the most tokens per byte.
 
 ## 3. Accuracy
 
@@ -133,39 +143,21 @@ comments is affected.
 
 ## 4. Where the time goes
 
-**Pass 1: classes become masks one at a time.** simdjson classifies each 16-byte vector with
-two table lookups, and makes only a few 64-bit masks. Our block program makes a 64-bit mask for
-each of its 27 classes and tests, then combines masks. On NEON, each mask costs a compare and a
-reduction of about ten instructions. The UTF-8 check alone is 13 classes, and its `prev`s are
-done on masks. simdjson checks UTF-8 in vector registers, and skips the work when a block is
-all ASCII.
+**Pass 1: about 1,186 instructions for a block with UTF-8, 864 without.** simdjson's stage 1 is
+about 173. What is left, in the compiler and not in a language:
 
-What would close it, in the compiler and not in a language:
+- **Carried `prev`s of masks.** Of the 47 `prev`s, a few shift bytes; the rest shift masks:
+  the number check's states (one `prev` by one per group of arms), and values brought to a
+  later delay. Each costs about 4 to 7 scalar instructions, with its field in the packed
+  state.
+- **Masks still made.** 26 values become masks on the full body, 19 on the ASCII one, each
+  about 10 instructions on NEON. They are read by something that needs a mask: a `fill`,
+  `toggle` or `escaped`, a value that is not byte-local, or several `prev`s of one value.
+- **The number check.** It is about 60 of the 205 operations, run on every byte. simdjson
+  checks only the bytes of numbers, in stage 2. A file without numbers pays for it too.
 
-- lower classes that share a table to one lookup, and keep the byte vectors until a mask is
-  needed;
-- do `prev` of a class on the byte vectors (a vector extract) before making the mask;
-- an all-ASCII test per block, so the UTF-8 masks are made only when a byte is 0x80 or above.
-
-The last is a branch. It would be the second kind of branch in pass 1's body.
-
-**Pass 2: the number check is 80% of it on files of numbers.** Without the check:
-
-| file | pass 2 with the check | pass 2 without it |
-|---|---|---|
-| canada | 4.56 ms | 0.87 ms |
-| marine_ik | 10.41 ms | 1.83 ms |
-| twitter | 0.33 ms | 0.23 ms |
-| gsoc-2018 | 0.51 ms | 0.47 ms |
-
-The check is a block program, run over a 64-byte block for every number. Most numbers are a few
-bytes long. Two ways to make it cheaper:
-
-- run the check over an 8-byte word, as the words' `WORD` test reads one, when the number is
-  short;
-- or check numbers in pass 1, over every byte at once, as masks.
-
-Without the check, pass 2 runs at 2.6 GB/s on `canada.json` and 7.1 GB/s on `gsoc-2018.json`.
+**Pass 2: no check left.** It runs at 2.9 GB/s over the corpus, 7.7 GB/s on gsoc-2018. Its
+time is the token loop: a switch, the arm's nodes, and the jump to the next state, per token.
 
 ## 5. Rerunning it
 
