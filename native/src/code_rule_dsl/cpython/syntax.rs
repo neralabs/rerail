@@ -578,6 +578,8 @@ fn replacement_field(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
     }
     let field = strings.last()?.last().filter(|f| !f.over)?;
     let after = all[field.open + 1..].iter().find(|t| !matches!(t.kind(), TokenKind::NonLogicalNewline | TokenKind::Comment))?;
+    // APPROX: a bracket left open after the field's first token (`f'{x + (y $)}'`) gives "a valid expression after
+    // '{'" here, where CPython 3.13 says "expecting '=', or '!', or ':', or '}'". No corpus holds such a field.
     if after.start() >= at || field.depth > 0 {
         Some((cx.lines.line(after.start()), "f-string: expecting a valid expression after '{'".into()))
     } else {
