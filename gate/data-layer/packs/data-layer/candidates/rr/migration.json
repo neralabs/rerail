@@ -2535,7 +2535,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "045158eb00d48def674de7ad87f078372c1902577f3b8f22bb3c626be5bec90d"
+        "sha256": "dcb39e3c904a96abd43c2abb432701c0f355d70438ac49806b188b78389cbf61"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
@@ -2571,7 +2571,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "81bb6408e925f4b526a59487bdeb3c0b2181967b2438c8821933d6666eb91809"
+        "sha256": "773ef6e2b3a844f1dfb02ef7d19ee86967dc6432038ee8b10fd8669ca89ac6f6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",

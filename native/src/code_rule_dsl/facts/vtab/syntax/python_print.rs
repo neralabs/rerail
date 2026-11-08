@@ -58,26 +58,42 @@ fn repr(points: &[u32], bytes: bool) -> String {
 struct Printer<'a> {
     source: &'a str,
 }
+
+fn integer(i: &ast::Int) -> Result<String> {
+    if let Some(value) = i.as_u64() {
+        return Ok(value.to_string());
+    }
+    // Ruff keeps the original token for large integers. Formatting a literal
+    // needs radix conversion, not the arithmetic evaluator's bit budget.
+    let text = i.to_string().replace('_', "").to_ascii_lowercase();
+    let (radix, digits) = [("0x", 16), ("0o", 8), ("0b", 2)].into_iter()
+        .find_map(|(prefix, radix)| text.strip_prefix(prefix).map(|digits| (radix, digits)))
+        .unwrap_or((10, text.as_str()));
+    num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
+        .map(|value| value.to_string())
+        .ok_or_else(|| "invalid integer annotation literal".to_owned())
+}
+
 impl Printer<'_> {
     /// Python repr(value) for non-string Constant expressions. The syntax
     /// printer uses source expressions such as 1e309; value facts use inf.
     fn annotation_constant(&self, e: &Expr) -> Option<Result<String>> {
         match e {
-            Expr::NumberLiteral(n) => Some(Ok(match &n.value {
-                ast::Number::Int(i) => i.to_string(),
-                ast::Number::Float(f) => crate::code_rule_dsl::value::python::float_repr(*f),
+            Expr::NumberLiteral(n) => Some(match &n.value {
+                ast::Number::Int(i) => integer(i),
+                ast::Number::Float(f) => Ok(crate::code_rule_dsl::value::python::float_repr(*f)),
                 ast::Number::Complex { real, imag } => {
                     let component = |f| {
                         let text = crate::code_rule_dsl::value::python::float_repr(f);
                         text.strip_suffix(".0").unwrap_or(&text).to_owned()
                     };
-                    if *real == 0.0 {
+                    Ok(if *real == 0.0 {
                         format!("{}j", component(*imag))
                     } else {
                         format!("({}{}{}j)", component(*real), if *imag >= 0.0 { "+" } else { "" }, component(*imag))
-                    }
+                    })
                 }
-            })),
+            }),
             Expr::BytesLiteral(_) | Expr::BooleanLiteral(_) | Expr::NoneLiteral(_) => Some(self.expr(e, TEST)),
             Expr::EllipsisLiteral(_) => Some(Ok("Ellipsis".to_owned())),
             _ => None,
@@ -328,7 +344,7 @@ impl Printer<'_> {
             Expr::NumberLiteral(n) => (
                 ATOM,
                 match &n.value {
-                    ast::Number::Int(i) => i.to_string(),
+                    ast::Number::Int(i) => integer(i)?,
                     ast::Number::Float(f) => float(*f),
                     ast::Number::Complex { real, imag } => {
                         let i = float(*imag);
