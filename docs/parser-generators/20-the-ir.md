@@ -144,8 +144,9 @@ check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit
 ```
 
 simdjson checks each number in its second stage, one number at a time. Here the
-check is part of tier 1. It runs over every byte of the file at once, with the
-rest of the block program:
+check is part of tier 1. It runs over a block's bytes at once, with the rest of
+the block program, and only on blocks that hold a number or the end of one (§6,
+gated regions):
 
 1. The grammar becomes a byte machine: a few states, and arms on byte sets.
 2. Each state gets a mask: the bytes after which a token is in that state.
@@ -153,15 +154,17 @@ rest of the block program:
    entered at a token's first byte, except from the start. Arms into one state on
    the same bytes share one `prev`.
 4. A self-loop on bytes `L`, such as `digit*`, is a run: `fill(entered, ~L | start)`.
-5. A token is refused where its last byte is in no accepting state. That mask joins
-   the fallback, so tier 2's `EMPTY` refuses the file.
+5. A token is refused where its last byte is in no accepting state. The token's
+   span is filled from the starts the machine takes, and a refused last byte in it
+   joins the fallback, so tier 2's `EMPTY` refuses the file.
 
 A token whose first byte the machine does not take, such as `true`, is left to
 tier 2: its switch takes the keyword or refuses the byte. A machine with a cycle
 through two or more states would need a loop over bytes, so it is refused.
 
 For JSON (ladder step 14) the block program grows from 143 to 205 operations,
-four of them fills, and tier 2 loses its number check.
+four of them fills, and tier 2 loses its number check. Of the 205, 44 check
+numbers.
 
 ### 3.5 The native IR
 
@@ -279,12 +282,58 @@ Cranelift these stay in 16-byte vectors, as simdjson keeps its classes:
 
 - a table's lookups are made once per 16 bytes, for all of its classes;
 - a `prev` by `k` is a shift by `k` bytes (one `ext`), from the 16 bytes before the
-  block; no carried word;
-- a value becomes a 64-bit mask only where something else reads it.
+  block; no carried word. Only where its operand is a mask anyway, for some other
+  reader, is the mask shifted instead;
+- a value becomes a 64-bit mask only where something else reads it, and only in a
+  body where that reader is made.
 
 The block loop also tests each full block for all-ASCII, with the 16 bytes before
 it. That is one branch. On an ASCII block, a second body runs, with the values that
 are always zero on ASCII bytes folded away. For JSON these are the UTF-8 checks.
+
+**Known bits in full blocks.** A full block is inside the file and not its first.
+Its `within`s are all ones, and the block before it is full or the first. The
+lowering follows which bits of each value are known in both kinds of block. A
+value known in every full block is a constant there, a `prev` of one included,
+when the bits it shifts in are known and agree. A value whose readers are all
+constants is not made. For JSON this removes the byte-order mark's chain and the
+check for UTF-8 cut short at the end of the file.
+
+**Gated regions.** simdjson's stage 1 does not look at numbers; its stage 2 checks
+each number it meets. A Bitlex check is masks (§3.4), so it would run on every
+block. A gated region skips that work on a block that has none of it:
+
+- A *gate* is an `and` of a computed mask with a byte class: a number's first byte
+  at a token start, or a `u` after a backslash in a string. The mask must not be the
+  same in every full block, and must not be a byte class itself. A quote, for
+  example, is in nearly every block, so it makes a poor gate.
+- The region is every value that must be zero when the gate is zero and the
+  region's carried bits came in zero: an `and` with such a value, an `and not` of
+  one, an `or` of two, and a `prev`, `fill`, `toggle` or `escaped` of one. It also
+  holds the values only the region reads, its byte classes among them.
+- In a full body the region runs behind one branch, on
+  `gate | (carried bits & the region's fields)`. When it is skipped, its values are
+  zero and its byte classes are never made.
+
+```
+; one region in a full body, as Cranelift IR (shortened)
+v1 = band v_starts, v_number_first    ; the gate
+v2 = band_imm v_carried_3, 0x1c0      ; the region's carried bits
+v3 = bor v1, v2
+brif v3, active, skip
+active:                               ; the number check, then
+    jump after(v_check, v_words)
+skip:                                 ; its values zero, the words as they were
+    jump after(0, v_words_before)
+```
+
+A region must be convex: no value outside it may both read it and be read by it,
+or it could not sit behind one branch. The values after such a path leave the
+region before it is weighed. A region is kept when it skips at least a few masks'
+worth of work, and a test checks that every region keeps its branch.
+
+JSON has three regions: the number check, in two nested parts, and the `\u` check.
+JSON with comments adds a fourth, for comments.
 
 **The shape guard** (`native_cpu_shape`). Each generated Cranelift function is
 checked before code generation, and refused if:
