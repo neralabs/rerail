@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from migration import ROOT,PIN,git,sha,write_json,compare
 from dto import canonical
-from ast_transport import columns
+from ast_transport import columns,scalar_columns
 
 METHODS={'NonLocalStateDetector':['visit'],'TransactionClosureLinter':['visit'],
          'ClosureDefinitionFinder':['visit']}
@@ -14,17 +14,7 @@ FUNCTIONS=['lint_file','lint_paths','lint_source']
 
 def syntax(tree):
     """Transport syntax and scalar fields; never classify a binding or a violation."""
-    data=columns(tree);nodes=[];pending=[tree]
-    while pending:
-        node=pending.pop();nodes.append(node);pending.extend(reversed(list(ast.iter_child_nodes(node))))
-    for key,attr in [('astColumns','col_offset'),('astArgNames','arg'),('astKeywords','arg'),('astAsNames','asname')]:
-        data[key]=[str(getattr(n,attr,0)) if key=='astColumns' else str(getattr(n,attr,'') or '') for n in nodes]
-    data.update(astListNodes=[],astListNames=[],astListOrdinals=[])
-    for index,node in enumerate(nodes):
-        for ordinal,name in enumerate(getattr(node,'names',[])):
-            if isinstance(name,str):
-                data['astListNodes'].append(str(index));data['astListNames'].append(name);data['astListOrdinals'].append(str(ordinal))
-    return data
+    return scalar_columns(tree)
 
 
 class Contract:

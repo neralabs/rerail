@@ -478,7 +478,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
+      "sha256": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -542,6 +542,11 @@
           "before": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
           "after": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
           "reason": "Adopt the committed Final shape library resolutions at cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2"
+        },
+        {
+          "before": "95b63d44165cb868eaf4b760f04a6d2de0f680dd987a68762012044b13b5367b",
+          "after": "d706169f0f8d2b48ee93d67b0a8cb0ed8c570a2646687a12e36086479be81898",
+          "reason": "Document ordered object-member capture on the modern typed JSON reader; transaction_patterns preserves category lookup precedence"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -1425,7 +1430,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "sha256": "606b317190f8420cd0d04df5bb85a95c2a5a17e1645a53ede410e1bc30405e2b",
+      "sha256": "4105da80ec10b04a98fd9351415b9b0f9a08e1dd721482113073e64d6eacf7f7",
       "origin": "authored",
       "upstreamPath": "scripts/lint_transaction_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1662,7 +1667,7 @@
       "legacySha256": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-patterns.rr",
-      "ruleSha256": "606b317190f8420cd0d04df5bb85a95c2a5a17e1645a53ede410e1bc30405e2b"
+      "ruleSha256": "4105da80ec10b04a98fd9351415b9b0f9a08e1dd721482113073e64d6eacf7f7"
     },
     {
       "check": "lazy_result_usage",
@@ -2422,7 +2427,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "1e4840f3c9100266e36e23308a6e36d8db678457",
-    "status": "Root Final shape engine through 1e4840f3c; reviewed generic compatibility extensions only",
+    "status": "Root Final shape engine through 1e4840f3c; reviewed generic Python compatibility and ordered JSON input extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2450,7 +2455,7 @@
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "9aab7a13e4825f43fb0b907b2483c6bcf4f67138d629e01b6b9e314908eab4e3"
+        "sha256": "1a67d2cce937ab923e9d35e1cb7c69fb9c1bbebc459ce9a507a044cd7d45a462"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -2462,7 +2467,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "8c1e886f1f95587d7c91f0c62f969bfdb47cd66fb87439d2f488caca9411f82f"
+        "sha256": "da11e02d3ace533f0ac8133485dcf1b254b0dac9c412922a780409133526fc38"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2499,6 +2504,10 @@
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
         "sha256": "fc53677409ec8a135e072a52c821b2f70e60a89bc0f3d04558f2870b5383c39d"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
+        "sha256": "5fbc626896f57a8095525ac7bf62b06cd046d054f5e70bf2d912f775f8e1848f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",

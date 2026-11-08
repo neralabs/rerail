@@ -105,6 +105,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'transaction_patterns' in modules:
+            from patterns_port import install
+            install(backend, modules['transaction_patterns'])
         def guard(frame, event, arg):
             if event == 'call' and frame.f_code in original_codes:
                 check, name, passive = original_codes[frame.f_code]
@@ -131,7 +134,13 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='transaction_callback_wrappers' and case['entry']=='collector':
+                if case['check']=='transaction_patterns':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry'] in {'finder','internal'}:
+                        from patterns_port import probe
+                        call=lambda:probe(module,case['entry'],values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='transaction_callback_wrappers' and case['entry']=='collector':
                     from callback_wrappers_port import collector_result
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     call=lambda:collector_result(module,values['path'],values['source'],values['tree'],backend if native else None,values.get('check_inline'))

@@ -1,7 +1,7 @@
 """Transport transaction-pattern API inputs and native values; keep rule decisions in .rr."""
 import ast, json, os
 from pathlib import Path
-from callback_wrappers_port import ast_input
+from ast_transport import visit_columns
 
 
 def categories(value, *, merge=False):
@@ -22,11 +22,7 @@ def signature(value):
 def query(suite,entry,options=None,tree=None,files=None):
     options=dict(options or {})
     if tree is not None:
-        syntax,_=ast_input(tree);nodes=[];pending=[tree]
-        while pending:
-            node=pending.pop();nodes.append(node);pending.extend(reversed(list(ast.iter_child_nodes(node))))
-        syntax['astLiteralText']=[str(n.value) if isinstance(n,ast.Constant) else '' for n in nodes]
-        options.update(syntax)
+        options.update(visit_columns(tree))
     return suite.native('transaction_patterns',entry,files if files is not None else [dict(path='_transport.py',source='pass\n')],options)
 
 
@@ -44,6 +40,16 @@ def graph(suite,entry,owner,tree):
     if isinstance(owner,Path):options=dict(originalPath=str(owner))
     else:options=dict(originalPath=str(owner.file_path),**categories(owner.categorized_functions))
     return findings(query(suite,entry,options,tree))
+
+
+def probe(module,entry,values):
+    """Expose complete visitor state for externally supplied syntax, without classifying it."""
+    if entry=='finder':
+        owner=module.ConnectionParameterFinder(file_path=values['file_path'],categorized_functions=values.get('categorized_functions',{}))
+        owner.visit(values['tree']);return owner.findings
+    owner=module.InternalTransactionFinder(conn_param_name=values.get('connectionName'),internal_txn_calls=values.get('initial',[]).copy())
+    for tree in values.get('trees',[values.get('tree')]):owner.visit(tree)
+    return owner.internal_txn_calls
 
 
 def root_for(path,baseline_file):

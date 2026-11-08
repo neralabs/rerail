@@ -23,6 +23,7 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/python_',
     'native/src/code_rule_dsl/logic/plan.rs',
+    'native/src/code_rule_dsl/logic/plan/corpus/inputs.rs',
     'native/src/code_rule_dsl/logic/rr/tests.rs',
     'native/src/code_rule_dsl/logic/sql/select.rs',
     'native/src/code_rule_dsl/logic/strings.rs',

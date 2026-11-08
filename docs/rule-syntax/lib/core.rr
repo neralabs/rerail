@@ -484,6 +484,8 @@
 //                list of objects one row, a column per key
 //                A `*` step in path matches every element or member: path="/groups/*/operations/*" gives one
 //                row per operation of every group, and each `*` it crossed is a leading column (its index or key).
+//                `*#` adds the zero-based member position before its key or index. Object positions follow
+//                insertion order, including empty members; a repeated key keeps its first position and last value.
 //   IO=jsonl     one JSON value per line (JSON Lines); each line is read as IO=json reads a file, with the line
 //                number as a leading column
 //   IO=yaml      the same shapes as json

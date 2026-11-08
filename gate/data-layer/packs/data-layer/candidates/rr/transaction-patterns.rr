@@ -51,6 +51,10 @@ tp_default_key(8, "SCHEMA_OPS").
 tp_default_key(9, "DEPRECATED").
 tp_default_key(10, "BACKEND_OPS").
 tp_default_key(11, "BULK_OPS").
+.decl tp_baseline_member(priority: number, category: symbol, index: number, name: symbol)
+.input tp_baseline_member(IO=json, filename=".transaction-patterns-baseline.json", path="/categories/*#/*")
+.decl tp_baseline_ready()
+tp_baseline_ready() :- !input_error(".transaction-patterns-baseline.json", _, _).
 .decl tp_layer(path: symbol)
 tp_layer(path) :- doc(_, path, _), match("(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^/\\n][^/]*/.*", path).
 
@@ -106,8 +110,20 @@ tp_binary(n, l, r) :- tp_gkind(n, "BinOp"), tp_edge(n, "left", l), tp_edge(n, "r
 tp_annotation(n, name) :- tp_name(n, name).
 tp_annotation(n, name) :- tp_attribute(n, _, name).
 tp_annotation(n, value) :- !tp_graph(), plain_str(n, value).
-tp_annotation(n, cat("b'", value, "'")) :- !tp_graph(), string_form(n, "bytes"), value(n, value).
-tp_annotation(n, value) :- tp_gkind(n, "Constant"), option_item("astLiteralText", n, value).
+// Only the three source predicates on the head matter: contains Connection, equals ConnectionId, equals conn.
+// Word facts retain scalar pieces of a Python string containing lone surrogates.
+tp_annotation(n, "<escaped>Connection") :- !tp_graph(), plain_str_node(n), !plain_str(n, _),
+    str_part_word(n, _, word, _), contains("Connection", word).
+tp_annotation(n, cat("b'", value, "'")) :- !tp_graph(), tp_bytes_value(n, value).
+tp_annotation(n, "conn") :- tp_gkind(n, "Constant"), option_item("astLiteralJson", n, encoded), encoded = @json_str("conn").
+tp_annotation(n, "ConnectionId") :- tp_gkind(n, "Constant"), option_item("astLiteralJson", n, encoded), encoded = @json_str("ConnectionId").
+tp_annotation(n, encoded) :- tp_gkind(n, "Constant"), option_item("astLiteralJson", n, encoded),
+    encoded != @json_str("conn"), encoded != @json_str("ConnectionId").
+.decl tp_bytes_value(n: node, value: symbol)
+tp_bytes_value(n, value) :- string_form(n, "bytes"), value(n, value).
+tp_bytes_value(n, value) :- kind(n, "concatenated_string"),
+    count : { child(n, c, _), !kind(c, "comment"), !string_form(c, "bytes") } = 0,
+    value = join part by i sep "" : { child(n, c, i), string_form(c, "bytes"), value(c, part) }.
 tp_annotation(n, "") :- tp_gkind(n, k), k != "Name", k != "Attribute", k != "Constant", k != "Subscript", k != "BinOp".
 tp_annotation(n, "") :- !tp_graph(), kind(n, k), k != "identifier", k != "attribute", k != "string", k != "concatenated_string",
     k != "type", k != "parenthesized_expression", k != "subscript", k != "generic_type", k != "union_type", k != "binary_operator".
@@ -174,6 +190,11 @@ tp_category_key(i + 12, category) :- option_item("categoryKeys", i, category), o
 .decl tp_category_member(i: number, category: symbol, name: symbol)
 tp_category_member(i, category, name) :- tp_category_key(i, category), option_item("categoryMemberKeys", j, category), option_item("categoryMemberNames", j, name).
 tp_category_member(i, "LEGITIMATE", name) :- tp_category_key(i, "LEGITIMATE"), tp_core(name), (option("mergeCategories", "true") ; !option("categoriesProvided", _)).
+// Known categories keep the default dictionary's order. New categories follow baseline member order.
+tp_category_member(i, category, name) :- !option("categoriesProvided", _), tp_baseline_ready(),
+    tp_baseline_member(_, category, _, name), tp_default_key(i, category).
+tp_category_member(12 + i, category, name) :- !option("categoriesProvided", _), tp_baseline_ready(),
+    tp_baseline_member(i, category, _, name), !tp_default_key(_, category).
 .decl tp_is_init(name: symbol, cls: symbol)
 tp_is_init("__init__", cls) :- tp_current_class(_, cls), tp_init_pattern(pattern), contains(pattern, cls).
 tp_is_init("__init__", cls) :- option("className", cls), tp_init_pattern(pattern), contains(pattern, cls).
@@ -223,12 +244,15 @@ TPConstant(@place("", 0), "file", value) :- option("entryPoint", "constants"), t
 tp_triggered(d) :- doc(d, _, _), source(d, sp), text(sp, source), tp_trigger(trigger), contains(trigger, source).
 .decl tp_selected(d: number)
 tp_selected(0) :- tp_graph().
-tp_selected(d) :- !tp_graph(), tp_doc(d, _), option("entryPoint", _), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d).
+tp_selected(d) :- !tp_graph(), tp_doc(d, _), option("entryPoint", _), tp_api_gate(), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d).
 tp_selected(d) :- !tp_graph(), tp_doc(d, p), !option("entryPoint", _), tp_triggered(d), !syntax_error(d, _, _), !tp_skipped(d),
     (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; tp_layer(p)).
 .decl tp_skipped(d: number)
 tp_skipped(d) :- doc(d, physical, _), !option_item("documentPaths", _, physical), path_part(d, p), (p = "test" ; p = "tests").
 tp_skipped(d) :- doc(d, physical, _), option_item("documentPaths", i, physical), option_item("scopePaths", i, scope), match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?", scope).
+.decl tp_api_gate()
+tp_api_gate() :- !option("providedSource", _).
+tp_api_gate() :- option("providedSource", text), tp_trigger(trigger), contains(trigger, text).
 .decl tp_owned_call(f: node, method: symbol, visit: number)
 tp_owned_call(f, method, i) :- tp_first_parameter(f, name), tp_internal_call(c, name, method, i), tp_owner(c, f).
 .decl tp_final_category(f: node, category: symbol)

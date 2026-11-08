@@ -2,6 +2,7 @@
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
+import json
 
 
 def canonical(value, root=None):
@@ -24,6 +25,10 @@ def canonical(value, root=None):
                     fields={f.name: canonical(getattr(value, f.name), root) for f in fields(value)})
     if isinstance(value, tuple):
         return dict(kind='tuple', items=[canonical(item, root) for item in value])
+    if isinstance(value, (set, frozenset)):
+        items=[canonical(item, root) for item in value]
+        return dict(kind='frozenset' if isinstance(value, frozenset) else 'set',
+                    items=sorted(items,key=lambda item:json.dumps(item,sort_keys=True,ensure_ascii=True)))
     if isinstance(value, list):
         return [canonical(item, root) for item in value]
     if isinstance(value, dict):

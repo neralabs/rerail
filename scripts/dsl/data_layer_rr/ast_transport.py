@@ -52,3 +52,31 @@ def syntax_columns(tree):
     result['receiverTransport'] = ('def _receiver_transport(' + ', '.join(
         f'call{index}: {source}' for index, source in receivers) + '):\n    pass\n') if receivers else 'pass\n'
     return result
+
+
+def scalar_columns(tree):
+    """Flat AST fields shared by the transaction visitor contracts."""
+    data=columns(tree);nodes=[];pending=[tree]
+    while pending:
+        node=pending.pop();nodes.append(node);pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    for key,attr in [('astColumns','col_offset'),('astArgNames','arg'),('astKeywords','arg'),('astAsNames','asname')]:
+        data[key]=[str(getattr(n,attr,0)) if key=='astColumns' else str(getattr(n,attr,'') or '') for n in nodes]
+    data.update(astListNodes=[],astListNames=[],astListOrdinals=[])
+    for index,node in enumerate(nodes):
+        for ordinal,name in enumerate(getattr(node,'names',[])):
+            if isinstance(name,str):
+                data['astListNodes'].append(str(index));data['astListNames'].append(name);data['astListOrdinals'].append(str(ordinal))
+    return data
+
+
+def visit_columns(tree):
+    """Per-occurrence completion order and ASCII JSON text of literal values; no detector decisions."""
+    data=scalar_columns(tree);pending=[(tree,-1,False)];nodes=[];exits={}
+    while pending:
+        node,index,leaving=pending.pop()
+        if leaving:exits[index]=len(exits);continue
+        index=len(nodes);nodes.append(node);pending.append((node,index,True))
+        pending.extend((c,-1,False) for c in reversed(list(ast.iter_child_nodes(node))))
+    data['astExitOrder']=[str(exits[i]) for i in range(len(nodes))]
+    data['astLiteralJson']=[json.dumps(str(n.value),ensure_ascii=True) if isinstance(n,ast.Constant) else '' for n in nodes]
+    return data

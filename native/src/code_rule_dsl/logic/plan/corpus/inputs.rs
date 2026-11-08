@@ -42,17 +42,19 @@ fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     Ok(out)
 }
 
-/// JSON pointer selectors retain the key or index of each wildcard as a leading column.
+/// `*` retains its key or index; `*#` also retains the member's zero-based position before it.
 fn select<'a>(value: &'a Json, steps: &[&str], prefix: Vec<Json>, out: &mut Vec<(Vec<Json>, &'a Json)>) {
     let Some((step, rest)) = steps.split_first() else { out.push((prefix, value)); return; };
-    if *step == "*" {
+    if matches!(*step, "*" | "*#") {
         let members: Vec<(Json, &Json)> = match value {
             Json::Object(map) => map.iter().map(|(k, v)| (Json::String(k.clone()), v)).collect(),
             Json::Array(items) => items.iter().enumerate().map(|(i, v)| (Json::from(i), v)).collect(),
             _ => Vec::new(),
         };
-        for (key, child) in members {
-            let mut next = prefix.clone(); next.push(key);
+        for (ordinal, (key, child)) in members.into_iter().enumerate() {
+            let mut next = prefix.clone();
+            if *step == "*#" { next.push(Json::from(ordinal)); }
+            next.push(key);
             select(child, rest, next, out);
         }
     } else {

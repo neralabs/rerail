@@ -1,0 +1,2459 @@
+{
+  "cases": [
+    {
+      "id": "annotation-plain-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: SyncDatabaseConnection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-plain-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: SyncDatabaseConnection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-attr-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: pkg.SyncDatabaseConnection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-attr-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: pkg.SyncDatabaseConnection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-optional-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Optional[SyncDatabaseConnection]):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-optional-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Optional[SyncDatabaseConnection]):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-union-left-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: SyncDatabaseConnection | None):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-union-left-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: SyncDatabaseConnection | None):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-union-right-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: None | SyncDatabaseConnection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-union-right-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: None | SyncDatabaseConnection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-all-binops-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: SyncDatabaseConnection + None):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-all-binops-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: SyncDatabaseConnection + None):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-connection-id-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: ConnectionId):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-connection-id-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: ConnectionId):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-id-before-connection-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: ConnectionId | SyncDatabaseConnection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-id-before-connection-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: ConnectionId | SyncDatabaseConnection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-conn-union-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: conn | None):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-conn-union-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: conn | None):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-quoted-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: \"SyncDatabaseConnection\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-quoted-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: \"SyncDatabaseConnection\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bare-conn-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: conn):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bare-conn-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: conn):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-quoted-conn-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: \"conn\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-quoted-conn-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: \"conn\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"Connection\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"Connection\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-id-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"ConnectionId\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-id-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"ConnectionId\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-conn-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"conn\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-conn-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"conn\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-unicode-escape-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"\\u0043onnection\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-unicode-escape-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"\\u0043onnection\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-hex-escape-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"\\x43onnection\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-hex-escape-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"\\x43onnection\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-adjacent-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: b\"Connec\" b\"tion\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-bytes-adjacent-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: b\"Connec\" b\"tion\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-adjacent-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: \"Connec\" \"tion\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-adjacent-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: \"Connec\" \"tion\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-fstring-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: f\"Connection\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-fstring-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: f\"Connection\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-surrogate-tail-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: \"Connection\\ud800\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-surrogate-tail-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: \"Connection\\ud800\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-surrogate-id-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: \"\\ud800ConnectionId\"):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-surrogate-id-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: \"\\ud800ConnectionId\"):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-unicode-identifier-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: ＳｙｎｃＤａｔａｂａｓｅＣｏｎｎｅｃｔｉｏｎ):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-unicode-identifier-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: ＳｙｎｃＤａｔａｂａｓｅＣｏｎｎｅｃｔｉｏｎ):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-subscript-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: SyncDatabaseConnection[int]):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-subscript-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: SyncDatabaseConnection[int]):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-attribute-id-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: pkg.ConnectionId):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "annotation-attribute-id-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: pkg.ConnectionId):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-posonly-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection, /):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-posonly-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection, /):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-pos-after-only-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(a: Connection, /, conn: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-pos-after-only-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(a: Connection, /, conn: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-keyword-only-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(*, conn: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-keyword-only-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(*, conn: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-vararg-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(*conn: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-vararg-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(*conn: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-kwarg-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(**conn: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-kwarg-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(**conn: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-self-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(self: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-self-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(self: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-first-only-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(a: Connection, b: Connection):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-first-only-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(a: Connection, b: Connection):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-default-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection = None):\n    b.write()\n    conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "parameters-default-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection = None):\n    b.write()\n    conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-ordered-duplicates-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write(); conn.read(); conn.write(); conn.schema_transaction()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-ordered-duplicates-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write(); conn.read(); conn.write(); conn.schema_transaction()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-nested-calls-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.read(conn.write())\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-nested-calls-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.read(conn.write())\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-lambda-transparent-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    f(lambda: conn.write())\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-lambda-transparent-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    f(lambda: conn.write())\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-other-receiver-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    other.write(); self.conn.read(); get().schema_transaction()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-other-receiver-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    other.write(); self.conn.read(); get().schema_transaction()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-keyword-then-star-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    f(k=conn.read(), *(conn.write(),))\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-keyword-then-star-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    f(k=conn.read(), *(conn.write(),))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-dictionary-field-order-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    {conn.read(): conn.write(), conn.schema_transaction(): conn.read()}\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-dictionary-field-order-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    {conn.read(): conn.write(), conn.schema_transaction(): conn.read()}\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-conditional-field-order-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.read() if conn.write() else conn.schema_transaction()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "calls-conditional-field-order-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.read() if conn.write() else conn.schema_transaction()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "nested-functions-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    def register_table(conn: Connection):\n        conn.read()\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "nested-functions-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    def register_table(conn: Connection):\n        conn.read()\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "nested-same-end-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection):\n    def g(conn: Connection):\n        conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "nested-same-end-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection):\n    def g(conn: Connection):\n        conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "class-boundaries-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "class MyConnection:\n    def __init__(self, conn: Connection): conn.write()\n    def register_queue(self, conn: Connection): conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "class-boundaries-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "class MyConnection:\n    def __init__(self, conn: Connection): conn.write()\n    def register_queue(self, conn: Connection): conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "async-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "async def register_queue(conn: Connection):\n    await conn.read()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "async-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "async def register_queue(conn: Connection):\n    await conn.read()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "class-decorator-in-function-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    @conn.read()\n    class Nested: pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "class-decorator-in-function-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    @conn.read()\n    class Nested: pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "function-decorator-and-default-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def outer(conn: Connection):\n    @conn.write()\n    def inner(x: Connection = conn.read()): pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "function-decorator-and-default-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def outer(conn: Connection):\n    @conn.write()\n    def inner(x: Connection = conn.read()): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "override-allowed-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "BOOTSTRAP": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-allowed-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "BOOTSTRAP": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-denied-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "SCHEMA_OPS": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-denied-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "SCHEMA_OPS": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-first-allowed-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "BACKGROUND": [
+            "register_queue"
+          ],
+          "SCHEMA_OPS": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-first-allowed-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "BACKGROUND": [
+            "register_queue"
+          ],
+          "SCHEMA_OPS": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-first-denied-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "SCHEMA_OPS": [
+            "register_queue"
+          ],
+          "BACKGROUND": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "override-first-denied-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "SCHEMA_OPS": [
+            "register_queue"
+          ],
+          "BACKGROUND": [
+            "register_queue"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-needs-review-first-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "NEEDS_REVIEW": [
+            "f"
+          ],
+          "ZZZ_ALLOWED": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-needs-review-first-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "NEEDS_REVIEW": [
+            "f"
+          ],
+          "ZZZ_ALLOWED": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-unknown-first-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "ZZZ_ALLOWED": [
+            "f"
+          ],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-unknown-first-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "ZZZ_ALLOWED": [
+            "f"
+          ],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-bridge-first-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "TS_BRIDGE": [
+            "f"
+          ],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-bridge-first-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "TS_BRIDGE": [
+            "f"
+          ],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-empty-before-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "tree": {
+          "pythonAst": "def f(conn: Connection):\n    pass\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {
+          "EMPTY": [],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "baseline-empty-before-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "categorized_functions": {
+          "EMPTY": [],
+          "NEEDS_REVIEW": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "id": "scope-impl-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "impl/sqlite/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-impl-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "impl/sqlite/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/sqlite/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-api-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-api-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "api/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "api/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-other-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "other/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-other-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "other/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "other/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-tests-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/tests/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-tests-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/tests/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/tests/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-test-prefix-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/test_example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-test-prefix-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l5200_vector_index/test_example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/test_example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-unicode-layer-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l１２３４_example/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-unicode-layer-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l１２３４_example/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l１２３４_example/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-short-layer-graph",
+      "check": "transaction_patterns",
+      "entry": "finder",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "l123_example/example.py"
+        },
+        "tree": {
+          "pythonAst": "def register_queue(conn: Connection):\n    conn.write()\n",
+          "mode": "exec"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "scope-short-layer-file",
+      "check": "transaction_patterns",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "l123_example/example.py",
+          "source": "def register_queue(conn: Connection):\n    conn.write()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l123_example/example.py"
+        },
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "inference-0",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "l1000_foo/m.py"
+      }
+    },
+    {
+      "id": "inference-1",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "impl/sqlite/m.py"
+      }
+    },
+    {
+      "id": "inference-2",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "l1000_foo/impl/sqlite/m.py"
+      }
+    },
+    {
+      "id": "inference-3",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "impl/l1000_foo/sqlite/m.py"
+      }
+    },
+    {
+      "id": "inference-4",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "other/m.py"
+      }
+    },
+    {
+      "id": "inference-5",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "l１２３４_foo/m.py"
+      }
+    },
+    {
+      "id": "inference-6",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "l1234_\n/m.py"
+      }
+    },
+    {
+      "id": "inference-7",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "f",
+        "file_path": "l1234_a\nrest/m.py"
+      }
+    },
+    {
+      "id": "inference-8",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "ensure_validate_handler",
+        "file_path": "l9900_ts_models/m.py"
+      }
+    },
+    {
+      "id": "inference-9",
+      "check": "transaction_patterns",
+      "entry": "_infer_category",
+      "files": [],
+      "arguments": {
+        "func_name": "BOOTSTRAP",
+        "file_path": "other/m.py"
+      }
+    },
+    {
+      "id": "merged-0",
+      "check": "transaction_patterns",
+      "entry": "_get_categorized_functions",
+      "files": [],
+      "arguments": {
+        "baseline": null
+      }
+    },
+    {
+      "id": "merged-1",
+      "check": "transaction_patterns",
+      "entry": "_get_categorized_functions",
+      "files": [],
+      "arguments": {
+        "baseline": {}
+      }
+    },
+    {
+      "id": "merged-2",
+      "check": "transaction_patterns",
+      "entry": "_get_categorized_functions",
+      "files": [],
+      "arguments": {
+        "baseline": {
+          "categories": {}
+        }
+      }
+    },
+    {
+      "id": "merged-3",
+      "check": "transaction_patterns",
+      "entry": "_get_categorized_functions",
+      "files": [],
+      "arguments": {
+        "baseline": {
+          "categories": {
+            "UNKNOWN": [],
+            "LEGITIMATE": [
+              "f",
+              "f"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "merged-4",
+      "check": "transaction_patterns",
+      "entry": "_get_categorized_functions",
+      "files": [],
+      "arguments": {
+        "baseline": {
+          "categories": {
+            "Z": [
+              "x"
+            ],
+            "A": [
+              "x"
+            ],
+            "BOOTSTRAP": []
+          }
+        }
+      }
+    },
+    {
+      "id": "signature-0",
+      "check": "transaction_patterns",
+      "entry": "_compute_signature_message",
+      "files": [],
+      "arguments": {
+        "categories": {}
+      }
+    },
+    {
+      "id": "signature-1",
+      "check": "transaction_patterns",
+      "entry": "_compute_signature_message",
+      "files": [],
+      "arguments": {
+        "categories": {
+          "Z": [
+            "z",
+            "a",
+            "a"
+          ],
+          "A": []
+        }
+      }
+    },
+    {
+      "id": "signature-2",
+      "check": "transaction_patterns",
+      "entry": "_compute_signature_message",
+      "files": [],
+      "arguments": {
+        "categories": {
+          "é": [
+            "非",
+            "a"
+          ],
+          "A": [
+            "x"
+          ]
+        }
+      }
+    },
+    {
+      "id": "signature-3",
+      "check": "transaction_patterns",
+      "entry": "_compute_signature_message",
+      "files": [],
+      "arguments": {
+        "categories": {
+          "a/b": [
+            "\\",
+            "\"",
+            "\n"
+          ]
+        }
+      }
+    },
+    {
+      "id": "init-0",
+      "check": "transaction_patterns",
+      "entry": "_is_connection_class_init",
+      "files": [],
+      "arguments": {
+        "func_name": "__init__",
+        "class_name": "MyConnection"
+      }
+    },
+    {
+      "id": "init-1",
+      "check": "transaction_patterns",
+      "entry": "_is_connection_class_init",
+      "files": [],
+      "arguments": {
+        "func_name": "__init__",
+        "class_name": "connection"
+      }
+    },
+    {
+      "id": "init-2",
+      "check": "transaction_patterns",
+      "entry": "_is_connection_class_init",
+      "files": [],
+      "arguments": {
+        "func_name": "__init__",
+        "class_name": null
+      }
+    },
+    {
+      "id": "init-3",
+      "check": "transaction_patterns",
+      "entry": "_is_connection_class_init",
+      "files": [],
+      "arguments": {
+        "func_name": "close",
+        "class_name": "Connection"
+      }
+    },
+    {
+      "id": "provided-gate-0",
+      "check": "transaction_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "source": "pass\n",
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "provided-gate-1",
+      "check": "transaction_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/example.py",
+          "source": "def f(conn: Connection): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "l5200_vector_index/example.py"
+        },
+        "source": "# conn\n",
+        "categorized_functions": {}
+      }
+    },
+    {
+      "id": "internal-0",
+      "check": "transaction_patterns",
+      "entry": "internal",
+      "files": [],
+      "arguments": {
+        "connectionName": "conn",
+        "tree": {
+          "pythonAst": "def f(): pass\n",
+          "mode": "exec"
+        },
+        "initial": [
+          "existing"
+        ]
+      }
+    },
+    {
+      "id": "internal-1",
+      "check": "transaction_patterns",
+      "entry": "internal",
+      "files": [],
+      "arguments": {
+        "connectionName": "conn",
+        "tree": {
+          "pythonAst": "def f(): conn.read()\n",
+          "mode": "exec"
+        },
+        "initial": [
+          "existing"
+        ]
+      }
+    },
+    {
+      "id": "internal-2",
+      "check": "transaction_patterns",
+      "entry": "internal",
+      "files": [],
+      "arguments": {
+        "connectionName": "conn",
+        "tree": {
+          "pythonAst": "def f(): conn.read(); conn.read()\n",
+          "mode": "exec"
+        },
+        "initial": [
+          "existing"
+        ]
+      }
+    }
+  ]
+}

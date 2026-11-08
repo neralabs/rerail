@@ -274,6 +274,14 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
     for q in ["\"\"\"", "'''", "\"", "'", "`"] {
         if rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q) {
             let body = &rest[q.len()..rest.len() - q.len()];
+            if family == Family::Python && prefix.contains('b') {
+                let body = body.replace("\r\n", "\n").replace('\r', "\n");
+                let value = if raw { body } else {
+                    crate::code_rule_dsl::value::python::decode_escapes(&body, true)?
+                        .into_iter().map(char::from_u32).collect::<Option<String>>()?
+                };
+                return Some((prefix, value));
+            }
             let v = if raw {
                 body.to_owned()
             } else if family == Family::Python {
@@ -935,6 +943,21 @@ mod tests {
         assert_eq!(name("member_expression", "a(b).c"), None);
         assert_eq!(comment_body("# noqa: E501 "), "noqa: E501");
         assert_eq!(comment_body("/* x */"), "x");
+    }
+
+    #[test]
+    fn python_bytes_literals_keep_unknown_unicode_escapes_and_decode_byte_escapes() {
+        for (source, expected) in [
+            (r#"b"\u0043onnection""#, r"\u0043onnection"),
+            (r#"b"\U00000043onnection""#, r"\U00000043onnection"),
+            (r#"b"\N{LATIN CAPITAL LETTER C}onnection""#, r"\N{LATIN CAPITAL LETTER C}onnection"),
+            (r#"b"\x43onnection""#, "Connection"),
+            (r#"rb"\x43onnection""#, r"\x43onnection"),
+            ("b\"Connec\\\r\ntion\"", "Connection"),
+        ] {
+            let result = literal(Family::Python, "string", source, false);
+            assert_eq!(result.value.as_ref().map(|(value, _)| value.as_str()), Some(expected), "{source}");
+        }
     }
 
     #[test]

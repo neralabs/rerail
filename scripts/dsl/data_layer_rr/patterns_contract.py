@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from migration import ROOT, PIN, git, sha, write_json, read_json, compare
 from dto import canonical
-from callback_wrappers_port import ast_input
+from ast_transport import visit_columns
 
 FUNCTIONS = ['analyze_file', 'analyze_source', '_facts_for_files', '_collect_current_findings',
     '_infer_category', '_is_connection_class_init', '_get_categorized_functions',
@@ -37,7 +37,7 @@ class Contract:
             *[Path(__file__).with_name(n) for n in ['patterns_port.py','ast_transport.py','callback_wrappers_port.py','replay.py','suite.py','dto.py']]]}
 
     def value(self, value):
-        if isinstance(value, ast.AST):return dict(syntax=ast_input(value)[0])
+        if isinstance(value, ast.AST):return dict(syntax=visit_columns(value))
         if isinstance(value, set):return dict(kind='set',items=sorted(self.value(x) for x in value))
         if isinstance(value, list):return [self.value(x) for x in value]
         if isinstance(value, dict):return dict(kind='dict',items=[[self.value(k),self.value(v)] for k,v in value.items()])
