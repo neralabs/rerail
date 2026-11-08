@@ -69,14 +69,12 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of the file-local program: its rules, declarations, inputs and outputs as lowered, and the facts of the
-/// relations its rules read (a file's rows depend on no others: the answers a round of `world` gives the cross-file
-/// part change none of them).
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
+/// engine reads (a guest policy) as well as those its rules read.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    let read: std::collections::BTreeSet<&str> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().filter(|(rel, _)| read.contains(rel.as_str())).collect();
+    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v2\0");
+    hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
     hash.finalize().into()
 }

@@ -581,7 +581,7 @@ pub(crate) fn run_with_options(
             };
             // Documents a rule loaded (`world`), after the corpus's own.
             let mut files = files;
-            for (path, _) in world::library_files(options) {
+            for (path, _) in world::loaded_files(options) {
                 if !files.contains(&path) {
                     files.push(path);
                 }
@@ -593,7 +593,7 @@ pub(crate) fn run_with_options(
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // A loaded document's module, from its load; and the loaded documents' keys, whose rows are not written.
-    let named: HashMap<String, Arc<str>> = world::library_files(options).into_iter().map(|(p, m)| (p, Arc::from(m))).collect();
+    let named: HashMap<String, Arc<str>> = world::loaded_files(options).into_iter().map(|(p, m)| (p, Arc::from(m))).collect();
     let loaded_keys: std::collections::HashSet<i64> = docs.iter().filter(|(_, p)| named.contains_key(p)).map(|(d, _)| *d).collect();
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
@@ -700,8 +700,8 @@ pub(crate) fn run_with_options(
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
     // after pruning is not memoised (a round of `world` does not read them).
     let reads_declared = prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| a.rel == "declared_ret");
-    // A round of `world` is not memoised: it is not a run of the corpus, and its cut program is run once.
-    let memoised = tapes.is_some() && t.is_none() && !discovering && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
+    // A round of `world` is memoised like a run, but records no manifest: its entries' sources are the run proper's.
+    let memoised = tapes.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
         (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan; {} relations given a document column", located.as_ref().map_or(0, Vec::len)),
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
@@ -1312,7 +1312,22 @@ pub(crate) fn run_with_options(
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
-    let run_sources = worker_cpu.2.clone();
+    let mut run_sources = worker_cpu.2.clone();
+    // The cross-file part is a derivation too (decision 0060 §2, 03 §14): its outputs are a function of every
+    // document's path and content, the cross-file program (its facts included) and the engine. Its key is a source
+    // of its own, held by the run's manifest like the documents' sources.
+    let cross_key = (memoised && run_sources.len() == docs.len() && repository.is_empty())
+        .then(|| {
+            let mut text = format!("rerail.corpus-cross/v1\n{}\n", hex(&memo::program_digest(&cross.program)));
+            for ((d, path), source) in docs.iter().zip(&run_sources) {
+                text.push_str(&format!("{d}\t{}\t{source:?}\n", world::store_path(path)));
+            }
+            memo::source(store, &text)
+        })
+        .transpose()
+        .map_err(|e| Error::Plan(e.to_string()))?;
+    run_sources.extend(cross_key);
+    run_sources.extend(options.get("worldKey").and_then(serde_json::Value::as_i64).map(crate::content_store::SourceId::from_row));
     let collecting = if recording { record_run(store, root, &run_sources, &memo_program, lease)? } else { drop(lease); None };
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
@@ -1384,7 +1399,24 @@ pub(crate) fn run_with_options(
     // `returns`, held for the typing outputs (`corpus::typing`).
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
-    if !cross.program.rules.is_empty() {
+    let cross_digest = memo::program_digest(&cross.program);
+    let cross_hit = match cross_key {
+        Some(key) => memo::lookup(store, key, CROSS_PATH, 0, &cross_digest).map_err(|e| Error::Plan(e.to_string()))?,
+        None => None,
+    };
+    let lines_before: BTreeMap<String, usize> = outputs.iter().map(|(rel, lines)| (rel.clone(), lines.len())).collect();
+    if let Some(entry) = &cross_hit {
+        // Every input is as the recorded run's: its outputs are read, not derived.
+        crate::code_rule_dsl::logic::profile::decision("cross-file part", || "read from the store: every document and the program are as the run that derived it".to_owned());
+        rounds = cross_rounds::Rounds { run: 0, converged: true, ..Default::default() };
+        for (rel, (columns, lines)) in &entry.lines {
+            outputs.entry(rel.clone()).or_default().extend(lines.iter().cloned());
+            node_columns.insert(rel.clone(), columns.clone());
+        }
+        if let Some((_, flat)) = entry.rows.get("returns") {
+            returns = flat.chunks(2).map(|r| vec![r[0], r[1]]).collect();
+        }
+    } else if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
@@ -1505,6 +1537,18 @@ pub(crate) fn run_with_options(
             });
         }
     }
+    if let (Some(key), None) = (cross_key, &cross_hit) {
+        let mut entry = memo::Entry::default();
+        for (rel, lines) in &outputs {
+            let from = lines_before.get(rel).copied().unwrap_or(0);
+            if from < lines.len() {
+                entry.lines.insert(rel.clone(), (node_columns[rel].clone(), lines[from..].to_vec()));
+            }
+        }
+        entry.rows.insert("returns".into(), (2, returns.iter().flat_map(|r| [r[0], r[1]]).collect()));
+        let _remember = crate::code_rule_dsl::logic::profile::span(|| "cross-file part: remember".into());
+        memo::remember(store, key, CROSS_PATH, 0, &cross_digest, &entry).map_err(|e| Error::Plan(e.to_string()))?;
+    }
     phase("cross", statements.count());
     statements.enter("write");
     let mut rows = BTreeMap::new();
@@ -1597,23 +1641,67 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
     let rust = typing.rust.unwrap_or(rs.len() > python.len());
     let (label, corpus) = if rust { ("rust", rs) } else { ("python", python) };
     let corpus: BTreeSet<String> = corpus.into_iter().collect();
-    let mut world = world::World::new(root, prog);
     let scratch = out.join("world");
     let start = thread_usage();
-    let mut rounds = 0;
-    loop {
-        rounds += 1;
-        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("world round {rounds}"));
-        run_with_options(programs, root, None, &scratch, modes, binding, chunk_nodes, typing, &world.options(options, prog, "discover"))?;
-        if !world.answer(&scratch, label, &corpus)? || rounds >= world::ROUNDS {
-            break;
+    // Discovery is a derivation (decision 0060 §2): its answers are a function of the program, the settings, the
+    // corpus's files and what it read. Its key names the first three; the record holds the rest, checked on reuse.
+    let store = if t_facts.is_none() { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
+    // Collection is held off until the run proper's manifest holds the key's source.
+    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let lease = store.as_ref().map(|s| s.begin_corpus_run(now_s + 3600)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
+    let key = match &store {
+        Some(store) => {
+            let mut text = format!("rerail.corpus-world/v1\n{}\n{}\n{}\n{options}\n", env!("RERAIL_ENGINE_BUILD_ID"), std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).display(), programs.join("\n\u{0}\n"));
+            for path in &corpus {
+                let bytes = std::fs::read(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+                text.push_str(&format!("{path}\t{}\n", hex(&<sha2::Sha256 as sha2::Digest>::digest(&bytes))));
+            }
+            Some(memo::source(store, &text).map_err(|e| Error::Plan(e.to_string()))?)
         }
-    }
+        None => None,
+    };
+    let recalled = match (&store, key) {
+        (Some(store), Some(key)) => memo::lookup(store, key, WORLD_PATH, 0, &[0; 32])
+            .map_err(|e| Error::Plan(e.to_string()))?
+            .and_then(|entry| entry.lines.get("world").and_then(|(_, l)| l.first().cloned()))
+            .and_then(|text| world::World::recall(root, prog, &text)),
+        _ => None,
+    };
+    let (world, rounds) = match recalled {
+        Some((world, rounds)) => {
+            crate::code_rule_dsl::logic::profile::decision("world", || "read from the store: the corpus, the program and everything discovery read are unchanged".to_owned());
+            (world, rounds)
+        }
+        None => {
+            let mut world = world::World::new(root, prog);
+            let mut rounds = 0;
+            loop {
+                rounds += 1;
+                let _round = crate::code_rule_dsl::logic::profile::span(|| format!("world round {rounds}"));
+                run_with_options(programs, root, None, &scratch, modes, binding, chunk_nodes, typing, &world.options(options, prog, "discover"))?;
+                if !world.answer(&scratch, label, &corpus)? || rounds >= world::ROUNDS {
+                    break;
+                }
+            }
+            if let (Some(store), Some(key)) = (&store, key) {
+                let entry = memo::Entry { lines: [("world".to_owned(), (Vec::new(), vec![world.record(rounds)]))].into(), ..memo::Entry::default() };
+                memo::remember(store, key, WORLD_PATH, 0, &[0; 32], &entry).map_err(|e| Error::Plan(e.to_string()))?;
+            }
+            (world, rounds)
+        }
+    };
     let now = thread_usage();
     let mut final_options = world.options(options, prog, "final");
+    if let Some(key) = key {
+        // The run proper's manifest holds the key's source, so collection keeps the record.
+        final_options["worldKey"] = key.row().into();
+    }
     let summary = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1);
     final_options["worldSummary"] = summary.into();
-    run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &final_options)
+    let report = run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &final_options);
+    drop(lease);
+    drop(store);
+    report
 }
 
 /// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
@@ -2050,6 +2138,17 @@ fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, ro
             (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
         })
         .collect()
+}
+
+/// The path discovery's derivation is memoised under (its key is the source that names its inputs).
+const WORLD_PATH: &str = "<world>";
+
+/// The path the cross-file part's derivation is memoised under (its key is the source that names its inputs).
+const CROSS_PATH: &str = "<cross-file part>";
+
+/// A digest as lowercase hex.
+fn hex(digest: &[u8]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A memo entry's rows holding its file's tree statistics (`Own::put`).
