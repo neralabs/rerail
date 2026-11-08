@@ -1,8 +1,7 @@
 //! Block programs on the CPU JIT: Cranelift emits a `BlockNative` (the native IR) as one function
 //! `tempo_block(bytes, rows, nrows, out, positions, counts)` over a batch of files (decision
 //! 0044). Its loops run over the files and over each file's 64-byte blocks. A block's body is
-//! straight-line bit operations (`body`), the same code tier 2's `CHECK` inlines over a token
-//! (`native_cpu_stream`). Each file starts with zero carries.
+//! straight-line bit operations (`body`). Each file starts with zero carries.
 //!
 //! The sinks are lowered in the loop, from the IR alone (`native_ir::BlockNative`):
 //!
@@ -301,18 +300,13 @@ impl Consts {
 
 /// Where a body runs: its block's index in the stream, the stream's length, the block's first
 /// byte, the carried state in, whether the block is full (inside the stream and not the first:
-/// every `within` all ones), and whether the byte before the stream must read as 0x00 although
-/// the buffer holds another byte there.
+/// every `within` all ones).
 pub(super) struct At<'a> {
     pub(super) i: Value,
     pub(super) len: Value,
     pub(super) base: Value,
     pub(super) packed_in: &'a [Value],
     pub(super) full: bool,
-    pub(super) zero_before: bool,
-    /// The buffer holds other bytes past the stream (a token's, for `CHECK`): the block's bytes
-    /// at and past `len` are read as 0x00, as past a file's end.
-    pub(super) cut: bool,
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
@@ -353,7 +347,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let mut values: Vec<Option<Value>> = Vec::with_capacity(native.insts.len());
     // The block's 64 bytes, loaded once for every compare and class.
     let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Pair { .. }));
-    let mut chunks: Vec<Value> = if reads {
+    let chunks: Vec<Value> = if reads {
         (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
     } else {
         vec![]
@@ -361,47 +355,11 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     // The block's bytes one back (each byte's byte before), loaded once for every `pair`:
     // unaligned loads at -1, the first block's reading `FRONT`'s zeros.
     let back = native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
-    let mut befores: Vec<Value> = if back {
+    let befores: Vec<Value> = if back {
         (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16 - 1)).collect()
     } else {
         vec![]
     };
-    // A stream inside a larger buffer: its bytes past the end read as 0x00. Each 16-byte chunk
-    // keeps the lanes below the bytes left (`0..=16`); the bytes one back keep one more.
-    if at.cut {
-        let iota = {
-            let lanes: Vec<u8> = (0..16).collect();
-            let handle = f.func.dfg.constants.insert(ConstantData::from(&lanes[..]));
-            f.ins().vconst(types::I8X16, handle)
-        };
-        let start = f.ins().ishl_imm(i, 6);
-        let left = f.ins().isub(len, start);
-        let keep = |f: &mut FunctionBuilder<'_>, from: i64| {
-            let r = f.ins().iadd_imm(left, from);
-            let (zero, sixteen) = (f.ins().iconst(types::I64, 0), f.ins().iconst(types::I64, 16));
-            let r = f.ins().smax(r, zero);
-            let r = f.ins().smin(r, sixteen);
-            let r = f.ins().ireduce(types::I8, r);
-            let r = f.ins().splat(types::I8X16, r);
-            f.ins().icmp(IntCC::UnsignedLessThan, iota, r)
-        };
-        for (part, chunk) in chunks.iter_mut().enumerate() {
-            let k = keep(&mut *f, -16 * part as i64);
-            *chunk = f.ins().band(*chunk, k);
-        }
-        for (part, chunk) in befores.iter_mut().enumerate() {
-            let k = keep(&mut *f, 1 - 16 * part as i64);
-            *chunk = f.ins().band(*chunk, k);
-        }
-    }
-    // A stream inside a larger buffer (a token's, for `CHECK`): the byte before its first block
-    // is 0x00, as before a file, not the buffer's byte there.
-    if at.zero_before && back {
-        let zero = f.ins().iconst(types::I8, 0);
-        let cleared = f.ins().insertlane(befores[0], zero, 0);
-        let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
-        befores[0] = f.ins().select(first, cleared, befores[0]);
-    }
     // Each class's nibbles, split once.
     let classy = native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. }));
     let (low, high): (Vec<Value>, Vec<Value>) = if classy {
@@ -801,7 +759,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let packed_in = &p[3..3 + carried];
             let counts_in = &p[3 + carried..3 + carried + counted.len()];
             let held_in = &p[3 + carried + counted.len()..];
-            let (values, packed_out) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, zero_before: false, cut: false });
+            let (values, packed_out) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full });
             // Each output cut to the stream outside full blocks: the bits `d <= 64 i + j < len + d`.
             let words: Vec<Value> = values
                 .iter()

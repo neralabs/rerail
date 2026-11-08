@@ -411,7 +411,7 @@ fn json_shapes() {
         eprintln!("  loop body: {} CLIF instructions {clif:?}", body.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
-        eprintln!("  switches {}, strings {}, checks {}", c.native.switches.len(), c.native.strings.len(), p.checks.len());
+        eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
         if std::env::var("RERAIL_DUMP").is_ok() {
             eprintln!("{}", c.parser.tier1.disassembly);

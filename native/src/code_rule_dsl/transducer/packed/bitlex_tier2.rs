@@ -8,8 +8,7 @@
 //!   (`first_bytes`), and a keyword of the row by its bytes (a switch per byte of the keyword,
 //!   then one `WORD`). Where two rows can begin with one byte, the narrower takes it and tier 1
 //!   gets a guard: the other row starting with it sends the file to tree-sitter.
-//! - **An arm** is its row's `CHECK` (a token with a check, not a keyword), its acts (`CLOSE`,
-//!   `OPEN`, `LEAF`, `NODE_FIELD`, `NODE_SUPER`), its `PUSH` and its `GOTO`.
+//! - **An arm** is its acts (`CLOSE`, `OPEN`, `LEAF`, `NODE_FIELD`, `NODE_SUPER`), its `PUSH` and its `GOTO`.
 //! - **The end:** the root closes and accepts at the end of the stream; a nested level closes
 //!   its node and returns to switch on the token again.
 
@@ -39,9 +38,9 @@ pub(super) struct Row {
     pub(super) first: ByteSet,
     /// Its keywords: a token whose text is the word has the kind.
     pub(super) keywords: Vec<(Vec<u8>, u16)>,
-    /// Its check (an index of the block program's checks) and the bytes a token passing it can
-    /// begin with.
-    pub(super) check: Option<(u16, ByteSet)>,
+    /// With a check, the bytes a token passing it can begin with. The check itself is tier 1's
+    /// (masks joining the fallback); tier 2 uses the bytes only to tell rows apart.
+    pub(super) check: Option<ByteSet>,
 }
 
 impl Row {
@@ -176,7 +175,6 @@ enum Span {
 enum Pre {
     None,
     Word(Vec<u8>),
-    Check(u16),
 }
 
 /// Tier 2 as words: their `rir` text (strings, switches, words), and the guards tier 1 adds
@@ -245,7 +243,6 @@ impl Emit<'_> {
                 let s = self.string(w);
                 self.push("WORD", 0, Arg::Str(s));
             }
-            Pre::Check(c) => self.push("CHECK", 0, Arg::Num(*c)),
         }
         self.body(arm);
         at
@@ -298,11 +295,15 @@ impl Emit<'_> {
             .map(|(w, _)| w.clone())
             .filter(|w| depth == 0 && w[0] == b && !words.iter().any(|c| c.word.as_ref() == Some(w)))
             .collect();
-        let check_refuses = row.check.is_some_and(|(_, first)| !has(&first, b));
+        let check_refuses = row.check.is_some_and(|first| !has(&first, b));
+        // A token of a checked row beginning with a byte its check does not take, and no keyword:
+        // refused (tier 1's check masks pass such tokens to tier 2).
+        if words.is_empty() && check_refuses {
+            return Ok(REFUSE);
+        }
         if words.is_empty() && (missing.is_empty() || plain.is_empty() || check_refuses) {
-            let pre = row.check.map_or(Pre::None, |(c, _)| Pre::Check(c));
             let span = if row.one_byte { Span::Len(1) } else { Span::Last };
-            return Ok(self.arm(plain[0].arm, span, pre));
+            return Ok(self.arm(plain[0].arm, span, Pre::None));
         }
         if !plain.is_empty() && (words.len() > 1 || !check_refuses) {
             // Keywords and the row's own kind on one byte, which the row's check does not tell
@@ -326,9 +327,6 @@ impl Emit<'_> {
                 self.push("WORD", 1, Arg::Str(w));
                 jumps.push((self.pc(), None));
                 self.push("GOTO", 0, Arg::Pc(0));
-            }
-            if let Some((c, _)) = row.check {
-                self.push("CHECK", 0, Arg::Num(c));
             }
             self.body(plain[0].arm);
             let mut stop = None;

@@ -576,8 +576,9 @@ fn json_state_is_bits() {
 
 /// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049); 5 since a
 /// keyword-only row's tokens end at their own last bytes (an escape's last byte, one byte after
-/// its backslash, is carried into the next block's last-bytes stream).
-const JSON_STATE_BITS: usize = 5;
+/// its backslash, is carried into the next block's last-bytes stream); 15 since the number check
+/// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills.
+const JSON_STATE_BITS: usize = 15;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
 /// tier 1 began to hand tier 2 its stream (decision 0053): the starts' four ORs, as simdjson's
@@ -585,9 +586,10 @@ const JSON_STATE_BITS: usize = 5;
 /// that a sharper first-byte analysis would drop. The four token-row outputs went. 42 and 5
 /// carried words when escapes' last bytes joined the stream (a `prev` by one and an OR): a row of
 /// keywords only is checked over its token's whole length, so `truee` is not `true`. A fixed
-/// length the compiler can prove would drop them.
-const JSON_OPS: usize = 42;
-const JSON_CARRIED_WORDS: usize = 5;
+/// length the compiler can prove would drop them. 85 and 15 when the number check moved from a
+/// program of its own, run per number in tier 2, into tier 1's masks (`JSON_NUMBER_CHECK_OPS`).
+const JSON_OPS: usize = 85;
+const JSON_CARRIED_WORDS: usize = 15;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -805,33 +807,48 @@ fn only_the_compiler_reads_tier2s_states() {
     assert!(readers.is_empty(), "tier 2's state table read outside the compiler: {readers:?}");
 }
 
-/// JSON's number check (doc 18 §4, decision 0052): simdjson's `parse_number` steps as
-/// straight-line operations over the token's window. One `fill` per run (the integer, the
-/// fraction, the exponent), shifts by one byte, and logic; no loop, no other carry. Its size is a
-/// ratchet: lower it as the compiler improves.
-#[test]
-fn json_number_check_is_straight_line() {
-    use super::block::BlockOp::*;
-    let program = json_program();
-    let check = &program.block_programs()[0].checks[0].program;
-    let fills = check.ops.iter().filter(|op| matches!(op, Fill(..))).count();
-    let other: Vec<&block::BlockOp> = check.ops.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(0) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
-    eprintln!("json number check: {} operations, {fills} fills", check.ops.len());
-    assert_eq!((fills, other.len()), (3, 0), "{other:?}");
-    assert!(check.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", check.ops.len());
+/// JSON with its `check` line replaced by `with` (or dropped), compiled whole.
+fn json_with_check(with: Option<&str>) -> Result<(Program, bitlex_compile::Compiled), String> {
+    let text: String = JSON
+        .lines()
+        .map(|l| if l.starts_with("check number") { with.unwrap_or("") } else { l })
+        .collect::<Vec<_>>()
+        .join("\n");
+    json_compiled_text(&text)
 }
 
-const JSON_NUMBER_CHECK_OPS: usize = 100;
+/// JSON's number check (doc 18 §4) is tier 1's: masks computed with the rest of the block
+/// program, a state's mask per state of its byte machine, joining the fallback. One `fill` per
+/// run (the integer, the fraction, the exponent) and one for the tokens it leaves to tier 2's
+/// keywords; `prev`s by one byte, and logic; no other carry. Tier 2 has no word for it. Its
+/// size is a ratchet: lower it as the compiler improves.
+#[test]
+fn json_number_check_is_tier1_masks() {
+    use super::block::BlockOp::*;
+    let (with, _) = json_compiled();
+    let (without, _) = json_with_check(None).expect("compiles without the check");
+    let (a, b) = (&with.block_programs()[0], &without.block_programs()[0]);
+    let fills = |p: &block::BlockProgram| p.ops.iter().filter(|op| matches!(op, Fill(..))).count();
+    let added: Vec<&block::BlockOp> = a.ops.iter().filter(|op| !b.ops.contains(op)).collect();
+    let other: Vec<&&block::BlockOp> = added.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(_) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
+    eprintln!("json number check: {} operations, {} fills", a.ops.len() - b.ops.len(), fills(a) - fills(b));
+    assert_eq!((fills(a) - fills(b), other.len()), (4, 0), "{other:?}");
+    assert!(a.ops.len() - b.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", a.ops.len() - b.ops.len());
+    let text = rir::disassemble(&with, None);
+    assert!(!text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks a token");
+}
 
-/// JSON's number check, as straight-line operations, equals the reference's grammar on every
-/// word of up to five bytes over `-01.eEx`, and on longer ones: run on the block interpreter over
-/// the token's bytes, it fails exactly the words the reference refuses.
+/// The check's operations (a ratchet). 100 as a program of its own run per number in tier 2;
+/// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`.
+const JSON_NUMBER_CHECK_OPS: usize = 43;
+
+/// JSON's number check, as tier 1's masks, equals the reference's grammar on every word of up
+/// to five bytes over `-01.eEx`, and on longer ones: a file of the word alone is parsed, both
+/// tiers on their interpreters, exactly when the reference parses it, to the same nodes.
 #[test]
 fn json_number_check_equals_the_reference() {
-    let program = json_program();
-    let check = &program.block_programs()[0].checks[0].program;
+    let (p, _) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let tables = std::collections::HashMap::new();
     let alphabet = b"-01.eEx";
     let mut words: Vec<Vec<u8>> = vec![];
     let mut frontier: Vec<Vec<u8>> = vec![vec![]];
@@ -839,9 +856,8 @@ fn json_number_check_equals_the_reference() {
         frontier = frontier.iter().flat_map(|w| alphabet.iter().map(move |&b| [w.as_slice(), &[b]].concat())).collect();
         words.extend(frontier.iter().cloned());
     }
-    words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5"].map(<[u8]>::to_vec));
-    // Tokens over 64 bytes: the check runs word by word, its carries passed on, as tier 1 runs
-    // over a file; never sent to tree-sitter (decision 0052). Lengths around the word's edges.
+    words.extend([&b"-12.5e-30"[..], b"100000000000000000000000000000000000000000000000000000000.5", b"1.e5", b"0.0e0", b"-0e-0", b"1e+5", b"[1,-2,3e4]", b"[1 2]", b"[truee]", b"[nul]", b"[true,1x]"].map(<[u8]>::to_vec));
+    // Tokens over 64 bytes, and at the blocks' edges: the masks carry from block to block.
     for n in [63, 64, 65, 127, 128, 129, 200, 1000] {
         let digits = vec![b'7'; n];
         words.push([&b"-1"[..], &digits].concat());
@@ -852,40 +868,35 @@ fn json_number_check_equals_the_reference() {
         words.push([&digits[..], b"x", &digits].concat());
         words.push([&digits[..], b"-"].concat());
         words.push([&digits[..n - 1], b"-", &digits].concat());
+        words.push([&b"["[..], &vec![b' '; n - 2], b"1,2.5]"].concat());
     }
     let mut refused = 0;
     for w in &words {
-        // The word alone is a file of one number token (or a keyword, which no word here is).
-        let out = ::bitlex::eval::Ev::run(&stmts, w, &tables).expect("evaluates");
-        let want = out.errors.iter().any(|e| e.contains("fails its check"));
-        let got = check.interpret(w)[0].iter().any(|&x| x != 0);
-        assert_eq!(got, want, "{:?}", String::from_utf8_lossy(w));
-        refused += usize::from(want);
+        let want = reference_nodes(&stmts, w);
+        assert_eq!(tier2_nodes(&p, w), want, "{:?}", String::from_utf8_lossy(w));
+        refused += usize::from(want.is_none());
     }
     assert!(refused > 0 && refused < words.len());
 }
 
 /// A check whose byte machine cycles through two or more states (`('a' 'b')*`) would need a loop
-/// over the token's bytes: the compiler refuses it. One whose only cycles are runs (`digit+`,
-/// `'-' digit* '.'`) compiles to straight-line operations.
+/// over the token's bytes: the compiler refuses it. JSON's, whose only cycles are runs, compiles.
 #[test]
 fn a_check_that_needs_a_byte_loop_is_refused() {
-    use ::bitlex::syntax::Gram;
-    let classes = std::collections::HashMap::from([("digit".to_owned(), vec![(0x30, 0x39)])]);
-    let lit = |s: &str| Gram::Lit(s.to_owned());
-    let compile = |g: Gram| super::grammar::byte_check(&g, &classes).and_then(|(accept, arms)| super::grammar::check_program(&accept, &arms));
-    let cycle = compile(Gram::Star(Box::new(Gram::Seq(vec![lit("a"), lit("b")])))).expect_err("a two-state cycle");
-    assert!(cycle.contains("loop over the bytes"), "{cycle}");
-    for g in [Gram::Plus(Box::new(Gram::Sym("digit".into()))), Gram::Seq(vec![lit("-"), Gram::Star(Box::new(Gram::Sym("digit".into()))), lit(".")])] {
-        let p = compile(g).expect("runs only");
-        assert!(p.ops.iter().all(|op| !matches!(op, block::BlockOp::Toggle(_) | block::BlockOp::Escaped(_))), "{:?}", p.ops);
-    }
+    let cycle = json_with_check(Some("check number = ('-' '0')+")).map(|_| ()).expect_err("a two-state cycle");
+    assert!(cycle.contains("a cycle through two or more states"), "{cycle}");
+    json_with_check(Some("check number = digit+")).expect("runs only");
 }
 
 // --- Tier 2: the transducer's words (decision 0053) ----------------------------------------------
 
 /// JSON compiled whole: its program, and the compiler's output (labels, fallbacks, machine).
 fn json_compiled() -> (Program, bitlex_compile::Compiled) {
+    json_compiled_text(JSON).unwrap_or_else(|e| panic!("compiles: {e}"))
+}
+
+/// A Bitlex text with JSON's tree compiled whole.
+fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled), String> {
     use ast_grep_language::LanguageExt;
     let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
@@ -894,10 +905,10 @@ fn json_compiled() -> (Program, bitlex_compile::Compiled) {
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let stmts = ::bitlex::syntax::parse(json).map_err(|e| format!("{e:?}"))?;
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let text = compiled.text();
-    (rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}")), compiled)
+    Ok((rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}")), compiled))
 }
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
@@ -974,10 +985,10 @@ fn json_tier2_is_transducer_words() {
     let text = rir::disassemble(&p, None);
     assert_eq!(rir::assemble(&text).expect("reassembles").plain_digest(), p.plain_digest(), "the words round trip");
     let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
-    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "CHECK", "WORD"] {
+    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "WORD"] {
         assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
     }
-    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
 }

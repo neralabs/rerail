@@ -318,7 +318,7 @@ const TOKEN: u8 = 0x50;
 const SWITCH: u8 = 0x51;
 /// `WORD` in `rir`.
 const WORD_IS: u8 = 0x52;
-const CHECK: u8 = 0x53;
+// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
 const OPEN: u8 = 0x54;
 const CLOSE: u8 = 0x55;
 const LEAF: u8 = 0x56;

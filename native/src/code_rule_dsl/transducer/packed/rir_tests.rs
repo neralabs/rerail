@@ -375,25 +375,14 @@ fn the_frontends_dumps_are_the_goldens() {
     assert!(expected == dump, "the dumps differ from {} (RERAIL_BLESS=1 to accept them)", golden.display());
 }
 
-/// A block program's token checks (decision 0052): each a straight-line program with one output,
-/// in the digest. Tier 2's state machine is not in the block program: it is the program's words
-/// (decision 0053).
+/// A token's check is tier 1's masks (doc 18 §4): a block program has no check rows of its own,
+/// and tier 2 no `CHECK` word. Both are refused as text.
 #[test]
-fn block_check_rows_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 output %0\n  block 0 check 0\n  block 0 check 0 table 0 lo=ffff0000000000000000000000000000 hi=00000001000000000000000000000000\n  block 0 check 0 %0 = within\n  block 0 check 0 %1 = class t0 0x01\n  block 0 check 0 %2 = andnot %0, %1\n  block 0 check 0 fail %2\n  block 0 check 0 delay 1\n  0000 STOP 0\n";
-    let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
-    let block = &program.block_programs()[0];
-    assert_eq!((block.checks[0].program.ops.len(), block.checks[0].program.outputs.clone(), block.checks[0].program.delay), (3, vec![2], 1));
-    let text = round_trip(&program, None);
-    assert!(text.contains("check 0 %2 = andnot %0, %1\n  block 0 check 0 fail %2"), "{text}");
-    for (from, to, what) in [("check 0 %1 = class t0 0x01", "check 0 %1 = eq 0x30", "operations"), ("  block 0 check 0 delay 1\n", "", "delay")] {
-        let other = assemble(&rows.replace(from, to)).unwrap_or_else(|e| panic!("{what}: {e}"));
-        assert_ne!(other.plain_digest(), program.plain_digest(), "the check's {what} are in the digest");
+fn check_rows_and_words_are_refused() {
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 output %0\n  0000 STOP 0\n";
+    assemble(rows).unwrap_or_else(|e| panic!("{e}"));
+    for old in ["  block 0 check 0\n", "  block 0 check 0 %0 = within\n"] {
+        assert!(!refused(&rows.replace("  0000 STOP 0\n", &format!("{old}  0000 STOP 0\n"))).is_empty(), "a check row: {old}");
     }
-    for old in ["  block 0 token 0 kind 0 start %0 end %0\n", "  block 0 state 0 level 15\n", "  block 0 arm 0 token 1 to 0 do leaf\n", "  block 0 skip %0\n"] {
-        assert!(!refused(&rows.replace("  block 0 check 0\n", &format!("{old}  block 0 check 0\n"))).is_empty(), "no tree rows: {old}");
-    }
-    assert!(refused(&rows.replace("block 0 check 0\n", "block 0 check 1\n")).contains("out of order"));
-    assert!(!refused(&rows.replace("check 0 %2 = andnot %0, %1", "check 0 %2 = andnot %0, %7")).is_empty(), "a check's operand is an earlier value");
-    assert!(!refused(&rows.replace("  block 0 check 0 fail %2\n", "")).is_empty(), "a check has one output");
+    assert!(!refused(&rows.replace("  0000 STOP 0\n", "  0000 CHECK 0\n")).is_empty(), "a CHECK word");
 }

@@ -1,26 +1,23 @@
 //! Tier 2 on the CPU JIT: Cranelift emits a program's words (`native_ir::StructuralOperation`'s
 //! tier-2 words) as one function `tempo_stream(ctx)`. Each word is one block of code made from
-//! the word and its operand alone, and its tables (a switch's targets, a string's bytes, a check's
-//! block program). Nothing in it is fixed for a language or a tape format.
+//! the word and its operand alone, and its tables (a switch's targets, a string's bytes). Nothing in it is fixed for a language or a tape format.
 //!
 //! The machine's state (`stream::run`, the reference) is in SSA variables: the stream's cursors,
 //! the token's start, end and limit, the end of the token before, the node and supertype
 //! counts, and the open and return stacks' depths. Its output is the node table, one row per node
 //! in preorder (kind, field, start, end, size), and the supertypes, one row each (node, kind).
 //!
-//! The loops are the stream's, as the verifier requires: every cycle passes a `TOKEN`. A `CHECK`
-//! inlines its check's block body (`native_cpu_block::body`) in a loop over the token's 64-byte
-//! blocks, which runs once for a token of up to 63 bytes. `native_cpu_shape` refuses any other
-//! loop, and any call.
+//! The loops are the stream's, as the verifier requires: every cycle passes a `TOKEN`.
+//! `native_cpu_shape` refuses any other loop, and any call.
 //!
 //! Room is sized from the program, not checked per node: between two `TOKEN`s the words write at
 //! most `per_token` nodes, supertypes and returns (the longest path, `Bounds`), so a stream of
 //! `n` starts needs `per_token * (n + 2)`.
 
 use super::Error;
-use super::native_cpu_block::{At, Consts, State, body, within_word};
+
 use super::native_cpu_shape::Step;
-use super::native_ir::{BlockNative, NativeModule, StructuralOperation as Op};
+use super::native_ir::{NativeModule, StructuralOperation as Op};
 use super::stream::{ByteSwitch, Node, REFUSE, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -222,7 +219,6 @@ fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
 /// Compile a program's tier-2 words.
 pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     let words = &native.structural;
-    let checks: &[BlockNative] = native.block_programs.first().map_or(&[], |b| &b.checks[..]);
     let pushes = push_targets(native);
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
     let starts = named(|o| if let Op::Token { extract } = *o { Some(extract) } else { None });
@@ -279,7 +275,6 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
             (cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]);
-        let consts = Consts::make(&mut f);
         let zero = f.ins().iconst(types::I64, 0);
         for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret] {
             f.def_var(var, zero);
@@ -427,46 +422,6 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         guard(&mut f, differs, pc);
                         f.ins().jump(fall, &[]);
                     }
-                }
-                Op::Check { check } => {
-                    // The check's block body over the token, a block at a time: the token's
-                    // bytes from `start`, 0x00 past its end and before its first byte.
-                    let c = &checks[usize::from(check)];
-                    let state = State::of(c);
-                    let (start, end) = (f.use_var(v.start), f.use_var(v.end));
-                    let n = f.ins().isub(end, start);
-                    let d = c.output_delays[0];
-                    let span = f.ins().iadd_imm(n, i64::from(c.delay) + 63);
-                    let blocks = f.ins().ushr_imm(span, 6);
-                    let first = f.ins().iadd(bytes, start);
-                    let (top, inside, after) = (f.create_block(), f.create_block(), f.create_block());
-                    for _ in 0..2 + state.words {
-                        f.append_block_param(top, types::I64);
-                    }
-                    f.append_block_param(after, types::I64);
-                    let zeros: Vec<BlockArg> = std::iter::repeat_n(BlockArg::from(zero), 2 + state.words).collect();
-                    f.ins().jump(top, &zeros);
-                    heads.push((top, Step::Block));
-                    f.switch_to_block(top);
-                    let p = f.block_params(top).to_vec();
-                    let (i, acc) = (p[0], p[1]);
-                    let more = f.ins().icmp(IntCC::UnsignedLessThan, i, blocks);
-                    f.ins().brif(more, inside, &[], after, &[BlockArg::from(acc)]);
-                    f.switch_to_block(inside);
-                    let off = f.ins().ishl_imm(i, 6);
-                    let base = f.ins().iadd(first, off);
-                    let (outs, packed) = body(&mut f, c, &state, &consts, At { i, len: n, base, packed_in: &p[2..], full: false, zero_before: true, cut: true });
-                    let cut = within_word(&mut f, i, n, d);
-                    let fail = f.ins().band(outs[0], cut);
-                    let acc = f.ins().bor(acc, fail);
-                    let i = f.ins().iadd_imm(i, 1);
-                    let again: Vec<BlockArg> = [i, acc].into_iter().chain(packed).map(BlockArg::from).collect();
-                    f.ins().jump(top, &again);
-                    f.switch_to_block(after);
-                    let acc = f.block_params(after)[0];
-                    let failed = f.ins().icmp_imm(IntCC::NotEqual, acc, 0);
-                    guard(&mut f, failed, pc);
-                    f.ins().jump(fall, &[]);
                 }
                 Op::Open { kind } => {
                     let (nodes, start, open) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.open));

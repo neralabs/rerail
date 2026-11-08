@@ -2,7 +2,7 @@ use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FIRST, FLAGS, FOLLOWING, FORK,
     GOTO, KIND, LAST, NEXT, PARENT, Program, REPEAT_BEGIN, REPEAT_BUMP, REPEAT_END, RESTORE_CURSOR,
     SAVE_CURSOR, SIZE, STOP, SUPERTYPE, TEXT, split,
-    ACCEPT, CHECK, CLOSE, EMPTY, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
+    ACCEPT, CLOSE, EMPTY, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
     value::{CaptureProgram, ValueProgram},
 };
 
@@ -92,7 +92,6 @@ pub(super) enum StructuralOperation {
     /// The token's bytes against a string: refuse where they differ, or with `test`, skip the
     /// next word.
     Word { string: u16, test: bool },
-    Check { check: u16 },
     Open { kind: u16 },
     /// At the end of this token (`this`), or of the one before.
     Close { this: bool },
@@ -145,7 +144,6 @@ impl StructuralOperation {
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
             Self::Word { string, test } => (WORD_IS, u8::from(test), string),
-            Self::Check { check } => (CHECK, 0, check),
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind } => (LEAF, 0, kind),
@@ -371,7 +369,6 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
-            CHECK => StructuralOperation::Check { check: operand },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF => StructuralOperation::Leaf { kind: operand },
@@ -453,8 +450,6 @@ pub(super) struct BlockNative {
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
-    /// The token checks tier 2's `CHECK` runs (decision 0052), lowered.
-    pub checks: Vec<BlockNative>,
 }
 
 /// An instruction of a block body.
@@ -546,7 +541,6 @@ impl BlockNative {
             totals: program.total_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
-            checks: program.checks.iter().map(|c| BlockNative::lower(&c.program)).collect(),
         }
     }
 
@@ -612,7 +606,6 @@ impl BlockNative {
             totals: self.totals.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
-            checks: self.checks.iter().map(BlockNative::planes_form).collect(),
         }
     }
 }
