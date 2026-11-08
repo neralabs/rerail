@@ -11,7 +11,9 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`07a6b4171`. Merge `0b094980e` takes the memo reuse and session resolutions.
+`ae7c48111`. Merge `ee5b50fa2` adopts stored cross-file typing and discovery derivations.
+Loaded documents have the same evaluation rules as other documents; `load` and `loaded` have no role column.
+Earlier merge `0b094980e` takes the memo reuse and session resolutions.
 Merge `2ffa7a028` takes combined-rule planning and cycle analysis through `044449ca7`.
 Merge `0ca019c6d` takes the cached matcher automata, guest specialization, and store resolutions.
 Merge `57ad2b1ee` takes prepared-program facts and tapes through `6c22fca95` (decision 0074).
@@ -92,7 +94,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **86 target drafts and 14 absent translations**. None has full acceptance yet.
+The current inventory contains **87 target drafts and 13 absent translations**. None has full acceptance yet.
+The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
+On the `ae7c48111` engine, all 144 original tests pass with 137 complete observations, including 57 positive set results and four growing-allowlist CLI cases.
+All 200 supplemental API cases and 24 reporter cases pass. Twenty-three disabled-behavior controls produce observable parity failures.
+A newer Final tip arrived after that cohort. Its adoption and acceptance are recorded separately; these results do not certify a newer engine.
 The 86th draft, `grammar_fragment_usage`, preserves import resets, sticky alias eligibility, captured strings, unsafe constructor values, and reachable render returns.
 All 39 original tests pass, including 31 positive file checks and the FactEngine integration assertion.
 Its 165 supplemental API cases include 111 positive finding lists. All 172 reporter cases pass, including 112 positives.
@@ -1164,3 +1170,66 @@ The integration adapter supports the default production policy; arbitrary custom
 The original missing-path CLI assertion retains host argument and I/O protocol. The `.rr` rule invokes no Python.
 Full shared registry/scope, production registration, native CLI/enforcement, and persistent-workspace acceptance remain open.
 The inventory is 86 drafts and 14 absent translations. Full migration acceptance remains pending.
+
+
+## 2026-11-08 — Native allowlist extraction and CLI reports
+
+The rule keeps three different source contracts separate.
+File extraction returns the first nonempty assignment to the requested variable.
+The CLI unions entries from each variable's designated owner file.
+The plugin reporter consumes the last recorded fact for each variable, without owner binding.
+Empty assignments do not create facts and do not clear earlier entries.
+Nested assignments participate in semantic visit order. Chained targets retain separate fact occurrences.
+
+Set extraction accepts direct string constants and bitwise unions of set expressions.
+The frozenset helper also accepts the first positional argument of any call, regardless of its callee name.
+It excludes a bare union at its root. These source quirks are preserved.
+Supplied AST arguments use typed syntax fields, including constructed values; file analysis uses native syntax facts.
+No rule invokes Python.
+
+The source recording passes all 144 original tests. It records 137 complete observations.
+The empty detector fails 52 tests and passes 92. The implemented detector passes all 144 tests.
+The native checks include all 57 positive set observations, four growing-allowlist CLI cases, syntax errors, and missing-file errors.
+No original assertion is excluded. The original CLI's single bulk materialization assertion also passes.
+
+The CLI adapter retains argument parsing, file reads, and stdout transport.
+Native relations supply extraction, owner binding, unions, counts, maximum comparisons, report text, ordering keys, and exit status.
+Original semantic functions are rejected during native execution, including the original CLI body.
+The supplemental transport now preserves tuple arguments and complete `SyntaxError` location fields.
+Separate red/green tests cover both repairs.
+
+The final `ae7c48111` cohort passes 200 supplemental API cases.
+They include 56 positive set cases, eight nonempty fact lists, 18 growing-allowlist CLI cases, and three positive supplied-fact reporter cases.
+Four cases check totals across all five categories, shared entry names, overlapping assignments, and repeated targets.
+All 24 production reporter cases pass, including 18 positives.
+All 23 mutations that disable or alter required behavior produce observable parity failures through successful native execution.
+
+The source reporter has an ordering defect when different files define the same variable.
+Reversing two supplied files changes both the reported count and finding path.
+The source fact engine delivers files in worker completion order, so repository execution has no stable answer for such a collision.
+The native reporter preserves the ordered last-fact-wins fold and uses explicit producer order.
+Both supplied file orders have exact source/native comparisons. The CLI's separate owner binding remains unchanged.
+This evidence does not prove equality with an arbitrary worker schedule.
+The receipt retains the two-file source reproduction. No Linear issue was created.
+
+Final shape advanced during mutation checks. The live-tip guard rejected the remaining runs.
+Merge `ee5b50fa2` adopts committed Final shape `ae7c48111`, including stored cross-file typing and discovery derivations.
+The sibling's unfinished merge was left untouched. The same 21 reviewed generic extension files remain in the native diff.
+The rebuilt root CLI took 41.077 seconds. The unit build took 138.760 seconds under the existing build-time exception.
+These are compilation wall times, recorded separately from execution.
+
+The rebuilt engine passes all 144 original tests in two complete case shards and all 200 supplemental API cases.
+It also passes the preceding fragment-usage suite's 39 original tests.
+All 100 tooling tests, 98 policy/table readers, and four focused native unit tests pass.
+The known prepared-program roundtrip still fails; its full output remains in the receipt.
+Direct reporter execution now has the same ancestry and retired-engine checks as the original-assertion harness.
+A separate red/green test proves that the direct path cannot bypass those checks.
+
+The [native contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-allowlist-burndown-native-contracts.json.gz) archives the complete `ae7c48111` cohort, consumed program bytes, controls, builds, and validator.
+The [source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-allowlist-burndown-original-source.json.gz) and
+[empty-detector failures](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-allowlist-burndown-detector-red.json.gz) retain the TDD starting point.
+Committed Final shape advanced again to `a9e927674` after these runs. This archive is historical evidence for `ae7c48111`, not acceptance of that newer engine.
+
+Legacy collector and factory interfaces and malformed supplied-fact domains are not fully certified by this snapshot.
+Full registry/scope, production registration, native CLI/enforcement, persistent-workspace acceptance, and global migration acceptance remain open.
+The inventory is 87 drafts and 13 absent translations. Full migration acceptance remains pending.
