@@ -88,8 +88,8 @@ fn reference_graphs(document: &serde_json::Value) -> Vec<serde_json::Map<String,
 #[derive(Default)]
 struct Adjust {
     scope: Option<(Vec<String>, Vec<String>)>,
-    keep: Option<Box<dyn Fn(&str) -> bool>>,
-    policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String>>>,
+    keep: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
+    policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String> + Send + Sync>>,
 }
 
 /// The leaves of a JSON value, each at its JSON pointer (RFC 6901: `/a/0`, `~` and `/` in keys as `~0`, `~1`).
@@ -644,6 +644,8 @@ struct Event {
     /// Whether the oracle ran the production entry (the suite plugin), which drops a hand-written rule's log-mode
     /// codes (`log_codes`).
     production: bool,
+    /// What `adjust` is made from: events of a check with one setting run one program.
+    setting: String,
 }
 
 fn port() -> PathBuf {
@@ -700,7 +702,8 @@ fn recorded_events() -> Vec<Event> {
             let config = event.get("oracle_config").filter(|c| !c.is_null());
             let gate_only = config.is_none_or(|c| c.as_object().is_some_and(|c| c.keys().all(|k| k == "source_gate")));
             let plain = gate_only && !truthy("compare_message") && !truthy("compare_fields") && event["path_skip_override"] != true;
-            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust, plain, production });
+            let setting = format!("{entry} {production} {} {} {}", event["oracle_config"], event["scope"], event["path_skip_override"]);
+            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust, plain, production, setting });
         }
     }
     out
@@ -810,7 +813,8 @@ fn api_events() -> Vec<Event> {
             };
             let production = record["production"] == true;
             let adjust = Ok(api_adjust(&check, &entry, &record["parameters"], production));
-            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust, plain: false, production });
+            let setting = if production { "production".to_owned() } else { format!("{entry} {}", record["parameters"]) };
+            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust, plain: false, production, setting });
         }
     }
     out
@@ -870,7 +874,7 @@ fn api_want(check: &str, entry: &str, expected: &Json, files: &[(String, String)
 }
 
 /// The replay's clause filters (`replay.ts`), by check and entry.
-fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -> bool>> {
+fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -> bool + Send + Sync>> {
     let entry = entry.to_owned();
     match check {
         "no_blanket_grammar_bypass" if !production => {
@@ -942,18 +946,145 @@ impl Row {
     }
 }
 
+/// What replaying one event gave.
+#[derive(Clone)]
+enum Outcome {
+    /// Not replayable, and why.
+    Skipped(String),
+    /// Replayable, not run: these clauses are still gapped.
+    Gapped(Vec<String>),
+    /// Replayable, and an error: the rule did not convert (an authored file's error; `run` false) or its run failed.
+    Error { run: bool, error: String },
+    /// Run: the oracle's findings and the program's, each a sorted set of keys (J1: several of one clause on one line
+    /// are one), whether that collapsed some, and whether the event is configured with an authored clause, or its
+    /// oracle compares more than the keys.
+    Run { want: Vec<String>, got: Vec<String>, collapsed: bool, config_authored: bool, keys_only: bool },
+}
+
+/// The program an event runs: its check's hand-written rule, or its rule converted (with its authored file) as the
+/// oracle configured it, whether the one or the other, and whether it is configured with an authored clause.
+#[derive(Clone)]
+struct Replayed {
+    text: String,
+    hand: bool,
+    config_authored: bool,
+}
+
+/// Replays event `k` in `root/e<k>`: `replay_program`, then `replay_run`.
+fn replay(k: usize, event: &Event, root: &Path) -> Outcome {
+    match replay_program(event) {
+        Ok(program) => replay_run(k, event, &program, root),
+        Err(outcome) => outcome,
+    }
+}
+
+/// The program `event` runs, or what replaying it gives without a run. Of the events of a check with findings to
+/// compare, those of one `Event::setting` and `Event::plain` give one.
+fn replay_program(event: &Event) -> Result<Replayed, Outcome> {
+    let Some(rule) = rule_file(&event.check) else { return Err(Outcome::Skipped("no rule file".into())) };
+    if let Err(reason) = &event.want {
+        return Err(Outcome::Skipped(reason.clone()));
+    }
+    // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
+    // the oracle ran unconfigured (`Event::plain`).
+    match hand_written(&event.check) {
+        Some(_) if !event.plain => Err(Outcome::Skipped("configured (the hand-written rule has no options)".into())),
+        Some(text) => Ok(Replayed { text, hand: true, config_authored: false }),
+        None => {
+            let adjust = event.adjust.as_ref().map_err(|reason| Outcome::Skipped(reason.clone()))?;
+            let c = match convert(&rule, adjust) {
+                Ok(c) => c,
+                Err(Failure::Config(reason)) => return Err(Outcome::Skipped(reason)),
+                Err(e @ Failure::Authored(_)) => return Err(Outcome::Error { run: false, error: e.to_string() }),
+            };
+            let gaps: Vec<String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id.clone()).collect();
+            if !gaps.is_empty() {
+                return Err(Outcome::Gapped(gaps));
+            }
+            let config_authored = c.configured && c.clauses.iter().any(|(_, r)| *r == Ok(Origin::Authored));
+            Ok(Replayed { text: c.program, hand: false, config_authored })
+        }
+    }
+}
+
+/// Runs `program` over event `k`'s files in `root/e<k>`, and compares its findings with the oracle's. Reads the
+/// environment `converted_rules_give_the_recorded_findings` documents.
+fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outcome {
+    let Ok(want) = &event.want else { unreachable!("replay_program skips an event without findings to compare") };
+    let Replayed { text: program, hand, config_authored } = program.clone();
+    let dir = root.join(format!("e{k}"));
+    write_files(&dir, event.files.iter().map(|(p, s)| (p.as_str(), s.as_str())));
+    // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
+    let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
+    let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
+    // `RERAIL_REPLAY_EXTRA=<file>`: `.rr` rules added to every replayed program, to try a change to a rule.
+    let program = match std::env::var("RERAIL_REPLAY_EXTRA") {
+        Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
+        Err(_) => program,
+    };
+    // `RERAIL_REPLAY_PROFILE=<dir>`: each event's run profiled into <dir>/e<k> (`logic::profile`), to be summed.
+    if let Ok(profiles) = std::env::var("RERAIL_REPLAY_PROFILE") {
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::set_directory(&std::path::Path::new(&profiles).join(format!("e{k}")));
+    }
+    let mut got = match finding_keys(&program, &dir) {
+        Ok(got) => got,
+        Err(error) => return Outcome::Error { run: true, error },
+    };
+    for r in &show {
+        let rows = std::fs::read_to_string(dir.join(".out").join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
+        eprintln!("{} {r}:\n{rows}", event.test);
+    }
+    // Where the oracle records no code, (path, line) only.
+    let codeless = want.iter().any(|(_, _, code)| code.is_none());
+    let key = |path: &str, line: u64, code: Option<&str>| match code {
+        Some(code) if !codeless => format!("{path}:{line}:{code}"),
+        _ => format!("{path}:{line}"),
+    };
+    let mut want: Vec<String> = want.iter().map(|(p, l, c)| key(p, *l, c.as_deref())).collect();
+    // The suite plugin (a production event) drops a hand-written rule's log-mode codes.
+    if event.production && hand {
+        let log = log_codes(&event.check);
+        got.retain(|(_, _, c)| !log.contains(c));
+    }
+    let mut got: Vec<String> = got.iter().map(|(p, l, c)| key(p, *l, Some(c))).collect();
+    let n = (want.len(), got.len());
+    want.sort();
+    want.dedup();
+    got.sort();
+    got.dedup();
+    let collapsed = n != (want.len(), got.len());
+    Outcome::Run { want, got, collapsed, config_authored, keys_only: event.keys_only || codeless }
+}
+
+/// Each event's name in the baseline: `<group> | <check> | <n> | <test>`, `n` its index among the group's events of
+/// that check and test (an API record's test can give several).
+fn event_ids(events: &[Event]) -> Vec<String> {
+    let mut seen = BTreeMap::<(&str, &str, &str), usize>::new();
+    events
+        .iter()
+        .map(|e| {
+            let n = seen.entry((e.group, &e.check, &e.test)).or_default();
+            *n += 1;
+            format!("{} | {} | {} | {}", e.group, e.check, *n - 1, e.test)
+        })
+        .collect()
+}
+
 /// The converted rules, with their authored files, on every event of the oracle (`events`), each configured as its
 /// oracle ran (`recorded_adjust`, `api_adjust`); a check with a hand-written rule that lowers (`hand_written`) runs
 /// that instead, on its unconfigured events (`Event::plain`), unless `RERAIL_REPLAY_CONVERTED` is set. Per group and
 /// check: the events, those it can replay, those whose kept clauses are all converted or authored (run), how many
 /// give the oracle's findings exactly as a set of (path, line, code) keys (J1: a key found twice is one; the events
 /// where that collapsed some are counted), and why the rest were not run; then per check the clauses still gapped,
-/// the first misses, and the mismatches of configured events with authored clauses. `RERAIL_REPLAY_CHECK` (check
-/// names) and `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select; `RERAIL_REPLAY_EVENT` keeps the events whose
-/// name contains it; `RERAIL_REPLAY_MISSES` is how many misses are printed (40); `RERAIL_REPLAY_SHOW` and
-/// `RERAIL_REPLAY_EXTRA` print relations' rows and add rules (below).
+/// the first misses, and the mismatches of configured events with authored clauses. The result must be the
+/// baseline's (`check_baseline`): worse or better fails, and `RERAIL_REPLAY_BLESS=1` records it.
+/// `RERAIL_REPLAY_CHECK` (check names) and `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select;
+/// `RERAIL_REPLAY_EVENT` keeps the events whose name contains it; `RERAIL_REPLAY_MISSES` is how many misses are
+/// printed (40); `RERAIL_REPLAY_SHOW` and `RERAIL_REPLAY_EXTRA` print relations' rows and add rules (`replay`).
+/// `a_sample_of_the_replay_gives_the_recorded_findings` runs a sample of it with the library's tests.
 #[test]
-#[ignore = "runs every recorded event through the corpus runner"]
+#[ignore = "runs every recorded event through the corpus runner (about 17 minutes)"]
 fn converted_rules_give_the_recorded_findings() {
     let list = |var: &str| std::env::var(var).ok().map(|s| s.split(',').map(str::to_owned).collect::<Vec<_>>());
     let (checks, rules) = (list("RERAIL_REPLAY_CHECK"), list("RERAIL_REPLAY_RULE"));
@@ -962,136 +1093,51 @@ fn converted_rules_give_the_recorded_findings() {
             || checks.as_ref().is_some_and(|c| c.iter().any(|c| c == check))
             || rules.as_ref().is_some_and(|r| r.iter().any(|r| *r == format!("data-layer-{}", check.replace('_', "-"))))
     };
+    // `RERAIL_REPLAY_EVENT=<text>`: only the events whose name contains it.
+    let only_event = std::env::var("RERAIL_REPLAY_EVENT").ok();
     let shown: usize = std::env::var("RERAIL_REPLAY_MISSES").ok().map_or(40, |n| n.parse().expect("RERAIL_REPLAY_MISSES: a count"));
     let mut per_check = BTreeMap::<(&'static str, String), Row>::new();
     let mut gapped = BTreeMap::<String, BTreeSet<String>>::new();
     let (mut misses, mut config_misses) = (Vec::new(), Vec::new());
+    let (mut now, mut ran) = (Baseline::default(), BTreeSet::new());
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay");
-    for (k, event) in events().into_iter().enumerate() {
-        if !selected(&event.check) {
+    let events = events();
+    let ids = event_ids(&events);
+    for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
+        if !selected(&event.check) || only_event.as_ref().is_some_and(|e| !event.test.contains(e)) {
             continue;
         }
-        // `RERAIL_REPLAY_EVENT=<text>`: only the events whose name contains it.
-        if std::env::var("RERAIL_REPLAY_EVENT").is_ok_and(|e| !event.test.contains(&e)) {
-            continue;
-        }
+        ran.insert(id.clone());
         let row = per_check.entry((event.group, event.check.clone())).or_default();
         row.events += 1;
-        let mut skip = |reason: &str| *row.not_run.entry(reason.chars().take(120).collect()).or_default() += 1;
-        let Some(rule) = rule_file(&event.check) else {
-            skip("no rule file");
-            continue;
-        };
-        let want = match &event.want {
-            Ok(want) => want,
-            Err(reason) => {
-                skip(reason);
-                continue;
+        let outcome = replay(k, event, &root);
+        row.replayable += usize::from(!matches!(outcome, Outcome::Skipped(_)));
+        match outcome {
+            Outcome::Skipped(reason) => *row.not_run.entry(reason.chars().take(120).collect()).or_default() += 1,
+            Outcome::Gapped(gaps) => {
+                *row.not_run.entry("clauses gapped".to_owned()).or_default() += 1;
+                gapped.entry(event.check.clone()).or_default().extend(gaps);
             }
-        };
-        // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
-        // the oracle ran unconfigured (`Event::plain`).
-        let written = hand_written(&event.check);
-        let hand = written.is_some();
-        let (program, config_authored) = match written {
-            Some(_) if !event.plain => {
-                skip("configured (the hand-written rule has no options)");
-                continue;
-            }
-            Some(program) => {
-                row.replayable += 1;
-                (program, false)
-            }
-            None => {
-                let adjust = match &event.adjust {
-                    Ok(adjust) => adjust,
-                    Err(reason) => {
-                        skip(reason);
-                        continue;
-                    }
-                };
-                let c = match convert(&rule, adjust) {
-                    Ok(c) => c,
-                    Err(Failure::Config(reason)) => {
-                        skip(&reason);
-                        continue;
-                    }
-                    Err(e @ Failure::Authored(_)) => {
-                        row.replayable += 1;
-                        row.errors += 1;
-                        misses.push(format!("{} {}: error {e}", event.check, event.test));
-                        continue;
-                    }
-                };
-                row.replayable += 1;
-                let gaps: Vec<&String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id).collect();
-                if !gaps.is_empty() {
-                    *row.not_run.entry("clauses gapped".to_owned()).or_default() += 1;
-                    gapped.entry(event.check.clone()).or_default().extend(gaps.into_iter().cloned());
-                    continue;
-                }
-                let config_authored = c.configured && c.clauses.iter().any(|(_, r)| *r == Ok(Origin::Authored));
-                (c.program, config_authored)
-            }
-        };
-        row.run += 1;
-        if config_authored {
-            row.config_authored += 1;
-        }
-        let dir = root.join(format!("e{k}"));
-        write_files(&dir, event.files.iter().map(|(p, s)| (p.as_str(), s.as_str())));
-        // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
-        let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
-        let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
-        // `RERAIL_REPLAY_EXTRA=<file>`: `.rr` rules added to every replayed program, to try a change to a rule.
-        let program = match std::env::var("RERAIL_REPLAY_EXTRA") {
-            Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
-            Err(_) => program,
-        };
-        // `RERAIL_REPLAY_PROFILE=<dir>`: each event's run profiled into <dir>/e<k> (`logic::profile`), to be summed.
-        if let Ok(profiles) = std::env::var("RERAIL_REPLAY_PROFILE") {
-            crate::code_rule_dsl::logic::profile::set(true);
-            crate::code_rule_dsl::logic::profile::set_directory(&std::path::Path::new(&profiles).join(format!("e{k}")));
-        }
-        let mut got = match finding_keys(&program, &dir) {
-            Ok(got) => got,
-            Err(e) => {
+            Outcome::Error { run, error } => {
+                row.run += usize::from(run);
                 row.errors += 1;
-                misses.push(format!("{} {}: error {e}", event.check, event.test));
-                continue;
+                misses.push(format!("{} {}: error {error}", event.check, event.test));
+                now.misses.insert(id.clone(), "error".to_owned());
             }
-        };
-        for r in &show {
-            let rows = std::fs::read_to_string(dir.join(".out").join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
-            eprintln!("{} {r}:\n{rows}", event.test);
-        }
-        // Where the oracle records no code, (path, line) only.
-        let codeless = want.iter().any(|(_, _, code)| code.is_none());
-        let key = |path: &str, line: u64, code: Option<&str>| match code {
-            Some(code) if !codeless => format!("{path}:{line}:{code}"),
-            _ => format!("{path}:{line}"),
-        };
-        let mut want: Vec<String> = want.iter().map(|(p, l, c)| key(p, *l, c.as_deref())).collect();
-        // The suite plugin (a production event) drops a hand-written rule's log-mode codes.
-        if event.production && hand {
-            let log = log_codes(&event.check);
-            got.retain(|(_, _, c)| !log.contains(c));
-        }
-        let mut got: Vec<String> = got.iter().map(|(p, l, c)| key(p, *l, Some(c))).collect();
-        // Findings are a set of keys (J1): several of one clause on one line are one.
-        let n = (want.len(), got.len());
-        want.sort();
-        want.dedup();
-        got.sort();
-        got.dedup();
-        row.collapsed += usize::from(n != (want.len(), got.len()));
-        if got == want {
-            row.exact += 1;
-            row.keys_only += usize::from(event.keys_only || codeless);
-            row.config_authored_exact += usize::from(config_authored);
-        } else {
-            let miss = format!("{} {}: want {want:?} got {got:?}", event.check, event.test);
-            if config_authored { config_misses.push(miss) } else { misses.push(miss) }
+            Outcome::Run { want, got, collapsed, config_authored, keys_only } => {
+                row.run += 1;
+                row.config_authored += usize::from(config_authored);
+                row.collapsed += usize::from(collapsed);
+                if got == want {
+                    row.exact += 1;
+                    row.keys_only += usize::from(keys_only);
+                    row.config_authored_exact += usize::from(config_authored);
+                } else {
+                    let miss = format!("{} {}: want {want:?} got {got:?}", event.check, event.test);
+                    if config_authored { config_misses.push(miss) } else { misses.push(miss) }
+                    now.misses.insert(id.clone(), "miss".to_owned());
+                }
+            }
         }
     }
     let _ = std::fs::remove_dir_all(&root);
@@ -1102,6 +1148,7 @@ fn converted_rules_give_the_recorded_findings() {
         for key in [*group, "all"] {
             sums.entry(key).or_default().add(row);
         }
+        now.counts.insert(((*group).to_owned(), check.clone()), [row.events, row.replayable, row.run, row.exact, row.errors]);
     }
     for (group, sum) in &sums {
         report.push_str(&format!("total ({group}): {}\n", sum.line()));
@@ -1119,11 +1166,119 @@ fn converted_rules_give_the_recorded_findings() {
     for m in config_misses.iter().take(shown) {
         println!("{m}");
     }
-    // Per check (events, run, exact, errors) against the recorded baseline; a selection compares what it ran.
-    let counts: BTreeMap<(String, String), [usize; 4]> =
-        per_check.iter().map(|((group, check), row)| (((*group).to_owned(), check.clone()), [row.events, row.run, row.exact, row.errors])).collect();
-    let only: Option<Vec<String>> = (checks.is_some() || rules.is_some()).then(|| counts.keys().map(|(_, check)| check.clone()).collect());
-    check_baseline(&counts, only.as_deref());
+    // A selection of checks compares their counts; a selection of events, only whether each is exact.
+    let whole = checks.is_none() && rules.is_none() && only_event.is_none();
+    let counted = |key: &(String, String)| only_event.is_none() && selected(&key.1);
+    check_baseline(&now, &ran, &counted, whole);
+}
+
+/// Events per check the replay sample runs: one that finds something, one that finds nothing.
+const SAMPLED: usize = 2;
+
+/// A sample of the replay (`converted_rules_give_the_recorded_findings`, ignored for its time), run with the library's
+/// tests: per group and check, up to `SAMPLED` events the baseline records exact (`sample_check`). Each must give the
+/// oracle's findings exactly: a broken authored file, hand-written rule or converter fails here. The checks share a
+/// few threads, each keeping its own prepared programs.
+#[test]
+fn a_sample_of_the_replay_gives_the_recorded_findings() {
+    let start = std::time::Instant::now();
+    let baseline = Baseline::read().unwrap_or_else(|e| panic!("{e}"));
+    let events = events();
+    let ids = event_ids(&events);
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay-sample");
+    let _ = std::fs::remove_dir_all(&root);
+    // Per group and check, its events with findings to compare that the baseline records exact.
+    let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
+    for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
+        if event.want.is_ok() && !baseline.misses.contains_key(id) {
+            by_check.entry((event.group, &event.check)).or_default().push(k);
+        }
+    }
+    let checks = by_check.len();
+    let queue = std::sync::Mutex::new(by_check.into_iter().collect::<Vec<_>>());
+    let next = || queue.lock().expect("the sample's checks").pop();
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    // Per check: the events run, the failures, the time taken.
+    let sampled: Vec<(usize, Vec<String>, std::time::Duration, String)> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    while let Some(((group, check), ks)) = next() {
+                        let begun = std::time::Instant::now();
+                        let (run, failures) = sample_check(&events, &ids, &ks, &baseline, &root);
+                        out.push((run, failures, begun.elapsed(), format!("{group} | {check}")));
+                    }
+                    out
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().expect("a sample thread")).collect()
+    });
+    let _ = std::fs::remove_dir_all(&root);
+    let run: usize = sampled.iter().map(|(run, ..)| run).sum();
+    let failures: Vec<&str> = sampled.iter().flat_map(|(_, failures, ..)| failures.iter().map(String::as_str)).collect();
+    let mut slowest: Vec<(std::time::Duration, &str)> = sampled.iter().map(|(_, _, took, check)| (*took, check.as_str())).collect();
+    slowest.sort_by(|a, b| b.cmp(a));
+    let slowest: Vec<String> = slowest.iter().take(5).map(|(took, check)| format!("{check} {took:.1?}")).collect();
+    println!("replay sample: {run} events of {checks} checks, on {threads} threads, in {:.1?}; slowest: {}", start.elapsed(), slowest.join(", "));
+    assert!(run > 0, "the replay sample ran no event");
+    assert!(failures.is_empty(), "{} of the replay sample's {run} events do not give the recorded findings:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// The replay sample of one check, of its events `ks`: the first that finds something, then the first that finds
+/// nothing, then any that finds a code the others do not, up to `SAMPLED`, all of the first one's setting so they run
+/// one program. Gaps the baseline records (fewer events run than replayable) are not run. Returns how many events
+/// ran, and the failures.
+fn sample_check(events: &[Event], ids: &[String], ks: &[usize], baseline: &Baseline, root: &Path) -> (usize, Vec<String>) {
+    let mut programs = std::collections::HashMap::<(&str, bool), Result<Replayed, Outcome>>::new();
+    let mut setting: Option<&str> = None;
+    // The codes found (`""` where the oracle records none), and whether an event that finds nothing ran.
+    let (mut codes, mut nothing) = (BTreeSet::<&str>::new(), false);
+    let (mut run, mut failures) = (0, Vec::new());
+    for pass in ["something", "nothing", "a new code"] {
+        for &k in ks {
+            let (event, id) = (&events[k], &ids[k]);
+            let Ok(want) = &event.want else { unreachable!("the sample's events have findings to compare") };
+            if run == SAMPLED {
+                return (run, failures);
+            }
+            if setting.is_some_and(|s| s != event.setting) {
+                continue;
+            }
+            let found: BTreeSet<&str> = want.iter().map(|(_, _, code)| code.as_deref().unwrap_or_default()).collect();
+            let wanted = match pass {
+                "something" => codes.is_empty() && !found.is_empty(),
+                "nothing" => !nothing && found.is_empty(),
+                _ => !found.is_subset(&codes),
+            };
+            if !wanted {
+                continue;
+            }
+            let program = programs.entry((&event.setting, event.plain)).or_insert_with(|| replay_program(event)).clone();
+            match program.map_or_else(|outcome| outcome, |program| replay_run(k, event, &program, root)) {
+                Outcome::Skipped(_) => continue,
+                Outcome::Gapped(gaps) => {
+                    let [_, replayable, recorded_run, ..] = baseline.counts.get(&(event.group.to_owned(), event.check.clone())).copied().unwrap_or_default();
+                    if replayable > recorded_run {
+                        continue;
+                    }
+                    failures.push(format!("{id}: clauses gapped: {}", gaps.join(", ")));
+                }
+                Outcome::Error { error, .. } => failures.push(format!("{id}: error {error}")),
+                Outcome::Run { want, got, .. } => {
+                    if got != want {
+                        failures.push(format!("{id}: want {want:?} got {got:?}"));
+                    }
+                }
+            }
+            run += 1;
+            setting = Some(&event.setting);
+            nothing |= found.is_empty();
+            codes.extend(found);
+        }
+    }
+    (run, failures)
 }
 
 /// Writes `files` (path, source) under `dir`, which is made though there are none (an event of no files is an empty
@@ -1406,7 +1561,7 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
     assert!(gated.clauses.iter().all(|(c, r)| c == "usage-0" || r.is_err()), "{:?}", gated.clauses);
     assert_eq!(findings(&gated.program, &run).unwrap(), Vec::<String>::new());
     // As the escape-hatch analyzer calls run it, without the gate: the declaration and no row.
-    let drop: Box<dyn Fn(&mut Json) -> Result<bool, String>> = Box::new(|document| {
+    let drop: Box<dyn Fn(&mut Json) -> Result<bool, String> + Send + Sync> = Box::new(|document| {
         for clause in document["clauses"].as_array_mut().unwrap() {
             if let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) {
                 define.remove("report_when");
@@ -1461,7 +1616,7 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     assert!(!defaults.program.contains(r#"option_on("oracleAnalyzer")."#), "{}", defaults.program);
     assert_eq!(tests(&defaults.program, "defaults"), Vec::<String>::new());
     // As an analyzer event configures it: `oracleAnalyzer` on, the category one name.
-    let configure: Box<dyn Fn(&mut Json) -> Result<bool, String>> = Box::new(|document| {
+    let configure: Box<dyn Fn(&mut Json) -> Result<bool, String> + Send + Sync> = Box::new(|document| {
         for clause in document["clauses"].as_array_mut().unwrap() {
             let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
             if define.get("options").is_some_and(|o| o.get("oracleAnalyzer").is_some()) {
@@ -1483,46 +1638,136 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The replay's recorded result per check (`replay_baseline.txt`): `<group> | <check> | events converted exact
-/// errors`. A check may not convert fewer events, give fewer exact, or more errors than recorded; a better result
-/// is printed, and `RERAIL_REPLAY_BLESS=1` records it. With `RERAIL_REPLAY_CHECK`, only those checks compare.
-fn check_baseline(per_check: &BTreeMap<(String, String), [usize; 4]>, only: Option<&[String]>) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt");
-    let row = |line: &str| -> Option<((String, String), [usize; 4])> {
-        let mut parts = line.split(" | ");
-        let (group, check, numbers) = (parts.next()?, parts.next()?, parts.next()?);
-        let n: Vec<usize> = numbers.split_whitespace().map(|n| n.parse().ok()).collect::<Option<_>>()?;
-        Some(((group.to_owned(), check.to_owned()), n.try_into().ok()?))
-    };
-    let recorded: BTreeMap<_, _> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| !l.starts_with('#')).filter_map(row).collect();
-    if std::env::var_os("RERAIL_REPLAY_BLESS").is_some() {
-        assert!(only.is_none() && std::env::var_os("RERAIL_REPLAY_EVENT").is_none(), "bless the whole replay only");
-        let mut text = String::from("# converted_rules_give_the_recorded_findings, per check: events converted exact errors\n");
-        for ((group, check), r) in per_check {
-            text.push_str(&format!("{group} | {check} | {} {} {} {}\n", r[0], r[1], r[2], r[3]));
+/// The replay's recorded result (`replay_baseline.txt`): per group and check, `count | <group> | <check> | events
+/// replayable run exact errors`; then each replayable event that is not exact (`event_ids`), `miss | <event>` (it
+/// ran and gave other findings) or `error | <event>`.
+#[derive(Default)]
+struct Baseline {
+    counts: BTreeMap<(String, String), [usize; 5]>,
+    /// Event → `miss` or `error`.
+    misses: BTreeMap<String, String>,
+}
+
+impl Baseline {
+    fn path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+    }
+
+    /// The recorded baseline, or why it does not read.
+    fn read() -> Result<Baseline, String> {
+        let path = Baseline::path();
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut out = Baseline::default();
+        for line in text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+            let bad = || format!("{}: not a baseline line: {line}", path.display());
+            match line.split_once(" | ") {
+                Some(("count", rest)) => {
+                    let mut parts = rest.splitn(3, " | ");
+                    let (Some(group), Some(check), Some(numbers)) = (parts.next(), parts.next(), parts.next()) else { return Err(bad()) };
+                    let numbers: Vec<usize> = numbers.split_whitespace().map(str::parse).collect::<Result<_, _>>().map_err(|_| bad())?;
+                    out.counts.insert((group.to_owned(), check.to_owned()), numbers.try_into().map_err(|_| bad())?);
+                }
+                Some((kind @ ("miss" | "error"), event)) => {
+                    out.misses.insert(event.to_owned(), kind.to_owned());
+                }
+                _ => return Err(bad()),
+            }
         }
-        std::fs::write(&path, text).unwrap();
+        if out.counts.is_empty() {
+            return Err(format!("{}: no counts", path.display()));
+        }
+        Ok(out)
+    }
+
+    fn text(&self) -> String {
+        let mut text = String::from(
+            "# converted_rules_give_the_recorded_findings (RERAIL_REPLAY_BLESS=1 writes this): per group and check,\n\
+             # `count | <group> | <check> | events replayable run exact errors`; then each replayable event that is not\n\
+             # exact, `miss | <event>` or `error | <event>`, an event `<group> | <check> | <n> | <test>`.\n",
+        );
+        for ((group, check), n) in &self.counts {
+            text.push_str(&format!("count | {group} | {check} | {} {} {} {} {}\n", n[0], n[1], n[2], n[3], n[4]));
+        }
+        for (event, kind) in &self.misses {
+            text.push_str(&format!("{kind} | {event}\n"));
+        }
+        text
+    }
+
+    /// How `now` differs from this, as (worse, better): the counts of the checks `counted` selects, where fewer of
+    /// any or more errors is worse, and whether each event `ran` is exact; with the `whole` replay, a recorded event
+    /// that is no more is better.
+    fn diff(&self, now: &Baseline, ran: &BTreeSet<String>, counted: &dyn Fn(&(String, String)) -> bool, whole: bool) -> (Vec<String>, Vec<String>) {
+        let line = |n: &[usize; 5]| format!("events {}, replayable {}, run {}, exact {}, errors {}", n[0], n[1], n[2], n[3], n[4]);
+        let (mut worse, mut better) = (Vec::new(), Vec::new());
+        let keys: BTreeSet<&(String, String)> = self.counts.keys().chain(now.counts.keys()).filter(|k| counted(k)).collect();
+        for key in keys {
+            let name = format!("{} | {}", key.0, key.1);
+            match (self.counts.get(key), now.counts.get(key)) {
+                (Some(was), Some(is)) if was != is => {
+                    let lost = (0..5).any(|i| if i == 4 { is[i] > was[i] } else { is[i] < was[i] });
+                    let text = format!("{name}: {} (recorded {})", line(is), line(was));
+                    if lost { worse.push(text) } else { better.push(text) }
+                }
+                (Some(was), None) => worse.push(format!("{name}: not replayed (recorded {})", line(was))),
+                (None, Some(is)) => better.push(format!("{name}: {} (not recorded)", line(is))),
+                _ => {}
+            }
+        }
+        for event in ran {
+            match (self.misses.get(event), now.misses.get(event)) {
+                (None, Some(is)) => worse.push(format!("{is} (recorded exact): {event}")),
+                (Some(was), None) => better.push(format!("exact (recorded {was}): {event}")),
+                (Some(was), Some(is)) if was != is => {
+                    let text = format!("{is} (recorded {was}): {event}");
+                    if is == "error" { worse.push(text) } else { better.push(text) }
+                }
+                _ => {}
+            }
+        }
+        if whole {
+            better.extend(self.misses.iter().filter(|(event, _)| !ran.contains(*event)).map(|(event, was)| format!("no such event (recorded {was}): {event}")));
+        }
+        (worse, better)
+    }
+}
+
+/// The replay's result against its baseline (`Baseline`): any difference fails, worse or better, so the baseline is
+/// the result and a later loss shows. `RERAIL_REPLAY_BLESS=1` records the whole replay's result instead, printing
+/// how it differs. A selection (`ran`, `counted`, not `whole`) compares what it ran.
+fn check_baseline(now: &Baseline, ran: &BTreeSet<String>, counted: &dyn Fn(&(String, String)) -> bool, whole: bool) {
+    let path = Baseline::path();
+    let bless = std::env::var_os("RERAIL_REPLAY_BLESS").is_some();
+    let recorded = match Baseline::read() {
+        Ok(recorded) => recorded,
+        Err(e) if bless => {
+            println!("the recorded baseline does not read ({e}): blessing anew");
+            Baseline::default()
+        }
+        Err(e) => panic!("{e}"),
+    };
+    let (worse, better) = recorded.diff(now, ran, counted, whole);
+    if bless {
+        let exploring = ["RERAIL_REPLAY_EXTRA", "RERAIL_REPLAY_CONVERTED", "RERAIL_REPLAY_HAND_WRITTEN", "RERAIL_HAND_DIR"];
+        assert!(whole && exploring.iter().all(|v| std::env::var_os(v).is_none()), "bless the whole replay as it is: no selection, and none of {exploring:?}");
+        for (what, lines) in [("worse", &worse), ("better", &better)] {
+            for l in lines {
+                println!("blessed, {what} than recorded: {l}");
+            }
+        }
+        std::fs::write(&path, now.text()).unwrap();
         return;
     }
-    let mut worse = Vec::new();
-    for (key, want) in &recorded {
-        if only.is_some_and(|o| !o.contains(&key.1)) {
-            continue;
-        }
-        let got = per_check.get(key).copied().unwrap_or_default();
-        if got[1] < want[1] || got[2] < want[2] || got[3] > want[3] {
-            worse.push(format!("{} {}: {:?} (recorded {want:?})", key.0, key.1, got));
-        } else if got != *want {
-            println!("better than recorded: {} {}: {got:?} (recorded {want:?}); RERAIL_REPLAY_BLESS=1 records it", key.0, key.1);
-        }
-    }
-    for (key, got) in per_check {
-        if !recorded.contains_key(key) {
-            println!("not recorded: {} {}: {got:?}", key.0, key.1);
-        }
-    }
-    assert!(!recorded.is_empty(), "no replay baseline at {}", path.display());
-    assert!(worse.is_empty(), "worse than the replay baseline:\n{}", worse.join("\n"));
+    let list = |lines: &[String]| lines.iter().map(|l| format!("  {l}\n")).collect::<String>();
+    assert!(
+        worse.is_empty() && better.is_empty(),
+        "the replay differs from {}: {} worse, {} better. Fix what is worse; once it is right, RERAIL_REPLAY_BLESS=1 records the result.\nworse:\n{}better:\n{}",
+        path.display(),
+        worse.len(),
+        better.len(),
+        list(&worse),
+        list(&better)
+    );
 }
 
 /// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
