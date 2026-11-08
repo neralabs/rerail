@@ -1875,6 +1875,11 @@
           "reason": "Preserve CLI directory semantics, parsed module membership, and dense filtered report positions"
         }
       ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
+      "origin": "authored",
+      "sha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69"
     }
   ],
   "rules": [
@@ -2396,8 +2401,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-raw-execute-regression.json",
       "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
+      "ruleSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69"
     },
     {
       "check": "legacy_execution_surfaces",

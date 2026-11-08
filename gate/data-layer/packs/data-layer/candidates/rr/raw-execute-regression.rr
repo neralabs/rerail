@@ -1,0 +1,18 @@
+.policy "data-layer-raw-execute-regression" revision 1
+.description "Port of the pinned raw-execute-regression linter."
+.language python
+.mode block
+.scope include "**/*.py"
+.scope exclude
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_raw_execute_regression.py
+#include "python/ast.rr"
+
+.decl rre_relative(path: symbol, root: symbol, relative: symbol)
+rre_relative(path,root,@slice(path,strlen(root)+1,strlen(path))) :- option("argumentPath",path), option("argumentRoot",root), prefix(cat(root,"/"),path).
+rre_relative(path,path,".") :- option("argumentPath",path), option("argumentRoot",path).
+.violation RREValue(at: span, value: symbol) code "RRE_VALUE" "value"
+RREValue(@place("",0),relative) :- option("entryPoint","_relative"), rre_relative(_,_,relative).
+.violation RREError(at: span, value: symbol) code "RRE_ERROR" "{value}"
+RREError(@place("",0),cat(@python_repr(path)," is not in the subpath of ",@python_repr(root))) :- option("entryPoint","_relative"), option("argumentPath",path), option("argumentRoot",root), !rre_relative(path,root,_).
+.violation RREString(at: span, file_order: number, ordinal: number, value: symbol) code "RRE_STRING" "{value}"
+RREString(@place("",0),0,0,"") :- option("entryPoint",_), 1 = 0.
