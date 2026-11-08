@@ -237,14 +237,8 @@ def verify(root):
 
 
 def verify_engine_alignment(root, source):
-    """Reject a detached engine or native edits outside the reviewed modern extensions."""
-    if source.get('checkout') != '.':
-        raise ValueError('Build and develop the engine in the repository root')
-    upstream = source['upstreamCommit']
-    try:
-        git(root, 'merge-base', '--is-ancestor', upstream, 'HEAD')
-    except subprocess.CalledProcessError as error:
-        raise ValueError('The engine does not include the adopted Final shape commit') from error
+    """Audit the live Final tips when adopting or registering an engine cohort."""
+    verify_engine_snapshot(root, source)
     # Check both the sibling and the fetched remote. A stale local branch must
     # not hide an upstream resolution that is already available in this clone.
     if branch := source.get('upstreamBranch'):
@@ -264,6 +258,17 @@ def verify_engine_alignment(root, source):
             except subprocess.CalledProcessError as error:
                 raise ValueError(f'Merge the newer {location} Final shape before migration acceptance') from error
             checked.add(current)
+
+
+def verify_engine_snapshot(root, source):
+    """Reject a detached engine or native edits outside the reviewed modern extensions."""
+    if source.get('checkout') != '.':
+        raise ValueError('Build and develop the engine in the repository root')
+    upstream = source['upstreamCommit']
+    try:
+        git(root, 'merge-base', '--is-ancestor', upstream, 'HEAD')
+    except subprocess.CalledProcessError as error:
+        raise ValueError('The engine does not include the adopted Final shape commit') from error
     reviewed = {item['path']: item['sha256'] for item in source['nativeExtensions']}
     for name in reviewed:
         if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)
@@ -303,15 +308,15 @@ def verify_engine_artifact(root, source, engine):
 
 
 def verify_source_cohort(root, source):
-    """Audit live sibling tips once per process and adopted source identity.
+    """Audit a registered source snapshot once per process and adopted identity.
 
     Another worktree can advance while an immutable acceptance cohort runs.
     Every execution still checks the actual source trees and binary artifact.
-    A new process or adoption always performs the live-tip audit again.
+    Adoption and artifact registration audit live tips. Shards share that cohort.
     """
     key = (str(root), sha(json.dumps(source, sort_keys=True).encode()))
     if key not in _SOURCE_COHORTS:
-        verify_engine_alignment(root, source)
+        verify_engine_snapshot(root, source)
         _SOURCE_COHORTS.add(key)
 
 

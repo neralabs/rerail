@@ -27,18 +27,18 @@ class EngineAlignmentTests(unittest.TestCase):
                 migration.verify_engine_artifact(root,source,binary)
                 live.assert_not_called()
 
-    def test_live_tip_audit_repeats_at_new_process_or_adoption_boundaries(self):
+    def test_source_snapshot_audit_repeats_at_new_process_or_adoption_boundaries(self):
         source=dict(checkout='.',upstreamCommit='adopted')
-        with patch.object(migration,'verify_engine_alignment') as audit:
+        with patch.object(migration,'verify_engine_snapshot') as audit:
             migration.verify_source_cohort(Path('/fixture'),source)
-            audit.side_effect=ValueError('Final advanced')
+            audit.side_effect=ValueError('source changed')
             migration.verify_source_cohort(Path('/fixture'),source)
             self.assertEqual(audit.call_count,1)
-            with self.assertRaisesRegex(ValueError,'Final advanced'):
+            with self.assertRaisesRegex(ValueError,'source changed'):
                 migration.verify_source_cohort(Path('/fixture'),dict(source,upstreamCommit='next'))
         migration._SOURCE_COHORTS.clear()
-        with patch.object(migration,'verify_engine_alignment',side_effect=ValueError('Final advanced')):
-            with self.assertRaisesRegex(ValueError,'Final advanced'):
+        with patch.object(migration,'verify_engine_snapshot',side_effect=ValueError('source changed')):
+            with self.assertRaisesRegex(ValueError,'source changed'):
                 migration.verify_source_cohort(Path('/fixture'),source)
 
     def artifact(self,root):
@@ -87,7 +87,7 @@ class EngineAlignmentTests(unittest.TestCase):
         for boundary in ['direct','worker']:
             with self.subTest(boundary=boundary), \
                  patch.object(migration,'read_json',return_value=dict(engineSource={})), \
-                 patch.object(migration,'verify_engine_alignment'), \
+                 patch.object(migration,'verify_source_cohort'), \
                  patch.object(migration,'verify_engine_artifact',side_effect=ValueError('stale binary')), \
                  patch.object(replay.subprocess,'run') as direct,patch.object(suite.subprocess,'Popen') as worker:
                 with self.assertRaisesRegex(ValueError,'stale binary'):
@@ -172,7 +172,7 @@ class EngineAlignmentTests(unittest.TestCase):
         import suite
         manifest = dict(engineSource=dict(checkout='.'))
         with patch.object(migration, 'read_json', return_value=manifest), \
-                patch.object(migration, 'verify_engine_alignment', side_effect=ValueError('outdated engine')) as audit, \
+                patch.object(migration, 'verify_engine_snapshot', side_effect=ValueError('outdated engine')) as audit, \
                 patch.object(suite.subprocess, 'Popen') as worker:
             with self.assertRaisesRegex(ValueError, 'outdated engine'):
                 suite.Suite(Path('/source'), Path('/engine'), [], 0, 1, Path('/baseline'))
@@ -190,7 +190,7 @@ class EngineAlignmentTests(unittest.TestCase):
                 binary.write_bytes(b'identical bytes do not make this the active checkout')
                 with patch.object(suite, 'ROOT', root), \
                         patch.object(migration, 'read_json', return_value=dict(engineSource={})), \
-                        patch.object(migration, 'verify_engine_alignment'), \
+                        patch.object(migration, 'verify_source_cohort'), \
                         patch.object(suite.subprocess, 'Popen') as worker:
                     with self.assertRaisesRegex(ValueError, 'retired engine'):
                         suite.Suite(Path('/source'), binary, [], 0, 1, Path('/baseline'))
@@ -242,7 +242,7 @@ class EngineAlignmentTests(unittest.TestCase):
     def test_direct_native_execution_checks_alignment_before_starting_a_process(self):
         manifest=dict(engineSource=dict(checkout='.'))
         with patch.object(migration,'read_json',return_value=manifest), \
-                patch.object(migration,'verify_engine_alignment',side_effect=ValueError('outdated engine')) as audit, \
+                patch.object(migration,'verify_engine_snapshot',side_effect=ValueError('outdated engine')) as audit, \
                 patch.object(replay.subprocess,'run') as process:
             with self.assertRaisesRegex(ValueError,'outdated engine'):
                 replay.execute_native(Path('/engine'),Path('/policy.rr'),[],{})
@@ -252,7 +252,7 @@ class EngineAlignmentTests(unittest.TestCase):
     def test_direct_native_execution_rejects_both_retired_engine_locations(self):
         for retired in ['.rerail/rr-migration-20261106/engine','.rerail/data-layer-batch-seven/engine-source']:
             with self.subTest(retired=retired), \
-                    patch.object(migration,'verify_engine_alignment'), \
+                    patch.object(migration,'verify_source_cohort'), \
                     patch.object(replay.subprocess,'run') as process:
                 with self.assertRaisesRegex(ValueError,'retired engine'):
                     replay.execute_native(replay.ROOT/retired/'target/debug/rerail-engine',Path('/policy.rr'),[],{})

@@ -349,11 +349,15 @@ def main():
         evidence['caseSelection']=dict(part=args.part,parts=args.parts,total=len(baseline['cases']))
         evidence['baselineSha256'] = sha(args.baseline.read_bytes())
         evidence['engineSha256'] = sha(args.engine.read_bytes())
+        evidence.update(complete=False,passed=False)
+        write_json(args.output,evidence)
         for case in baseline['cases'][args.part::args.parts]:
             native = execute_native(args.engine, args.rule, case['files'], {})
             rows = native_rows(native['diagnostics'])
             evidence['cases'].append(dict(id=case['id'], expected=case['expected'], actual=rows,
                                           passed=rows == case['expected'], programInputs=native['programInputs']))
+            write_json(args.output,evidence)
+    evidence['complete']=True
     evidence['passed'] = all(c.get('passed', True) for c in evidence['cases'])
     write_json(args.output, evidence)
     print(json.dumps(dict(cases=len(evidence['cases']), passed=evidence['passed'],

@@ -136,11 +136,14 @@ def main():
         if baseline['format']!=result['format'] or baseline['sourcePin']!=PIN:p.error('Wrong source recording identity')
         if [{k:c[k] for k in ['id','files','extraRoots','excludedPaths']} for c in baseline['cases']]!=CASES:p.error('Require the complete current source corpus')
         check_positives(baseline['cases'])
-        result.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()),caseSelection=dict(part=args.part,parts=args.parts,total=len(CASES)))
+        result.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()),caseSelection=dict(part=args.part,parts=args.parts,total=len(CASES)),complete=False,passed=False)
+        write_json(args.output,result)
         for case in baseline['cases'][args.part::args.parts]:
             native=execute_native(args.engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr/internal-dead-code.rr',case['files'],dict(entryPoint='analyze_dead_code',extraRoots=case['extraRoots'],excludedPaths=case['excludedPaths']))
             actual=native_result(native['diagnostics'])
             result['cases'].append(dict(id=case['id'],expected=case['expected'],actual=actual,passed=same_result(case['expected'],actual),programInputs=native['programInputs']))
+            write_json(args.output,result)
+    result['complete']=True
     result['passed']=all(c.get('passed',True) for c in result['cases'])
     write_json(args.output,result)
     print(json.dumps(dict(cases=len(result['cases']),passed=result['passed'],failures=[c['id'] for c in result['cases'] if not c.get('passed',True)])))

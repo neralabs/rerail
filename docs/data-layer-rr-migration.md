@@ -62,9 +62,10 @@ Boolean operand formatting also follows CPython: each operand increases the requ
 The manifest records all 27 extension files, including the dependency lock, typed shard-column mapping, and generic BFS operator, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
-At process start, the audit checks both the local Final shape branch and its fetched remote tip.
-A new acceptance cohort requires those commits in this branch. A running cohort retains its adopted snapshot when another worktree advances.
-Native assertion suites run that audit before they start an execution worker. Source-tree and binary checks continue on every execution.
+Adoption and artifact registration audit the local Final shape branch and its fetched remote tip.
+An acceptance cohort is the registered source/binary pair, including all bounded shard processes.
+Each shard checks that source snapshot before it starts. Source-tree and binary checks continue on every execution.
+Another worktree can advance during a cohort. Merge those updates between cohorts; do not relabel earlier results as newer-engine acceptance.
 They also reject binaries inside either retired engine checkout.
 New compatibility work must extend this engine and its shared libraries. It must not restore an older executor or scheduler.
 The shared Python shape projection is Datalog over the existing tape; it adds no parser or execution engine.
@@ -1782,3 +1783,37 @@ A new process or changed adoption performs the strict audit again.
 Every execution still checks committed source trees, binary ancestry, and executable bytes.
 Thus a running cohort can finish without accepting an older binary for a newer source tree.
 This change introduces no execution mode or production configuration flag.
+
+### 2026-11-08 — Complete source acceptance on Final 79fabb23d
+
+The next merge adopts Final `79fabb23d`. Its root CLI builds in 64.413 seconds, with hash prefix `54acc7f2c0548877`.
+The standard native test executable builds in 160.897 seconds, with hash prefix `cc29a8b0b1700569`.
+Compilation remains separate from test execution. Both binaries use source `8c690b90f` and the same native tree.
+
+The larger analysis shards reach the 115-second command limit. Two producer shards also reach that limit.
+Commit `2f2b07162` first exposes the lost-progress problem through failing tests.
+The harness now writes every completed case while retaining `complete: false` and `passed: false` until its shard finishes.
+Interrupted prefixes cannot certify a completed shard.
+Smaller disjoint shards finish within the limit. No corpus case or expected field is excluded.
+
+All 130 source analyses and all 106 complete producer comparisons pass on this registered CLI.
+The evidence validator checks exact case-ID coverage, uniqueness, source-record hashes, executable hashes, and consumed program bytes.
+All four original assertions, thirty-six supplied-graph cases, and twelve raw-graph helper cases also pass.
+All forty mutation controls pass, including explicit refusal when a mixin-equivalence proof fails.
+Four BFS tests, the projected-extrema test, and the canonical annotation-printer test pass on the current native test executable.
+All one hundred policy readers pass. The tooling suite passes 122 tests and sixty-four subtests.
+
+Final advances between shard processes. A per-process live-tip gate still interrupts a shared acceptance cohort.
+Commit `edd9faef3` exposes that remaining boundary error.
+Live-tip audits now occur at adoption and artifact registration. Shards verify the registered snapshot and binary on each execution.
+The cohort therefore spans bounded processes without changing its source, executable, or rule programs.
+No production configuration flag is necessary.
+
+The [Final-79 acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-final79-acceptance.json.gz) retains full results, controls, build identities, and consumed programs.
+These results certify that checkpoint, not later Final commits. Rule 89 still needs discovery, production reporting, and lifecycle acceptance.
+The inventory remains eighty-nine drafts and eleven absent translations.
+
+A scope probe initially collides with the built-in `loaded` relation because its violation is named `Loaded`.
+Renaming the probe removes that collision. It does not justify a missing-feature ticket.
+The API replay transport also supplies `inputFiles`, which deliberately bypasses discovery scope.
+Production-scope acceptance needs a workspace runner without that explicit input batch.
