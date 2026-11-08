@@ -39,6 +39,7 @@ It takes text values, with no AST traversal or Python execution.
 The `annotation_constant_repr` relation supplies non-string literal values within annotations, including nested literals.
 It shares the existing demanded native AST pass and excludes literals outside annotations.
 Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
+Boolean operand formatting also follows CPython: each operand increases the required precedence, with saturation at `ATOM`.
 The manifest records all 21 extension files, including the dependency lock and typed shard-column mapping, with exact hashes.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
@@ -87,7 +88,12 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **82 target drafts and 18 absent translations**. None has full acceptance yet.
+The current inventory contains **83 target drafts and 17 absent translations**. None has full acceptance yet.
+The 83rd draft, `grammar_render_methods`, preserves render context, exemptions, source fragments, event order, and first-event deduplication.
+All 114 unchanged original tests pass with 101 complete observations, including 22 positive file checks.
+Its 124 supplemental API cases include 58 positive finding lists and 38 canonical source comparisons.
+All 78 reporter cases pass, including 55 positive cases. Fourteen disabled-path controls fail as required.
+Caller-supplied AST text uses unchanged parsed source as argument transport. Constructed or changed ASTs still need a structured-value adapter.
 The 82nd draft, `sql_grammar_escape_hatches`, preserves class inheritance, subsequent alias propagation, unsafe parameter types, lexical usages, deduplication, and the signed ceiling.
 All 165 unchanged original tests pass with 134 complete observations, including visitor state, captured output, and 21 positive file checks.
 Its 65 supplemental API cases include 39 positive results. All 17 reporter cases pass, including eight positives above the ceiling.
@@ -944,3 +950,46 @@ The receipt retains the full failure. This audit makes no claim that the full en
 
 The [alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-07a6-alignment-audit.json.gz) records the branch comparison, build provenance, test commands, and results.
 The inventory remains 82 drafts and 18 absent translations. Full migration acceptance remains pending.
+
+## 2026-11-08 — Grammar render-method detector and original assertions
+
+The new native rule executes the collector's class and function context in Datalog.
+Nested helpers retain render context. Legacy class exemptions and static-call exemptions remain separate.
+Call-name matching preserves the source's different handling of one attribute and deeper attribute chains.
+Diagnostics retain original source fragments, visit order, and first-event deduplication.
+Default plugin scope, test exclusions, codes, messages, and error severity match the source reporter.
+
+The first native detector run failed all 22 positive file checks and passed the other 20 file checks.
+The implemented detector passes those 42 cases. The full suite passes all 114 original cases without skips.
+The 101 full observations include helper values, receiver state, exceptions, stdout, and stderr.
+Twenty-one recorded calls retain the host CLI or malformed/missing signing-key protocol.
+No real private key is read or used. The rules invoke no Python.
+
+The supplemental run passes 124 API cases, including 58 positive finding lists and 38 canonical expression comparisons.
+It also passes 78 reporter cases, including 55 positive cases.
+All 14 controls reject disabled detector paths, inherited context, exemptions, source spans, ordering, allowlists, source triggers, and native formatting.
+
+Canonical AST arguments use their recorded raw source. The native printer supplies the canonical result.
+The transport performs no `ast.unparse` call. It rejects constructed or changed trees instead of guessing source.
+Those helper input domains remain unsupported. The original suite does not exercise every legacy visitor event or fact-object helper.
+This evidence does not close those broader API contracts or the global migration gates.
+
+The extra expression cases exposed a shared printer defect after the original suite passed.
+CPython prints `a or b and c` as `a or (b and c)`.
+It increases the required precedence for each Boolean operand, including later unary and comparison expressions.
+The shared printer now follows that rule. Thirteen additional source vectors cover nested operands and precedence saturation.
+The native printer regression failed before the repair and passes after it. No second engine or runtime flag was added.
+
+The frozen root CLI and unit builds record source commit `26e694e62`.
+Compilation took 14.745 seconds for the CLI and 27.747 seconds for the unit binary.
+The five focused native unit tests pass without ignored cases. All 95 tooling tests and 94 rule/table readers pass.
+The previous escape-hatch suite also passes all 165 original tests on this engine.
+The full engine suite remains unverified, with the preceding prepared-program roundtrip failure still recorded.
+
+The [native contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-render-methods-native-contracts.json.gz) contains the source oracles, native results, controls, builds, and validator.
+The earlier receipts retain the [empty-detector failures](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-render-methods-detector-red.json.gz),
+[AST-text failure](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-render-methods-ast-text-red.json.gz),
+and [Boolean printer regression](../gate/data-layer/fixtures/host/data-layer-port/rr-grammar-render-methods-boolean-format-red.json.gz).
+
+Final shape remains merged through `07a6b4171`; its fetched branch did not advance during this work.
+The inventory is 83 drafts and 17 absent translations. Full migration acceptance remains pending.
