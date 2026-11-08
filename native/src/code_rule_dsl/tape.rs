@@ -1500,7 +1500,7 @@ impl TapeImage {
         })
     }
 
-    /// The image of columns a tape writer wrote (tier 2's compiled words, decision 0080): the
+    /// The image of columns a tape writer wrote (tier 2's compiled words, decision 0088): the
     /// node columns as they are stored, at their widths (`widths`: size, off, tail and its
     /// `TAIL_FROM_START` flag), and the codes in first-use order, each a `kf` and its supertype
     /// classes, ascending. Nothing per node is done here: the writer packed the columns.

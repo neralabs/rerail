@@ -17,7 +17,7 @@
 //!   coverage and overlap checks.
 //! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): the grammar's state
 //!   machine (`grammar`), with grammar ids from `Symbols`, lowered to tier 2's words
-//!   (`bitlex_tier2`, decision 0079); tier 1 outputs the stream they read, two extracts.
+//!   (`bitlex_tier2`, decision 0087); tier 1 outputs the stream they read, two extracts.
 //! - **Errors and escapes.** Each mask joins the fallback output (`FALLBACK`); a file with a bit
 //!   of it goes to tree-sitter.
 //!
@@ -64,7 +64,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) rows: String,
-    /// Tier 2's words (decision 0079), with their strings and switches; `0000 STOP 0` without a
+    /// Tier 2's words (decision 0087), with their strings and switches; `0000 STOP 0` without a
     /// tree section.
     pub(super) words: String,
     /// The tree section's state machine as text (`grammar::text`), which the words are lowered from.
@@ -91,7 +91,7 @@ pub(in crate::code_rule_dsl) struct Symbols<'a> {
     pub(super) field: &'a dyn Fn(&str) -> Option<u16>,
 }
 
-/// The output names of the stream tier 2 reads (decision 0079): every token's first byte, and
+/// The output names of the stream tier 2 reads (decision 0087): every token's first byte, and
 /// the last byte of each token whose arm reads it.
 pub(in crate::code_rule_dsl) const STREAM_START: &str = "stream start";
 pub(in crate::code_rule_dsl) const STREAM_LAST: &str = "stream last";
@@ -196,7 +196,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     }
     low.stmts(stmts)?;
     let token_rows = low.tokens()?;
-    // The tree section: its state machine, its checks and tier 2's words (decision 0079), before
+    // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
     let has_tree = !low.tree.is_empty();
     let mut tier2: Option<(String, Vec<CheckRow>, String, Vec<bool>)> = None;

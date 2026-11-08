@@ -296,9 +296,9 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     tree_rows(out, at, block);
 }
 
-/// Block program `at`'s token checks (decision 0078): `block N check C`, then its program's
+/// Block program `at`'s token checks (decision 0086): `block N check C`, then its program's
 /// tables, operations (`%i = op`), `fail %v` and `delay D`. Tier 2 itself is the program's
-/// words (decision 0079).
+/// words (decision 0087).
 pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     // A check: its straight-line program over the token's window, as a block program's rows.
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -1112,7 +1112,7 @@ fn switch_target(t: u16) -> String {
     if t == stream::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
 }
 
-/// Switch table `at` (decision 0079): `switch N at OFFSET end TARGET`, then a row per run of
+/// Switch table `at` (decision 0087): `switch N at OFFSET end TARGET`, then a row per run of
 /// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
 pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
     let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));

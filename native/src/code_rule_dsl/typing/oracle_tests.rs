@@ -1019,3 +1019,68 @@ fn benchmark_python_calls_program_corpus() {
         }
     }
 }
+
+/// O125 (decision 0083, spike 1): delete-and-rederive on calls.rr's cross-file fixpoint. A session (0077) keeps the
+/// cross-file part; each edit (`RERAIL_SPIKE_EDITS`: E1 append to exceptions.py, E2 a comment at its top, E3 a
+/// statement in an early body of lazy_reads.py) is run through the session, then without it, and the outputs are
+/// compared. `RERAIL_SPIKE_DELTA` prints the rows overdeleted and put back per relation.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_o125_a_session_maintains_calls_rr() {
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("o125");
+    let out = base.join("out");
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let dump = || -> BTreeMap<String, Vec<String>> {
+        let mut all = BTreeMap::new();
+        for e in std::fs::read_dir(&out).unwrap().flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "csv") {
+                let mut lines: Vec<String> = std::fs::read_to_string(&p).unwrap().lines().map(str::to_owned).collect();
+                lines.sort();
+                all.insert(p.file_name().unwrap().to_string_lossy().into_owned(), lines);
+            }
+        }
+        all
+    };
+    let cpu = |r: &corpus::Report, phase: Option<&str>| -> f64 { r.phases.iter().filter(|p| phase.is_none_or(|n| p.0 == n)).map(|p| p.1 + p.2).sum() };
+    let rss = |r: &corpus::Report| r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+    let show = |what: &str, r: &corpus::Report| {
+        println!("O125 {what}: {:.1} s CPU (main thread), cross {:.1} s, peak RSS {:.0} MB; strata {:?}, maintained {:?}", cpu(r, None), cpu(r, Some("cross")), rss(r), r.cross_strata, r.cross_maintained);
+    };
+    session::start(&base.join("session")).unwrap();
+    let primed = run();
+    show("prime (session, cold cross part)", &primed);
+    let again = run();
+    show("unchanged (session)", &again);
+    let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
+    for edit in edits.split(',') {
+        let (file, change): (&str, fn(&str) -> String) = match edit {
+            "E1" => ("l1100_exceptions/exceptions.py", |s| format!("{s}\n\ndef _o125_probe() -> None:\n    pass\n")),
+            "E2" => ("l1100_exceptions/exceptions.py", |s| format!("# o125\n{s}")),
+            "E3" => ("l2055_lazy_result/lazy_reads.py", |s| {
+                let mut lines: Vec<&str> = s.lines().collect();
+                let at = lines.iter().position(|l| l.starts_with("def _lazy_result_to_seq")).unwrap();
+                lines.insert(at + 1, "    _o125 = 1");
+                lines.join("\n") + "\n"
+            }),
+            other => panic!("unknown edit {other}"),
+        };
+        let path = root.join(file);
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, change(&before)).unwrap();
+        let maintained = run();
+        show(&format!("{edit} (session, maintained)"), &maintained);
+        let kept = dump();
+        let full = session::full(run);
+        show(&format!("{edit} (no session, cross part derived)"), &full);
+        let derived = dump();
+        let differ: Vec<&String> = derived.keys().filter(|k| kept.get(*k) != derived.get(*k)).collect();
+        println!("O125 {edit}: outputs {}", if differ.is_empty() { "equal".to_owned() } else { format!("DIFFER in {differ:?}") });
+    }
+    session::stop();
+    let _ = std::fs::remove_dir_all(&base);
+}

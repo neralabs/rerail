@@ -1,4 +1,4 @@
-# 0078: A token's syntax is checked in tier 2, as simdjson's stage 2 parses a number
+# 0086: A token's syntax is checked in tier 2, as simdjson's stage 2 parses a number
 
 Status: accepted (user, 2026-11-07: "keep it as close to simdjson as possible").
 
@@ -14,7 +14,7 @@ operations to 95, its loop from 178 instructions to 450, and its carried state f
 
 - **0071 (two tiers):** validators per token, in tier 2. **Agrees;** this restores it, without
   a built-in validator: the check is the language's grammar, compiled.
-- **0077 (the tree as a grammar):** a number's syntax as tier-1 masks. **Superseded** on that
+- **0085 (the tree as a grammar):** a number's syntax as tier-1 masks. **Superseded** on that
   point.
 - **0069 (simdjson's shape, ratchets):** the ratchets fall to 37 operations and 174 loop
   instructions, below where they were before the masks.

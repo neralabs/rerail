@@ -1,4 +1,4 @@
-# 0080: Tier 2 writes the tape
+# 0088: Tier 2 writes the tape
 
 Status: accepted (user, 2026-11-08: "please complete the tape writing").
 
@@ -16,7 +16,7 @@ runs over the nodes afterwards.
   the walk; the walk writes the columns.
 - **Doc 17 §5e (widths speculated):** widths guessed before the file, ORs as it
   goes, at most one second pass. **Agrees.**
-- **0079 (the words):** a node's field and supertypes are words after its
+- **0087 (the words):** a node's field and supertypes are words after its
   `OPEN` or `LEAF`. **Kept:** they are read when the function is compiled.
 
 ## Decision

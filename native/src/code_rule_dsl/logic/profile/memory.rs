@@ -1,4 +1,4 @@
-//! Memory for the profile (decision 0082): what a thread allocated and freed, from jemalloc's per-thread counters,
+//! Memory for the profile (decision 0084): what a thread allocated and freed, from jemalloc's per-thread counters,
 //! and the process's physical footprint now and at its high-water mark.
 //!
 //! - **Per thread.** jemalloc keeps two running byte counts per thread, `thread.allocatedp` and

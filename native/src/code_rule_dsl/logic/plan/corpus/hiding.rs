@@ -522,7 +522,7 @@ mod tests {
     }
 
     /// A copy whose head holds a constant at the seeded column (`unset` is -1) is never carried as scoped there, so
-    /// every round found the same copy again and counted it a change: `ruff-perf401` did not end (decision 0082's
+    /// every round found the same copy again and counted it a change: `ruff-perf401` did not end (decision 0084's
     /// dump found it). Reading the copy already is no change, and the rounds end.
     #[test]
     fn a_copy_with_a_constant_at_its_seeded_column_ends() {

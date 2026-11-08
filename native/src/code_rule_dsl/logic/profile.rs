@@ -1012,7 +1012,7 @@ mod tests {
         assert!(statements().iter().any(|(p, t, _)| p == "a/b" && t == "SELECT 1"));
     }
 
-    /// Decision 0082: a span charges the bytes its thread allocated, its own apart from its children's, and what it
+    /// Decision 0084: a span charges the bytes its thread allocated, its own apart from its children's, and what it
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {

@@ -275,7 +275,7 @@ impl ClassTable {
     }
 }
 
-/// A token's `check` (doc 18 §4, decision 0078): straight-line operations over the token's bytes,
+/// A token's `check` (doc 18 §4, decision 0086): straight-line operations over the token's bytes,
 /// 64 at a time with carries, which tier 2's `CHECK` runs, as simdjson's stage 2 parses a
 /// number. Bit `i` is the token's byte `i`, `within 0` its bytes; its one output fails the
 /// token where it has a bit.
@@ -305,8 +305,8 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
-    /// The token checks tier 2's `CHECK` runs (decision 0078). Tier 2 itself is the program's
-    /// words (decision 0079).
+    /// The token checks tier 2's `CHECK` runs (decision 0086). Tier 2 itself is the program's
+    /// words (decision 0087).
     pub(super) checks: Vec<CheckRow>,
 }
 

@@ -1460,6 +1460,40 @@ ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
     assert_eq!(read("ndig"), "AB12\t2\nCD3\t1");
 }
 
+/// `match_all` over a node's own text, and over an earlier match's captures (decision 0081): each group is a span
+/// placed in the file, with its text and line. Strings and comments in one relation give both; the same text in two
+/// strings is matched once and placed at each.
+#[test]
+fn match_all_captures_spans_over_a_nodes_text_and_over_captures() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchnode");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 'ab1 cd22'\ny = 'ab1 cd22'  # ef3\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl piece(t: loc)
+piece(t) :- kind(t, "string_content").
+piece(t) :- kind(t, "comment").
+.decl piece_word(t: loc, w: span)
+piece_word(t, w) :- piece(t), match_all("(?<w>[a-z]+[0-9]+)", t).
+.decl digits(x: symbol, k: number, c: number)
+digits(x, k, c) :- piece_word(_, w), match_all("(?<d>[0-9]+)", w), text(d, x), line(d, k), col(d, c).
+.decl per(x: symbol, n: number)
+per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])", w) }.
+.output digits, per
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    assert_eq!(read("digits"), "1\t1\t7\n22\t1\t11\n1\t2\t7\n22\t2\t11\n3\t2\t20".split('\n').collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("\n"));
+    assert_eq!(read("per"), "ab1\t1\ncd22\t2\nef3\t1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `data-layer/noqa-sec-ratchet.rr`, whose `match_all` over each line's span is what lowering refused (O80): every
 /// SEC code on a suppression line counts, inside the comment or not.
 #[test]
@@ -2299,4 +2333,23 @@ one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
     assert_eq!(words, ["alpha", "beta", "gamma", "wolf"]);
     assert_eq!(hit, ["beta", "wolf"]);
     assert_eq!(one, ["alpha", "beta"]);
+}
+
+/// A grammar a rule names is one the language registry has (decision 0082): a dialect's label or a fragment.
+#[test]
+fn a_grammar_the_registry_does_not_have_is_refused() {
+    let lower = |text: &str| {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("grammar");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule = dir.join("g.rr");
+        std::fs::write(&rule, text).unwrap();
+        let got = crate::code_rule_dsl::logic::rr::parse_file(&rule).map(|_| ()).map_err(|e| e.to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        got
+    };
+    let rule = |g: &str| format!(".decl hit(s: node)\nhit(s) :- kind(s, \"string\"), parsed(s, \"{g}\", _).\n.output hit\n");
+    assert!(lower(&rule("annotation")).is_ok(), "a fragment");
+    assert!(lower(&rule("sql")).is_ok(), "a dialect's label");
+    let refused = lower(&rule("postgres")).unwrap_err();
+    assert!(refused.contains("no grammar \"postgres\""), "{refused}");
 }

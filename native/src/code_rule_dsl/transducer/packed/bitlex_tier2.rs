@@ -1,4 +1,4 @@
-//! The Bitlex compiler's last pass (decision 0079): tier 2's state machine (`grammar`) lowered
+//! The Bitlex compiler's last pass (decision 0087): tier 2's state machine (`grammar`) lowered
 //! to the transducer's words, as simdjson's stage 2 is written: per state, take a token, switch
 //! on its first byte, do the arm's straight-line work, jump to the next state.
 //!

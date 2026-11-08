@@ -1,7 +1,7 @@
 # 0072: Tier 2 on Metal, from a dependency analysis
 
 Status: accepted (user, 2026-11-07: "go ahead"). The design is
-`docs/parser-generators/14-tier-2-design.md`. Superseded in part by 0077: the rows'
+`docs/parser-generators/14-tier-2-design.md`. Superseded in part by 0085: the rows'
 conditions, backward keys and the 8-byte stack effect give way to a grammar, forward rules and
 a depth carry; Metal comes after the CPU.
 
