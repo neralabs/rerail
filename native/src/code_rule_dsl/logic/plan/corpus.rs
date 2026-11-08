@@ -198,8 +198,8 @@ pub(crate) struct Report {
     pub(crate) prepared: &'static str,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
     pub(crate) cross_strata: Option<(usize, usize)>,
-    /// Of those, strata maintained from deltas, and of them recursive (decision 0077 §3).
-    pub(crate) cross_maintained: (usize, usize),
+    /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
+    pub(crate) cross_maintained: (usize, usize, usize),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1695,6 +1695,7 @@ pub(crate) fn run_with_options(
     // Strata a session's run evaluated, of all (decision 0077).
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
+    let mut cross_again = 0;
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
     // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
@@ -1772,6 +1773,7 @@ pub(crate) fn run_with_options(
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;
+                    cross_again = maintained.derived_again;
                     *cell = Some(next);
                 }
                 None => {
@@ -1966,7 +1968,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive) })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_again) })
 }
 
 
