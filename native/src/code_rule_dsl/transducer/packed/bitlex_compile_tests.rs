@@ -999,21 +999,144 @@ fn json_tier2_nodes_equal_the_reference() {
 }
 
 /// JSON's tier 2 on Cranelift (`native_cpu_stream`, the words lowered as `native_ir` decodes
-/// them): over the stream tier 1 writes, the same nodes as the words' interpreter, and a refusal
-/// at the same word. A compiled `CHECK` runs the compiled check.
+/// them): over the stream tier 1 writes, the same nodes as the words' interpreter, read back
+/// from the tape the compiled words write, and a refusal at the same word. A compiled `CHECK`
+/// runs the compiled check.
 #[test]
 fn json_tier2_on_cranelift_equals_the_interpreter() {
     let (p, _) = json_compiled();
-    let native = native_ir::lower(&p).expect("lowers");
-    let compiled = native_cpu_stream::compile(&native).unwrap_or_else(|_| panic!("compiles"));
+    let compiled = native_cpu_stream::Tier2Cpu::new(&native_ir::lower(&p).expect("lowers")).unwrap_or_else(|_| panic!("compiles"));
     let block = &p.block_programs()[0];
     let mut refused = 0;
     for f in json_tier2_files() {
         let run = block.run_files(&[&f]).remove(0);
         let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-        let want = stream::run(&p, &f, starts, lasts).map_err(|r| r.pc);
+        let want = stream::run(&p, &f, starts, lasts)
+            .map(|nodes| nodes.into_iter().map(|mut n| {
+                n.supers.sort_unstable();
+                n
+            }).collect::<Vec<_>>())
+            .map_err(|r| r.pc);
         refused += usize::from(want.is_err());
-        assert_eq!(compiled.run(&f, starts, lasts).map_err(|r| r.pc), want, "{}", String::from_utf8_lossy(&f));
+        let got = compiled.tape(&f, starts, lasts).map(|t| native_cpu_stream::nodes_of(&t)).map_err(|r| r.pc);
+        assert_eq!(got, want, "{}", String::from_utf8_lossy(&f));
     }
     assert!(refused > 3, "{refused} refused");
+}
+
+/// Both tiers compiled: tier 1 (`native_cpu_block`) and tier 2 (`native_cpu_stream`).
+struct JsonCpu {
+    tier1: native_cpu_block::CompiledBlock,
+    tier2: native_cpu_stream::Tier2Cpu,
+    fallbacks: Vec<u16>,
+    grammar: std::sync::Arc<crate::code_rule_dsl::tape::Grammar>,
+}
+
+impl JsonCpu {
+    fn new() -> Self {
+        let (p, compiled) = json_compiled();
+        let native = native_ir::lower(&p).expect("lowers");
+        Self {
+            tier1: native_cpu_block::compile(&native.block_programs[0]).expect("compiles"),
+            tier2: native_cpu_stream::Tier2Cpu::new(&native).unwrap_or_else(|_| panic!("compiles")),
+            fallbacks: compiled.fallbacks,
+            grammar: crate::code_rule_dsl::tape::Grammar::new(crate::code_rule_dsl::language::GrammarDialect::Json).expect("json"),
+        }
+    }
+
+    /// The tape both tiers write for `source` after tier 1's run `run`, or `None` where the
+    /// file goes to tree-sitter; and the passes tier 2 took.
+    fn tape(&self, run: &block::BlockRun, source: &str) -> Option<(crate::code_rule_dsl::tape::TapeImage, u8)> {
+        if self.fallbacks.iter().any(|&k| run.outputs[usize::from(k)].iter().any(|&w| w != 0)) {
+            return None;
+        }
+        let c = self.tier2.tape(source.as_bytes(), &run.positions[0], &run.positions[1]).ok()?;
+        let image = crate::code_rule_dsl::tape::TapeImage::from_columns(c.code, c.size, c.base, c.off, c.tail, c.shape.widths(), &c.codes, &self.grammar, source)
+            .expect("an image");
+        Some((image, c.passes))
+    }
+}
+
+/// Tree-sitter's tape for `source`, and whether its tree has an error.
+fn tree_sitter_tape(grammar: &crate::code_rule_dsl::tape::Grammar, source: &str) -> (Vec<u8>, bool) {
+    let parsed = crate::code_rule_dsl::tape::TapeImage::parse(grammar, source, &|| false).expect("parses").expect("encodes").primary;
+    let error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
+    (parsed.to_bytes().expect("bytes"), error)
+}
+
+/// The tape the two compiled tiers write (decision 0054) equals tree-sitter's byte for byte,
+/// for every file that does not go to tree-sitter; a file tree-sitter finds an error in always
+/// goes to it.
+#[test]
+fn json_tapes_equal_tree_sitter_byte_for_byte() {
+    let cpu = JsonCpu::new();
+    let mut files = inputs();
+    files.extend(JSON_CASES.iter().map(|c| c.to_vec()));
+    files.extend(json_tier2_files());
+    let (mut equal, mut fallback) = (0, 0);
+    for bytes in files {
+        let Ok(source) = std::str::from_utf8(&bytes) else { continue };
+        let (want, error) = tree_sitter_tape(&cpu.grammar, source);
+        let run = cpu.tier1.extract(&bytes);
+        match cpu.tape(&run, source) {
+            None => fallback += 1,
+            Some(_) if error => panic!("a tape for a file tree-sitter finds an error in: {source:?}"),
+            Some((tape, _)) => {
+                assert!(tape.to_bytes().expect("bytes") == want, "the tape differs for {source:?}");
+                equal += 1;
+            }
+        }
+    }
+    eprintln!("{equal} tapes equal, {fallback} to tree-sitter");
+    assert!(equal > 20, "{equal} tapes equal");
+}
+
+/// The widths are guessed before the file, and a second pass runs only where the guess was
+/// wrong: here a string longer than two bytes can count, whose tail needs four.
+#[test]
+fn json_widths_speculated_once() {
+    let cpu = JsonCpu::new();
+    for (source, passes) in [("[1, 2, \"a\"]".to_owned(), 1), (format!("[\"{}\"]", "a".repeat(70_000)), 2)] {
+        let run = cpu.tier1.extract(source.as_bytes());
+        let (tape, got) = cpu.tape(&run, &source).expect("a tape");
+        assert_eq!(got, passes, "{} bytes", source.len());
+        assert!(tape.to_bytes().expect("bytes") == tree_sitter_tape(&cpu.grammar, &source).0);
+    }
+}
+
+/// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
+/// (one path a line), tier 1 on Cranelift's batch: each file's tape equals tree-sitter's byte
+/// for byte, or the file goes to tree-sitter; never a tape where tree-sitter finds an error.
+#[test]
+#[ignore = "a corpus check; run by name with RERAIL_JSON_FILES"]
+fn json_corpus_tapes_equal_tree_sitter() {
+    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
+    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
+    let cpu = JsonCpu::new();
+    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+    let runs = native_cpu_block::run_batch(&[&cpu.tier1], &files);
+    let (mut equal, mut fallback, mut second, mut not_utf8, mut differ) = (0, 0, 0, 0, Vec::new());
+    for ((path, bytes), run) in paths.iter().zip(&bytes).zip(&runs) {
+        let Ok(source) = std::str::from_utf8(bytes) else {
+            not_utf8 += 1;
+            continue;
+        };
+        let (want, error) = tree_sitter_tape(&cpu.grammar, source);
+        match cpu.tape(run, source) {
+            None => {
+                fallback += 1;
+                if !error {
+                    eprintln!("{path}: valid JSON to tree-sitter");
+                }
+            }
+            Some(_) if error => panic!("{path}: a tape where tree-sitter finds an error"),
+            Some((tape, passes)) => {
+                second += usize::from(passes == 2);
+                if tape.to_bytes().expect("bytes") == want { equal += 1 } else { differ.push(path.clone()) }
+            }
+        }
+    }
+    eprintln!("{equal} equal, {fallback} to tree-sitter, {second} took a second pass, {not_utf8} not UTF-8, {} differ", differ.len());
+    assert!(differ.is_empty(), "tapes differ: {differ:?}");
 }

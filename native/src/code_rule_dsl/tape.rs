@@ -41,7 +41,7 @@ const fn padded(length: usize) -> usize {
 }
 /// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
 /// its last descendant's (for a tree where a node ends before its last descendant starts).
-const TAIL_FROM_START: u8 = 0x80;
+pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
 /// A code's flags.
 const CODE_EXTRA: u8 = 1;
 const CODE_ERROR: u8 = 2;
@@ -1441,6 +1441,48 @@ impl TapeImage {
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
+        })
+    }
+
+    /// The image of columns a tape writer wrote (tier 2's compiled words, decision 0054): the
+    /// node columns as they are stored, at their widths (`widths`: size, off, tail and its
+    /// `TAIL_FROM_START` flag), and the codes in first-use order, each a `kf` and its supertype
+    /// classes, ascending. Nothing per node is done here: the writer packed the columns.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn from_columns(
+        code: Vec<u8>,
+        size: Vec<u8>,
+        base: Vec<u8>,
+        off: Vec<u8>,
+        tail: Vec<u8>,
+        widths: [u8; 3],
+        codes: &[(u16, Vec<u16>)],
+        grammar: &Grammar,
+        source: &str,
+    ) -> Result<Self, String> {
+        let codes = codes
+            .iter()
+            .map(|(kf, classes)| {
+                if classes.len() > MAX_NODE_SUPERTYPES {
+                    return Err("too many supertype memberships".to_owned());
+                }
+                let mut c = [0_u16; MAX_NODE_SUPERTYPES];
+                c[..classes.len()].copy_from_slice(classes);
+                Ok(Code { kf: *kf, flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: c })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            code,
+            size,
+            base,
+            off,
+            tail,
+            widths,
+            codes,
+            kind_aliases: Vec::new(),
+            language: grammar.lang,
+            source_len: source.len(),
+            source_digest: source_digest(source, &|| false)?,
         })
     }
 
