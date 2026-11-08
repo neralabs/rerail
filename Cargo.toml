@@ -1,6 +1,7 @@
 [workspace]
 members = ["native"]
-exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation"]
+# The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
+exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
 
 [patch.crates-io]

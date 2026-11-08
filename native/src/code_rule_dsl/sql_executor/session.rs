@@ -15,6 +15,7 @@ pub(super) struct Execution {
     pub outputs: Vec<String>,
     pub max_waves: u32,
     pub reductions: Option<BTreeMap<String, reductions::Retained>>,
+    pub recursive: BTreeMap<u32, recursive::Partitioned>,
 }
 
 impl CodeRuleSqlExecutor {
@@ -104,6 +105,9 @@ pub(super) fn index(
         return Err(rusqlite::Error::InvalidParameterName(
             "index columns must be distinct valid positions".into(),
         ));
+    }
+    if super::super::facts::vtab::bound_source(db, relation).is_some_and(|s| s.writable()) {
+        return Ok(());
     }
     let suffix = columns
         .iter()

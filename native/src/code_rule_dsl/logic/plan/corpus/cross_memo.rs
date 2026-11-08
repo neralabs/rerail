@@ -1,4 +1,4 @@
-//! A corpus run's cross-file rows, memoised per import component (decision 0063).
+//! A corpus run's cross-file rows, memoised per import component (decision 0074).
 //!
 //! - A program asks with `.pragma "cross-memo" "a b …"`. That names the cross-file relations whose rows are about
 //!   the document of their first node column and are a function of that document's import closure.
@@ -12,8 +12,8 @@
 //!   node of a stored row lies in the closure of its first node's component.
 //! - With `RERAIL_CROSS_MEMO=verify` nothing is replayed, and the hits' stored rows are compared with what was
 //!   derived.
-use super::{Error, Result, front, library};
-use crate::content_store::ContentStore;
+use super::{Error, Result, front};
+use crate::content_store::{ContentStore, HashKey};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -24,6 +24,8 @@ const PREFIX: &str = "rr_cx_";
 pub(super) const SUFFIX: &str = "__cross";
 pub(super) const DOCS: &str = "rr_cross_doc";
 const SCHEMA: &str = "rerail.cross-rows/v1";
+/// The stored rows' encoding version: bumped when its meaning changes.
+const ROWS_SCHEMA: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
@@ -174,7 +176,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     }
     for rule in &mut cross.rules {
         let Some(&(first, _)) = memo.get(&rule.head.rel) else { continue };
-        let copy = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with(SUFFIX) || a.rel.ends_with(library::SUFFIX)));
+        let copy = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with(SUFFIX)));
         if copy {
             continue;
         }
@@ -246,7 +248,7 @@ fn name(plan: &[u8; 32], key: &str) -> String {
 #[derive(Default)]
 pub(super) struct Found {
     /// The components found, by component, with their stored rows.
-    pub(super) hits: BTreeMap<i64, library::Rows>,
+    pub(super) hits: BTreeMap<i64, Rows>,
     /// The components that missed.
     pub(super) misses: BTreeSet<i64>,
     /// The hits' stored sources, which the run's manifest names so collection keeps them (decision 0053).
@@ -281,7 +283,7 @@ impl Found {
 pub(super) fn lookup(store: &ContentStore, plan: &Plan, components: &Components, paths: &HashMap<i64, String>) -> Found {
     let mut found = Found::default();
     for (c, (key, docs)) in components.members() {
-        let stored = library::lookup_source(store, &name(&plan.digest, &key)).and_then(|(id, b)| library::Rows::decode(&b).map(|r| (id, r)));
+        let stored = lookup_source(store, &name(&plan.digest, &key)).and_then(|(id, b)| Rows::decode(&b).map(|r| (id, r)));
         let keys: BTreeMap<String, i64> = docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect();
         match stored {
             Some((id, rows)) if rows.keys == keys => {
@@ -336,7 +338,7 @@ pub(super) fn record(
                     && !reach.contains(e)
                 {
                     return Err(Error::Plan(format!(
-                        "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0063): remove it from `.pragma \"{PRAGMA}\"`",
+                        "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0074): remove it from `.pragma \"{PRAGMA}\"`",
                         paths.get(&doc_of(row[*first])).map_or("?", String::as_str),
                         paths.get(&doc_of(row[n])).map_or("?", String::as_str)
                     )));
@@ -349,7 +351,7 @@ pub(super) fn record(
     let mut recorded = Recorded::default();
     for (c, (key, docs)) in &members {
         let derived = by.remove(c).unwrap_or_default();
-        let mut stored = library::Rows { keys: docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect(), rels: BTreeMap::new() };
+        let mut stored = Rows { keys: docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect(), rels: BTreeMap::new() };
         for (rel, &(_, width)) in &plan.memo {
             stored.rels.insert(rel.clone(), (width, derived.get(rel).cloned().unwrap_or_default()));
         }
@@ -372,7 +374,7 @@ pub(super) fn record(
             continue;
         }
         recorded.rows += stored.rels.values().map(|(w, v)| v.len() / w).sum::<usize>();
-        recorded.sources.push(library::record_named(store, &name(&plan.digest, key), &plan.digest, &stored.encode())?);
+        recorded.sources.push(record_named(store, &name(&plan.digest, key), &plan.digest, &stored.encode())?);
         recorded.stored += 1;
     }
     Ok(recorded)
@@ -380,3 +382,86 @@ pub(super) fn record(
 
 /// The component sub-program's relations a run holds: the components and the edges.
 pub(super) const HELD: [&str; 2] = [COMPONENT, EDGE];
+
+/// A component's stored rows: each of its documents' keys (by path), and each relation's width and rows (flat).
+#[derive(Default, Debug, PartialEq)]
+pub(super) struct Rows {
+    pub(super) keys: BTreeMap<String, i64>,
+    pub(super) rels: BTreeMap<String, (usize, Vec<i64>)>,
+}
+
+impl Rows {
+    pub(super) fn encode(&self) -> Vec<u8> {
+        let mut b = Vec::new();
+        let put_str = |b: &mut Vec<u8>, s: &str| {
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        };
+        b.extend_from_slice(&ROWS_SCHEMA.to_le_bytes());
+        b.extend_from_slice(&(self.keys.len() as u32).to_le_bytes());
+        for (path, key) in &self.keys {
+            put_str(&mut b, path);
+            b.extend_from_slice(&key.to_le_bytes());
+        }
+        b.extend_from_slice(&(self.rels.len() as u32).to_le_bytes());
+        for (rel, (width, values)) in &self.rels {
+            put_str(&mut b, rel);
+            b.extend_from_slice(&(*width as u32).to_le_bytes());
+            b.extend_from_slice(&(values.len() as u64).to_le_bytes());
+            for v in values {
+                b.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        zstd::encode_all(b.as_slice(), 3).expect("zstd over memory")
+    }
+
+    pub(super) fn decode(bytes: &[u8]) -> Option<Rows> {
+        let b = zstd::decode_all(bytes).ok()?;
+        let mut at = 0usize;
+        let mut take = |n: usize| -> Option<&[u8]> {
+            let s = b.get(at..at + n)?;
+            at += n;
+            Some(s)
+        };
+        let u32_ = |s: &[u8]| u32::from_le_bytes(s.try_into().expect("4 bytes"));
+        if u32_(take(4)?) != ROWS_SCHEMA {
+            return None;
+        }
+        let mut rows = Rows::default();
+        for _ in 0..u32_(take(4)?) {
+            let n = u32_(take(4)?) as usize;
+            let path = String::from_utf8(take(n)?.to_vec()).ok()?;
+            let key = i64::from_le_bytes(take(8)?.try_into().ok()?);
+            rows.keys.insert(path, key);
+        }
+        for _ in 0..u32_(take(4)?) {
+            let n = u32_(take(4)?) as usize;
+            let rel = String::from_utf8(take(n)?.to_vec()).ok()?;
+            let width = u32_(take(4)?) as usize;
+            let len = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
+            let raw = take(len.checked_mul(8)?)?;
+            let values = raw.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().expect("8 bytes"))).collect();
+            rows.rels.insert(rel, (width, values));
+        }
+        Some(rows)
+    }
+}
+
+/// The stored source a derivation's output `name` binds, and its bytes.
+fn lookup_source(store: &ContentStore, name: &str) -> Option<(crate::content_store::SourceId, Vec<u8>)> {
+    let digest = store.binding(name).ok()??;
+    let source = store.source_by_hash(HashKey::from_sha256_digest(digest)).ok()??;
+    store.get_source(source).ok().map(|bytes| (source, bytes))
+}
+
+/// Stores `bytes` as the derivation `name` of `producer`, with no named input: `name` is a function of its inputs.
+fn record_named(store: &ContentStore, name: &str, producer: &[u8; 32], bytes: &[u8]) -> Result<crate::content_store::SourceId> {
+    use crate::content_store::DerivationRecord;
+    let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
+    let source = store.put_source(bytes, &[]).map_err(plan)?;
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let record = DerivationRecord { output: name.to_owned(), producer: *producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
+    store.record_derivations(&[record]).map_err(plan)?;
+    Ok(source)
+}
+

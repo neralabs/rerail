@@ -90,6 +90,39 @@ names(c, a) :- found(c, a, _).
     assert!(cone_split(&b.program, &b.hops).is_none());
 }
 
+/// What the rounds read and no round changes (`own`, from base relations only) runs once before them, and the
+/// rounds read its rows as `own__pre`; `found`, which reads the previous round, stays in the rounds.
+#[test]
+fn what_no_round_changes_runs_before_the_rounds() {
+    let prog = crate::code_rule_dsl::logic::rr::parse(
+        r#"
+.decl base(c: node, b: node)
+.decl bound_in(c: node, a: symbol)
+.input base, bound_in
+.decl own(c: node, a: symbol)
+own(c, a) :- bound_in(c, a), base(c, _).
+.decl found(c: node, a: symbol, at: node)
+found(c, a, c) :- own(c, a).
+found(c, a, x) :- base(c, b), !own(c, a), found(b, a, x).
+.output found
+"#,
+    )
+    .unwrap();
+    let b = bound(&prog, &BTreeMap::new()).unwrap();
+    let ps = pre_split(&b.program).expect("own reads no previous round");
+    assert!(ps.pre.rules.iter().all(|r| r.head.rel == "own"));
+    assert_eq!(ps.reads, BTreeSet::from(["own".to_owned()]));
+    assert!(ps.rounds.rules.iter().all(|r| r.head.rel == "found"));
+    assert!(ps.rounds.inputs.contains(&"own__pre".to_owned()));
+    let rules: Vec<String> = ps.rounds.rules.iter().map(ToString::to_string).collect();
+    assert!(rules.iter().all(|r| !r.contains("own(")), "{rules:#?}");
+    assert_eq!(ps.rounds.outputs, vec!["found".to_owned()]);
+    // A program whose every relation reads the previous round is not split.
+    let only = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
+    let b = bound(&only, &BTreeMap::new()).unwrap();
+    assert!(pre_split(&b.program).is_none());
+}
+
 #[test]
 fn the_digest_ignores_row_order() {
     let a = BTreeMap::from([("r".to_owned(), vec![vec![1, 2], vec![3, 4]])]);

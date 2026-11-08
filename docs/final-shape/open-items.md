@@ -1209,7 +1209,9 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
   round when round k ends unconverged. `calls.rr` marks unknown, in that round, a call with no target whose callee
   is not rooted outside the workspace (`python_calls_program_cut_short_is_unknown_not_no_edge`). Left open:
   - pending marking for the other programs (`calls_rust.rr`, workload);
-  - the per-document cutoff, since each round still reruns the whole cross-file part.
+  - the per-document cutoff, since each round still reruns the whole cross-file part. *Superseded by decision 0065
+    (draft):* no rounds at all. The cross-file part becomes one fixpoint, so nothing is cut and nothing is
+    pending. The cutoff (0064) was measured and withdrawn.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
@@ -1834,16 +1836,26 @@ and 1.56 GB. Thirteen more rules now run, 62 in all:
 The 62 rules together on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule's count equals its count
 alone), and a peak of 1.43 GB, **over the 1 GB budget**.
 
-Left out, by cause:
+**Later on 2026-11-07** (t10 §2l). schema-architecture and bootstrap-engine-invariants run too: 64 rules.
 
-- **schema-architecture**: over 60 s alone, not yet profiled.
-- **bootstrap-engine-invariants**: `no symbol 25416499766238680` (a node or span id read as a symbol). The flattened
-  program types correctly, so the column is likely one the engine makes at run time.
-- **lazy-architecture**: refused as an aggregate in recursion. `la_cls`'s `@cat` recursion goes through
-  `ast_parent(e, f) :- decorator(f, e)`, which is not a tree move, so the bound is not proved.
-- **plan-composition-architecture, test-budget**: revision and stamped-artifact readers are not written.
-- **versioned-table-names**: `n ~ `pattern`` (an AST pattern literal) has no lowering or executor. It needs the
-  matcher as an input relation (O103).
+| corpus | CPU | instructions | peak (the run's) | violations |
+|---|---|---|---|---|
+| s50 | 15–17 s | 302e9 | 913 MB (995 MB profiled) | 637 |
+| s200 | 43.0 s | | **2.39 GB** | 2,960 |
+
+s50 is within the 1 GB budget; s200 is not. On s200 the footprint is about 1.5 GB at the end of each chunk's
+file-local run, and binding the cross-file part's inputs adds 800 MB (the base relations held for it, and the
+exports read back from `x`).
+
+Left out, by cause (none of them is a quick fix):
+
+- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
+  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
+  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
+  one down), but `front::cycles` measures by preorder and has no depth count.
+- **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
+  `artifact="test_collection"`). Stamped-artifact readers are not written.
+- **versioned-table-names**: `n ~ `pattern`` (O103).
 
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
@@ -2059,3 +2071,80 @@ depends on it being a `call`, and a negated comparison is refused. Nothing outsi
 **Closure:** the parser builds only the tree, and decides from node kinds what it decided from statements. The
 parity test becomes a comparison of the tape-read statements with a recorded set, and the replay (3988 303 298 0)
 and the rr tests are unchanged.
+
+## O108. A corpus run takes two collection leases for one problem
+
+Rerail-rule-expressivity and Typing-support-final-shape each fixed collection deleting a running corpus run's sources
+(O95), in different ways. The final shape now has both:
+- `ContentStore::hold_collection` (`CollectionLease`) with `HeldPlan` (`hold_corpus_plan`, `hold_sources`);
+- `ContentStore::begin_corpus_run` (`CorpusRunLease`, with the store's busy retries).
+
+A run takes both and releases both once its manifest is recorded, before its collection starts (`record_run`). One of
+them is enough.
+
+**Closure:** one lease, the other's tests kept against it.
+
+## O109. A run read from memoised base rows derives other rows
+
+Decision 0063 memoises the base rows a file hands the cross-file part (`memo::Entry::base`), each row its file's by
+its first column, and a memo hit replays them. Merged with typing's `calls.rr`, a run read entirely from the memo
+gave 233 `call_open` rows where the evaluated run and T give 241: eight calls of `glob.py` missing
+(`own_ingestion_derives_what_t_facts_do`, the 4096-node run after the 262144-node one). Every file was a hit and no
+chunk was refused. With `RERAIL_CORPUS_MEMO=off` the rows agree. The cause is not found: the replayed base rows, or
+the statistics the cross-file part plans with (measured once over every file's rows in a memoised run), are the
+candidates. Crediting a guest's rows to its host file made no difference.
+
+Until then a run whose cross-file part reads base relations is not memoised, as before 0063: `memoised &&
+stored.is_empty()`. The entry's `base` field stays. `a_session_reruns_what_an_edit_changed` (0063's test, whose rule
+reads base relations) is ignored with this reason, so a session reruns every file of such a rule.
+
+**Closure:** a memoised run with base rows gives the evaluated run's rows in that test, the hold-back is removed and
+the session test runs again.
+
+## O110. Four builtin receivers are Unknown after the Typing-support merge
+
+After Typing-support-final-shape (84cba7e50) merged into the final shape, `python_type_relations_agree_with_the_runtime`
+finds four receivers of `fixtures/python/calls/project/pkg/typed.py` Unknown: `text = str(12)`, `data = b"ab"`,
+`words = [...]` and `table = {...}` (40 exact of 44). It fails with `RERAIL_CORPUS_MEMO=off` too, so the memo is not
+the cause. The merged `calls.rr` is that branch's, unchanged. The rr tape reader gives the parser's statements for it
+(`statements_from_the_tape_are_the_parsers` now covers the typing and golden programs). The run reads no typeshed:
+the world round loads no documents, and `litq`'s classes come from `qv("builtins.…", "cls", c)`. Whether the test
+passes on that branch alone was not checked: building a second target would exceed the disk budget. The test is
+ignored with this reason.
+
+**Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
+
+## O111. Python pack rules that fail to run, alone or combined
+
+Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail-engine run-rr` over
+`fixtures/python/calls/project`, a sample of the Python pack failed:
+
+- **A message names no column:** `ruff-c404`, `ruff-c406` and `ruff-perf403` ("message: no column k: v"), and
+  `ruff-fly002` ("FLY002_fstring message: no column a").
+- **No such table `returns`:** `ruff-pyi006`, `ruff-pyi011`, `ruff-pyi014` and `ruff-pyi046`.
+- **Not lowered yet:** a rule including `ruff-ruf001-ambiguous-unicode-character-string.confusables.rr`
+  (`confusable_word`: `match_all` over a node, O80).
+- **Refused:** `ruff-b005`, whose value cycle is unbounded (see above).
+
+Given as one directory to `rerail-engine logic`, the pack does not combine. Leaving out the rules above, and others
+that fail combined (`ruff-c408`, `era001`, `fast003`, `int001`, `int002`, `ruf001` to `ruf003`, `ruf024`, `up030`,
+`up032`), every bandit rule then failed with "relation kind is read by the rule for B101 and not declared". That
+points to how a directory is combined, not to the bandit rules. Not investigated.
+
+**Closure:** every pack rule runs alone, or is listed with its reason, and the pack combines into one program.
+
+## O112. The shared tape cache holds memo rows whose length does not match
+
+Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
+"corrupt content store: facts memo length does not match metadata". The default tape cache
+(`$TMPDIR/rerail-tape-cache.sqlite`, which every build and session on the machine shares) held 18 of 4,867
+`facts_results` rows whose zstd frame decodes to one byte fewer than `raw_length`. All are per-file memo rows (fact
+schemas 3 and 4) of a `b.py`. No prepared-program entry (schema 1) is among them. In one writer, `raw_length` and the
+frame come from the same entry (`put_facts_memo`), so another writer of the shared file is the likely source. That
+is not confirmed.
+
+`facts_memo` decodes every content-pure row of a source and schema, so one bad row fails every lookup on that source,
+and the run fails instead of missing. The file was not moved (DB files are not moved). Tests for 0073 ran against a
+fresh store (`RERAIL_TAPE_CACHE`).
+
+**Closure:** the writer found, or a row that does not decode treated as a miss (and rewritten), with a test.

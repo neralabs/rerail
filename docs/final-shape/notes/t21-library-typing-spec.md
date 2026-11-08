@@ -173,16 +173,18 @@ A library file's facts are made once, by the mechanisms that already make a work
 - **File-local rows**: the per-file memo (decision 0052) keys a document's rows by its content, its path and the
   plan. A stub is a document, so its rows are replayed from the memo after the first run that reads it, in any
   workspace on the machine.
-- **Cross-file rows**: these are the rows only the rounds make, such as a library class's inherited attributes
-  or a re-export's target. Here the derivation graph (03 §14, `content_store::derivation`) is the mechanism.
-  - A library never imports the workspace, so the cross-file rows of a set of library documents closed under
-    their imports are a derivation. Its inputs are those files' digests, the settings the rules read (`env`)
-    and the program.
-  - The workspace run reads that derivation's output as fixed rows and does not recompute them. A changed stub
-    rebinds its name and invalidates the derivation, as any changed file does.
-  - What is new is the granularity: one derivation per import-closed set of documents, not per file. 0052
-    memoises only the file-local part today, because the cross-file part was 0.01 s for its rules. For a
-    typing program it is not.
+- **Cross-file rows**: these are the rows the cross-file fixpoint makes, such as a library class's inherited
+  attributes or a re-export's target. Here the derivation graph (03 §14, `content_store::derivation`) is the
+  mechanism (decision 0065).
+  - Library documents are ordinary documents. The normal fixpoint derives their rows with the workspace's.
+    There is no separate library run.
+  - A library never imports the workspace, so the rows about a set of library documents closed under their
+    imports are a derivation. Its inputs are those files' digests, the settings the rules read (`env`) and the
+    program. The store records them from the run that first derives them.
+  - Later runs read the recorded rows in place, and the fixpoint derives only what is new. A changed stub rebinds
+    its name and invalidates the derivation, as any changed file does.
+  - For this to hold, no row about a library node may depend on the workspace. Demand (0048) applies to
+    workspace rows only, and relations such as a library class's subclasses are derived from the workspace side.
 
 ## 3. Engine changes (generic, minimal)
 
@@ -192,8 +194,8 @@ A library file's facts are made once, by the mechanisms that already make a work
 | E2 | `load(path, module, grammar, role)` requests: the engine parses each requested file as a document with `doc_role(d, role)`, in the demand loop 0055 runs for `parsed`, with a budget per run and per root | a guest without a host: 0055's embed loop over files instead of strings |
 | E3 | file extensions per language in the registry (`languages/python.json`: `.py`, `.pyi`), so the corpus reader and E2 take `.pyi` | data, not code |
 | E4 | `env(key, value)` facts from `--env k=v` and a project config file | settings as facts, read by rules |
-| E5 | the cross-file rows of an import-closed set of library documents recorded as a derivation in the existing store (03 §14), and replayed into the workspace run as fixed rows; no findings for non-primary documents | the derivation graph at one more granularity, not a new cache |
-| E6 | the per-document cutoff in the rounds (O41, O86): needed in any case for cost; more so while E5 is missing | already open |
+| E5 | the cross-file rows about an import-closed set of library documents, made by the normal fixpoint, recorded as a derivation in the existing store (03 §14) and read in place by later runs; no findings for non-primary documents (0065) | the derivation graph at one more granularity, not a new cache |
+| E6 | *withdrawn:* a per-document cutoff in the rounds. The rounds go instead: the cross-file part is one fixpoint (0065) | — |
 
 E1–E4 are small. E5 reuses the store's derivations and the per-file memo, which already make a file's facts once.
 
@@ -240,10 +242,18 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
    This finds out how many of the 1,571 calls become decided. The ceiling is about 760 (the categories above),
    less what needs §5.1.
 2. **E5: library cross-file rows as a derivation.** The goal is a warm workspace run that costs at most 10% more
-   than today.
+   than today. *A first form (0059) ran the library as a separate stage and replayed its rows into each round. It
+   cost more than it saved, and its code is removed. The form now planned is 0065's: one fixpoint, with library
+   rows recorded by the store and read in place.*
 3. **Site directories, stub packages, `py.typed`, `.pth`, user declarations as `.pyi`.** Retire `deps.rs`,
-   `declare.rs` and the `declared_ret` facts.
-4. **§5.1–§5.3**, ordered by what the score says is left.
+   `declare.rs` and the `declared_ret` facts. *Built: `python/modules.rr`'s layers in §2.2's order, the venv's site
+   directory and `.pth` lines (`python/env.rr`); fixtures `world_site` and `world_decl`. `calls.rr` reads no
+   `declared_ret`: the inputs of the `deps`/`declare` test type the same calls from `.pyi` declarations and installed
+   sources. Not yet: a workspace `.pyi` beside its `.py` (the corpus reads `.py` files); `partial` stub packages.
+   `deps.rs`, `declare.rs` and `corpus/typing.rs` remain for `workload.rr` and its test, unreached by `calls.rr`;
+   removing them is the user's call.*
+4. **§5.1–§5.3**, ordered by what the score says is left. *Built: §5.1's first version and generic returns, §5.2,
+   §5.3 (§6b).*
 5. **A second language's `env.rr` and `modules.rr`** (TypeScript: `.d.ts` is the same shape), as the test that
    the blueprint is generic.
 
@@ -275,17 +285,69 @@ What it says:
   `list` methods (71), `Path` (54), `Mapping` (25), `IO`, `Logger`, … The §2.3 estimate of about 760 was too high
   for this corpus.
 - **Cost is the rounds over library documents.** 263 documents take 7.5× the CPU of 84, almost all of it in the
-  final run's local and cross parts (discovery is about 6 s). E5 (library rows as a derivation) and E6 (the
-  per-document cutoff) are what make this affordable; E6 also lets k rise.
+  final run's local and cross parts (discovery is about 6 s). The rounds rerun the whole cross-file part per file
+  crossing. 0065 replaces them with one fixpoint over recorded library rows.
 
 Next, in that order: literal values as instances of `builtins` classes (`"".join`, `[].append`), the per-call
-difference between the two converged runs (which calls the stubs decide, which they un-decide, and why), then E5
-and E6.
+difference between the two converged runs (which calls the stubs decide, which they un-decide, and why), then
+0065.
+
+## 6b. Checkpoint: step 4, §5.1 and §5.2 (2026-11-07)
+
+Built, in `calls.rr`:
+
+- **Generic substitution (§5.1).** A class's parameters are read as written (`Generic[K, V]`, `Protocol[T]`, else
+  the type variables its first generic base is given). An annotated instantiation (`x: dict[str, V]`) is a generic
+  value. A method declared to return its class's parameter returns the receiver's binding of it. A function
+  declared to return a generic (`-> Iterator[_T]`) returns a generic value of the declared class, its parameters
+  bound at the call. That class is exact: a subclass's method is typed by it.
+- **Implicit calls (§5.2).** A subscript `o[i]` is `o.__getitem__(i)`. `for x in e` binds x to
+  `e.__iter__().__next__()`, and `with e as x` binds x to `e.__enter__()`. Their `async` forms stay unknown (the
+  syntax producer marks them `op "async"`, as it marks `async def`).
+- **Class decorators.** One declared `(cls: type[T]) -> type[T]` gives back the class. Before, every subclass of a
+  decorated class had an open base, so a method call on a receiver that might be one was unknown.
+
+The 84 files, k = 4, debug build (Jedi on the whole repository):
+
+```text
+                                agree   unknown, Jedi decided   no edge, Jedi a definition   another definition
+before §5.1                     5,656   1,369                   412                          0
+generics, first version         5,895   1,130                   412                          0
++ implicit calls, generic
+  returns, class decorators     6,149     874                   412                          2
+```
+
+The two "another definition" calls are Jedi's error: `LazyWriteTransaction(LazyReadTransaction,
+WriteTransactionLazyMixin)` finds `query_lazy` on WriteTransactionLazyMixin by C3, where Jedi takes
+ReadTransactionLazyMixin's.
+
+Of the 874 unknowns, 305 are calls Jedi resolves to definitions outside the 84 files (it read the whole
+repository): no rule decides them on this corpus. 443 are workspace definitions in the corpus, 126 external.
+
+Then, also in `calls.rr`:
+
+- **ParamSpec wrappers.** A decorator declared `(func: Callable[P, A]) -> Callable[P, B]` (`contextmanager`) makes
+  a call of the decorated function hold a B. B's type variables are bound by matching A against the function's
+  declared return, through the return's class's bases. So `with opened() as v` gives v what `opened` yields.
+  A class with no `Generic[...]` base takes its parameters from its first base that has a type variable as an
+  argument (`_GeneratorContextManager`'s first base is given `Generator[...]`).
+- **A function's own type variable.** It is bound from the argument's generic value or its class's bases
+  (`sorted(iterable: Iterable[_T]) -> list[_T]`, `min`). For a protocol parameter, it is bound from what the
+  argument's method returns, the method the protocol declares to return the variable
+  (`next(i: SupportsNext[_T]) -> _T` is `i.__next__()`).
+- **Overloads by arity.** An overload types a call only if the call's positional arguments fit it. The fit takes
+  in required and keyword-only parameters, `*args`, and the `self` an attribute call binds. Every overload is
+  still a call target.
+- **`modules.rr`.** A VERSIONS line with a comment after an open range (`_typeshed: 3.0-  # ...`) had kept its
+  module from loading: `_typeshed`, the home of `SupportsNext`, `SupportsIter` and `SupportsRichComparison`.
+
+`next(iter(xs))` on a `list[V]` needs 8 rounds on typeshed, where k is 4. Under one fixpoint (0065) it needs no
+bound.
 
 ## 7. Open questions
 
-- **Rounds over library documents.** The typeshed closure does not converge by k = 4 either. Should the library
-  stage run to its fixpoint (it is cached, so cost matters less), or be bounded like the workspace?
+- **Rounds over library documents.** *Answered by 0065:* there are no rounds. The library's rows come from the
+  same fixpoint as the workspace's, and the store records them.
 - **Kinds across grammars.** A `.pyi` is the Python grammar, so no new kinds are needed. TypeScript's `.d.ts` is
   likewise its own grammar.
 - **Where typeshed comes from by default.** Options: a pinned pack fetched by tooling, or one found inside an

@@ -153,7 +153,7 @@ impl LibraryFile {
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
 const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
-/// The library's programs the engine adds to a run itself (decision 0063's import components).
+/// The library's programs the engine adds to a run itself (decision 0074's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {

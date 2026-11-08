@@ -128,11 +128,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
-        let mut work = Work {
-            db: &self.db,
-            scratch: vec![],
-            sequence: 0,
-        };
+        let mut work = Work::new(&self.db, &self.scratch);
         let mut touched = Vec::new();
         let limits = self.limits.clone();
         self.db
@@ -140,30 +136,6 @@ impl CodeRuleSqlExecutor {
             .map_err(error)?;
         let result = (|| -> Result<Value> {
             let _budget = limits.enter(&self.db)?;
-            let mut migrated = BTreeMap::new();
-            let mut walk_initializations = BTreeMap::new();
-            for i in &affected {
-                migrated.insert(
-                    *i,
-                    maintenance::track_views(&mut work, &mut executions[*i])?,
-                );
-                walk_initializations.insert(*i, walks::prepare(&mut work, &mut executions[*i])?);
-            }
-            let mut potential = changed.clone();
-            let mut initializations = Vec::new();
-            for i in &affected {
-                let mut relations = walk_initializations.remove(i).unwrap_or_default();
-                relations.extend(reductions::prepare(
-                    &mut work,
-                    &mut executions[*i],
-                    &mut potential,
-                )?);
-                relations.sort();
-                relations.dedup();
-                if !relations.is_empty() {
-                    initializations.push(json!({"program":i,"relations":relations}));
-                }
-            }
             let mut deltas = BTreeMap::new();
             for p in &prepared {
                 touched.push(p);
@@ -203,7 +175,7 @@ impl CodeRuleSqlExecutor {
                 let limit = max_waves.unwrap_or(run.max_waves);
                 let mut report = maintenance::maintain(&mut work, run, &mut deltas, limit)?;
                 report["program"] = json!(i);
-                report["migrated_views"] = json!(migrated[&i]);
+                report["migrated_views"] = json!(0);
                 reports.push(report);
             }
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
@@ -230,11 +202,12 @@ impl CodeRuleSqlExecutor {
                 .execute_batch("RELEASE sql_fact_changes")
                 .map_err(error)?;
             Ok(
-                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":initializations,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
+                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
             )
         })();
         match result {
             Ok(report) => {
+                self.scratch = work.pool;
                 for p in prepared {
                     self.inputs.insert(p.name.clone(), p.source.clone());
                     if let Some(live) = p.live {

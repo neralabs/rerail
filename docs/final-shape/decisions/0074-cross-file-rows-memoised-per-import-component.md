@@ -1,4 +1,4 @@
-# 0063: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
+# 0074: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
 Status: built (2026-11-07; steps 1–4, Python imports; not measured on a large corpus yet)
 
@@ -10,10 +10,12 @@ changed, but the cross-file part still runs whole every time:
 - for typing it dominates: 12.6 s of CPU on the 84-file workspace (0059), and about 52 s on 489
   files (O94).
 
-Decision 0059 keeps one part of it: a library's rows, as one derivation over all the loaded
-documents. It leaves the next step open: "splitting the stage per import-closed component".
+Decision 0059 kept one part of it: a library's rows, as one derivation over all the loaded
+documents. It left the next step open: "splitting the stage per import-closed component". 0059 is
+now withdrawn. Decision 0065 makes library documents ordinary documents of the run and has the
+store record "their cross-file rows per import-closed group".
 
-This decision takes that step, for the workspace as well as the library. The work that decides
+This decision builds that grouping, for the workspace as well as the library. The work that decides
 what can be reused is itself made of rules and facts, so it is memoised the same way.
 
 A file's cross-file rows depend on other files: an import, a base class, a re-export. They cannot
@@ -74,7 +76,7 @@ facts. Only the order-sensitive hashing is native, as `dfs_first`'s search is.
    `components.rr`'s exports.
 2. **The rest.** The run looks up each component's key in the store and replays what it finds.
 
-Replay generalises 0059's:
+Replay generalises 0059's (since withdrawn):
 - Each memoised relation gets an input `<rel>__cross` holding the replayed rows, and a rule
   `rel(…) :- rel__cross(…)`.
 - The relation's other rules are guarded by `!rr_cross_doc(@doc(first))` on the first node column,
@@ -178,13 +180,14 @@ that is unsound.
 ## Not decided here
 
 - Other languages' import rules: TypeScript and the data-layer languages.
-- Whether 0059's library stage becomes a special case of this one. A library is closed under
-  imports, so its components would be memoised the same way. Both run until the components path is
-  measured on the typing corpus.
+- How this meets 0065 (a draft). A library is closed under imports, so its components are
+  memoised by this decision as they are. What 0065 adds is the fixpoint reading the recorded rows
+  in place, rather than through `<rel>__cross` copies, and per-class grouping if a closure is too
+  large.
 - Rounds (0035, 0047) still iterate the whole cross-file part of the components that missed. A
   per-component cutoff inside the rounds is O41's remaining step.
 - Stored component rows are never removed while their name stays bound. Every version of a
-  component's key is kept. Collecting rows that no recent manifest names is open, as it is for
+  component's key is kept. Collecting rows that no recent manifest names is open, as it was for
   0059's library rows.
 - Measurement on the 9,010-file repository and the typing corpus. No converted rule declares
   `cross-memo` yet.

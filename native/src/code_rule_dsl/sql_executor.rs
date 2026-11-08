@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 mod catalog;
+mod constants;
 mod corpus;
 mod documents;
 mod indexes;
@@ -23,9 +24,12 @@ mod live;
 mod maintenance;
 mod overlay;
 mod producers;
+mod recursive;
 mod reductions;
-mod walks;
+mod scratch;
 mod updates;
+mod versions;
+mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
 mod runtime;
@@ -66,6 +70,7 @@ pub struct CodeRuleSqlExecutor {
     mutable_inputs: BTreeSet<String>,
     live_inputs: BTreeMap<String, Arc<live::Live>>,
     documents: Option<documents::Documents>,
+    scratch: scratch::Pool,
 }
 
 #[napi]
@@ -91,6 +96,7 @@ impl CodeRuleSqlExecutor {
             mutable_inputs: BTreeSet::new(),
             live_inputs: BTreeMap::new(),
             documents: None,
+            scratch: scratch::Pool::default(),
         })
     }
 
@@ -214,8 +220,6 @@ impl CodeRuleSqlExecutor {
             return Err(error("a fact row does not have the declared arity"));
         }
         self.check_input(&input.name, &input.columns, logical_arity)?;
-        let mut source =
-            Relation::new(&input.columns.iter().map(String::as_str).collect::<Vec<_>>());
         let symbols: BTreeSet<&str> = input
             .rows
             .iter()
@@ -237,10 +241,10 @@ impl CodeRuleSqlExecutor {
                     .collect::<Result<Vec<_>>>()
             })
             .collect::<Result<BTreeSet<_>>>()?;
-        for row in values {
-            source.push(&row);
-        }
-        self.install_input(input.name, Arc::new(source), logical_arity, logical_types, true)
+        let source = Arc::new(live::Live::from_rows(input.columns, values));
+        self.install_input(input.name.clone(), source.clone(), logical_arity, logical_types, true)?;
+        self.live_inputs.insert(input.name, source);
+        Ok(())
     }
 
     /// Whether `name` may be bound as a fact relation of these columns.
@@ -845,12 +849,64 @@ impl CodeRuleSqlExecutor {
                     counts.insert(name, n);
                 }
             }
+            let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
+            let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
+            dependencies.extend(producers.values().flatten().cloned());
+            for q in emitted
+                .queries
+                .iter()
+                .flatten()
+                .chain(emitted.views.iter().map(|(_, q)| q))
+            {
+                for r in q.reads() {
+                    if let Some(name) = r.program_relation()
+                        && !owned.contains(name)
+                    {
+                        dependencies.insert(name.into());
+                    }
+                }
+            }
+            let mut execution = session::Execution {
+                inputs: dependencies,
+                objects: objects.clone(),
+                counts,
+                emitted: Arc::new(emitted.clone()),
+                program: declared.clone(),
+                producers: producers.clone(),
+                outputs: outputs.clone(),
+                max_waves,
+                reductions: None,
+                recursive: BTreeMap::new(),
+            };
+            let mut work = maintenance::Work::new(&self.db, &self.scratch);
+            let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
+            let constant_tables = constants::prepare(&self.db, &mut execution)?;
+            // These views used to inherit native estimates. Their retained SQL tables need
+            // actual index statistics before support joins choose their access paths.
+            for (name, _) in &emitted.views {
+                self.db
+                    .execute_batch(&format!("ANALYZE temp.{}", quote(name)))
+                    .map_err(error)?;
+            }
+            let mut initializations = walks::prepare(&mut work, &mut execution, None)?;
+            let mut potential = execution.inputs.clone();
+            initializations.extend(reductions::prepare(
+                &mut work,
+                &mut execution,
+                &mut potential,
+                None,
+            )?);
+            initializations.sort();
+            initializations.dedup();
+            recursive::prepare(&self.db, &mut execution)?;
+            work.cleanup()?;
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
-            Ok((waves, counts))
+            Ok((waves, execution, work.pool, preparation))
         })();
-        let (waves, counts) = match result {
+        let (waves, execution, pool, preparation) = match result {
             Ok(value) => value,
             Err(e) => {
                 let _ = self
@@ -862,38 +918,12 @@ impl CodeRuleSqlExecutor {
                 return Err(e);
             }
         };
-        self.generated.extend(objects.clone());
-        let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
-        let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
-        dependencies.extend(producers.values().flatten().cloned());
-        for q in emitted
-            .queries
-            .iter()
-            .flatten()
-            .chain(emitted.views.iter().map(|(_, q)| q))
-        {
-            for r in q.reads() {
-                if let Some(name) = r.program_relation()
-                    && !owned.contains(name)
-                {
-                    dependencies.insert(name.into());
-                }
-            }
-        }
-        self.executions.push(session::Execution {
-            inputs: dependencies,
-            objects,
-            counts,
-            emitted: Arc::new(emitted.clone()),
-            program: declared,
-            producers,
-            outputs,
-            max_waves,
-            reductions: None,
-        });
+        self.scratch = pool;
+        self.generated.extend(execution.objects.iter().cloned());
+        self.executions.push(execution);
         self.refresh_catalog()?;
         serde_json::to_string(
-            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes}),
+            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
         )
         .map_err(error)
     }
@@ -916,6 +946,7 @@ impl CodeRuleSqlExecutor {
         self.clear_control()?;
         self.generated.clear();
         self.executions.clear();
+        self.scratch.clear(&self.db)?;
         self.db.reset_execution();
         self.refresh_catalog()
     }

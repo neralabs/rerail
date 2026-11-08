@@ -352,6 +352,21 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
+/// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
+#[test]
+fn a_set_of_tests_on_a_span_tests_its_text() {
+    let p = parse(concat!(
+        ".decl source(d: number, sp: span)\n.decl text(n: loc, s: symbol)\n.input source, text\n",
+        ".decl hit(d: number)\n.output hit\n",
+        "hit(d) :- source(d, sp), (contains(\"a\", sp) ; contains(\"b\", sp)).\n",
+    ))
+    .unwrap();
+    let rule = p.rules.iter().find(|r| r.head.rel == "hit").unwrap().to_string();
+    assert!(rule.contains("text($sp, "), "{rule}");
+    assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
+}
+
 /// What is not lowered yet says so by name.
 #[test]
 fn unlowered_constructs_are_named() {
@@ -1209,7 +1224,9 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let run = |chunk_nodes: usize| {
         let out = dir.join(format!("out{chunk_nodes}"));
-        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        // Every file evaluated in every run: a memo hit would not be chunked (decision 0063 memoises base rows too).
+        let options = serde_json::json!({ "memo": "off" });
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes, &Default::default(), &options).unwrap();
         ["called", "violation"].map(|rel| {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
             rows.sort();

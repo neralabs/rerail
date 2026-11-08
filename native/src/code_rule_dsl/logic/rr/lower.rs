@@ -185,13 +185,9 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
-                // `.pragma "cross-memo" "r s"` (decision 0063): cross-file relations memoised per import component.
+                // `.pragma "cross-memo" "r s"` (decision 0074): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {
                     l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
-                }
-                // `.pragma "library-open" "r s"` (decision 0059): relations a workspace run still derives about library nodes.
-                [key, rels] if key == "library-open" => {
-                    l.prog.settings.push(("pragma".to_owned(), format!("\"library-open\" \"{rels}\"")));
                 }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
@@ -768,8 +764,11 @@ impl Lowerer {
     fn literal(&mut self, lit: &Lit, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
         Ok(match lit {
             Lit::Group { alts, neg } => {
-                if let Some(Literal::Cmp { l, op, .. }) = self.test_set(alts)? {
-                    return Ok(vec![vec![Literal::Cmp { l, op, r: Term::Int(if *neg { 0 } else { 1 }) }]]);
+                if let Some(mut set) = self.test_set(alts)? {
+                    if let Some(Literal::Cmp { r, .. }) = set.last_mut() {
+                        *r = Term::Int(if *neg { 0 } else { 1 });
+                    }
+                    return Ok(vec![set]);
                 }
                 // `!(a, b)`: no row of the conjunction, through a helper relation of the variables it shares with the
                 // rule; `!(a ; b)` is `!a, !b`.
@@ -1481,7 +1480,7 @@ impl Lowerer {
     }
 
     /// `(glob("a", s) ; glob("b", s))` as one test of the set, and `(s = "a" ; s = "b")` as one membership.
-    fn test_set(&mut self, alts: &[Vec<Lit>]) -> Result<Option<Literal>, Error> {
+    fn test_set(&mut self, alts: &[Vec<Lit>]) -> Result<Option<Vec<Literal>>, Error> {
         if alts.len() < 2 || alts.iter().any(|a| a.len() != 1) {
             return Ok(None);
         }
@@ -1499,9 +1498,19 @@ impl Lowerer {
         if let Some(tests) = tests
             && tests.iter().all(|(op, s, _)| *op == tests[0].0 && *s == tests[0].1)
         {
-            let s = self.term(&tests[0].1)?;
+            // On a node or span, the tests are of its text, as one test's are (`text_test`).
+            let mut out = Vec::new();
+            let s = match &tests[0].1 {
+                STerm::Var(v) if self.span_container(v).is_some() || self.node_typed(v) => {
+                    let t = self.fresh("text");
+                    out.push(Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false }));
+                    Term::Var(t)
+                }
+                s => self.term(s)?,
+            };
             let set = Term::Call(SET.to_owned(), tests.iter().map(|(_, _, p)| Term::Str(p.clone())).collect());
-            return Ok(Some(Literal::Cmp { l: Term::Call(tests[0].0.to_owned(), vec![s, set]), op: "=", r: Term::Int(1) }));
+            out.push(Literal::Cmp { l: Term::Call(tests[0].0.to_owned(), vec![s, set]), op: "=", r: Term::Int(1) });
+            return Ok(Some(out));
         }
         let members: Option<Vec<(String, String)>> = alts
             .iter()
@@ -1516,7 +1525,7 @@ impl Lowerer {
             && self.bound_beside(&members[0].0)
         {
             let set = Term::Call(SET.to_owned(), members.iter().map(|(_, c)| Term::Str(c.clone())).collect());
-            return Ok(Some(Literal::Cmp { l: Term::Call("equals".to_owned(), vec![Term::Var(members[0].0.clone()), set]), op: "=", r: Term::Int(1) }));
+            return Ok(Some(vec![Literal::Cmp { l: Term::Call("equals".to_owned(), vec![Term::Var(members[0].0.clone()), set]), op: "=", r: Term::Int(1) }]));
         }
         Ok(None)
     }

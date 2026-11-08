@@ -32,6 +32,7 @@ pub(in crate::code_rule_dsl) mod syntax;
 
 /// `idx_num` of a filter on several `=` columns, listed in `idx_str`.
 const MULTI: c_int = 1 << 22;
+const ORDERED: c_int = 1 << 23;
 
 fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
@@ -41,6 +42,17 @@ fn failure(message: &str) -> rusqlite::Error {
 /// A mutable owner must close every reader before changing rows, then refresh its binding
 /// and planner estimates. Most producers expose immutable snapshots.
 pub(crate) trait Source: Send + Sync {
+    /// Pin a stable version before a SQL cursor starts. Immutable sources need no copy.
+    fn frozen(&self) -> Option<Arc<dyn Source>> { None }
+    fn cell(&self,row:usize,column:usize)->Value { Value::Integer(self.value(row,column)) }
+    fn row_id(&self,row:usize)->i64 { row as i64+1 }
+    fn writable(&self)->bool {false}
+    fn ordered(&self,_equal:&[usize],_order:&[(usize,bool)])->bool {false}
+    fn ordered_range(&self,_equal:&[(usize,i64)])->Option<Range<usize>> {None}
+    /// SQL writes are available only to explicitly mutable native relations.
+    fn write(&self,_old:Option<i64>,_new:Option<i64>,_values:Option<Vec<Option<i64>>>,_replace:bool,_ignore:bool)->Result<i64> {
+        Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
+    }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
     fn estimated_len(&self) -> usize {
@@ -139,7 +151,7 @@ impl Binding {
         *self.current.write() = self.schema.clone();
     }
     pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
-        if self.schema.columns != source.columns() {
+        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() {
             return Err(failure("native binding schema changed"));
         }
         *self.current.write() = source;
@@ -154,8 +166,10 @@ impl Binding {
 }
 struct Metadata {
     columns: Vec<String>,
+    writable: bool,
 }
 impl Source for Metadata {
+    fn writable(&self)->bool {self.writable}
     fn columns(&self) -> Vec<String> {
         self.columns.clone()
     }
@@ -212,7 +226,7 @@ impl Modules {
             return binding.set(source);
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { columns: source.columns() }),
+            schema: Arc::new(Metadata { columns: source.columns(), writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
@@ -226,6 +240,9 @@ impl Modules {
     }
     /// Releases the table without a schema write or a retained row source.
     pub(crate) fn unregister(&self, db: &Connection, name: &str) -> Result<()> {
+        if self.bindings.borrow().get(name).is_some_and(|b|b.schema.writable) {
+            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}",quote(name)))?;
+        }
         self.bindings.borrow_mut().remove(name);
         BOUND.lock().remove(&(unsafe { db.handle() } as usize, name.to_owned()));
         let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
@@ -238,6 +255,13 @@ impl Modules {
             return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None));
         }
         Ok(())
+    }
+}
+impl Drop for Modules {
+    fn drop(&mut self) {
+        let mine=self.bindings.get_mut();
+        if mine.is_empty(){return;}
+        BOUND.lock().retain(|(_,name),binding|!mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current)));
     }
 }
 
@@ -254,6 +278,7 @@ pub(crate) fn bound_source(db: &Connection, name: &str) -> Option<Arc<dyn Source
 struct Table {
     base: rusqlite::ffi::sqlite3_vtab,
     binding: Binding,
+    connection: *mut rusqlite::ffi::sqlite3,
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -264,7 +289,12 @@ fn register(db: &Connection, name: &str, binding: Binding) -> Result<()> {
     }
     let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
     const MODULE: Module<Table> = Module::eponymous_only_module();
-    db.create_module(module.as_c_str(), &MODULE, Some(binding))?;
+    const WRITABLE: Module<Table> = Module::update_module();
+    let writable=binding.current().writable();
+    db.create_module(module.as_c_str(), if writable { &WRITABLE } else { &MODULE }, Some(binding))?;
+    // Mutable execution state is temporary. An eponymous table in main would make
+    // SQLite classify volatile writes as durable store writes (including its atom guard).
+    if writable {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
     // Resolve xConnect before an authored-query authorizer is installed.
     db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
     Ok(())
@@ -309,12 +339,29 @@ unsafe impl<'a> VTab<'a> for Table {
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::Innocuous)?;
         let binding = aux.ok_or_else(|| failure("missing native row source"))?.clone();
+        if binding.current().writable() {
+            // This option takes a third vararg. VTabConnection::config in the pinned
+            // rusqlite version supplies only the option code, so pass the flag explicitly.
+            let code=unsafe {rusqlite::ffi::sqlite3_vtab_config(db.handle(),rusqlite::ffi::SQLITE_VTAB_CONSTRAINT_SUPPORT,1)};
+            if code!=rusqlite::ffi::SQLITE_OK {return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code),None));}
+        }
         let columns: Vec<String> = binding.schema.columns.iter().map(|c| format!("{} INTEGER", quote(c))).collect();
         let sql = CString::new(format!("CREATE TABLE x({})", columns.join(","))).map_err(|_| failure("invalid native columns"))?;
-        Ok((Cow::Owned(sql), Self { base: rusqlite::ffi::sqlite3_vtab::default(), binding }))
+        Ok((Cow::Owned(sql), Self { base: rusqlite::ffi::sqlite3_vtab::default(), binding, connection:unsafe {db.handle()} }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let source = self.binding.current();
+        let equal=info.constraints().enumerate().filter(|(i,c)|c.is_usable()&&c.column()>=0&&c.operator()==IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ&&info.collation(*i).is_ok_and(|v|v=="BINARY")).map(|(i,c)|(i,c.column() as usize)).collect::<Vec<_>>();
+        let order=info.order_bys().map(|o|(o.column() as usize,o.is_order_by_desc())).collect::<Vec<_>>();
+        if !order.is_empty()&&equal.iter().all(|(i,_)|info.is_in_constraint(*i).is_ok_and(|b|!b))&&source.ordered(&equal.iter().map(|(_,c)|*c).collect::<Vec<_>>(),&order) {
+            for (arg,&(i,_)) in equal.iter().enumerate(){info.constraint_usage(i).set_argv_index((arg+1) as i32);}
+            info.set_idx_num(ORDERED);
+            info.set_idx_str(&format!("{}:{}",if order[0].1{"d"}else{"a"},equal.iter().map(|(_,c)|c.to_string()).collect::<Vec<_>>().join(",")));
+            info.set_order_by_consumed(true);
+            let rows=source.estimated_matches_all(&equal.iter().map(|(_,c)|*c).collect::<Vec<_>>());
+            info.set_estimated_rows(rows as i64);info.set_estimated_cost(rows.max(1) as f64);
+            return Ok(true);
+        }
         // The document bound by an `EQ`, where the source can keep a lookup to it (`lookup_in`).
         let doc = source.doc_column().filter(|&d| {
             info.constraints().enumerate().any(|(j, c)| {
@@ -474,6 +521,8 @@ unsafe impl<'a> VTab<'a> for Table {
             range: 0..0,
             selected: None,
             position: 0,
+            reverse:false,
+            lazy:false,
         })
     }
 }
@@ -485,10 +534,32 @@ struct Cursor {
     range: Range<usize>,
     selected: Option<Vec<usize>>,
     position: usize,
+    reverse: bool,
+    lazy: bool,
 }
 impl Cursor {
     fn row(&self) -> usize {
-        self.selected.as_ref().map_or(self.range.start, |r| r[self.position])
+        self.selected.as_ref().map_or(if self.reverse {self.range.end.saturating_sub(1)}else{self.range.start}, |r| r[self.position])
+    }
+}
+impl<'vtab> rusqlite::vtab::CreateVTab<'vtab> for Table {
+    const KIND:rusqlite::vtab::VTabKind=rusqlite::vtab::VTabKind::Eponymous;
+}
+impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
+    fn delete(&mut self,arg:rusqlite::types::ValueRef<'_>)->Result<()> {
+        self.binding.current().write(Some(arg.as_i64()?),None,None,false,false).map(|_|())
+    }
+    fn insert(&mut self,args:&rusqlite::vtab::Inserts<'_>)->Result<i64> {
+        use rusqlite::vtab::ConflictMode;
+        let conflict=unsafe {args.on_conflict(self.connection)};
+        let values=(2..args.len()).map(|i|args.get::<Option<i64>>(i)).collect::<Result<Vec<_>>>()?;
+        self.binding.current().write(None,args.get(1)?,Some(values),conflict==ConflictMode::Replace,conflict==ConflictMode::Ignore)
+    }
+    fn update(&mut self,args:&rusqlite::vtab::Updates<'_>)->Result<()> {
+        use rusqlite::vtab::ConflictMode;
+        let conflict=unsafe {args.on_conflict(self.connection)};
+        let values=(2..args.len()).map(|i|args.get::<Option<i64>>(i)).collect::<Result<Vec<_>>>()?;
+        self.binding.current().write(args.get(0)?,args.get(1)?,Some(values),conflict==ConflictMode::Replace,conflict==ConflictMode::Ignore).map(|_|())
     }
 }
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
@@ -497,9 +568,25 @@ unsafe impl VTabCursor for Cursor {
         let stats = &self.binding.stats;
         stats.scans.fetch_add(1, Ordering::Relaxed);
         self.source = self.binding.current();
+        if let Some(version)=self.source.frozen() {self.source=version;}
         self.position = 0;
+        self.reverse=false;
+        self.lazy=false;
         self.selected = None;
         self.range = 0..0;
+        if index==ORDERED {
+            self.lazy=true;
+            let (direction,columns)=list.ok_or_else(||failure("missing ordered columns"))?.split_once(':').ok_or_else(||failure("invalid ordered columns"))?;
+            let mut equal=Vec::new();
+            for (arg,column) in columns.split(',').filter(|c|!c.is_empty()).enumerate() {
+                let Some(value)=integer(&args.get::<Value>(arg)?) else {self.range=0..0;return Ok(());};
+                equal.push((column.parse().map_err(|_|failure("invalid ordered field"))?,value));
+            }
+            self.range=self.source.ordered_range(&equal).ok_or_else(||failure("ordered source lost its index"))?;
+            self.reverse=direction=="d";
+            if !self.range.is_empty(){stats.candidates.fetch_add(1,Ordering::Relaxed);}
+            return Ok(());
+        }
         if index == MULTI {
             let list = list.ok_or_else(|| failure("missing index columns"))?;
             let (tag, list) = list.split_at(1);
@@ -594,8 +681,9 @@ unsafe impl VTabCursor for Cursor {
         if self.selected.is_some() {
             self.position += 1;
         } else {
-            self.range.start += 1;
+            if self.reverse {self.range.end-=1;}else{self.range.start+=1;}
         }
+        if self.lazy&&!self.range.is_empty(){self.binding.stats.candidates.fetch_add(1,Ordering::Relaxed);}
         Ok(())
     }
     fn eof(&self) -> bool {
@@ -603,10 +691,10 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         self.binding.stats.columns.fetch_add(1, Ordering::Relaxed);
-        ctx.set_result(&self.source.value(self.row(), col as usize))
+        ctx.set_result(&self.source.cell(self.row(), col as usize))
     }
     fn rowid(&self) -> Result<i64> {
-        Ok(self.row() as i64 + 1)
+        Ok(self.source.row_id(self.row()))
     }
 }
 

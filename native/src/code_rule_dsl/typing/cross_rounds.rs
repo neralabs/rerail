@@ -273,6 +273,75 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
     Some(Split { cone: c, rest, reads })
 }
 
+/// The suffix of a relation the rounds read and no round changes (`pre_split`), derived once before them.
+pub(crate) const PRE: &str = "__pre";
+
+/// A cone split before its rounds: `pre` derives each relation of the cone that reads no `__prev` row and no
+/// `unconverged` fact, directly or through other relations, so every round would derive the same rows of it (a walk
+/// over the tree, an import's binding). It runs once; `rounds` reads its rows of `reads` as inputs `<rel>__pre`.
+/// `None` when every relation changes with the rounds, or the cone has gates or a lattice relation `rounds` reads.
+pub(crate) struct PreSplit {
+    pub(crate) pre: Program,
+    pub(crate) rounds: Program,
+    pub(crate) reads: BTreeSet<String>,
+}
+
+pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
+    if !cone.gates.is_empty() {
+        return None;
+    }
+    let changes_name = |r: &str| r.ends_with(PREV) || r == UNCONVERGED;
+    let mut changing: BTreeSet<&str> = BTreeSet::new();
+    loop {
+        let before = changing.len();
+        for r in &cone.rules {
+            if !changing.contains(r.head.rel.as_str()) && r.body.iter().filter_map(Literal::atom).any(|a| changes_name(&a.rel) || changing.contains(a.rel.as_str())) {
+                changing.insert(r.head.rel.as_str());
+            }
+        }
+        if changing.len() == before {
+            break;
+        }
+    }
+    let in_pre = |rel: &str| !changing.contains(rel);
+    if cone.rules.iter().all(|r| !in_pre(&r.head.rel)) {
+        return None;
+    }
+    let reads: BTreeSet<String> = cone
+        .rules
+        .iter()
+        .filter(|r| !in_pre(&r.head.rel))
+        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
+        .filter(|a| in_pre(&a.rel) && cone.rules.iter().any(|r| r.head.rel == a.rel))
+        .map(|a| a.rel.clone())
+        .collect();
+    if reads.iter().any(|r| cone.lattice.contains_key(r)) {
+        return None;
+    }
+    let mut pre = cone.clone();
+    pre.rules.retain(|r| in_pre(&r.head.rel));
+    pre.outputs.retain(|o| in_pre(o) && cone.rules.iter().any(|r| r.head.rel == *o));
+    pre.lattice.retain(|rel, _| in_pre(rel));
+    let mut rounds = cone.clone();
+    rounds.rules.retain(|r| !in_pre(&r.head.rel));
+    for r in &mut rounds.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && reads.contains(&a.rel)
+            {
+                a.rel = format!("{}{PRE}", a.rel);
+            }
+        }
+    }
+    rounds.outputs.retain(|o| !(in_pre(o) && cone.rules.iter().any(|r| r.head.rel == *o)));
+    rounds.lattice.retain(|rel, _| !in_pre(rel) || !cone.rules.iter().any(|r| r.head.rel == *rel));
+    for rel in &reads {
+        rounds.decls.insert(format!("{rel}{PRE}"), cone.decls[rel].clone());
+        rounds.inputs.push(format!("{rel}{PRE}"));
+    }
+    Some(PreSplit { pre, rounds, reads })
+}
+
 /// The digest of one round's rows of the hop relations: the early cutoff compares consecutive rounds'.
 pub(crate) fn digest(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
     let sorted = rows.iter().map(|(rel, rows)| {
