@@ -78,6 +78,41 @@ impl Work<'_> {
             true,
         )
     }
+    pub fn output_table(&mut self, width: usize) -> Result<String> {
+        let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        self.allocate_readonly(format!(
+            "{},PRIMARY KEY({})",
+            cols.iter()
+                .map(|c| format!("{c} INTEGER NOT NULL"))
+                .collect::<Vec<_>>()
+                .join(","),
+            cols.join(",")
+        ))
+    }
+    pub fn readonly_rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
+        let Some(store) = self.versions else {
+            return self.rows(width, rows);
+        };
+        let name = self.output_table(width)?;
+        let op = self.profiler.map(|p| {
+            p.operation(
+                "bulk delta storage",
+                ("sql-extension", 0),
+                0,
+                vec![("rows".into(), rows.len() as i64)],
+            )
+        });
+        store.load_scratch(
+            &name,
+            rows.iter()
+                .map(|r| r.iter().copied().map(Some).collect())
+                .collect(),
+        )?;
+        if let Some(op) = op {
+            op.finish(rows.len());
+        }
+        Ok(name)
+    }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
         if let Some(store) = self.versions.filter(|s| s.owns(&name)) {
@@ -170,6 +205,9 @@ impl Work<'_> {
 pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Result<usize> {
     let e = Arc::make_mut(&mut run.emitted);
     let views = std::mem::take(&mut e.views);
+    if views.is_empty() {
+        return Ok(0);
+    }
     let mut names = BTreeSet::new();
     for (name, q) in &views {
         let width = q.body.columns.len();

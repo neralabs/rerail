@@ -12,7 +12,6 @@ pub(super) fn apply(
     counts: Option<&str>,
     candidates: Vec<&str>,
 ) -> Result<()> {
-    let key = names("", spec.keys);
     let mut phase = phase::Phase::default();
     let queries = candidates
         .into_iter()
@@ -30,6 +29,36 @@ pub(super) fn apply(
     } else {
         queries.join(" UNION ")
     };
+    append(
+        w,
+        &mut phase,
+        spec,
+        keys,
+        previous,
+        previous_counts,
+        output,
+        frontier,
+        counts,
+        &candidates,
+        false,
+    )?;
+    phase.execute(w).map(|_| ())
+}
+
+pub(super) fn append(
+    w: &Work<'_>,
+    phase: &mut phase::Phase,
+    spec: &Relation,
+    keys: &str,
+    previous: &str,
+    previous_counts: Option<&str>,
+    output: &str,
+    frontier: &str,
+    counts: Option<&str>,
+    candidates: &str,
+    computed: bool,
+) -> Result<()> {
+    let key = names("", spec.keys);
     let candidate = phase.relation(spec.width, &candidates);
     let next_query = if spec.lattice {
         let value = format!("c{}", spec.width - 1);
@@ -83,8 +112,13 @@ pub(super) fn apply(
     let store = w
         .versions
         .ok_or_else(|| error("temporal fold requires native storage"))?;
-    phase.patch(store, frontier, keys, &frontier_rows)?;
-    phase.patch(store, output, keys, &next)?;
+    if computed {
+        phase.patch_computed(store, frontier, keys, &frontier_rows)?;
+        phase.patch_computed(store, output, keys, &next)?;
+    } else {
+        phase.patch(store, frontier, keys, &frontier_rows)?;
+        phase.patch(store, output, keys, &next)?;
+    }
     if let Some((counts, previous_counts)) = counts.zip(previous_counts) {
         let query = format!(
             "SELECT {},coalesce(p.c{},0)+(f.c0 IS NOT NULL) FROM {keys} k LEFT JOIN {} p ON {} LEFT JOIN {} f ON {} WHERE p.c0 IS NOT NULL OR f.c0 IS NOT NULL",
@@ -96,7 +130,11 @@ pub(super) fn apply(
             same("f", "k", spec.keys)
         );
         let rows = phase.relation(spec.keys + 1, &query);
-        phase.patch(store, counts, keys, &rows)?;
+        if computed {
+            phase.patch_computed(store, counts, keys, &rows)?;
+        } else {
+            phase.patch(store, counts, keys, &rows)?;
+        }
     }
-    phase.execute(w)
+    Ok(())
 }

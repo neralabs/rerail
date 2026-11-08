@@ -149,8 +149,8 @@ impl CodeRuleSqlExecutor {
                     continue;
                 }
                 let width = p.source.columns().len();
-                let plus = work.rows(width, &p.plus)?;
-                let minus = work.rows(width, &p.minus)?;
+                let plus = work.readonly_rows(width, &p.plus)?;
+                let minus = work.readonly_rows(width, &p.minus)?;
                 if let Some(live) = &p.live {
                     live.apply(&p.plus, &p.minus);
                 }
@@ -184,7 +184,9 @@ impl CodeRuleSqlExecutor {
                 report["migrated_views"] = json!(0);
                 reports.push(report);
             }
-            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
+            if !self.stats_ready.get() {
+                self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
+            }
             {
                 let mut rows = Vec::new();
                 for run in &executions {
@@ -218,6 +220,8 @@ impl CodeRuleSqlExecutor {
         })();
         match result {
             Ok(report) => {
+                self.stats_ready.set(true);
+                self.control_ready.set(true);
                 self.versions.commit();
                 self.scratch = work.pool;
                 for p in prepared {
@@ -231,7 +235,19 @@ impl CodeRuleSqlExecutor {
                     .flat_map(|e| e.objects.iter().cloned())
                     .collect();
                 self.executions = executions;
-                self.db.reset_execution();
+                let stable_phases = !self.executions.is_empty()
+                    && self.executions.iter().all(|run| {
+                        run.temporal.len() == 1
+                            && run
+                                .temporal
+                                .get(&0)
+                                .is_some_and(|trace| trace.stable_phases(&run.emitted.program))
+                    });
+                if stable_phases {
+                    self.db.reset_execution_storage();
+                } else {
+                    self.db.reset_execution();
+                }
                 Ok(report.to_string())
             }
             Err(e) => {

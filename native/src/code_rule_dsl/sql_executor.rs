@@ -28,9 +28,9 @@ mod reductions;
 mod scratch;
 mod temporal;
 mod updates;
-mod versions;
 #[cfg(feature = "headless")]
 mod verification;
+mod versions;
 mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
@@ -75,6 +75,8 @@ pub struct CodeRuleSqlExecutor {
     scratch: scratch::Pool,
     versions: versions::Store,
     next_trace: usize,
+    stats_ready: std::cell::Cell<bool>,
+    control_ready: std::cell::Cell<bool>,
     #[cfg(any(test, feature = "headless"))]
     cold_oracle: bool,
 }
@@ -105,6 +107,8 @@ impl CodeRuleSqlExecutor {
             scratch: scratch::Pool::default(),
             versions: versions::Store::default(),
             next_trace: 0,
+            stats_ready: std::cell::Cell::new(false),
+            control_ready: std::cell::Cell::new(false),
             #[cfg(any(test, feature = "headless"))]
             cold_oracle: false,
         })
@@ -635,14 +639,20 @@ impl CodeRuleSqlExecutor {
         })
         .map_err(error)?;
         let mut batch = HashMap::new();
-        let has_wave_stats: bool = self
-            .db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'wave_stats')",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(error)?;
+        let has_wave_stats: bool = if lowered.program.inputs.iter().all(|name| {
+            self.inputs.contains_key(name)
+                || self.executions.iter().any(|e| e.counts.contains_key(name))
+        }) {
+            false
+        } else {
+            self.db
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'wave_stats')",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(error)?
+        };
         for name in &lowered.program.inputs {
             if !identifier(name) || reserved(name) {
                 return Err(error(format!("invalid input relation: {name}")));
@@ -713,61 +723,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         let emitted = self.compile(program, dialect)?;
         let indexes = indexes::wanted(&emitted);
-        let mut objects: Vec<(String, bool)> = emitted
-            .views
-            .iter()
-            .map(|(name, _)| (name.clone(), false))
-            .collect();
-        for (name, arity) in &emitted.program.relations {
-            if name.starts_with("__") || reserved(name) {
-                return Err(error(format!("{name}: reserved SQL wave relation")));
-            }
-            if *arity == 0 {
-                return Err(error("SQL wave relations need at least one column"));
-            }
-            objects.extend([
-                (name.clone(), true),
-                (format!("new_{name}"), true),
-                (format!("delta_{name}"), true),
-            ]);
-            if emitted
-                .program
-                .lattice_operations
-                .get(name)
-                .is_some_and(|ops| ops.after.is_some())
-            {
-                objects.push((format!("__sql_changes_{name}"), true));
-            }
-        }
-        let mut unique = BTreeSet::new();
-        let owned: BTreeSet<_> = self
-            .generated
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        for (name, _) in &objects {
-            if !identifier(name)
-                || name.to_ascii_lowercase().starts_with("wave_")
-                || name.to_ascii_lowercase().starts_with("rdl_")
-                || name.eq_ignore_ascii_case("atoms")
-                || !unique.insert(name.to_ascii_lowercase())
-            {
-                return Err(error(format!(
-                    "invalid or overlapping wave relation: {name}"
-                )));
-            }
-            let exists: bool = self.db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE UNION ALL SELECT 1 FROM temp.sqlite_schema WHERE name = ?1 COLLATE NOCASE)", [name], |r| r.get(0)).map_err(error)?;
-            if (exists && !owned.contains(name.as_str()))
-                || self
-                    .inputs
-                    .keys()
-                    .any(|input| input.eq_ignore_ascii_case(name))
-            {
-                return Err(error(format!(
-                    "{name}: SQL output already exists; rebind inputs to clear derived results"
-                )));
-            }
-        }
+        let objects = self.output_objects(&emitted)?;
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
@@ -777,7 +733,11 @@ impl CodeRuleSqlExecutor {
         }
         let trace_namespace = self.next_trace;
         self.next_trace += 1;
-        let previous = (self.generated.clone(), self.executions.clone());
+        let previous = (
+            self.generated.clone(),
+            self.executions.clone(),
+            self.control_ready.get(),
+        );
         let mut affected: BTreeSet<usize> = self
             .executions
             .iter()
@@ -805,7 +765,20 @@ impl CodeRuleSqlExecutor {
             self.clear_control()?;
             self.db.reset_execution();
             let _budget = limits.enter(&self.db)?;
+            let needs_integers = emitted
+                .queries
+                .iter()
+                .flatten()
+                .chain(emitted.views.iter().map(|(_, q)| q))
+                .any(constants::uses_integer_domain);
             for statement in &emitted.setup {
+                let setup = statement.trim_start();
+                if !needs_integers
+                    && (setup.starts_with("CREATE TEMP TABLE rdl_int(")
+                        || setup.starts_with("INSERT INTO rdl_int "))
+                {
+                    continue;
+                }
                 // The split-position table is invariant across programs in this session.
                 if statement.starts_with("CREATE TEMP TABLE rdl_int")
                     && self.db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'rdl_int')", [], |r| r.get::<_, bool>(0)).map_err(error)?
@@ -814,8 +787,18 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            let minimal_setup =
+                emitted.views.is_empty() && emitted.queries.iter().all(Option::is_some);
+            if minimal_setup {
+                schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?;
+            } else {
+                schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            }
+            self.control_ready.set(true);
             for (table, columns) in &indexes {
+                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) {
+                    continue;
+                }
                 session::index(&self.db, table, columns).map_err(error)?;
             }
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY,rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
@@ -878,6 +861,7 @@ impl CodeRuleSqlExecutor {
                     &mut execution,
                     trace_namespace,
                     &emitted.program,
+                    !minimal_setup,
                 )?
             };
             #[cfg(not(any(test, feature = "headless")))]
@@ -887,12 +871,19 @@ impl CodeRuleSqlExecutor {
                 &mut execution,
                 trace_namespace,
                 &emitted.program,
+                !minimal_setup,
             )?;
             let mut initializations = Vec::new();
             let waves = if let Some(waves) = native_initial {
                 waves
             } else {
                 let _scope = profiling::scope(&self.db, "cold execution");
+                if minimal_setup {
+                    schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+                    for (table, columns) in &indexes {
+                        session::index(&self.db, table, columns).map_err(error)?;
+                    }
+                }
                 let waves = schedule::execute_declared(&self.db, &emitted.program, max_waves)
                     .map_err(error)?;
                 let mut stats = self
@@ -960,6 +951,7 @@ impl CodeRuleSqlExecutor {
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
                 self.generated = previous.0;
                 self.executions = previous.1;
+                self.control_ready.set(previous.2);
                 self.db.reset_execution();
                 native_rollback?;
                 return Err(e);
@@ -968,6 +960,7 @@ impl CodeRuleSqlExecutor {
         self.scratch = pool;
         self.generated.extend(execution.objects.iter().cloned());
         self.executions.push(execution);
+        self.stats_ready.set(true);
         serde_json::to_string(
             &json!({"waves": waves, "outputs": outputs, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
         )
@@ -1000,33 +993,6 @@ impl CodeRuleSqlExecutor {
         self.scratch.clear(&self.db, &self.versions)?;
         self.db.reset_execution();
         Ok(())
-    }
-
-    fn clear_control(&self) -> Result<()> {
-        for name in [
-            "wave_step",
-            "wave_read",
-            "wave_delta",
-            "wave_pending",
-            "wave_after",
-            "wave_document",
-            "wave_stats",
-        ] {
-            self.db
-                .execute_batch(&format!("DROP TABLE IF EXISTS temp.{name}"))
-                .map_err(error)?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for CodeRuleSqlExecutor {
-    fn drop(&mut self) {
-        let _scope = profiling::scope(&self.db, "reset");
-        self.db.profile_checkpoint();
-        let _ = self.db.remove_bindings();
-        let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
-        self.db.profile_checkpoint();
     }
 }
 

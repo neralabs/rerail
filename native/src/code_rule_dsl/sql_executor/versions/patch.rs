@@ -2,6 +2,15 @@
 use super::*;
 
 impl Version {
+    pub(super) fn renamed(mut self, columns: Vec<String>) -> Result<Self> {
+        if columns.len() != self.schema.columns.len()
+            || columns.iter().collect::<BTreeSet<_>>().len() != columns.len()
+        {
+            return Err(error("invalid diagnostic alias columns"));
+        }
+        Arc::make_mut(&mut self.schema).columns = columns;
+        Ok(self)
+    }
     pub fn rows(&self) -> Vec<Vec<Option<i64>>> {
         let mut rows = vec![];
         Node::prefix(&self.full, &[], &mut rows);

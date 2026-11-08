@@ -4,13 +4,13 @@ use operator::Operator;
 
 #[derive(Clone)]
 pub(super) struct Frame {
-    scope: usize,
-    inputs: BTreeMap<String, String>,
-    input_counters: BTreeMap<String, String>,
+    pub(super) scope: usize,
+    pub(super) inputs: BTreeMap<String, String>,
+    pub(super) input_counters: BTreeMap<String, String>,
     pub published: BTreeMap<String, String>,
     pub frontiers: BTreeMap<String, String>,
     pub(super) counters: BTreeMap<String, String>,
-    operators: Vec<Operator>,
+    pub(super) operators: Vec<Operator>,
 }
 pub(super) struct Versions {
     pub published: BTreeMap<String, versions::Version>,
@@ -19,8 +19,8 @@ pub(super) struct Versions {
 }
 #[derive(Clone)]
 pub(super) struct Prepared {
-    operator: Operator,
-    roots: Vec<(String, versions::Version)>,
+    pub(super) operator: Operator,
+    pub(super) roots: Vec<(String, versions::Version)>,
 }
 fn snapshot(
     store: &versions::Store,
@@ -48,6 +48,10 @@ pub(super) fn keys(w: &mut Work<'_>, target: &str, d: &Delta, width: usize) -> R
 }
 
 impl Frame {
+    pub(super) fn fused(&self, relations: usize) -> bool {
+        self.operators.iter().all(|op| op.phase_eligible)
+            && self.operators.iter().map(|op| op.phase_arms).sum::<usize>() + relations * 6 < 500
+    }
     pub fn prepared(&self, store: &versions::Store) -> Vec<(usize, Prepared)> {
         self.operators
             .iter()
@@ -186,6 +190,11 @@ impl Frame {
         limit: u32,
     ) -> Result<()> {
         let _scope = store.activate(self.scope)?;
+        if self.fused(relations.len()) {
+            return self.advance_phase(
+                w, store, relations, steps, desired, external, active, preparing, templates,
+            );
+        }
         let mut touched = BTreeMap::new();
         for (r, spec) in relations {
             touched.insert(r.clone(), w.table(spec.keys)?);

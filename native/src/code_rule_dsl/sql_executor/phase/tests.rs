@@ -41,26 +41,28 @@ fn dependent_phase_outputs_evaluate_once_and_publish_atomically() {
     let mut w = Work::new(&db, &pool);
     w.versions = Some(&store);
     let before = store.version("phase_a");
-    let mut phase = Phase::default();
-    let next = phase.relation(2, "SELECT c0,phase_probe(c1+1) FROM phase_a WHERE c0=1");
-    let other = phase.relation(2, &format!("SELECT c0,c1+10 FROM {next}"));
-    phase.patch(&store, "phase_a", "phase_keys", &next).unwrap();
-    phase
-        .patch(&store, "phase_b", "phase_keys", &other)
-        .unwrap();
-    phase.execute(&w).unwrap();
+    for _ in 0..2 {
+        let mut phase = Phase::default();
+        let next = phase.relation(2, "SELECT c0,phase_probe(c1+1) FROM phase_a WHERE c0=1");
+        let other = phase.relation(2, &format!("SELECT c0,c1+10 FROM {next}"));
+        phase.patch(&store, "phase_a", "phase_keys", &next).unwrap();
+        phase
+            .patch(&store, "phase_b", "phase_keys", &other)
+            .unwrap();
+        phase.execute(&w).unwrap();
+    }
     assert_eq!(
         count.load(Ordering::Relaxed),
-        1,
-        "a materialized SQL expression must run once"
+        2,
+        "each cached execution must evaluate a materialized expression once"
     );
     assert_eq!(
         store.version("phase_a").rows(),
-        vec![vec![Some(1), Some(6)], vec![Some(2), Some(8)]]
+        vec![vec![Some(1), Some(7)], vec![Some(2), Some(8)]]
     );
     assert_eq!(
         store.version("phase_b").rows(),
-        vec![vec![Some(1), Some(16)], vec![Some(2), Some(8)]]
+        vec![vec![Some(1), Some(17)], vec![Some(2), Some(8)]]
     );
     assert_eq!(before.row_id(0), store.version("phase_a").row_id(0));
     let a = store.version("phase_a");
@@ -84,6 +86,13 @@ fn dependent_phase_outputs_evaluate_once_and_publish_atomically() {
         .unwrap();
     failed.patch(&store, "phase_b", "phase_keys", &bad).unwrap();
     assert!(failed.execute(&w).is_err());
+    assert!(a.same(&store.version("phase_a")) && b.same(&store.version("phase_b")));
+    let mut replaced = Phase::default();
+    let good = replaced.relation(2, "SELECT 2,100");
+    let bad = replaced.relation(2, "SELECT 2,NULL");
+    replaced.replace_all(&store, "phase_a", &good).unwrap();
+    replaced.replace_all(&store, "phase_b", &bad).unwrap();
+    assert!(replaced.execute(&w).is_err());
     assert!(a.same(&store.version("phase_a")) && b.same(&store.version("phase_b")));
 }
 

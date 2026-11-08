@@ -262,6 +262,13 @@ impl Source for Version {
         Some((row.id, row.values.clone()))
     }
     fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
+        // Ordered readers seek only a leading primary-key prefix. Nonleading
+        // constraints need the selective index path, then a sort of its matches.
+        // Pricing an ordered full scan as a point lookup makes sparse joins scan
+        // every disconnected group when UNION requests canonical row order.
+        if equal.iter().any(|&c| (0..c).any(|p| !equal.contains(&p))) {
+            return false;
+        }
         let mut wanted = 0;
         for &(column, reverse) in order {
             if reverse != order[0].1 || column >= self.schema.keys {

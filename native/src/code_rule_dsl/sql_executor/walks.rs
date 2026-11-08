@@ -68,12 +68,14 @@ fn positive_ctes(query: &Query) -> bool {
     }
     let mut preceding = BTreeSet::new();
     for cte in &query.ctes {
-        if cte.arms.len() != 1
-            || !positive(&cte.arms[0])
-            || cte.arms[0]
-                .from
-                .iter()
-                .any(|i| matches!(&i.relation,Rel::Cte(name) if !preceding.contains(name)))
+        if cte.arms.is_empty()
+            || cte.arms.iter().any(|arm| {
+                !positive(arm)
+                    || arm
+                        .from
+                        .iter()
+                        .any(|i| matches!(&i.relation,Rel::Cte(name) if !preceding.contains(name)))
+            })
         {
             return false;
         }

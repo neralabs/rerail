@@ -1035,3 +1035,120 @@ All setup, diagnostics, verification, failure cleanup, and teardown statements m
 The requests are reproducible through `benchmark/sql-executor.py --session-request REGIONS OUTPUT.json`.
 The shared verifier runs through `scripts/profiling/sql-session.mjs VERIFIER REQUEST.json OUTPUT_DIRECTORY`.
 A successful goal audit still requires complete accepted runs at both 1,000 and 10,000 regions.
+
+### Completed continuation: shared SQL wave phases (2026-11-08)
+
+This section supersedes the preceding completion audit. All four items from the remaining-work list are complete within the checked shape boundaries below.
+The fixed complete-job allowance remains 100.
+
+#### Changes and root causes
+
+Each eligible wave now uses one SQL statement for contexts, contributions, support counts, improvements, frontiers, values, and widening counters.
+Materialized CTEs retain SQL expression evaluation. Native code validates all replacement roots before publication.
+Dense initial transitions rebuild complete roots through SQL result streams. Sparse edits keep keyed patches and persistent indexes.
+No native function hides rule evaluation or AST matching.
+
+The first cache fusion exposed an incorrect ordered-scan estimate.
+An equality constraint on a nonleading key could select an ordered reader that scanned unrelated groups.
+Ordered readers now require a leading equality prefix. Other constraints use selective indexes and sort their matches.
+The sparse recursive regression no longer exceeds its 50,000-instruction limit.
+
+Private contexts, contributions, heads, outputs, pending journals, and fact deltas now use read-only bindings where SQL writes are unnecessary.
+The initial path creates public outputs and wave diagnostics first. It declares cold control tables only when the fallback needs them.
+Output collision checks share one catalog read. Demand-module estimates share one statistics query.
+Statistics tables persist across edits, and initial wave diagnostics publish in one batch.
+Widening diagnostics share the final retained roots. Requested secondary indexes use sparse maintenance and survive rollback.
+Public result writes still run through SQLite, including extension triggers.
+
+Repeated preparation initially increased CPU for small edits, despite fewer SQL executions.
+Phases now reuse prepared statements. Successful edits retain those plans only when every execution uses complete, checked fixed-probe phases.
+Extra views, unsupported shapes, failures, and schema resets retain the full cache reset.
+Cached statements reopen the current native roots. They do not cache rows or expression results.
+
+Positive acyclic CTEs now accept multiple UNION or UNION ALL arms.
+Their final consumer must use DISTINCT. Function calls, scalar queries, aggregates, recursion, and forward references retain their established fallback.
+Cold-oracle tests cover single-arm, UNION, and UNION ALL cases at 32 and 512 regions.
+They compare values, frontiers, widening counters, rollback, and bounded sparse edits.
+Edits change recursive edges and delete or reinsert the CTE root input.
+Scalar reducers and registered lattice joins retain their existing SQL execution paths and failure behavior.
+
+#### Complete-session acceptance
+
+Both cases contain two expected failures, six successful edits, nine complete-state checkpoints, and a final query.
+The adapter checks all explicit facts, derived rows, widening counters, output deltas, rollback, and recovery against independent cold executions.
+Both reports have complete receipt coverage, zero unexpected explanation failures, and zero incomplete operations.
+Two deferred setup explanations fail as expected after their CREATE statements complete.
+
+| Regions / edges | Previous checkpoint SQL | Final complete-job SQL | Initial SQL | SQL per successful edit |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 / 5,000 | 847 | **100 / 100** | 16 | 10 |
+| 10,000 / 50,000 | 843 | **100 / 100** | 16 | 10 |
+
+The complete inventory contains 39 phase statements, 24 transaction statements, nine verification reads, and eight result-delta writes.
+It also contains seven statistics writes, four setup statements, four catalog/statistics reads, and two atom-flush statements.
+Initial result publication, initial wave diagnostics, and the final query add one statement each.
+All these statements count toward the allowance. There are no SQLite internal executions in these captures.
+
+Successful edits use 4,538, 6,270, and 9,936 VM instructions across the three repeated change shapes.
+Those values remain identical at both input sizes.
+Initial VM work increases from 3,460,361 to 5,876,559 instructions at 5,000 edges.
+At 50,000 edges, it increases from 33,565,361 to 58,724,559 instructions.
+CTE materialization, intermediate grouping, and tagged result streams add SQL work while reducing submissions and native storage work.
+The CPU measurements below establish the net result; statement counts alone do not establish a speed improvement.
+
+#### CPU and memory
+
+The comparison uses checkpoint `6e0a8735d` and the final engine, with identical benchmark requests and probe code.
+The baseline probe receives only the new option to disable SQL trace callbacks.
+`RERAIL_SQL_BENCH_UNPROFILED=1` disables those callbacks; both shared profiling environment variables are unset.
+Every trial validates results, reported deltas, unrelated-region guards, and scratch reuse.
+Each size uses three alternating baseline/final pairs in fresh processes.
+These are unoptimized development builds with debug information and incremental compilation disabled.
+The compiler is Homebrew Rust 1.97.1 on macOS arm64. Other worktrees ran jobs concurrently.
+These values must not be compared directly with the earlier optimized timings.
+
+| Regions / edges | Initial CPU before / after | Six edits CPU before / after | Peak RSS before / after |
+| --- | ---: | ---: | ---: |
+| 1,000 / 5,000 | 1.738 / 1.266 s | 57.7 / 48.2 ms | 89.5 / 85.6 MiB |
+| 10,000 / 50,000 | 20.100 / 14.811 s | 61.6 / 60.6 ms | 687.0 / 638.9 MiB |
+
+Initial CPU decreases by 26–27%. Peak RSS decreases by 4–7%.
+The larger case's small-edit CPU remains close to baseline. The measurement does not establish a material large-case edit speedup.
+The earlier version without statement reuse increased edit CPU by about 40%; that regression prompted the preparation changes above.
+
+#### Validation and boundaries
+
+All 129 SQL, virtual-table, demand, and profiling tests pass, with one child-process test ignored by design.
+The selection includes the 100,000-edge lattice regression, recursive counts, six CTE shape/size combinations, and failure recovery.
+Phase tests verify fresh roots on cached executions, one expression evaluation per execution, and atomic publication after invalid outputs.
+Diagnostic alias tests verify shared roots, stable row IDs, index retention, and rollback.
+The profiled library also type-checks with the repository's Rust 1.95 toolchain.
+All 38 Node and 82 Python profiling tests pass.
+The structure gate retains 10 passing metrics and 15 existing failures, with no added findings.
+
+| Requested item | Outcome |
+| --- | --- |
+| Fuse context, contribution, head, and fold execution | Complete for checked positive, call-free caches; other shapes keep their SQL paths. |
+| Reduce private schema and control work | Complete for this path; both full lifecycle captures meet the unchanged allowance. |
+| Verify SQL-session parity through the shared report | Complete for explicit-fact sessions, including full states, deltas, expected failures, and recovery. |
+| Extend the initial schedule to new mixed shapes | Complete for positive multi-arm CTEs, with cold-oracle and sparse-work checks at both sizes. |
+
+Snapshot, stored-fact, and file-edit replay remain outside this parity adapter's accepted request format.
+The adapter rejects those requests explicitly. Their executor paths retain separate regression coverage.
+Cold fallback remains visible for unsupported query shapes.
+
+Further performance work can reduce CTE materialization and grouping costs, extend fusion to scalar reducers and registered joins, and create execution-budget headroom.
+The current acceptance cases use the complete 100-execution allowance.
+These are follow-up improvements, rather than unfinished items in this continuation.
+
+#### Evidence and cleanup
+
+The final verifier has SHA-256 `9276e0f71ea52eb572e5c9a30b82b35b2103df8808d919f16d9d584eaeaaea1e`.
+The two complete capture digests are `231f1b0cec4cbb41536874967b2f8d2744905c0abf2a77091f2d773de7d0d128` and `155279be1e51e1202e6e47d92474615e52494e2cd430a1fe24ca45b6f746adfb`.
+The paired CPU baseline runner has SHA-256 `cc6759bcd84688d191e8044f6baaae5b9692fa8fe667a7e898c8ae804bb8710d`.
+The final CPU runner has SHA-256 `b6c98a419636c2f9f0b25803f9d44646476d19a8edecfa682a16bfaa4d3acc25`.
+
+The compact evidence archive is `/Users/jeremy/orca/artifacts/rerail-sql-wave-phases-20261108.tar.gz`.
+It retains the final reports, raw receipts, parity bundles, paired CPU observations, requests, source patch, and validation logs.
+The temporary comparison worktree, build targets, and intermediate capture directories are removed after archival.
+Cleanup also removes stale Rerail prefilter test files from exited processes, while preserving active jobs and their outputs.

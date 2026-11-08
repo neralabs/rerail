@@ -2,6 +2,44 @@
 use super::*;
 
 impl Store {
+    /// Publish a diagnostic alias without copying its rows or persistent indexes.
+    pub fn alias_readonly(
+        &self,
+        db: &rusqlite::Connection,
+        name: &str,
+        version: Version,
+        columns: Vec<String>,
+    ) -> Result<()> {
+        let mut version = version.renamed(columns)?;
+        if self.contains(name) {
+            let old = self.version(name);
+            if old.schema != version.schema
+                || self.tables.borrow()[&(self.scope.get(), name.into())].sql_writable
+            {
+                return Err(error("diagnostic alias changed schema or access mode"));
+            }
+            // An extension can request extra indexes on the public diagnostic.
+            // Maintain those indexes with a sparse patch instead of rebuilding them
+            // or losing them when the frame publishes its next shared root.
+            if old
+                .secondary
+                .iter()
+                .zip(version.secondary.iter())
+                .any(|(&keep, &incoming)| keep && !incoming)
+            {
+                let (plus, minus, _) = old.difference(&version);
+                let keys = plus
+                    .iter()
+                    .chain(&minus)
+                    .map(|r| r[..old.schema.keys].to_vec())
+                    .collect();
+                version = old.patched_rows(keys, plus, false)?;
+            }
+            self.replace(name, version)
+        } else {
+            self.fork_access(db, name, version, false)
+        }
+    }
     pub fn create(&self, db: &rusqlite::Connection, name: &str, schema: Schema) -> Result<()> {
         self.create_access(db, name, schema, true)
     }
@@ -32,6 +70,24 @@ impl Store {
             *flag = false;
         }
         self.fork_access(db, name, Version::empty(Arc::new(schema)), writable)
+    }
+    pub fn declare_readonly_empty(
+        &self,
+        db: &rusqlite::Connection,
+        name: &str,
+        schema: Schema,
+    ) -> Result<()> {
+        if self.contains(name) {
+            let old = self.version(name);
+            if *old.schema != schema
+                || self.tables.borrow()[&(self.scope.get(), name.into())].sql_writable
+            {
+                return Err(error("read-only cache slot changed schema or access mode"));
+            }
+            self.replace(name, old.empty_like())
+        } else {
+            self.create_readonly(db, name, schema)
+        }
     }
     pub fn fork(&self, db: &rusqlite::Connection, old: &str, new: &str) -> Result<()> {
         let writable = self.tables.borrow()[&(self.scope.get(), old.into())].sql_writable;

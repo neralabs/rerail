@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Clone, Default)]
 pub(super) struct Pool {
-    tables: BTreeMap<(String, bool), Vec<String>>,
+    tables: BTreeMap<(String, bool, bool), Vec<String>>,
     next: usize,
 }
 
@@ -13,14 +13,14 @@ pub(super) struct Work<'a> {
     pub profiler: Option<&'a super::super::sql_profile::Profiler>,
     pub pool: Pool,
     used: Vec<String>,
-    positions: BTreeMap<(String, bool), usize>,
+    positions: BTreeMap<(String, bool, bool), usize>,
     pub created: usize,
     pub version_nodes: usize,
     pub preparing: bool,
 }
 pub(super) struct Mark {
     used: usize,
-    positions: BTreeMap<(String, bool), usize>,
+    positions: BTreeMap<(String, bool, bool), usize>,
 }
 
 impl Pool {
@@ -80,14 +80,30 @@ impl<'a> Work<'a> {
         }
     }
     pub fn allocate(&mut self, definition: String, without_rowid: bool) -> Result<String> {
-        let shape = (definition, without_rowid);
+        self.allocate_access(definition, without_rowid, true)
+    }
+    pub fn allocate_readonly(&mut self, definition: String) -> Result<String> {
+        self.allocate_access(definition, true, false)
+    }
+    fn allocate_access(
+        &mut self,
+        definition: String,
+        without_rowid: bool,
+        writable: bool,
+    ) -> Result<String> {
+        let shape = (definition, without_rowid, writable);
         let position = self.positions.entry(shape.clone()).or_default();
         let tables = self.pool.tables.entry(shape.clone()).or_default();
         if *position == tables.len() {
             let name = format!("__rr_update_{}", self.pool.next);
             self.pool.next += 1;
             if let Some(store) = self.versions.filter(|_| shape.1) {
-                store.create_scratch(self.db, &name, versions::Schema::generated(&shape.0)?)?;
+                store.create_scratch_access(
+                    self.db,
+                    &name,
+                    versions::Schema::generated(&shape.0)?,
+                    shape.2,
+                )?;
             } else {
                 self.db
                     .execute_batch(&format!(

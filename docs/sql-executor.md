@@ -358,8 +358,10 @@ The connection belongs to the session, so Rust statements and cursors borrow tha
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.
-SQL selects each wave's pending frontier from `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
-The scheduler folds new rows into completed relations and records their deltas in `wave_delta`.
+The cold kernel selects pending steps through `wave_step`, `wave_read`, `wave_after`, and `wave_pending`.
+Retained execution preserves those dependency gates across immutable wave versions.
+SQL evaluates rule expressions and folds candidate rows into completed relations.
+Both paths record initial wave deltas in `wave_delta`.
 Negation and aggregation wait for their input strata to finish.
 Derived columns use positional names: `c0`, `c1`, and so on.
 
@@ -422,6 +424,7 @@ The latter counts native version-diff traversal, which SQLite instruction counts
 Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
 Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
 Acyclic positive CTEs can use arbitrary names when the final SELECT uses DISTINCT.
+Their arms can use UNION or UNION ALL. The final DISTINCT makes duplicate derivations safe to retain as sets.
 This path currently excludes function calls, scalar subqueries, and aggregate consumers.
 Bag-sensitive CTEs and unsupported scalar shapes keep the explicit refresh or partition fallback.
 Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
@@ -434,6 +437,17 @@ Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep th
 Frozen lookups share an immutable version. Contiguous scans stream through that version without repeated rank lookups.
 Scratch deltas share roots and prepare secondary indexes only when a lookup needs them.
 Bulk loads preserve the integer checks of the writable virtual tables.
+
+Positive, call-free caches can combine contexts, contributions, support counts, improvements, and folds into one statement per wave.
+Materialized CTEs evaluate the expressions. A tagged result stream returns the affected rows and keys.
+Native code validates every replacement before publication and maintains persistent storage roots.
+Scalar reducers, registered lattice joins, and other checked shapes retain their existing SQL paths.
+Merge and widening functions still execute through SQLite.
+
+Private phase outputs and fact deltas use read-only native bindings, which avoid CREATE and DROP statements.
+Initial execution creates public results and wave diagnostics first. The cold fallback declares its remaining control tables when needed.
+Widening counters retain their `__sql_changes_RELATION` names and `changes` columns as read-only diagnostics.
+These diagnostics share retained roots. Additional indexes requested by extensions survive sparse publication and rollback.
 
 An earlier frame can become active when an edit shortens an upstream dependency gate.
 Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.

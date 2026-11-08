@@ -9,7 +9,14 @@ const PROGRAM: &str = ".decl root(n:number)\n.decl edge(a:number,b:number,w:numb
 
 #[test]
 fn named_positive_ctes_use_one_initial_schedule_and_bounded_edits() {
-    for groups in [32, 512] {
+    for (groups, arms, distinct) in [
+        (32, 1, false),
+        (512, 1, false),
+        (32, 2, false),
+        (512, 2, false),
+        (32, 2, true),
+        (512, 2, true),
+    ] {
         let (_directory, mut e) = executor();
         let edges = (0..groups)
             .flat_map(|g| {
@@ -47,7 +54,9 @@ fn named_positive_ctes_use_one_initial_schedule_and_bounded_edits() {
         let old = emitted.queries[0].take().unwrap();
         let width = old.body.columns.len();
         let mut ctes = old.ctes;
-        ctes.push(Cte::walk("extension_seed", None, vec![old.body]));
+        let mut seed = Cte::walk("extension_seed", None, vec![old.body; arms]);
+        seed.distinct = distinct;
+        ctes.push(seed);
         let query = Query {
             ctes,
             body: Select {
@@ -71,16 +80,24 @@ fn named_positive_ctes_use_one_initial_schedule_and_bounded_edits() {
             format!("INSERT OR IGNORE INTO new_distance {}", query.render());
         emitted.queries[0] = Some(query);
         let original = emitted.program.clone();
-        e.db.execute_batch(
-            "DELETE FROM distance;DELETE FROM __sql_changes_distance;DELETE FROM wave_delta",
-        )
-        .unwrap();
+        e.db.execute_batch("DELETE FROM distance;DELETE FROM wave_delta")
+            .unwrap();
+        let old_counts = e.versions.version("__sql_changes_distance");
+        e.versions
+            .replace("__sql_changes_distance", old_counts.empty_like())
+            .unwrap();
         let tx = e.versions.transaction(&e.db).unwrap();
         let mut work = super::super::maintenance::Work::new(&e.db, &e.scratch);
         work.versions = Some(&e.versions);
-        let waves =
-            super::super::temporal::initial::run(&mut work, &e.versions, &mut run, 777, &original)
-                .unwrap();
+        let waves = super::super::temporal::initial::run(
+            &mut work,
+            &e.versions,
+            &mut run,
+            777,
+            &original,
+            false,
+        )
+        .unwrap();
         assert!(
             waves.is_some(),
             "positive checked CTE must avoid cold/retained fallback"
@@ -116,19 +133,26 @@ fn named_positive_ctes_use_one_initial_schedule_and_bounded_edits() {
         let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
         assert!(e.apply_changes(patch.clone(), Some(1)).is_err());
         assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), expected);
-        let (_, work) = super::scaling::profile(&mut e, |e| e.apply_changes(patch, None).unwrap());
-        assert!(work.vm.get() < 50_000, "{groups}: {work:?}");
-        for (name, columns) in [("edge", json!(["a", "b", "w"])), ("root", json!(["n"]))] {
-            oracle.bind_relation(json!({"name":name,"columns":columns,"rows":rows(&e,&format!("SELECT * FROM {name}"))}).to_string()).unwrap();
+        for patch in [
+            patch,
+            json!([{"name":"root","delete":[[0]]}]).to_string(),
+            json!([{"name":"root","insert":[[0]]}]).to_string(),
+        ] {
+            let (_, work) =
+                super::scaling::profile(&mut e, |e| e.apply_changes(patch, None).unwrap());
+            assert!(work.vm.get() < 50_000, "{groups}: {work:?}");
+            for (name, columns) in [("edge", json!(["a", "b", "w"])), ("root", json!(["n"]))] {
+                oracle.bind_relation(json!({"name":name,"columns":columns,"rows":rows(&e,&format!("SELECT * FROM {name}"))}).to_string()).unwrap();
+            }
+            oracle.run(PROGRAM.into(), "python".into(), None).unwrap();
+            assert_eq!(
+                rows(&e, "SELECT * FROM distance ORDER BY c0"),
+                rows(&oracle, "SELECT * FROM distance ORDER BY c0")
+            );
+            assert_eq!(
+                rows(&e, "SELECT * FROM __sql_changes_distance ORDER BY c0"),
+                rows(&oracle, "SELECT * FROM __sql_changes_distance ORDER BY c0")
+            );
         }
-        oracle.run(PROGRAM.into(), "python".into(), None).unwrap();
-        assert_eq!(
-            rows(&e, "SELECT * FROM distance ORDER BY c0"),
-            rows(&oracle, "SELECT * FROM distance ORDER BY c0")
-        );
-        assert_eq!(
-            rows(&e, "SELECT * FROM __sql_changes_distance ORDER BY c0"),
-            rows(&oracle, "SELECT * FROM __sql_changes_distance ORDER BY c0")
-        );
     }
 }

@@ -6,6 +6,8 @@ use super::*;
 enum Keys {
     Native(versions::Version),
     Query(String),
+    Incoming,
+    Replace,
 }
 
 struct Output {
@@ -15,6 +17,10 @@ struct Output {
     width: usize,
     keys: Keys,
     key_width: usize,
+}
+pub(super) struct Counts {
+    pub keys: usize,
+    pub rows: usize,
 }
 #[derive(Default)]
 pub(super) struct Phase {
@@ -53,6 +59,20 @@ impl Phase {
     ) -> Result<()> {
         self.output(store, table, source, Keys::Query(keys.into()))
     }
+    pub fn load_empty(&mut self, store: &versions::Store, table: &str, source: &str) -> Result<()> {
+        if store.available(table).is_none_or(|v| v.len() != 0) {
+            return Err(error("SQL phase load requires an empty native table"));
+        }
+        self.output(store, table, source, Keys::Incoming)
+    }
+    pub fn replace_all(
+        &mut self,
+        store: &versions::Store,
+        table: &str,
+        source: &str,
+    ) -> Result<()> {
+        self.output(store, table, source, Keys::Replace)
+    }
     fn output(
         &mut self,
         store: &versions::Store,
@@ -76,9 +96,9 @@ impl Phase {
         });
         Ok(())
     }
-    pub fn execute(self, w: &Work<'_>) -> Result<()> {
+    pub fn execute(self, w: &Work<'_>) -> Result<BTreeMap<String, Counts>> {
         if self.outputs.is_empty() {
-            return Ok(());
+            return Ok(BTreeMap::new());
         }
         let store = w
             .versions
@@ -118,7 +138,10 @@ impl Phase {
             arms.join(" UNION ALL ")
         );
         let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>()}));
-        let mut statement = w.db.prepare(&sql).map_err(error)?;
+        // Delta-first CROSS JOINs and primary-key probes fix the sparse access
+        // paths. Reuse preparation across wave scopes while xFilter reads their
+        // current immutable roots; rows and expressions are never cached here.
+        let mut statement = w.db.prepare_cached(&sql).map_err(error)?;
         let mut cursor = statement.query([]).map_err(error)?;
         let mut rows = vec![Vec::new(); self.outputs.len()];
         let mut key_rows = vec![Vec::new(); self.outputs.len()];
@@ -149,6 +172,26 @@ impl Phase {
         }
         drop(cursor);
         drop(statement);
+        let counts = self
+            .outputs
+            .iter()
+            .zip(&rows)
+            .zip(&key_rows)
+            .map(|((o, rows), keys)| {
+                let keys = match &o.keys {
+                    Keys::Native(k) => k.len(),
+                    Keys::Query(_) => keys.len(),
+                    Keys::Incoming | Keys::Replace => rows.len(),
+                };
+                (
+                    o.table.clone(),
+                    Counts {
+                        keys,
+                        rows: rows.len(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let operation = w
             .profiler
             .map(|p| p.operation("SQL phase publication", ("sql-extension", 0), 0, vec![]));
@@ -164,6 +207,11 @@ impl Phase {
                 let next = match o.keys {
                     Keys::Native(keys) => o.old.patched(&keys, rows, w.preparing)?,
                     Keys::Query(_) => o.old.patched_rows(keys, rows, w.preparing)?,
+                    Keys::Incoming => {
+                        let keys = rows.iter().map(|r| r[..o.key_width].to_vec()).collect();
+                        o.old.patched_rows(keys, rows, w.preparing)?
+                    }
+                    Keys::Replace => o.old.loaded(rows, false, true)?,
                 };
                 Ok((o.table, next))
             })
@@ -183,7 +231,7 @@ impl Phase {
         if let Some(operation) = operation {
             operation.finish_unobserved();
         }
-        Ok(())
+        Ok(counts)
     }
 }
 
