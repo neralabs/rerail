@@ -237,7 +237,7 @@ fn persisted_image_round_trips_without_parsing() {
     // 11: columns at 16 bytes, decision 0032) changes the bytes.
     assert_eq!(
         digest,
-        "bc05feccadd8b7779a4c39a2e056f2cd821fdadf580cbf4e1ffcd4d2e60d526c"
+        "849da2997ee2d9a39cf30375397ad0714b93d82c7dca107f46342fc51d85c9cb"
     );
 }
 
