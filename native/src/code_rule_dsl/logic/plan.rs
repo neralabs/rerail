@@ -1691,7 +1691,12 @@ impl Model {
                 Literal::Atom(l) => {
                     let al = a_name();
                     let conds = neg_conds(l, &al, &env, &[])?;
-                    let query = subquery(integer(1), self.relation(prog, &l.rel, false), al, conds);
+                    // A negation of a component's own (gated) relation reads its full table there.
+                    let relation = match tables.and_then(|t| t.get(&l.rel)) {
+                        Some((full, _)) => Relation::Bound { rel: l.rel.clone(), table: full.clone() },
+                        None => self.relation(prog, &l.rel, false),
+                    };
+                    let query = subquery(integer(1), relation, al, conds);
                     wh.push(Expr::Exists { negated: true, query: Box::new(query) });
                 }
                 Literal::Cmp { l, op, r } => {
@@ -2905,7 +2910,10 @@ impl Run<'_, '_> {
         // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
         // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
         let native_rels = std::mem::take(&mut self.native_rels);
-        let out = self.native_stratum_(scc, rules, &native_rels);
+        // Lent too, so the stratum may call `&mut self` methods while its spans name rules by number.
+        let numbers = std::mem::take(&mut self.numbers);
+        let out = self.native_stratum_(scc, rules, &native_rels, &numbers);
+        self.numbers = numbers;
         let added = std::mem::replace(&mut self.native_rels, native_rels);
         self.native_rels.extend(added);
         self.model.stats.solving.clear();
@@ -2917,7 +2925,7 @@ impl Run<'_, '_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -2935,24 +2943,21 @@ impl Run<'_, '_> {
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
-        let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
+        let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
+        let types = |r: &str| typed[r].clone();
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());
         let mut lines = vec![format!("name {name}")];
-        // A stratum's relations were made empty by `run` unless the program states facts of them.
-        // A produced input (decision 0065 §2a) starts from its rows where it is.
-        let produced_inputs: BTreeSet<&str> = super::answers::produced(prog).into_keys().filter(|p| prog.inputs.iter().any(|i| i == p)).collect();
-        for r in &rels {
-            if produced_inputs.contains(r.as_str()) {
-                let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
-                let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
-                lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
-            } else {
-                lines.push(format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" }));
-            }
-        }
+        // The relations' lines go here, once the seeds SQL derives are known (below).
+        let rel_at = lines.len();
         lines.push("nowrite".to_owned());
+        // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
+        // step is a SQL seed, run before the component opens, or a SQL probe over its relations' `set_rel` views.
+        let answering = scc.iter().any(|r| prog.answers.contains_key(r));
+        let views: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("nsx_f_{r}"), format!("nsx_d_{r}")))).collect();
+        let mut sql_seeded: BTreeSet<String> = BTreeSet::new();
+        let mut sql_probe: Vec<bool> = Vec::new();
         // Requests and what answers them (decision 0065 §2a): the run pauses for the first, and adds to the second.
         let produced = super::answers::produced(prog);
         for r in &rels {
@@ -2967,7 +2972,6 @@ impl Run<'_, '_> {
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
-        let numbers = &self.numbers;
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
                 let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
@@ -2991,6 +2995,15 @@ impl Run<'_, '_> {
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
+                if answering {
+                    let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
+                    self.materialize(&reads)?;
+                    self.ensure_indexes(&order)?;
+                    let select = self.model.sql_select(prog, &r.head, &order, None, None)?;
+                    self.insert_rows(&r.head, &select)?;
+                    sql_seeded.insert(r.head.rel.clone());
+                    continue;
+                }
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
                 return Ok(false);
             };
@@ -2999,6 +3012,22 @@ impl Run<'_, '_> {
             lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
             orders.push(order);
         }
+        // A stratum's relations were made empty by `run` unless the program states facts of them or a SQL seed derived
+        // some. A produced input (decision 0065 §2a) starts from its rows where it is.
+        let produced_inputs: BTreeSet<&str> = super::answers::produced(prog).into_keys().filter(|p| prog.inputs.iter().any(|i| i == p)).collect();
+        let mut rel_lines = Vec::new();
+        for r in &rels {
+            if produced_inputs.contains(r.as_str()) {
+                let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
+                let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
+                rel_lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
+            } else {
+                let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
+                rel_lines.push(format!("rel {r} {}{}", types(r), if empty { " empty" } else { "" }));
+            }
+        }
+        lines.splice(rel_at..rel_at, rel_lines);
+        let nseeds = orders.len();
         for r in &rels {
             let seeded = est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0);
             let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
@@ -3013,6 +3042,19 @@ impl Run<'_, '_> {
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
+                    if answering {
+                        let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
+                        self.materialize(&reads)?;
+                        // The component's own relations are read through its views; only the others take indexes.
+                        let outside: Vec<_> = order.iter().filter(|st| st.lit.atom().is_none_or(|b| !scc.contains(&b.rel))).cloned().collect();
+                        self.ensure_indexes(&outside)?;
+                        let sql = self.model.sql_select(prog, &r.head, &order, Some(at), Some(&views))?;
+                        explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
+                        lines.push(format!("probe {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&sql)));
+                        probes.push((*r, ai, order));
+                        sql_probe.push(true);
+                        continue;
+                    }
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
                     return Ok(false);
                 };
@@ -3027,6 +3069,7 @@ impl Run<'_, '_> {
                 }
                 lines.push(line);
                 probes.push((*r, ai, order));
+                sql_probe.push(false);
             }
         }
         for (g, d) in &gates {
@@ -3035,6 +3078,9 @@ impl Run<'_, '_> {
                 if s.is_empty() { "-".to_owned() } else { s }
             };
             let deps = d.deps.iter().filter_map(|x| gates.iter().position(|(g2, _)| g2 == x)).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            if let Some(src) = d.src.as_ref().filter(|s| !ri.contains_key(*s)) {
+                return Err(Error::Plan(format!("gate {g}: its source {src} is not in its component {scc:?}")));
+            }
             lines.push(format!(
                 "gate {} {} {} {}",
                 ri[g],
@@ -3047,6 +3093,15 @@ impl Run<'_, '_> {
         let started = std::time::Instant::now();
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
+        let sql_views = sql_probe.iter().any(|p| *p);
+        if sql_views {
+            for r in &rels {
+                let (full, delta) = &views[*r];
+                for (which, vt) in [("full", full), ("delta", delta)] {
+                    self.db.execute(&format!("CREATE VIRTUAL TABLE temp.{vt} USING set_rel({name}, {}, {which})", ri[*r]), [])?;
+                }
+            }
+        }
         // One wave first: the seeds' rows give live statistics before the next wave, the first in which most
         // relations' deltas are all their rows and the probes run their whole plans.
         let mut chunk: i64 = 1;
@@ -3087,6 +3142,9 @@ impl Run<'_, '_> {
                 // (`setfix` runs it once a wave).
                 let mut whole: Vec<(*const Rule, String)> = Vec::new();
                 for k in 0..probes.len() {
+                    if sql_probe[k] {
+                        continue;
+                    }
                     let r = probes[k].0;
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
                         Some((_, w)) => w.clone(),
@@ -3099,18 +3157,21 @@ impl Run<'_, '_> {
                             w
                         }
                     };
-                    self.fx().reprobe(&name, seeds.len() + k, "whole", &spec)?;
+                    self.fx().reprobe(&name, nseeds + k, "whole", &spec)?;
                 }
                 chunk = 2;
                 continue;
             }
             for k in 0..probes.len() {
+                if sql_probe[k] {
+                    continue;
+                }
                 let (r, ai) = (probes[k].0, probes[k].1);
                 let span = planning(r, "replan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
                 let ((new, _, _), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, Some(ai))?;
                 drop(span);
-                let e = &mut explained[seeds.len() + k];
+                let e = &mut explained[nseeds + k];
                 e.3 += if profiling { super::profile::now() - t0 } else { 0.0 };
                 if shown(&new) == shown(&probes[k].2) {
                     continue;
@@ -3122,7 +3183,7 @@ impl Run<'_, '_> {
                 let spec = self
                     .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
-                self.fx().reprobe(&name, seeds.len() + k, "join", &hex(&spec))?;
+                self.fx().reprobe(&name, nseeds + k, "join", &hex(&spec))?;
                 probes[k].2 = new;
             }
             chunk *= 2;
@@ -3173,6 +3234,12 @@ impl Run<'_, '_> {
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
                 let _ = f.write_all(text.as_bytes());
+            }
+        }
+        if sql_views {
+            for r in &rels {
+                let (full, delta) = &views[*r];
+                self.db.execute_batch(&format!("DROP TABLE temp.{full}; DROP TABLE temp.{delta};"))?;
             }
         }
         {
@@ -3928,7 +3995,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                         mine
                     }
                 };
-                if prog.inputs.contains(rel) || rows.is_empty() {
+                // An input's rows are the caller's to bind; a relation no rule reads has no table.
+                if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
                 let width = prog.decls[rel].len();
