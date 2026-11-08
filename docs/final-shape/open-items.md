@@ -2401,6 +2401,173 @@ once, and no measurement on the 9,010-file repository exists yet. A column bound
 measured at full size; and a column of any expression is scanned, or the rule binds its kinds.
 
 
+## O125. Delete-and-rederive on the points-to fixpoint (decision 0083, spike 1)
+
+0083 §2 maintains the stored fixpoint by deltas. Delete-and-rederive can over-delete in a large recursive
+component, and `calls.rr`'s `pv`/`bv` stratum is one: 51 relations, most of the cross-file cost.
+
+**Method:** apply real edits (the last 20 commits touching the 84 files, and the `exceptions.py` comment) as
+deltas to today's fixpoint, through More-ergonomic-rule-syntax's `maintain.rs`.
+
+**Closure:** measured rows over-deleted, rows re-derived and CPU against a cold run, results equal to a full run.
+A one-function edit costs under 5% of a cold run, or the fallback (support counts per row, or maintenance per
+component of definitions) is measured and chosen.
+
+**Measured, in part** (2026-11-08). The spike is the ignored test `spike_o125_session_maintains_calls`, run over the
+84 files without typeshed. It runs `calls.rr` in a session, makes one edit at a time, and compares each run with a
+full run. The edits are three hand-made ones (a comment, a function added at the end of a module, a `return` changed),
+not yet the last 20 commits.
+
+- **The results are right.** Every edit's outputs equal a full run's (`call_target`, `call_open`, `type_of`,
+  `possible_type`).
+- **Most strata are maintained.** 180–200 of 218 strata are maintained from deltas, 19–21 of them recursive. Three are
+  derived again because they hold an aggregate.
+- **The deltas are tiny.** An edit over-deletes 3–88 rows and inserts 3–88, out of 1.14 M rows the maintained
+  relations hold.
+- **The cost is not.** It follows the fixpoint's size, not the delta's (CPU on the main thread; machine load 6–15):
+
+  | Edit | Strata run | Session: cross part | Full run: cross part |
+  |---|---|---|---|
+  | comment in `exceptions.py` | 183 of 218 | 11.4 s | 4.5 s |
+  | function added | 203 of 218 | 17.7 s | 4.2 s |
+  | `return` changed | 203 of 218 | 16.4 s | 4.5 s |
+
+  The file-local part does shrink (7.5–8.0 s to 1.0–1.7 s: one file evaluated), but the cross part costs 2.5–4x a
+  cold derivation.
+- **Where the time goes.** About 7.7 s is the strata themselves. The points-to component alone goes from 1.7 s cold
+  to 3.6 s maintained (its insert rules plus its over-delete rules: 1,697 and 1,147 rules against 464). Over 4 s is
+  outside any stratum, and each item is linear in the stored fixpoint:
+  - the survivor rules (`h :- h__old, !h__del`) copy every held row;
+  - every kept relation and input is bound as a source, measured and digested;
+  - every derived relation's rows are copied out for the next run;
+  - the rewritten strata (3–4x the rules) are planned again.
+- **Why so many strata run.** A comment adds a tree-sitter node, so `node` changes and 183 strata read it. A
+  function added changes 41 inputs.
+
+**What it took to run at all** (in this branch, not More-ergonomic's):
+- `maintain.rs` takes a head's computed term (`@dot`) by naming it with a variable the body binds, and copies
+  `nearest` literals as it copies comparisons;
+- the session keeps one cross part per program key, since a run's passes are different programs and took each
+  other's place;
+- the `r__old` sources carry their constants' counts. Without them a measured column prices every constant at no
+  rows, and the over-delete plans began with a cross product of `kind__old(_, identifier)` (the run did not end in
+  400 s);
+- the demand split's nullary `pre_` relation gets the unit column every nullary relation has.
+
+**Not closed.** Delete-and-rederive written as rules over whole-relation copies is O(fixpoint) per edit. The 5%
+target needs maintenance in place:
+- maintained relations held in an indexed store across runs, so survivors are not copied;
+- deltas applied to that store;
+- old rows read where they are, not rebound and measured again;
+- plans of the rewritten strata kept.
+
+Still to run: the last 20 commits touching the 84 files, and the same with typeshed.
+
+## O126. How big a base delta is per definition (decision 0083, spike 2)
+
+0083 §2–3 make the definition the unit of change, with node ids `(definition, index)`.
+
+**Method:** replay the data layer's history (a few hundred commits). For each commit, count files changed,
+definitions whose digest changed, and base rows changed under `(document, preorder)` ids against
+`(definition, index)` ids. Count the cases a symbol key must cover: redefinitions, conditional definitions,
+`TYPE_CHECKING` branches, overloads, properties.
+
+**Closure:** the distributions recorded in 0083, and the symbol key's form decided.
+
+**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
+count). The tool is a dev script, not engine code.
+- **The commits are bulk.**
+  - 109 of the 224 change more than 40 `.py` files and were only counted.
+  - The other 115 change a median of 17 files (p90 34), and 120 definitions each (p90 277).
+- **Base rows rewritten per commit** (medians, p90 in brackets):
+
+  | Id scheme | Rows rewritten |
+  |---|---|
+  | `(definition, index)` | 18,605 (44,920) |
+  | `(document, preorder)` | 64,575 (160,774) |
+  | whole files (today's per-file memo) | 130,521 (319,704) |
+
+  Per commit, the definition scheme is a median 15% of the files' rows (p90 37%) and 29% of the preorder scheme's.
+- **Commits that change one file** (6 of them), the size of an edit:
+  - definition: 246 rows;
+  - preorder: 3,571 rows;
+  - file: 6,064 rows.
+
+  The definition scheme is 14x smaller than preorder and 25x smaller than the file.
+- **What a key by qualified name must disambiguate**, at HEAD:
+
+  | Case | Definitions | Share |
+  |---|---|---|
+  | conditional (inside `if`, `try`, loops) | 2,741 | 1.26% |
+  | a name defined more than once in one scope | 1,010 | 0.46% |
+  | `@overload` | 722 | 0.33% |
+  | under `TYPE_CHECKING` | 40 | 0.02% |
+  | property accessors sharing a name | 26 | 0.01% |
+
+  A key of (qualified name, ordinal among the scope's definitions of that name) covers all of these. Its ordinal
+  shifts only when a same-named definition is inserted before another, which is under 0.5% of definitions.
+
+Not yet measured: key churn across commits (renames and moves), and rows under tree-sitter's tapes rather than `ast`.
+
+## O127. Layout invariance of today's engine (decision 0083, spike 3)
+
+**Method:** move definitions between modules of the 84 files, with imports rewritten by a script. Run with and
+without typeshed, and compare findings and work (CPU, rows per stratum).
+
+**Closure:** the departure measured, and the layout-invariance test (0083 §0) in the suite as a guard.
+
+## O128. Search against eager propagation, counted (decision 0083, spike 4)
+
+**Method:** from today's relations, on the 84 files and on 500 data-layer files:
+- distinct `(f, targs)` keys against `gpar`/`gbind` rows;
+- distinct `(class, attribute)` lookups against `found` rows and the `sub` closure.
+
+**Closure:** the ratios recorded, and each question in 0083 §4's table confirmed as a search or moved to eager.
+
+**Measured, in part** (2026-11-08). 84 files with typeshed, `calls.rr` plus counting rules, through
+`RERAIL_PYTHON_CALLS_OUT`. Run at 166.6 s wall, which was this hour's exception to the run cap.
+- **Generics are small here.**
+  - `gpar`: 1,667 rows over 165 calls, and 426 distinct (class, variable, annotation node) keys, about 3.9 rows per key.
+  - `gbind`: 824 rows; `garg`: 2,474; `ghcls`: 1,409; `fbind`: 227.
+- **Attribute lookup:** `found` has 5,090 rows for 2,034 asked keys (`need_attr`), 2.5x.
+- **Subclasses:** `sub` has 628 rows, of which 396 serve the 286 classes some reader asks about, 1.6x.
+- **What dominates is `pv`.** On workspace nodes it grows from 24,475 rows without typeshed to 302,897 with it, and
+  181,293 of those point at a library value.
+- **Gap:** the benchmark writes no row located in a library document. So the library side (lookups on typeshed's
+  classes, its own `pv`) is not counted yet. Next: count by `RERAIL_PROFILE`'s rows per rule, or write the hidden
+  rows for counting.
+
+So far, searching for generics, attribute lookup and subclasses saves 1.6–4x rows on this corpus. The bulk is the
+value relation itself, which P1 and P2 shrink only if library values become declared facts.
+
+## O129. Structure and declared types over the real library (decision 0083, spike 5)
+
+**Method:** a first `struct.rr` (imports, bindings, class headers, written signatures) over the data layer's venv
+and typeshed.
+
+**Closure:** measured documents loaded, waves for the import frontier to settle, rows, CPU, RSS, and the share
+that is the same for another workspace on the same interpreter. The library's P1 and P2 run once per machine and
+are reused.
+
+## O130. One analysis that really crosses files (decision 0083, spike 6)
+
+**Method:** `param_in(f, i)` (parameter types from callers) and "never called", over the data layer's 9,010
+files: full, then after one edit.
+
+**Closure:** both cost what their delta reaches, under 1 GB, with no mechanism special to them.
+
+## O131. The stored fixpoint read in place under 1 GB (decision 0083, spike 7)
+
+**Closure:** measured sizes of P3's relations on 9,010 files, and the cost of maintaining a delta by index through
+the vtabs without loading relations whole. The store layout (one table per relation, keyed indexes) decided.
+
+## O132. Freshness of library state outside Git (decision 0083, spike 8)
+
+**Method:** stat-check what P1 read in a real venv, parse `RECORD` and `pyvenv.cfg`, and hand-edit one
+site-packages file.
+
+**Closure:** an unchanged venv is verified in milliseconds, and the edit reaches P1 as a content delta.
 ## O133. The Python pack does not finish within the run cap: its libraries are copied into every program
 
 Measured 2026-11-08 with decision 0084's profile and dump, on 538 of the pack's programs (O111's six left out),

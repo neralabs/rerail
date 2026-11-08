@@ -2142,7 +2142,8 @@ pub(crate) fn run_with_options(
     // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
     let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules.iter()).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
     for rel in &split.exports {
-        if one_fixpoint && !eager.contains(rel.as_str()) {
+        // A session binds every export now: it digests each input, and its maintained strata read them whole (0077).
+        if one_fixpoint && session.is_none() && !eager.contains(rel.as_str()) {
             let width = lowered.program.decls[rel].len();
             let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
             modules.bind(&db, rel, empty)?;
@@ -2261,7 +2262,10 @@ pub(crate) fn run_with_options(
                 Some(cell) => {
                     let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
                     let ckey = retain::key(&prepared_key, &cross.program);
-                    let mut cell = cell.lock().expect("the session's cross-file part");
+                    let mut cells = cell.lock().expect("the session's cross-file part");
+                    // One kept part per cross-file program: a run's passes (each over the documents loaded so far)
+                    // are programs of their own, and would otherwise take each other's place.
+                    let mut cell = cells.remove(&ckey);
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // The O125 spike's progress: each step of a session's run, with this thread's CPU.
                     let trace = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
@@ -2341,6 +2345,19 @@ pub(crate) fn run_with_options(
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
                         .collect::<Result<Vec<_>>>()?;
+                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
+                    // and hold after the run, for measuring delete-and-rederive (spike O125).
+                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
+                        let mut counts = [0usize; 3];
+                        for (rel, cols) in &part.program.decls {
+                            if !part.program.rules.iter().any(|r| &r.head.rel == rel) || cols.is_empty() {
+                                continue;
+                            }
+                            let at = if rel.ends_with("__del") { 0 } else if rel.ends_with("__ins") { 1 } else if part.program.decls.contains_key(&format!("{rel}__del")) { 2 } else { continue };
+                            counts[at] += held_rows(&db, &got, rel, cols.len()).map_or(0, |r| r.len());
+                        }
+                        cross_delta_counts = counts;
+                    }
                     let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
                     let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &cross.program.outputs)).unwrap_or_default();
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
@@ -2366,6 +2383,8 @@ pub(crate) fn run_with_options(
                     });
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
+                    cross_changed = cut.changed.clone();
+                    cross_again = maintained.again.clone();
                     cross_recursive = maintained.recursive;
                     cross_again = maintained.derived_again;
                     *cell = Some(next);

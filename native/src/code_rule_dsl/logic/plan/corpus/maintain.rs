@@ -109,8 +109,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut again: Vec<(String, &'static str)> = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
     for scc in dirty {
-        let mine: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
-        if !maintainable(&part.program, scc, &mine, &changed, &old) {
+        let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
+        let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
+        let mine: Vec<&Rule> = named_rules.iter().collect();
+        if let Some(why) = unmaintainable(&part.program, scc, &mine, &changed, &old) {
+            *again.entry(why).or_default() += 1;
             derived_again += 1;
             let name = scc.iter().max_by_key(|r| part.program.rules.iter().filter(|x| &x.head.rel == *r).count()).cloned().unwrap_or_default();
             let reason = if !scc.iter().all(|r| old(r)) {

@@ -51,6 +51,8 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         cross: Mutex::new(None),
         #[cfg(test)]
         thread: std::thread::current().id(),
+        #[cfg(test)]
+        owner: std::thread::current().id(),
     });
     Ok(())
 }
