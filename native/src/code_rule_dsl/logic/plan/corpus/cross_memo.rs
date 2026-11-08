@@ -1,7 +1,8 @@
 //! A corpus run's cross-file rows, memoised per import component (decision 0076).
 //!
 //! - A program asks with `.pragma "cross-memo" "a b …"`. That names the cross-file relations whose rows are about
-//!   the document of their first node column and are a function of that document's import closure.
+//!   the document of their first node column and are a function of that document's import closure; `"*"` names
+//!   every relation the contract's static half admits.
 //! - The run adds `components.rr` (`add`). Its file-local rules export each document's imports, module and own
 //!   digest, which the per-file memo keeps. Its cross-file rules make `rr_cx_component(d, c, key)`.
 //! - `split` takes those rules out of the cross-file part into a sub-program run first. It checks the contract's
@@ -200,12 +201,27 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             break;
         }
     }
+    // What the rest reads of the cone (`rr_cx_reach` reads the edges) stays in the cross-file part too, derived again
+    // there: a few thousand rows over the documents, not nodes.
+    let mut shared: BTreeSet<String> = BTreeSet::new();
+    let mut todo: Vec<String> = cross
+        .rules
+        .iter()
+        .filter(|r| !cone.contains(&r.head.rel))
+        .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))
+        .filter(|rel| cone.contains(rel))
+        .collect();
+    while let Some(rel) = todo.pop() {
+        if shared.insert(rel.clone()) {
+            todo.extend(cross.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|x| cone.contains(x)));
+        }
+    }
     let mut components = cross.clone();
     components.rules.retain(|r| cone.contains(&r.head.rel));
     components.natives.retain(|rel, _| cone.contains(rel));
     components.outputs = vec![COMPONENT.to_owned()];
-    cross.rules.retain(|r| !cone.contains(&r.head.rel));
-    cross.natives.retain(|rel, _| !cone.contains(rel));
+    cross.rules.retain(|r| !cone.contains(&r.head.rel) || shared.contains(&r.head.rel));
+    cross.natives.retain(|rel, _| !cone.contains(rel) || shared.contains(rel));
     cross.outputs.retain(|o| o != COMPONENT);
     // The plan: the engine, the grammars, the file-local part (what the exports are) and the cross-file part.
     let mut hash = Sha256::new();
@@ -213,7 +229,10 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
     hash.update(local);
-    hash.update(format!("{:?}{:?}{:?}{:?}{:?}", cross.decls, cross.rules, cross.facts, cross.natives, cross.lattice).as_bytes());
+    // A relation with no facts is left out: a program prepared afresh has `dir_entry: []` where the one read back from
+    // the store (decision 0073) has nothing, and the two must store under one plan.
+    let facts: Vec<_> = cross.facts.iter().filter(|(_, rows)| !rows.is_empty()).collect();
+    hash.update(format!("{:?}{:?}{:?}{:?}{:?}", cross.decls, cross.rules, facts, cross.natives, cross.lattice).as_bytes());
     let digest: [u8; 32] = hash.finalize().into();
     // The contract's static half: a memoised relation has a node column, and its rules read only what is not derived
     // across files, the components' facts, and other memoised relations.
@@ -246,6 +265,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             blockers.iter().map(|(r, n)| format!("{r}{}{n}", if cross.natives.contains_key(*r) { " (native) ×" } else { " ×" })).collect::<Vec<_>>().join(", ")
         )
     });
+    // `*`: every relation the static half admits.
+    let declared: &BTreeSet<String> = if declared.contains("*") { &closed } else { declared };
     let mut memo = BTreeMap::new();
     for rel in declared.iter().filter(|r| derived.contains(*r)) {
         if cross.natives.contains_key(rel) {
@@ -470,6 +491,7 @@ pub(super) fn record(
     }
     let members = components.members();
     let mut recorded = Recorded::default();
+    let mut differ: Vec<String> = Vec::new();
     for (c, (key, docs)) in &members {
         let derived = by.remove(c).unwrap_or_default();
         let mut stored = Rows { keys: docs.iter().filter_map(|d| paths.get(d).map(|p| (p.clone(), *d))).collect(), rels: BTreeMap::new() };
@@ -481,13 +503,16 @@ pub(super) fn record(
                 for (rel, (width, values)) in &stored.rels {
                     let had = hit.rels.get(rel).map(|(_, v)| v.clone()).unwrap_or_default();
                     let set = |v: &[i64]| v.chunks(*width).map(<[i64]>::to_vec).collect::<BTreeSet<_>>();
-                    if set(&had) != set(values) {
-                        return Err(Error::Plan(format!(
-                            "RERAIL_CROSS_MEMO=verify: {rel}'s stored rows about the component of {} differ from those derived ({} stored, {} derived)",
+                    let (had, now) = (set(&had), set(values));
+                    if had != now {
+                        differ.push(format!(
+                            "{rel} about the component of {} ({} stored, {} derived, {} only stored, {} only derived)",
                             docs.first().and_then(|d| paths.get(d)).map_or("?", String::as_str),
-                            set(&had).len(),
-                            set(values).len()
-                        )));
+                            had.len(),
+                            now.len(),
+                            had.difference(&now).count(),
+                            now.difference(&had).count()
+                        ));
                     }
                 }
                 recorded.verified += 1;
@@ -497,6 +522,9 @@ pub(super) fn record(
         recorded.rows += stored.rels.values().map(|(w, v)| v.len() / w).sum::<usize>();
         recorded.sources.push(record_named(store, &name(&plan.digest, key), &plan.digest, &stored.encode())?);
         recorded.stored += 1;
+    }
+    if !differ.is_empty() {
+        return Err(Error::Plan(format!("RERAIL_CROSS_MEMO=verify: stored rows differ from those derived: {}", differ.join("; "))));
     }
     Ok(recorded)
 }

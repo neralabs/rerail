@@ -69,6 +69,9 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
+            // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
+            // must be all of a document's, not those a reader outside the closure asked for.
+            || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {

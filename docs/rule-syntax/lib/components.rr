@@ -27,6 +27,8 @@ rr_cx_imports(d, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "modu
 rr_cx_imports(d, @dot(m, x)) :- rr_cx_from(i, m), rr_cx_from_name(i, x), docof(i, d).
 // The packages above each module named.
 rr_cx_imports(d, p) :- rr_cx_imports(d, q), p = @pkg_up(q, 1), p != "".
+// Every module reads `builtins` without importing it.
+rr_cx_imports(d, "builtins") :- rr_cx_own(d, _).
 
 .decl rr_cx_updots(t: symbol, k: number)
 rr_cx_updots(".", 0). rr_cx_updots("..", 1). rr_cx_updots("...", 2). rr_cx_updots("....", 3).
@@ -63,6 +65,15 @@ rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
 rr_cx_edge(d, e) :- rr_cx_imports(d, q), rr_cx_module(e, q), d != e.
 rr_cx_edge(g, h) :- rr_cx_guest(g, h).
 rr_cx_edge(h, g) :- rr_cx_guest(g, h).
+
+// d's closure: d and every document it depends on. A memoised rule that looks a name up joins it, so that what it
+// finds is in the closure (decision 0076).
+.decl rr_cx_reach(d: number, e: number)
+rr_cx_reach(d, d) :- rr_cx_own(d, _).
+rr_cx_reach(d, f) :- rr_cx_reach(d, e), rr_cx_edge(e, f).
+// The modules d's closure holds: "is q a module", asked of what d can see.
+.decl rr_cx_sees(d: number, q: symbol)
+rr_cx_sees(d, q) :- rr_cx_reach(d, e), rr_cx_module(e, q).
 
 .decl rr_cx_component(d: number, c: number, k: symbol)
 rr_cx_component(d, c, k) :- components(d, c, k, rr_cx_edge, rr_cx_own).

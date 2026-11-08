@@ -806,7 +806,13 @@ pub(crate) fn run_with_options(
     // final round's world facts are program facts, so they are in the plan's digest.
     let cross_mode = cross_memo::mode();
     let cross_declared = cross_memo::declared(&prog).filter(|_| world_round.as_deref().is_none_or(|r| r == "final") && cross_mode != cross_memo::Mode::Off && label == "python");
-    if cross_declared.is_some() {
+    // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
+    // without the memo.
+    let reads_components = prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel.starts_with("rr_cx_")));
+    if reads_components && label != "python" {
+        return Err(Error::Plan(format!("the import components' relations (`rr_cx_*`) are Python's; this run's documents are {label}")));
+    }
+    if cross_declared.is_some() || (reads_components && world_round.as_deref().is_none_or(|r| r == "final")) {
         cross_memo::add(&mut prog)?;
     }
     let prepared_key: [u8; 32] = {
