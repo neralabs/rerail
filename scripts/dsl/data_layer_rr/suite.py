@@ -106,7 +106,7 @@ class Suite:
 
     def native(self, check, entry, files, options=None):
         rule = self.rule_root / (check.replace('_', '-') + '.rr')
-        request = dict(rule=str(rule), files=files, options=dict(entryPoint=entry, **(options or {})))
+        request = dict(rule=str(rule), files=files, options=dict(({} if entry is None else dict(entryPoint=entry)), **(options or {})))
         call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, files=len(files), status='started',
                     inputFiles=[dict(path=f['path'], sourceSha256=sha(f['source'].encode())) for f in files],
                     options=request['options'])
