@@ -196,3 +196,224 @@ asdp_context_candidate(c, f, sync, @nfkc(cls), sn, an, path, rank) :- asdp_conte
 asdp_context_shared(c, f) :- asdp_context_candidate(c, f, sync, _, _, _, _, _), asdp_thin(sync, family), asdp_thin(f, family).
 ASDAnalysis(@place(path, line), cat(cls, ".", an), "C", cat("Context-manager pair ", cls, ".", sn, "/", an, " is not a thin wrapper over one shared helper family"), "", cat("sync_helper=", sync_text, "; async_helper=", async_text, ". Move wrapper logic into _..._sync/_..._async helpers and keep the dunder pair thin."), 0, 1, 2, exit*2+rank) :- asdp_context_candidate(c, f, sync, cls, sn, an, path, rank), !asdp_context_shared(c, f), asdp_family_text(sync, sync_text), asdp_family_text(f, async_text), line(f, line), asdp_exit_rank(c, exit).
 ASDAnalysis(@place(path, line), name, "C", "Name mixes lazy with sync/async execution mode", "", cat(@python_repr(name), " mixes 'lazy' with 'sync' or 'async'. Lazy surfaces must stay execution-mode neutral."), 0, 1, 1, i) :- asdp_function(f, path, name), !asdp_test_path(path), normalized = @lower(name), contains("lazy", normalized), (contains("sync", normalized) ; contains("async", normalized)), line(f, line), visit_index(f, i).
+
+.decl asdp_ab_skip(path: symbol, name: symbol)
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/tests/", path) ; (prefix("tests/", path))).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/conform/", path) ; (prefix("conform/", path))).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((prefix("__", name)) , (suffix("__", name))).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/browser/", path) ; (prefix("impl/browser/", path))).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l1500_llm/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (suffix("async_executor.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), ((suffix("connection.py", path)) , contains("/l2000_connection/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), ((suffix("schema_transaction.py", path)) , contains("/l2000_connection/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), ((suffix("transaction.py", path)) , contains("/l2050_transaction/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (suffix("backend_operations.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l2060_query_builder/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l4000_permissions/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l4200_event_pipeline/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (suffix("l4170_inbound_bridge/process.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (suffix("l4170_inbound_bridge/handler.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (contains("/l2090_response/", path) ; contains("/l2070_batching/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (suffix("l2200_notification/notification_channel.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l2080_lazy_orm/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), contains("/l5100_fts/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (contains("/l7000_versioned_schema/", path) ; contains("/l7200_versioned_transactions/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/api/", path) ; (prefix("api/", path))), (contains("/l9700_graph_query/", path) ; contains("/l9750_graphql/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l7245_versioned_backends/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l7125_versioned_txn_side_effects/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l7248_sparse_versioned_transactions/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l7300_sql_versioned_transactions/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l2200_sql_dialect/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l2070_server_plan/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (contains("/l1550_llm_providers/", path) ; contains("/l1570_llm_client/", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l1590_llm_test_fixtures/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l8000_admin/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/l8000_managed/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (contains("/l2550_storage_backend/backend.py", path) ; contains("/l1595_llm_cache/storage_backends.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/read_through/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (contains("/mongodb/schema_mixin.py", path) ; contains("/neo4j/schema_mixin.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (suffix("transaction.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (suffix("connection.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (contains("versioned_read_transaction", path) ; contains("versioned_write_transaction", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("versioned_transaction_sparse", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (suffix("query.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), (suffix("backend_operations.py", path)).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("/fts/", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("graph_query", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("versioned_write_query", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (contains("/impl/", path) ; (prefix("impl/", path))), contains("versioned_read_query", path).
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), (name = "_check_task_affinity" ; name = "versioned_read_async" ; name = "versioned_write_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l2550_storage_backend/azure_backend.py", path)) , name = "get_stats_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l2550_storage_backend/s3_backend.py", path)) , name = "get_stats_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l7300_cross_branch/permission_expression_compiler.py", path)) , name = "_needs_permission_where_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l7300_cross_branch/permission_expression_compiler.py", path)) , name = "compile_permission_where_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l7350_revision_graph/revision_graph.py", path)) , name = "has_any_parent_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/l1595_llm_cache/cache_manager.py", path)) , name = "get_stats_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/l1595_llm_cache/proxy_server.py", path)) , name = "_get_client").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/l1595_llm_cache/proxy_server.py", path)) , name = "clear_cache").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/l1595_llm_cache/write_back_queue.py", path)) , name = "start").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l1500_llm/provider.py", path)) , name = "cancel_completion_batch").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l1500_llm/provider.py", path)) , name = "close").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l1500_llm/provider.py", path)) , name = "get_completion_batch").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l1500_llm/provider.py", path)) , name = "list_models").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l1500_llm/watchers.py", path)) , name = "start_async_processing").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/connection.py", path)) , name = "_read_storage_chunk_manifest_rows_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/connection.py", path)) , name = "_set_statement_timeout_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/connection.py", path)) , name = "close_async_driver_connection").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/connection_provider.py", path)) , name = "_acquire_async_context_impl").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/schema_transaction.py", path)) , name = "_enter_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/schema_transaction.py", path)) , name = "_exit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2000_connection/schema_transaction.py", path)) , name = "execute_ddl_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2050_transaction/transaction.py", path)) , name = "cancel_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2070_batching/executor.py", path)) , name = "_run_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2070_batching/server_plan.py", path)) , name = "_enter_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2070_batching/server_plan.py", path)) , name = "_exit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2080_lazy_orm/lazy_row.py", path)) , name = "update_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2200_notification/polling_channel.py", path)) , name = "_do_subscribe").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2200_notification/polling_channel.py", path)) , name = "_do_unsubscribe").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4000_permissions/permission_scheme.py", path)) , name = "check_permission_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4000_permissions/rbac_permission_lookup.py", path)) , name = "_async_empty_dict_row_list").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4100_queue/insert_auth.py", path)) , name = "activate_queue_insert_token_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4100_queue/insert_auth.py", path)) , name = "revoke_queue_insert_authorization_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "count").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "delete_by_id").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "enqueue_message").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "execute").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "execute_one").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "insert").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "invoke_handler").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "select_one").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4170_inbound_bridge/process.py", path)) , name = "update").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/bridges/hook_generator.py", path)) , name = "start").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/bridges/hook_generator.py", path)) , name = "stop").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/bridges/subscription_generator.py", path)) , name = "start").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/bridges/subscription_generator.py", path)) , name = "stop").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/dispatcher.py", path)) , name = "_dispatch_event").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4200_event_pipeline/persistent_metrics.py", path)) , name = "start").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4300_ipc/handlers.py", path)) , name = "handle_force_gc").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4300_ipc/handlers.py", path)) , name = "handle_get_metrics").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4300_ipc/handlers.py", path)) , name = "handle_get_server_info").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l4300_ipc/handlers.py", path)) , name = "handle_ping").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l5000_subscriptions/dispatcher.py", path)) , name = "dispatch_graph_event_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l5200_vector_index/embedding_auto_queue.py", path)) , name = "_enqueue_embedding_auto_queue_for_row_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l5200_vector_index/embedding_auto_queue.py", path)) , name = "_enqueue_embedding_auto_queue_for_rows_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l7000_versioned_schema/versioned_connection.py", path)) , name = "_drain_pending_versioned_fts_rebuilds_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l7200_versioned_transactions/versioned_transactions.py", path)) , name = "_cleanup_versioned_context_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l9750_graphql/executor.py", path)) , name = "_execute_graphql_subscription").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l9900_auto_api/exception_handlers.py", path)) , name = "_handle_auto_api_response_error").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l9900_auto_api/exception_handlers.py", path)) , name = "_handle_db_permission_error").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l9900_auto_api/exception_handlers.py", path)) , name = "_handle_security_error").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l9900_auto_api/rest_router.py", path)) , name = "rest_type_catalog_properties").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("logged_table.py", path)) , name = "_create_triggers_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("scripts/benchmark_auto_api_batch_refs.py", path)) , name = "connection_disposer").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("scripts/benchmark_auto_api_batch_refs.py", path)) , name = "connection_factory").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/common/l8000_managed/permission/audit.py", path)) , name = "cleanup_old_entries_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/backend_operations.py", path)) , name = "create_staged_commit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/connection.py", path)) , name = "close_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/transaction.py", path)) , name = "commit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/transaction.py", path)) , name = "rollback_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/versioned_read_transaction_sparse.py", path)) , name = "find_object_branches_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/versioned_read_transaction_sparse.py", path)) , name = "find_object_revisions_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/versioned_read_transaction_sparse.py", path)) , name = "get_history_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/versioned_read_transaction_sparse.py", path)) , name = "select_at_revision_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/mongodb/versioned_read_transaction_sparse.py", path)) , name = "select_one_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/backend_operations.py", path)) , name = "create_staged_commit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/query.py", path)) , name = "delete_all_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/query.py", path)) , name = "delete_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/transaction.py", path)) , name = "commit_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/transaction.py", path)) , name = "rollback_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/versioned_read_transaction_sparse.py", path)) , name = "find_object_branches_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/versioned_read_transaction_sparse.py", path)) , name = "find_object_revisions_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/versioned_read_transaction_sparse.py", path)) , name = "get_history_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/versioned_read_transaction_sparse.py", path)) , name = "select_at_revision_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("impl/neo4j/versioned_read_transaction_sparse.py", path)) , name = "select_one_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "delete_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "exists_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "get_metadata_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "get_stats_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "iter_content_hashes_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "retrieve_async").
+asdp_ab_skip(path, name) :- asdp_candidate(path, name), ((suffix("l2550_storage_backend/memory_backend.py", path)) , name = "store_async").
+
+.decl asda_block_stmt(b: node, s: node, i: number)
+asda_block_stmt(b, s, i) :- body_stmt(b, s, i), i > 0.
+asda_block_stmt(b, s, 0) :- body_stmt(b, s, 0), !doc_stmt(s, _).
+.decl asda_raise(s: node)
+asda_raise(s) :- kind(s, "raise_statement"), child(s, raw, 0), unparen(raw, e), kind(e, "identifier"), asdp_callable(e, name), (name = "RuntimeError" ; name = "NotImplementedError").
+asda_raise(s) :- kind(s, "raise_statement"), child(s, raw, 0), unparen(raw, e), kind(e, "call"), field(e, "function", rawfn), unparen(rawfn, fn), asdp_callable(fn, name), (name = "RuntimeError" ; name = "NotImplementedError").
+.decl asda_setup_leaf(s: node)
+asda_setup_leaf(s) :- kind(s, k), (k = "pass_statement" ; k = "delete_statement").
+asda_setup_leaf(s) :- asgstmt(_, s).
+asda_setup_leaf(s) :- kind(s, "expression_statement"), child(s, raw, 0), unparen(raw, e), kind(e, "ellipsis").
+.decl asda_if_child(s: node, c: node)
+asda_if_child(s, c) :- py_if(s, _, body), asda_block_stmt(body, c, _).
+asda_if_child(s, c) :- py_orelse(s, c), kind(c, "elif_clause").
+asda_if_child(s, c) :- py_orelse(s, other), kind(other, "else_clause"), field(other, "body", body), asda_block_stmt(body, c, _).
+.decl asda_setup_part(s: node, c: node)
+asda_setup_part(s, s) :- body_stmt(_, s, _).
+asda_setup_part(s, c) :- asda_setup_part(s, p), asda_if_child(p, c).
+.decl asda_setup_bad(s: node)
+asda_setup_bad(s) :- asda_setup_part(s, c), !py_if(c, _, _), !asda_setup_leaf(c), !asda_raise(c).
+asda_setup_bad(s) :- asda_setup_part(s, c), py_if(c, _, body), !asda_block_stmt(body, _, _).
+.decl asda_setup(s: node)
+asda_setup(s) :- asda_setup_part(s, s), !asda_setup_bad(s), !asda_raise(s).
+.decl asda_stub(f: node)
+asda_stub(f) :- asdp_function(f, _, _), !asdp_statement(f, _, _).
+asda_stub(f) :- asdp_function(f, _, _), last = max i : { asdp_statement(f, _, i) }, asdp_statement(f, s, last), asda_raise(s), count : { asdp_statement(f, prev, i), i < last, !asda_setup(prev) } = 0.
+.decl asda_local_edge(root: node, item: node)
+asda_local_edge(root, item) :- (kind(root, "tuple") ; kind(root, "list") ; kind(root, "pattern_list") ; kind(root, "tuple_pattern") ; kind(root, "list_pattern")), child(root, raw, _), !kind(raw, "comment"), unparen(raw, item).
+.decl asda_local_part(root: node, item: node)
+asda_local_part(root, root) :- kind(root, _).
+asda_local_part(root, item) :- asda_local_part(root, p), asda_local_edge(p, item).
+.decl asda_self_attr(n: node)
+asda_self_attr(n) :- kind(n, "attribute"), field(n, "object", raw), unparen(raw, receiver), kind(receiver, "identifier"), text(receiver, name), @nfkc(name) = "self".
+.decl asda_local_leaf(n: node)
+asda_local_leaf(n) :- kind(n, "identifier").
+asda_local_leaf(n) :- asda_self_attr(n).
+asda_local_leaf(n) :- kind(n, k), (k = "tuple" ; k = "list" ; k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern").
+.decl asda_local_bad(n: node)
+asda_local_bad(n) :- asda_local_part(n, part), !asda_local_leaf(part).
+.decl asda_static_edge(root: node, item: node)
+asda_static_edge(root, item) :- kind(root, k), (k = "tuple" ; k = "list" ; k = "set" ; k = "expression_list"), child(root, raw, _), !kind(raw, "comment"), unparen(raw, item).
+asda_static_edge(root, item) :- kind(root, "dictionary"), child(root, pair, _), kind(pair, "pair"), (field(pair, "key", raw) ; field(pair, "value", raw)), unparen(raw, item).
+asda_static_edge(root, item) :- kind(root, "dictionary"), child(root, splat, _), kind(splat, "dictionary_splat"), child(splat, raw, 0), unparen(raw, item).
+.decl asda_static_part(root: node, item: node)
+asda_static_part(root, root) :- kind(root, _).
+asda_static_part(root, item) :- asda_static_part(root, p), asda_static_edge(p, item).
+.decl asda_static_leaf(n: node)
+asda_static_leaf(n) :- ast_constant(n).
+asda_static_leaf(n) :- kind(n, "identifier").
+asda_static_leaf(n) :- asda_self_attr(n).
+asda_static_leaf(n) :- kind(n, k), (k = "tuple" ; k = "list" ; k = "set" ; k = "dictionary" ; k = "expression_list").
+.decl asda_static_bad(n: node)
+asda_static_bad(n) :- asda_static_part(n, part), !asda_static_leaf(part).
+.decl asda_lifecycle_stmt(s: node)
+asda_lifecycle_stmt(s) :- kind(s, "pass_statement").
+asda_lifecycle_stmt(s) :- asgstmt(a, s), count : { assign_target(a, raw), unparen(raw, target), asda_local_bad(target) } = 0.
+asda_lifecycle_stmt(s) :- kind(s, "expression_statement"), child(s, a, 0), kind(a, "augmented_assignment"), field(a, "left", raw), unparen(raw, target), !asda_local_bad(target).
+asda_lifecycle_stmt(s) :- kind(s, "return_statement"), !child(s, _, _).
+asda_lifecycle_stmt(s) :- kind(s, "return_statement"), child(s, raw, 0), unparen(raw, value), !asda_static_bad(value).
+.decl asda_lifecycle(f: node)
+asda_lifecycle(f) :- asdp_function(f, _, name), (name = "start" ; name = "stop" ; name = "_on_last_unsubscribe"), count : { asdp_statement(f, s, _), !asda_lifecycle_stmt(s) } = 0.
+// Descendants include nested definitions, their defaults and decorators. The
+// current function's decorators precede its tree-sitter function range.
+.decl asda_desc_call(f: node, call: node)
+asda_desc_call(f, call) :- asdp_function(f, _, _), kind(call, "call"), within(call, f).
+asda_desc_call(f, call) :- asdp_function(f, _, _), decorator(f, raw), kind(call, "call"), (call = raw ; within(call, raw)).
+.decl asda_safe_call(call: node)
+asda_safe_call(call) :- kind(call, "call"), field(call, "function", raw), unparen(raw, fn), asdp_callable(fn, name), (suffix("_lazy", name) ; name = "cast" ; name = "JSONResponse" ; name = "_attach_auto_api_hook_registry").
+.decl asda_lazy_builder(f: node)
+asda_lazy_builder(f) :- asda_desc_call(f, call), field(call, "function", raw), unparen(raw, fn), asdp_callable(fn, name), suffix("_lazy", name), count : { asda_desc_call(f, c), !asda_safe_call(c) } = 0.
+.decl asda_await(f: node)
+asda_await(f) :- kind(n, "await"), def_frame(n, f).
+asda_await(f) :- kind(n, k), (k = "for_statement" ; k = "with_statement"), op(n, "async"), def_frame(n, f).
+.decl asda_sync(f: node, name: symbol)
+asda_sync(f, sync) :- asdp_function(f, _, name), is_async(f), suffix("_async", name), sync = @slice(name, 0, strlen(name)-6), kind(call, "call"), def_frame(call, f), field(call, "function", raw), unparen(raw, fn), ((kind(fn, "identifier"), text(fn, leaf)) ; (kind(fn, "attribute"), field(fn, "attribute", a), text(a, leaf))), @nfkc(leaf) = sync.
+.decl asda_candidate(f: node, path: symbol, name: symbol)
+asda_candidate(f, path, name) :- asdp_function(f, path, name), is_async(f), !asdp_ab_skip(path, name), !asda_await(f), !asdp_abstract(f), !asda_stub(f), !asda_lazy_builder(f), !asda_lifecycle(f), !asdp_decorator(f, _, "legacy_async"), !asdp_decorator(f, _, "legacy_module_async").
+.decl asda_event(f: node, d: number, end: number, depth: number)
+asda_event(f, d, end, depth) :- asda_candidate(f, _, _), node(d, f, _, _, end), ast_depth(f, depth).
+.decl asda_rank(f: node, rank: number)
+asda_rank(f, rank) :- asda_event(f, d, end, depth), rank = count : { asda_event(_, d, oe, od), (oe < end ; (oe = end, od > depth)) }.
+ASDAnalysis(@place(path, line), name, "A", cat("Async function delegates to sync '", sync, "' without await"), sync, "", 1, 0, 0, rank) :- asda_candidate(f, path, name), asda_sync(f, sync), line(f, line), asda_rank(f, rank).
+ASDAnalysis(@place(path, line), name, "B", "Async function has no await expressions", "", "", 0, 0, 0, rank) :- asda_candidate(f, path, name), !asda_sync(f, _), line(f, line), asda_rank(f, rank).

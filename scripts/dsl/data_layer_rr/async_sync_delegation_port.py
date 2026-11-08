@@ -4,6 +4,13 @@ from pathlib import Path
 from ast_transport import visit_columns,list_lengths
 
 
+def body_identity_probe(module, tree):
+    """Observe list ownership and original node identities without formatting syntax."""
+    body = tree.body
+    result = module._strip_method_docstring(body)
+    return dict(sameList=result is body, indices=[next(i for i,n in enumerate(body) if n is node) for node in result])
+
+
 def install(suite,module):
     def native(entry,files=(),options=None):return suite.native('async_sync_delegation',entry,list(files),options)
     for row in native('configuration'):
