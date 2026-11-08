@@ -111,6 +111,16 @@ impl Projection {
         Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect(), verdict, derived }
     }
 
+    /// The columns the batch binds base relation `rel` with (`select::input_columns`'), but T's `syntax_error(d)`
+    /// where the program declares that one and not core.rr's verdict (`verdict`): the cross-file part binds a base
+    /// relation with the chunks' columns, on the same connection.
+    pub(crate) fn columns(&self, rel: &str) -> Option<&'static [&'static str]> {
+        if rel == "syntax_error" && self.shape == Shape::T && !self.verdict {
+            return Some(&["d"]);
+        }
+        crate::code_rule_dsl::logic::sql::select::input_columns(rel)
+    }
+
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
