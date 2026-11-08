@@ -178,6 +178,7 @@ mod tests {
             ("main.py", "from pkg.loader import load\nload(b'x')\neval('1')\n"),
             ("pkg/loader.py", "import marshal as p\n\ndef load(b):\n    return p.loads(b)\n"),
         ];
+        let mut maintained = 0;
         for (path, text) in edits {
             std::fs::write(src.join(path), text).unwrap();
             let report = run();
@@ -185,8 +186,76 @@ mod tests {
             assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
             let (ran, _) = report.cross_strata.expect("a session's run");
             assert!(ran <= all, "{path}: {ran} of {all}");
-            eprintln!("{path}: {ran} of {all} strata run; {} findings", got.len());
+            eprintln!("{path}: {ran} of {all} strata run, {} maintained from deltas ({} recursive); {} findings", report.cross_maintained.0, report.cross_maintained.1, got.len());
+            maintained += report.cross_maintained.0;
         }
+        assert!(maintained > 0, "an edit's strata are maintained from deltas (stage 2)");
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A recursive cross-file stratum (import reachability) is maintained by delete-and-rederive (decision 0077 §3):
+    /// an edit that breaks a cycle deletes the rows that lost every derivation, one that closes it again inserts them,
+    /// and every run's findings are a full run's.
+    #[test]
+    fn a_session_maintains_a_recursive_cross_file_stratum() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-cycle" revision 1
+.description "An import that closes a cycle of imports."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
+        let edits: [(&str, &str); 4] = [
+            ("c.py", "from d import z\n"),
+            ("d.py", "from a import w\n"),
+            ("b.py", "x = 2\n"),
+            ("b.py", "from c import y\n"),
+        ];
+        let mut recursive = 0;
+        for (path, text) in edits {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            let got = findings();
+            assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
+            eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
+            recursive += report.cross_maintained.1;
+        }
+        assert!(recursive > 0, "the recursive stratum is maintained");
         stop();
         let _ = std::fs::remove_dir_all(&base);
     }

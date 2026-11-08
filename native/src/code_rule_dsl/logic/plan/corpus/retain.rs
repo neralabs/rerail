@@ -13,7 +13,8 @@
 //! runs) and its relations were kept. Kept relations are bounded by a byte budget (`RERAIL_CROSS_RETAIN_MB`, 256 MB):
 //! past it, a relation is not kept and its stratum runs again next time.
 //!
-//! Stage 2 (decision 0077 §3) maintains a changed stratum's rows from the deltas (DRed) instead of deriving them again.
+//! Stage 2 (decision 0077 §3, `maintain`) maintains a changed stratum's rows from the deltas (DRed) instead of deriving
+//! them again; it reads the old rows of what changed, so inputs' rows are kept too.
 
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -42,6 +43,8 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// A digest of each input's rows.
     inputs: HashMap<String, u64>,
     rels: HashMap<String, Kept>,
+    /// Each input's rows, as columns, for its deltas next run (stage 2).
+    input_rows: HashMap<String, Vec<Vec<i64>>>,
 }
 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered.
@@ -180,14 +183,17 @@ pub(in crate::code_rule_dsl) fn after(
     cut: &Cut,
     derived: Vec<(String, usize, Vec<Vec<i64>>)>,
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
+    sources: &[(String, Arc<dyn Source>)],
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
+    let mut old_inputs = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
         for (rel, k) in old.rels {
             if cut.clean.contains(&rel) {
                 rels.insert(rel, k);
             }
         }
+        old_inputs = old.input_rows;
     }
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let budget = budget();
@@ -205,10 +211,32 @@ pub(in crate::code_rule_dsl) fn after(
         }
         rels.insert(rel, k);
     }
-    Retained { key, inputs, rels }
+    // Inputs' rows after the relations: an input past the budget derives its readers again when it changes. An
+    // unchanged input's rows are the ones kept.
+    let mut input_rows = HashMap::new();
+    for (rel, source) in sources {
+        let width = source.columns().len();
+        if width == 0 || input_rows.contains_key(rel) {
+            continue;
+        }
+        let columns = match old_inputs.remove(rel) {
+            Some(columns) if !cut.changed.contains(rel) => columns,
+            _ => (0..width).map(|c| (0..source.len()).map(|i| source.value(i, c)).collect()).collect(),
+        };
+        bytes += columns.iter().map(|c: &Vec<i64>| c.len() * 8).sum::<usize>();
+        if bytes > budget {
+            break;
+        }
+        input_rows.insert(rel.clone(), columns);
+    }
+    Retained { key, inputs, rels, input_rows }
 }
 
 impl Retained {
+    /// A relation's or an input's rows as the last run had them.
+    pub(in crate::code_rule_dsl) fn old(&self, rel: &str) -> Option<&Vec<Vec<i64>>> {
+        self.rels.get(rel).map(|k| &k.columns).or_else(|| self.input_rows.get(rel))
+    }
     pub(in crate::code_rule_dsl) fn relations(&self) -> usize {
         self.rels.len()
     }

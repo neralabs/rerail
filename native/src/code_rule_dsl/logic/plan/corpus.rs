@@ -29,6 +29,7 @@ mod hiding;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod prepared;
+mod maintain;
 mod retain;
 mod bridge;
 mod inputs;
@@ -197,6 +198,8 @@ pub(crate) struct Report {
     pub(crate) prepared: &'static str,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
     pub(crate) cross_strata: Option<(usize, usize)>,
+    /// Of those, strata maintained from deltas, and of them recursive (decision 0077 §3).
+    pub(crate) cross_maintained: (usize, usize),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1691,6 +1694,8 @@ pub(crate) fn run_with_options(
     let mut rounds = cross_rounds::Rounds::default();
     // Strata a session's run evaluated, of all (decision 0077).
     let mut cross_strata: Option<(usize, usize)> = None;
+    let mut cross_maintained = 0;
+    let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`).
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
@@ -1715,20 +1720,21 @@ pub(crate) fn run_with_options(
                     let ckey = retain::key(&prepared_key, &cross.program);
                     let mut cell = cell.lock().expect("the session's cross-file part");
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
-                    let part = cut.program(&cross);
+                    // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
+                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross)?;
+                    let part = &maintained.program;
                     let mut stats = cross_stats;
-                    if let Some(kept) = cell.as_ref() {
-                        for (rel, source) in cut.sources(kept, &part.program) {
-                            let measured = syntax::statistics(source.as_ref());
-                            stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
-                            modules.bind(&db, &rel, source)?;
-                        }
+                    let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
+                    for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+                        let measured = syntax::statistics(source.as_ref());
+                        stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+                        modules.bind(&db, &rel, source)?;
                     }
-                    let derived = cut.derived(&part.program)?;
+                    let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
-                    let got = super::run_atoms_native_over(&part, &db, "main", stats, keep, modes)?;
+                    let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     if wanted.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
@@ -1748,18 +1754,23 @@ pub(crate) fn run_with_options(
                             node_columns.insert(rel, nodes);
                         }
                     }
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs);
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
-                            "{} of {} strata run; inputs changed: {}; {} relations kept for the next run, {:.1} MB",
+                            "{} of {} strata run ({} maintained from deltas, {} of them recursive; {} derived again); inputs changed: {}; {} relations kept for the next run, {:.1} MB",
                             cut.strata.0,
                             cut.strata.1,
+                            maintained.maintained,
+                            maintained.recursive,
+                            maintained.derived_again,
                             if cut.changed.is_empty() { "none".to_owned() } else { cut.changed.iter().take(8).cloned().collect::<Vec<_>>().join(", ") },
                             next.relations(),
                             next.bytes() as f64 / 1e6
                         )
                     });
                     cross_strata = Some(cut.strata);
+                    cross_maintained = maintained.maintained;
+                    cross_recursive = maintained.recursive;
                     *cell = Some(next);
                 }
                 None => {
@@ -1954,7 +1965,7 @@ pub(crate) fn run_with_options(
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin, cross_strata })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed), prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive) })
 }
 
 

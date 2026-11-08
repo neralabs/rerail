@@ -1,6 +1,6 @@
 # 0077: A session keeps its cross-file part; an edit runs the strata it changed, then maintains their rows
 
-Status: accepted (2026-11-08). Stage 1 built; stage 2 (native DRed) decided, being built.
+Status: accepted (2026-11-08). Stages 1 and 2 built.
 
 (Numbered past 0076, which Bend-language-investigation uses for its per-component cross memo, not yet in this
 tip.)
@@ -71,21 +71,49 @@ runs every stratum that reads it.
 
 ### 3. Stage 2: a stratum's rows are maintained, natively
 
-Decided with the user: the native set engine maintains rows itself, porting the SQL executor's algorithms
-(`sql_executor/maintenance.rs`, `reductions/`, `recursive/`), rather than running changed strata through the SQL
-executor. One evaluation path, at the native engine's speed.
+Decided with the user: the native set engine maintains rows itself, porting the SQL executor's algorithm
+(delete-and-rederive, `sql_executor/maintenance.rs`), rather than running changed strata through the SQL executor.
+Built as a program rewrite (`corpus::maintain`): the running strata's rules become maintenance rules, and the native
+engine runs them as it runs any program. One evaluation path, one engine call; the engine is unchanged.
 
-- **Deltas in.** A changed file's rows of each input, as the last run kept them, against this run's: `minus` and
-  `plus` per input relation (ledger #14: each file owns its rows; an edit deletes and rewrites only that file's).
-- **Monotone strata** (no negation or aggregate over a relation that changed): delete-and-rederive. Over-delete with
-  the `minus` deltas against the old contents, rederive what has another derivation in the new contents, then
-  insert semi-naively from `plus`. The engine's relations gain delete; its delta windows are what semi-naive already
-  uses within a recursive stratum.
-- **Non-monotone strata** (negation, aggregates): counting per group where the executor has a reducer for it
-  (count, sum, extrema); otherwise the stratum is derived again from its inputs and diffed against the kept rows.
-- **Out.** A stratum's `minus` and `plus` are the next strata's input deltas. An empty pair stops there: a recomputed
-  stratum identical to the kept one runs nothing after it.
-- **Threshold.** A delta larger than a share of the relation derives the stratum again (spec §21.8).
+For a changed relation `r`, an input whose digest differs or a relation of a stratum that runs, the program has
+its new rows under its own name, its old rows as an input `r__old` (from what was kept), and its deltas:
+
+```text
+r__minus(x) :- r__old(x), !r(x).        // rows gone
+r__plus(x)  :- r(x), !r__old(x).        // rows new
+```
+
+A stratum `S` is maintained when its rules are joins, negations and comparisons, and every changed relation it
+reads had its old rows kept. For each rule `h :- B`, and each position `k` of `B` that can change (an atom of `S`,
+or of a changed relation, positive or negated):
+
+```text
+overdelete   h__del(..) :- B over old rows, k as its loss      // q__del, r__minus; a negated !n as n__plus
+survivors    h(..)      :- h__old(..), !h__del(..).
+rederive     h(..)      :- h__del(..), B over new rows.
+insert       h__ins(..) :- B over new rows, k as its gain      // q__ins, r__plus; a negated !n as n__minus
+             h(..)      :- h__ins(..).
+```
+
+Overdeleted rows cover every row that lost all its derivations, so a survivor holds. A new row has a derivation
+that uses a gained row at some position, by induction on the derivation, so the insert rules reach it. Within a
+recursive stratum, `h__del` and `h__ins` are recursive too; the engine evaluates them semi-naively, as any stratum.
+
+A stratum with an aggregate, a native operator, a lattice, an `ast` or `nearest` literal, or a changed read whose
+old rows were not kept is derived again from its inputs, its rules unchanged. Its rows then give the deltas to the
+strata after it, as a maintained stratum's do. An empty delta derives nothing after it.
+
+Kept for this: each input's rows, as columns, after the derived relations in the same budget (§1). An unchanged
+input's rows are carried over, not copied again.
+
+Measured:
+
+- Test `a_session_maintains_a_recursive_cross_file_stratum`: import reachability, recursive, over four files.
+  Four edits break a cycle, close another, break it, and close it again. Every changed stratum is maintained,
+  the recursive one included, and the findings equal a full run's each time.
+- Test `a_session_runs_the_cross_file_strata_an_edit_changed` (pack rules B301 and B307): every stratum that ran was
+  maintained.
 
 ## What the prior work says
 
@@ -117,8 +145,11 @@ Sibling branches (surveyed 2026-11-08):
 
 ## Open
 
-- Stage 2 (§3) is being built.
-- Inputs are digested whole each run (O(rows)); per-file deltas (§3) replace the digests.
+- Inputs are digested whole each run, and a maintained stratum's deltas, survivors and copies scan whole relations
+  (O(rows)). Per-file deltas (ledger #14) would make both O(changed). Today the saving is in joins: a changed stratum
+  joins only its deltas, where it would otherwise derive everything again.
+- Counting (aggregates) is not ported: an aggregate's stratum is derived again. The spec's threshold (§21.8: a delta
+  past a share of the relation derives again) is not applied.
 - The run still makes the part's views, tables and plans each time, and replays memoised exports into `x`; a session
   could keep the connection and `x` too.
 - Programs with gates, and typing programs with bounded rounds, run whole.
