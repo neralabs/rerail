@@ -16,7 +16,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_components`, `rx_span`, `ast_pattern`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -75,6 +75,7 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
+        ("ast_pattern", &["p:sym", "s:sym"]),
         ("policy", &["p:sym", "k:int", "json:sym"]),
         ("setting", &["p:sym", "k:int", "key:sym", "text:sym"]),
         // `doc_scopes`: present when the program reads only some documents; each entry k's globs, side 0 the
@@ -323,6 +324,9 @@ impl Writer<'_> {
                 SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
+        }
+        for pattern in &prog.ast_patterns {
+            self.row("ast_pattern", vec![s(pattern)]);
         }
     }
 }
@@ -600,6 +604,21 @@ impl<'a> Reader<'a> {
                 _ => return Err(bad(format!("no span {named:?}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
+        }
+        for row in self.get("ast_pattern") {
+            prog.ast_patterns.insert(text(&row[0])?);
+        }
+        // Earlier stored programs omitted this projection demand. Recover the
+        // same constant requests the frontend collects from their stored rules.
+        // Otherwise a warm run silently produces no ast_match facts.
+        if prog.ast_patterns.is_empty() {
+            for rule in &prog.rules {
+                for atom in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
+                    if let Some(Term::Str(pattern)) = atom.args.first() {
+                        prog.ast_patterns.insert(pattern.clone());
+                    }
+                }
+            }
         }
         if !self.get("doc_scoped").is_empty() {
             let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;

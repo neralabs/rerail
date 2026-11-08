@@ -2952,7 +2952,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "e74d1ed03ba8845fd8e0001342eb91e45b1134fbc15f52b5981eadf7655b29a5"
+        "sha256": "ab91c1bf31b901af6ff120c696c356876750d2f46ca6955b09f490c8d11931ff"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
