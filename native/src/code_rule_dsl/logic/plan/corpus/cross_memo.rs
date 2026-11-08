@@ -101,6 +101,31 @@ pub(super) struct Plan {
 
 /// Takes the component rules out of `cross`, checks the declared relations, and adds their replay inputs, copies
 /// and guards. `local` is the file-local program's digest (`memo::program_digest`).
+/// The largest set of cross-file relations that a `cross-memo` pragma could name: each has a node column and is
+/// made by rules that read, of what is derived across files, only the components' facts and the set itself.
+fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = derived
+        .iter()
+        .filter(|r| !r.starts_with(PREFIX) && !cross.natives.contains_key(*r) && cross.decls.get(*r).is_some_and(|c| c.iter().any(|(_, t)| t == "node")))
+        .cloned()
+        .collect();
+    loop {
+        let out: Vec<String> = cross
+            .rules
+            .iter()
+            .filter(|r| set.contains(&r.head.rel))
+            .filter(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| derived.contains(&a.rel) && !set.contains(&a.rel) && !a.rel.starts_with(PREFIX)))
+            .map(|r| r.head.rel.clone())
+            .collect();
+        if out.is_empty() {
+            return set;
+        }
+        for r in out {
+            set.remove(&r);
+        }
+    }
+}
+
 pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, local: &[u8; 32]) -> Result<Option<Plan>> {
     use front::{Atom, Literal, Rule, Term};
     let heads: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
@@ -140,9 +165,18 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     let digest: [u8; 32] = hash.finalize().into();
     // The contract's static half: a memoised relation has a node column, and its rules read only what is not derived
     // across files, the components' facts, and other memoised relations.
-    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    // A native relation of the cross-file part is derived across files too, and is not replayed: it has no rules to
+    // copy into or guard.
+    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).chain(cross.natives.keys().cloned()).collect();
+    let closed = closed(cross, &derived);
+    crate::code_rule_dsl::logic::profile::decision("cross-file memo: the static contract", || {
+        format!("{} of {} cross-file relations could be declared (a node column, reading only each other): {}", closed.len(), derived.len(), closed.iter().cloned().collect::<Vec<_>>().join(" "))
+    });
     let mut memo = BTreeMap::new();
     for rel in declared.iter().filter(|r| derived.contains(*r)) {
+        if cross.natives.contains_key(rel) {
+            return Err(Error::Plan(format!("{rel}: a native relation cannot be declared `{PRAGMA}`: it is made whole, not by rules")));
+        }
         let cols = &cross.decls[rel];
         let first = cols.iter().position(|(_, t)| t == "node").ok_or_else(|| Error::Plan(format!("{rel}: a `{PRAGMA}` relation needs a node column, the document its rows are about")))?;
         memo.insert(rel.clone(), (first, cols.len()));
