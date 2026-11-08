@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`0f0049ec7`. Merge `7a846bfca` adopts Final's parser-generator updates and its proposed library-module decision.
+`0ab7966c9`. Merge `f286e6a13` adopts Final's first library-module implementation.
+Merge `7a846bfca` adopts Final's parser-generator updates and the preceding library-module design.
 The preceding merge adds cross-file rows memoized by import component.
 The preceding merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
 The preceding merge adopts SQL execution phases, fused reductions, and the phased-facts direction.
@@ -60,7 +61,7 @@ The `annotation_constant_repr` relation supplies non-string literal values withi
 It shares the existing demanded native AST pass and excludes literals outside annotations.
 Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
 Boolean operand formatting also follows CPython: each operand increases the required precedence, with saturation at `ATOM`.
-The manifest records all 31 extension files, including typed syntax columns, graph operators, batched SQL ordering, filesystem metadata, and the join correction.
+The manifest records all 33 extension files, including typed syntax columns, graph operators, batched SQL ordering, host metadata, and stored-program repairs.
 Each file has an exact hash.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
@@ -1996,6 +1997,7 @@ Rule 89 still needs production directory discovery, reporting, CLI and registry 
 Its production default continues to refuse execution. No incomplete rule is marked accepted.
 The migration inventory remains eighty-nine drafts and eleven absent translations.
 
+
 ### Production discovery requirements before implementation
 
 Sixteen new source cases record complete selected paths and dead-code categories.
@@ -2018,3 +2020,47 @@ New native regressions specify both metadata and typed ordering, including store
 The draft discovery library is not executable until these capabilities are implemented.
 No Linear issue was created.
 
+### 2026-11-08 — Native survey reporting and cached pattern repair
+
+Merge `f286e6a13` adopts committed Final `0ab7966c9` during the reporting work.
+All development and builds remain in the root engine.
+The shared report library declares typed category, occurrence, and symbol inputs.
+Callers derive those inputs without redeclaring the library names.
+Two consumers through the actual module API retain distinct results, equal to their separate runs.
+This check proves request isolation. It does not measure pack performance.
+
+The native formatter implements `_worst_files`, `_print_text`, and `_print_json`.
+Thirty-eight supplied-graph cases compare complete return values, insertion order, errors, and output bytes.
+They cover repeated symbols, tied counts, default limits, negative limits, arbitrary category keys, and the `summary` key collision.
+They also cover Unicode escaping, actual qualified names, and partial text before a missing-key error.
+The first native run failed thirty-four cases before implementation. Four empty Counter cases already passed.
+
+Sixteen further cases construct the graph from workspace source and render its native analysis.
+The harness supplies no expected result rows or graph arguments to the rule.
+The cases cover nested symbols, Unicode, parse failures, exclusions, equivalent mixin choices, and the fifty-two-file scanner ordering case.
+All fifty-four reporting cases pass.
+Nine mutations change individual reporting requirements and produce mismatches through successful native execution.
+Two further controls disable the mixin proof and require an explicit refusal without report output.
+
+The refusal control exposed a bug in the new bridge.
+The bridge withheld category rows, but the JSON formatter treated those rows as an empty result and printed an empty summary.
+The bridge now requires a proven graph before it activates either formatter.
+The default diagnostic also names the actual remaining work: CLI and registry integration.
+It no longer claims that native source graph production is absent.
+
+Broader native tests exposed a separate stored-program defect.
+A cold AST-pattern run passed. A second process with the same cache returned three unmatched nodes instead of two matches and one unmatched node.
+The program codec stored regex requests but omitted AST-pattern requests.
+Cached source projection therefore produced no `ast_match` rows.
+Commit `d744214d8` stores those requests and recovers requests from the rules of legacy stored programs.
+The codec regression now passes, and the pattern case passes cold, warm, and on another warm run.
+The frontend suite also passes on two consecutive runs.
+
+The [reporting acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-acceptance.json.gz)
+retains the source oracles, native results, controls, failed runs, repaired runs, builds, program snapshots, and harness snapshots.
+Its current CLI source is `d744214d8`, based on Final `0ab7966c9`.
+Earlier receipts remain evidence for their recorded engines only.
+
+This work does not complete rule 89 or the whole migration.
+Native CLI behavior, registry integration, remaining default-entry contracts, and eleven absent translations remain open.
+No production Python execution, new runtime mode, or Linear ticket was added.

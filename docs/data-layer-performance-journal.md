@@ -9135,3 +9135,21 @@ The [acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-sur
 The final CLI build took 13.450 seconds. The final unit build took 25.007 seconds.
 These compile times remain separate from execution measurements.
 No full repository cold run occurred, and these fixture results do not establish a repository performance improvement.
+
+### 2026-11-08 — Survey report integration on Final library modules
+
+The branch now includes Final `0ab7966c9` and its first library-module implementation.
+Native text and JSON reports consume typed category, occurrence, and symbol rows.
+A two-consumer module check preserves separate answers instead of combining the input scopes.
+This fixture check does not establish a pack performance improvement.
+
+The wider tests exposed a cache correctness defect before acceptance.
+Cold AST-pattern matching passed, but a second process lost every positive match.
+Stored programs omitted the pattern requests that source projection needs.
+The repaired codec preserves those requests and recovers them from legacy rule rows.
+Cold and repeated warm runs now retain the same positive and negative findings.
+
+The repaired CLI build took 27.992 seconds. The repaired unit build took 41.053 seconds.
+Compile time remains separate from execution time.
+No full repository cold run occurred.
+The [reporting receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-report-acceptance.json.gz) retains the fixture phase measurements and the failed cache experiment.

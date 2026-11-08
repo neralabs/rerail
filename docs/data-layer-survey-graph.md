@@ -36,8 +36,9 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
 1. Retain the explicit raw mixin ambiguity for consumers that observe individual calls. Dead-code analysis uses a separate equivalence proof.
-2. Complete reporting, CLI, registry, and remaining source contracts over the tested producer and consumer.
+2. Complete CLI, registry, and remaining source contracts over the tested producer and consumer.
    The discovery harness already loads facade resources outside the scan without adding their definitions to the graph.
+   The reporting library renders text and JSON from the native analysis or caller-supplied result rows.
 3. Resolve the remaining default-entry requirements before replacing the draft's missing-producer diagnostic.
 
 Reuse the modern engine's implementations where their meanings match.
