@@ -1830,6 +1830,28 @@ impl Lowerer {
         // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
         let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
         let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        // Of the inputs, only those that reach the variables asked about through shared variables: an input that
+        // meets them nowhere (`text(nm, x)` beside `text(a, t)` asked for `t`) filters nothing the rule does not,
+        // and joined in the context it is a cross product (every text times every text).
+        let base = if vars.is_empty() {
+            base
+        } else {
+            let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
+            let mut kept = vec![false; base.len()];
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for (i, l) in base.iter().enumerate() {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !kept[i] && !lv.is_disjoint(&reach) {
+                        kept[i] = true;
+                        reach.extend(lv);
+                        grew = true;
+                    }
+                }
+            }
+            base.into_iter().zip(kept).filter_map(|(l, k)| k.then_some(l)).collect()
+        };
         let (base, base_bound) = Self::bound_context(base);
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
         // So do atoms of the clause's own heads, where the rest binds the variables: through one, the aggregate
@@ -1839,7 +1861,25 @@ impl Lowerer {
         let own = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if heads.contains(rel));
         let (first, bound) = Self::bound_context(context(false).into_iter().filter(|l| !own(l)).collect());
         let (first, bound) = if vars.iter().all(|v| bound.contains(v)) { (first, bound) } else { Self::bound_context(context(false)) };
-        let context = if vars.iter().all(|v| base_bound.contains(v)) {
+        // A context whose literals leave the variables asked about in separate groups is their cross product (every
+        // function times every name, where the derived atom that joins them is left out): the next choice is taken.
+        let joined = |lits: &[Lit]| {
+            let Some(v0) = vars.first() else { return true };
+            let mut reach: BTreeSet<String> = BTreeSet::from([v0.clone()]);
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for l in lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. })) {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !lv.is_disjoint(&reach) && !lv.is_subset(&reach) {
+                        reach.extend(lv);
+                        grew = true;
+                    }
+                }
+            }
+            vars.iter().all(|v| reach.contains(v))
+        };
+        let context = if vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
             base
         } else if vars.iter().all(|v| bound.contains(v)) {
             first
