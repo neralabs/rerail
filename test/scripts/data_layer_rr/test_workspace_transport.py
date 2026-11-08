@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +13,23 @@ import replay
 
 
 class WorkspaceTransportTests(unittest.TestCase):
+    def test_physical_fixture_keeps_empty_directories_and_directory_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            replay.write_fixture(root,[dict(path='empty',directory=True),
+                                       dict(path='pkg/a.py',source='def actual(): pass\n'),
+                                       dict(path='alias',symlink='pkg'),dict(path='pkg/back',symlink='..')])
+            self.assertEqual(list((root/'empty').iterdir()),[])
+            self.assertTrue((root/'alias').is_symlink())
+            self.assertTrue((root/'pkg/back').is_symlink())
+            self.assertEqual((root/'alias/a.py').read_text(),'def actual(): pass\n')
+
+    def test_physical_fixture_rejects_paths_and_links_outside_its_workspace(self):
+        for item in [dict(path='../outside.py',source=''),dict(path='/outside.py',source=''),
+                     dict(path='link',symlink='../outside'),dict(path='link',symlink='/outside')]:
+            with self.subTest(item=item),tempfile.TemporaryDirectory() as temporary:
+                with self.assertRaises(ValueError):replay.write_fixture(Path(temporary),[item])
+
     def execute(self,runner):
         seen={}
         files=[dict(path='impl/a.py',source='class Primary: pass\n'),

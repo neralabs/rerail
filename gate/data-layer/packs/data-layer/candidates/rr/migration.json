@@ -1741,11 +1741,27 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-scope.rr",
-      "sha256": "ed90f3155fa06bdba063509ab92d43eb3004b1f7d4c547397171e0b5d3ac2579",
+      "sha256": "5dac9fe7013bc297d0ccb01aa255a1d84f157b484e442e3a9a58ff5fbe48558d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-acceptance.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-scope-acceptance.json.gz",
+      "importedSha256": "ed90f3155fa06bdba063509ab92d43eb3004b1f7d4c547397171e0b5d3ac2579",
+      "repairs": [
+        {
+          "before": "ed90f3155fa06bdba063509ab92d43eb3004b1f7d4c547397171e0b5d3ac2579",
+          "after": "5dac9fe7013bc297d0ccb01aa255a1d84f157b484e442e3a9a58ff5fbe48558d",
+          "reason": "Separate load demand from final batch ordering before native production discovery"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
+      "sha256": "be6f62b98f87bafd81e41cc18a8477f94f670d63c94fd7f737248391bbfbfc2b",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_lib/discovery.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-source.json.gz"
     }
   ],
   "rules": [
@@ -2853,7 +2869,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "d7631ebf173a80aabd3d34f1199903d70d657d5be31a56b1030733ae8ed42f95"
+        "sha256": "7d1ff1793965d77bbd0a94e3d675558efd7acdc5548deb921e3730a823520e0b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",

@@ -6,6 +6,79 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn ordered_rows_sorts_typed_columns_once_and_survives_program_facts() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ordered-rows");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("ordered.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl items(group: number, key: symbol)
+items(10, "a"). items(2, "z"). items(2, "a"). items(2, "é"). items(-1, "last").
+.decl empty(group: number, key: symbol)
+.violation Ranked(at: span, group: number, key: symbol, ordinal: number) code "RANKED" "ranked"
+Ranked(@place("", 0), g, k, i) :- ordered_rows(g, k, i, items).
+Ranked(@place("", 0), g, k, i) :- ordered_rows(g, k, i, empty).
+"#).unwrap();
+    let (program, _) = read_file(&rule).unwrap();
+    let mut facts = super::super::program_facts::Facts::new();
+    super::super::program_facts::write(&mut facts, "ordered", &program);
+    let bytes = super::super::program_facts::encode(&facts);
+    let decoded = super::super::program_facts::decode(&bytes).unwrap();
+    let restored = super::super::program_facts::program(&decoded, "ordered").unwrap();
+    assert_eq!(restored.natives, program.natives);
+    let printed = print(&restored).unwrap();
+    assert_eq!(parse(&printed).unwrap().natives, restored.natives);
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"inputFiles": []})).unwrap();
+    for rows in [report["diagnostics"].as_array().unwrap().clone(), lowered_findings(&printed)] {
+        let mut actual: Vec<_> = rows.iter().map(|r| (
+            r["parameters"]["group"].as_i64().unwrap(),
+            r["parameters"]["key"].as_str().unwrap().to_owned(),
+            r["parameters"]["ordinal"].as_i64().unwrap(),
+        )).collect();
+        actual.sort_by_key(|r| r.2);
+        assert_eq!(actual, vec![(-1,"last".to_owned(),0),(2,"a".to_owned(),1),
+            (2,"z".to_owned(),2),(2,"é".to_owned(),3),(10,"a".to_owned(),4)]);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_metadata_distinguishes_files_links_and_broken_links() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("directory-metadata");
+    std::fs::create_dir_all(root.join("pkg/target")).unwrap();
+    std::fs::write(root.join("pkg/a.txt"), "abc").unwrap();
+    std::os::unix::fs::symlink("target", root.join("pkg/link")).unwrap();
+    std::os::unix::fs::symlink("absent", root.join("pkg/broken")).unwrap();
+    let rule = root.join("metadata.rr");
+    std::fs::write(&rule, r#"
+.language python
+.scope dirs "__no_primary__"
+.decl roots(path: symbol)
+roots("pkg").
+.decl dir_metadata(path: symbol, name: symbol, is_file: number, is_symlink: number, bytes: number)
+.violation Metadata(at: span, name: symbol, is_file: number, is_symlink: number, bytes: number) code "META" "metadata"
+Metadata(@place("", 0), n, f, s, b) :- roots(p), dir_metadata(p, n, f, s, b).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({})).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (
+        r["parameters"]["name"].as_str().unwrap().to_owned(),
+        r["parameters"]["is_file"].as_i64().unwrap(),
+        r["parameters"]["is_symlink"].as_i64().unwrap(),
+        r["parameters"]["bytes"].as_i64().unwrap(),
+    )).collect();
+    actual.sort();
+    assert_eq!(actual.len(), 4);
+    assert_eq!(actual[0], ("a.txt".into(),1,0,3));
+    assert_eq!(actual[1], ("broken".into(),0,1,0));
+    assert_eq!((&actual[2].0,actual[2].1,actual[2].2), (&"link".to_owned(),0,1));
+    assert_eq!((&actual[3].0,actual[3].1,actual[3].2), (&"target".to_owned(),0,0));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn bfs_walk_rejects_mixed_domains_and_malformed_relation_shapes() {
     for declarations in [
         ".decl e(a: symbol, b: number, i: number)\n.decl r(a: symbol)",

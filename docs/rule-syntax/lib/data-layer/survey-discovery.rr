@@ -1,0 +1,57 @@
+// Pinned SymbolGraph discovery. World requests contain only path selection;
+// ordinal assignment happens after discovery, outside the load request cone.
+#include "data-layer/survey-scope.rr"
+
+.decl sgd_workspace(path: symbol)
+sgd_workspace(".").
+.decl sgd_top(name: symbol)
+sgd_top(name) :- sgd_workspace(path), dir_entry(path, name, 1).
+.decl sgd_layer(name: symbol)
+sgd_layer(name) :- sgd_top(name), match_all("\\Al[0-9]{4}_.+", name).
+.decl sgd_modern()
+sgd_modern() :- sgd_top("data_layer").
+sgd_modern() :- sgd_top("_internal").
+sgd_modern() :- sgd_layer(_).
+.decl sgd_default(i: number, path: symbol)
+sgd_default(0, "impl") :- sgd_modern(), sgd_top("impl").
+sgd_default(1, "data_layer") :- sgd_modern(), sgd_top("data_layer").
+sgd_default(2, "_internal") :- sgd_modern(), sgd_top("_internal").
+sgd_default(i+3, path) :- sgd_layer(path), i = count : { sgd_layer(other), @str_cmp(other, path) < 0 }.
+sgd_default(0, "api") :- !sgd_modern(), sgd_top("api").
+sgd_default(1, "impl") :- !sgd_modern(), sgd_top("impl").
+
+.decl sgd_argument(i: number, path: symbol)
+sgd_argument(i, path) :- option_item("scanDirectories", i, path).
+sgd_argument(0, "public") :- !option_item("scanDirectories", _, _).
+.decl sgd_has_public()
+sgd_has_public() :- sgd_argument(_, "public").
+.decl sgd_expanded(i: number, j: number, path: symbol)
+sgd_expanded(i, 0, path) :- sgd_argument(i, path), path != "public".
+sgd_expanded(i, j, path) :- sgd_argument(i, "public"), sgd_default(j, path).
+.decl sgd_earlier_path(i: number, j: number, path: symbol)
+sgd_earlier_path(i, j, path) :- sgd_expanded(i, j, path), sgd_expanded(a, b, path), (a < i ; (a = i, b < j)).
+.decl sgd_chosen(i: number, j: number, path: symbol)
+sgd_chosen(i, j, path) :- sgd_expanded(i, j, path), (!sgd_has_public() ; !sgd_earlier_path(i, j, path)).
+.decl sgd_root(i: number, path: symbol)
+sgd_root(i, @replace_all(@replace_all(@replace_all(@replace_all(@replace_all(raw, "/+", "/"), "\\A(?:\\./)+", ""), "/(?:\\./)+", "/"), "/\\.\\z", ""), "/+\\z", "")) :- sgd_chosen(a, b, raw), i = count : { sgd_chosen(c, d, _), (c < a ; (c = a, d < b)) }.
+
+.decl sgd_probe(i: number, path: symbol, parent: symbol, name: symbol)
+sgd_probe(i, path, ".", path) :- sgd_root(i, path), path != ".", !contains("/", path).
+sgd_probe(i, path, parent, name) :- sgd_root(i, path), match_all("\\A(?<parent>.*)/(?<name>[^/]+)\\z", path).
+.decl sgd_blocked(path: symbol)
+sgd_blocked(path) :- sgd_root(_, path), match_all("(?:\\A|/)(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)(?:/|\\z)", path).
+.decl sgd_walk(i: number, path: symbol)
+sgd_walk(i, ".") :- sgd_root(i, ".").
+sgd_walk(i, path) :- sgd_probe(i, path, parent, name), dir_entry(parent, name, 1), !sgd_blocked(path).
+sgd_walk(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 1), dir_metadata(path, name, _, 0, _), !match_all("\\A(?:__pycache__|\\.pytest_cache|node_modules|\\.git|\\.venv|tmp|browser_build|tests|test|conform)\\z", name).
+.decl sgd_file(root: number, path: symbol)
+// An explicit Python file bypasses directory and test exclusions in the source.
+sgd_file(i, path) :- sgd_probe(i, path, parent, name), dir_metadata(parent, name, 1, _, _), suffix(".py", name), name != ".py".
+sgd_file(i, @replace_all(cat(path, "/", name), "\\A\\./", "")) :- sgd_walk(i, path), dir_entry(path, name, 0), suffix(".py", name), name != ".py".
+
+.decl sgd_key(root: number, key: symbol)
+// NUL is not a filesystem component. A NUL separator preserves Python Path's
+// component comparison, including a directory a/ before a neighbouring a.py.
+sgd_key(i, @replace_all(path, "/", "\u0000")) :- sgd_file(i, path).
+sgs_scan_path(@replace_all(key, "\u0000", "/"), ordinal) :- ordered_rows(_, key, ordinal, sgd_key).
+sgs_graph_path(path) :- sgd_file(_, path).

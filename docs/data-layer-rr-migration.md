@@ -1896,3 +1896,25 @@ Rule 89 still needs production directory discovery, reporting, CLI and registry 
 Its production default continues to refuse execution. No incomplete rule is marked accepted.
 The migration inventory remains eighty-nine drafts and eleven absent translations.
 
+### Production discovery requirements before implementation
+
+Sixteen new source cases record complete selected paths and dead-code categories.
+The workspace fixture transport now supports empty directories, relative links, and cycles.
+Five transport tests pass, with four subtests. Links outside the fixture workspace are rejected.
+
+The existing engine follows a nested directory link and selects `pkg/alias/hidden.py` incorrectly.
+The [failing workspace probe](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-discovery-symlink-red.json.gz)
+records the extra path through successful native execution.
+The pinned [walker](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/discovery.py#L80)
+requires symlink metadata to prune that edge. An explicitly selected symlink directory remains a valid root.
+The filesystem API needs typed file, symlink, and byte-size metadata from the same cached directory listing.
+The existing `dir_entry` contract must retain its current directory flag.
+
+The pinned walker also sorts paths by components. Full path-string order gives a different result.
+The graph needs one typed batch sort, implemented with a SQL window, to assign scan ordinals.
+Per-file correlated counts would repeat comparisons across the repository.
+Load requests now depend on unordered graph paths; final ordinal assignment stays outside their request cone.
+New native regressions specify both metadata and typed ordering, including stored-program round trips.
+The draft discovery library is not executable until these capabilities are implemented.
+No Linear issue was created.
+

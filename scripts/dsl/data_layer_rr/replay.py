@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -69,6 +70,31 @@ def execute_workspace(engine, rule, files, options, sources=None, workspace_name
     return _execute(engine,rule,files,dict(options),sources,workspace_name)
 
 
+def write_fixture(corpus, files, sources=None):
+    """Write the physical workspace, including empty directories and relative links."""
+    sources=sources or {}
+    links=[]
+    for file in files:
+        path=Path(file['path'])
+        if path.is_absolute() or '..' in path.parts:
+            raise ValueError(f'Buffer API required for this path: {path}')
+        target=corpus/path
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if 'symlink' in file:
+            link=Path(file['symlink'])
+            destination=Path(os.path.abspath(target.parent/link))
+            if link.is_absolute() or not destination.is_relative_to(corpus.absolute()):
+                raise ValueError(f'Fixture link leaves the workspace: {path}')
+            links.append((target,link))
+        elif file.get('directory') is True:
+            target.mkdir(exist_ok=True)
+        else:
+            source=file.get('source',sources.get(file.get('sourceSha256')))
+            if not isinstance(source,str):raise ValueError(f'Missing source for {path}')
+            target.write_text(source)
+    for target,link in links:target.symlink_to(link)
+
+
 def _execute(engine, rule, files, options, sources, workspace_name):
     import migration
     manifest=migration.read_json(ROOT/migration.MANIFEST)
@@ -84,16 +110,7 @@ def _execute(engine, rule, files, options, sources, workspace_name):
             raise ValueError('Invalid fixture workspace name')
         corpus = root / workspace_name
         corpus.mkdir()
-        for file in files:
-            path = Path(file['path'])
-            if path.is_absolute() or '..' in path.parts:
-                raise ValueError(f'Buffer API required for this path: {path}')
-            target = corpus / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = file.get('source', sources.get(file.get('sourceSha256')))
-            if not isinstance(source, str):
-                raise ValueError(f'Missing source for {path}')
-            target.write_text(source)
+        write_fixture(corpus,files,sources)
         option_file = root / 'options.json'
         write_json(option_file, options)
         command = [str(engine), 'run-rr', str(rule), str(corpus), str(root / 'out'), str(option_file)]

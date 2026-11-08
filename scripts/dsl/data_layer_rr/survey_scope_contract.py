@@ -62,6 +62,7 @@ def program(layer, item):
     text+='\n#include "data-layer/survey-scope.rr"\n'
     for i,path in enumerate(item['scanPaths']):
         text+=f'sgs_scan_path({json.dumps(path)}, {i}).\n'
+        text+=f'sgs_graph_path({json.dumps(path)}).\n'
     return text
 
 
