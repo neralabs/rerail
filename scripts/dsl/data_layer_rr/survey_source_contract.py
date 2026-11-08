@@ -36,6 +36,7 @@ CASES = [
     ('bases-and-fields', {'a.py': 'class C(pkg.ABC, Generic[A], metaclass=Meta):\n first: list[A]\n second: "B" = value\n first: C | None = None\n other.member: int = 0\n if flag:\n  hidden: int\n'}),
     ('decorator-spelling', {'a.py': '@pkg.decorate(1)\n@((factory()))\nclass C:\n @pkg.abstractmethod\n @wrap(value="(")\n def f(self): pass\n @property\n def g(self): pass\n'}),
     ('complex-decorators-and-bases', {'a.py': '@(lambda f: f)\n@(registry["key"])\nclass C(*bases, **keywords):\n @((make_decorator())(1))\n async def method(self): pass\nclass D(factory("ABC"), x if flag else y): pass\n'}),
+    ('multiple-definition-files', {'impl/a.py': '@first\nclass A(ABC):\n x: int\n def method(self, x: int): pass\n', 'impl/b.py': '@second(1)\nclass B(pkg.Base):\n y: str\n def method(self, y: str): pass\n'}),
 ]
 
 

@@ -79,6 +79,8 @@ pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 22] = [
     ("call_receiver_text", &[1]),
     ("call_text", &[1]),
     ("call_function_text", &[1]),
+    ("decorator_text", &[1]),
+    ("class_base_text", &[1]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an

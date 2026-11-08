@@ -6,6 +6,40 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn canonical_definition_text_keeps_typed_columns_and_file_locations() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("definition-text");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "@pkg.wrap(\"x\")\nclass C(Base[int], metaclass=Meta):\n @property\n def f(self): pass\n").unwrap();
+    std::fs::write(root.join("b.py"), "@other\nclass D(*bases): pass\n").unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl decorator_text(n: node, s: symbol)
+.input decorator_text
+.decl class_base_text(n: node, s: symbol)
+.input class_base_text
+.violation Printed(at: span, kind: symbol, value: symbol) code "DEFINITION_TEXT" "{value}"
+Printed(n, "decorator", s) :- decorator_text(n, s).
+Printed(n, "base", s) :- class_base_text(n, s).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"inputFiles": ["a.py", "b.py"]})).unwrap();
+    let actual: BTreeSet<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (
+        r["path"].as_str().unwrap().to_owned(), r["line"].as_u64().unwrap(),
+        r["parameters"]["kind"].as_str().unwrap().to_owned(), r["parameters"]["value"].as_str().unwrap().to_owned(),
+    )).collect();
+    let expected: BTreeSet<_> = [
+        ("a.py", 1, "decorator", "pkg.wrap('x')"),
+        ("a.py", 2, "base", "Base[int]"),
+        ("a.py", 3, "decorator", "property"),
+        ("b.py", 1, "decorator", "other"),
+        ("b.py", 2, "base", "*bases"),
+    ].into_iter().map(|(p,l,k,v)|(p.to_owned(),l,k.to_owned(),v.to_owned())).collect();
+    assert_eq!(actual, expected, "{report}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn extrema_use_projected_columns_after_constant_filters() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("aggregate-projection");
     std::fs::create_dir_all(&root).unwrap();
