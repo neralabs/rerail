@@ -71,7 +71,13 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **76 target drafts and 24 absent translations**. None has full acceptance yet.
+The current inventory contains **77 target drafts and 23 absent translations**. None has full acceptance yet.
+The 77th draft, `lazy_result_usage`, passes all five unchanged original tests, including both positive cases.
+Its 231 supplemental API cases pass, including 117 positive scan or collector results. All 114 reporter cases pass, including 52 positives.
+Single-value and sequence methods have independent disabled-arm controls in the original and configured reporter interfaces.
+The rule implements class eligibility, wrapper exemptions, canonical return text, completion order, file scope, and the repository-wide baseline ratchet.
+It uses existing modern engine capabilities. The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-lazy-result-usage-native-contracts.json.gz) retains complete observations and regression evidence.
+Full shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 76th draft, `transaction_patterns`, passes all 118 unchanged original tests on the engine through `9993e7e5f`.
 It preserves all 117 recorded API observations, including collector state and helper results.
 Its 151 supplemental API cases include 124 scans, with 96 positives. All 61 reporter cases pass, including 17 positives.

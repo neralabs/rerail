@@ -8723,3 +8723,62 @@ The validator checks exact shard coverage, complete values, source pinning, nati
 The inventory now contains 76 drafts and 24 absent translations. Full migration acceptance remains false.
 Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 Further migration work uses this merged root engine and its shared libraries.
+
+
+## 2026-11-07: Port lazy-result eligibility and the baseline ratchet on Final shape
+
+The 77th native draft is `lazy_result_usage`. The modern engine remains Final shape through `9993e7e5f`.
+The migration audit confirms its ancestry and the same 19 reviewed native extension files.
+This port requires no native engine change or rebuild. It uses the frozen root CLI with SHA-256
+`a9e68e528e1ea4f1158300c47cbd4ac17d057fedc4f9abe587a169aa02cdd696`.
+
+The rule preserves transaction, query, and table class eligibility and the source's explicit skip list.
+It excludes classes whose names start with Async or Lazy after leading underscores.
+It recognizes direct sibling lazy methods, protocol bases, legacy decorators, abstract methods, placeholders, and lazy references throughout function syntax.
+Nested functions retain the source collector's current class. Findings retain function completion order and duplicate occurrences.
+Return annotations use the existing native canonical printer. Supplied ASTs enter as flat syntax columns through the external test adapter.
+No rule invokes Python.
+
+Production metadata selects the data-layer roots before parsing. Relational predicates retain the exact layer-name and skip semantics.
+API buffer transport uses a reserved layer-shaped path. The rule reads each buffer's original scope from the supplied path columns.
+This preserves explicit-file behavior while the production selector avoids unrelated repository roots.
+The factory applies skip patterns. Direct collectors honor their explicit disabled argument instead.
+All files in a scan enter one native query. Collector transport sends one complete tree per query.
+
+The original module has five tests: two positive and three clean cases.
+All five unchanged tests pass. Their five complete returned DTO lists match the pinned source recording.
+All 231 supplemental API cases pass: 102 file scans, 108 collector cases, sixteen repository scans, and five skip-helper cases.
+There are 117 positive list results. All 114 reporter cases pass, including 52 positives.
+Reporter cases cover integer, string, Boolean, fractional, and large numeric baseline thresholds, plus a two-file repository total.
+Single-value and sequence methods have independent controls. Each enabled original and reporter positive passes.
+Disabling the corresponding native eligibility arm makes both positive interfaces fail through successful empty native output.
+
+The TDD ladders exposed four translation defects.
+First, the supplied-AST placeholder rule requested a nonexistent literal-type column. The existing column is `astValueTypes`.
+The red ellipsis case returned a false positive. The corrected rule passes it and the full corpus.
+Second, the baseline declaration requested a symbol from a numeric JSON value.
+The typed reader correctly rejected that shape. The rule then used its absent-baseline default of zero.
+The rule now uses the existing JSON projection, which preserves numbers and strings as serialized input values.
+Third, the factory witness exposed missing skip-pattern application. The factory path now applies it without changing direct collector behavior.
+Fourth, an integer count was compared with the engine's encoded float key.
+Both operands now enter the float domain explicitly. Fractional thresholds and the repository-wide count pass their recorded source results.
+These repairs change Datalog and test transport. They add no specialized native detector or alternate runtime.
+
+One earlier reporter process reached its 100-second timeout on the default shared store.
+The final replay uses isolated per-shard store paths and completes every command within 115 seconds.
+This change isolates test state. It does not establish the cause of that earlier timeout or demonstrate a performance gain.
+The receipt retains the original traceback. No full-repository or whole-batch cold benchmark ran.
+
+The reporter harness now writes the active case and completed values before each case starts.
+A simulated process failure proves that the checkpoint retains both the failed case identity and earlier full results.
+All 80 harness tests pass. All 88 candidate reader checks pass, including every one of the 77 target drafts.
+The reader lists unsuccessful library-search probes as absent files before it resolves tables beside a rule.
+The receipt validator checks those absences and every successful file hash. It does not treat a missing probe as a missing rule dependency.
+
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-lazy-result-usage-native-contracts.json.gz)
+contains the original and supplemental source recordings, complete native observations, disabled-arm controls, regression history, commands, and its validator.
+The validator checks exact shard coverage, complete values, source pinning, the frozen executable, library identities, and the final rule hash.
+It also retains the failed intermediate reporter records. Accepted results use only the final verified replay.
+
+The inventory now contains 77 drafts and 23 absent translations. Full migration acceptance remains false.
+Full shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.

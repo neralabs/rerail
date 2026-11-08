@@ -154,7 +154,7 @@ lru_violation(f, d, l, cls, method, ret, i, e) :- lru_position(f, d, l, i, e), l
 lru_count(total) :- total = count : { lru_violation(_, _, _, _, _, _, _, _) }.
 .decl lru_over_budget()
 lru_over_budget() :- lru_count(total), !lru_baseline(_), total > 0.
-lru_over_budget() :- lru_count(total), lru_baseline(raw), !prefix("\"", raw), raw != "true", raw != "false", total > to_float(raw).
+lru_over_budget() :- lru_count(total), lru_baseline(raw), !prefix("\"", raw), raw != "true", raw != "false", to_float(to_string(total)) > to_float(raw).
 lru_over_budget() :- lru_count(total), lru_baseline("true"), total > 1.
 lru_over_budget() :- lru_count(total), lru_baseline("false"), total > 0.
 lru_over_budget() :- lru_count(total), lru_baseline(raw), prefix("\"", raw), total > to_number(@slice(raw, 1, strlen(raw) - 1)).
