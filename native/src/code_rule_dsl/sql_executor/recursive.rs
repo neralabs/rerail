@@ -93,6 +93,9 @@ pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -
         }
     }
     for (stratum, group) in groups {
+        if run.temporal.contains_key(&stratum) {
+            continue;
+        }
         let rules = e
             .program
             .steps

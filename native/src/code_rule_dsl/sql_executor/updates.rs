@@ -129,11 +129,17 @@ impl CodeRuleSqlExecutor {
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
         let mut work = Work::new(&self.db, &self.scratch);
+        work.versions = Some(&self.versions);
+        work.profiler = self.db.profiler();
         let mut touched = Vec::new();
         let limits = self.limits.clone();
         self.db
             .execute_batch("SAVEPOINT sql_fact_changes")
             .map_err(error)?;
+        if let Err(e) = self.versions.begin() {
+            let _ = self.db.execute_batch("RELEASE sql_fact_changes");
+            return Err(e);
+        }
         let result = (|| -> Result<Value> {
             let _budget = limits.enter(&self.db)?;
             let mut deltas = BTreeMap::new();
@@ -180,33 +186,39 @@ impl CodeRuleSqlExecutor {
             }
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
             {
-                let mut stats = self
-                    .db
-                    .prepare_cached("INSERT OR REPLACE INTO wave_stats(tbl,rows) VALUES (?1,?2)")
-                    .map_err(error)?;
+                let mut rows = Vec::new();
                 for run in &executions {
                     for (name, count) in &run.counts {
-                        stats
-                            .execute(rusqlite::params![name, *count as i64])
-                            .map_err(error)?;
+                        rows.push(vec![
+                            SqlValue::Text(name.clone()),
+                            SqlValue::Integer(*count as i64),
+                        ]);
                     }
                 }
                 for p in &prepared {
-                    stats
-                        .execute(rusqlite::params![p.name, p.source.estimated_len() as i64])
-                        .map_err(error)?;
+                    rows.push(vec![
+                        SqlValue::Text(p.name.clone()),
+                        SqlValue::Integer(p.source.estimated_len() as i64),
+                    ]);
                 }
+                plan::insert_many(
+                    &self.db,
+                    "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
+                    rows,
+                )
+                .map_err(error)?;
             }
             work.cleanup()?;
             self.db
                 .execute_batch("RELEASE sql_fact_changes")
                 .map_err(error)?;
             Ok(
-                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
+                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"version_nodes":work.version_nodes,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
             )
         })();
         match result {
             Ok(report) => {
+                self.versions.commit();
                 self.scratch = work.pool;
                 for p in prepared {
                     self.inputs.insert(p.name.clone(), p.source.clone());
@@ -223,6 +235,7 @@ impl CodeRuleSqlExecutor {
                 Ok(report.to_string())
             }
             Err(e) => {
+                let native_rollback = self.versions.rollback(&self.db);
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_fact_changes; RELEASE sql_fact_changes");
@@ -233,6 +246,7 @@ impl CodeRuleSqlExecutor {
                     let _ = self.db.bind(&p.name, Arc::clone(&self.inputs[&p.name]));
                 }
                 self.db.reset_execution();
+                native_rollback?;
                 Err(e)
             }
         }
