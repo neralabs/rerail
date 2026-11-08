@@ -21,6 +21,8 @@
 mod setfix;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
+/// Ordered breadth-first traversal for a whole batch of demanded roots.
+pub(in crate::code_rule_dsl) mod bfs_walk;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
 pub(in crate::code_rule_dsl) mod components;
 pub(in crate::code_rule_dsl) mod match_all;

@@ -6,6 +6,49 @@ use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
 #[test]
+fn bfs_walk_is_typed_demanded_and_survives_program_facts() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("bfs-walk");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("walk.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl edge(src: symbol, dst: symbol, ordinal: number)
+edge("r", "a", 0). edge("r", "b", 1). edge("a", "c", 0).
+edge("b", "c", 0). edge("c", "r", 0). edge("u", "u", 0).
+edge("nondemand", "ignored", 0).
+.decl roots(r: symbol)
+roots("r"). roots("u"). roots("isolated").
+.violation Visit(at: span, root: symbol, hit: symbol, ordinal: number) code "VISIT" "visit"
+Visit(@place("", 0), r, hit, i) :- bfs_walk(r, hit, i, edge, roots).
+"#).unwrap();
+    let (program, _) = read_file(&rule).unwrap();
+    let mut facts = super::super::program_facts::Facts::new();
+    super::super::program_facts::write(&mut facts, "walk", &program);
+    let bytes = super::super::program_facts::encode(&facts);
+    let decoded = super::super::program_facts::decode(&bytes).unwrap();
+    let restored = super::super::program_facts::program(&decoded, "walk").unwrap();
+    assert_eq!(restored.natives, program.natives);
+    assert!(matches!(restored.natives.values().next(), Some(front::Native::BfsWalk { .. })));
+    let printed = root.join("printed.rr");
+    std::fs::write(&printed, print(&restored).unwrap()).unwrap();
+    for path in [&rule, &printed] {
+        let report = crate::code_rule_dsl::tools::run_rr(path, &root, &root.join("out"),
+            &serde_json::json!({"inputFiles": []})).unwrap();
+        let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (
+            r["parameters"]["root"].as_str().unwrap().to_owned(),
+            r["parameters"]["hit"].as_str().unwrap().to_owned(),
+            r["parameters"]["ordinal"].as_i64().unwrap(),
+        )).collect();
+        actual.sort();
+        let mut expected: Vec<_> = [("r","a",0),("r","b",1),("r","c",2),("r","r",3),("u","u",0)]
+            .into_iter().map(|(a,b,c)|(a.to_owned(),b.to_owned(),c)).collect();
+        expected.sort();
+        assert_eq!(actual, expected, "{report}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn canonical_definition_text_keeps_typed_columns_and_file_locations() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("definition-text");
     std::fs::create_dir_all(&root).unwrap();

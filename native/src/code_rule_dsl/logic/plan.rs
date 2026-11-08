@@ -2195,6 +2195,7 @@ impl Run<'_> {
         self.materialize(&reads)?;
         use crate::code_rule_dsl::logic::front::Native;
         let (edge, target, roots) = match native {
+            Native::BfsWalk { edge, roots } => return self.bfs_walk(rel, edge, roots),
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
             Native::Components { edge, own } => return self.components(rel, edge, own),
@@ -2225,6 +2226,27 @@ impl Run<'_> {
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
+    }
+
+    /// Read both input batches once, share one adjacency across all demands, and
+    /// publish typed rows through the same bulk writer as the other native relations.
+    fn bfs_walk(&mut self, rel: &str, edge: &str, roots: &str) -> Result<usize> {
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let (a, b, rank) = (self.model.col(edge, 0), self.model.col(edge, 1), self.model.col(edge, 2));
+        let edges: Vec<(i64, i64, i64)> = {
+            let mut statement = self.db.prepare(&format!("SELECT DISTINCT {a}, {b}, {rank} FROM {}", ident(edge)))?;
+            statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?
+        };
+        let c = self.model.col(roots, 0);
+        let roots: Vec<i64> = {
+            let mut statement = self.db.prepare(&format!("SELECT DISTINCT {c} FROM {}", ident(roots)))?;
+            statement.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        };
+        let rows = super::native::bfs_walk::bfs_walk(&edges, &roots);
+        let count = rows.len();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), rows.into_iter().map(|(a,b,c)|
+            vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
+        Ok(count)
     }
 
     /// `components` (`front::Native::Components`): each document's component and key from `edge`'s and `own`'s

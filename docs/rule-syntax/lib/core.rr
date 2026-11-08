@@ -264,6 +264,14 @@
 // only where a finding must match a script that does this; it reports fewer findings on cycles.
 // Cost: as dfs_first, plus a search in root order for each root whose chain enters a cycle.
 .decl dfs_first_memo(r: node, hit: node, first: number, edge: relation, target: relation, roots: relation)
+
+// bfs_walk(r, hit, ordinal, edge, roots): breadth-first reachable vertices for
+// every root in unary roots(r), using edge(src, dst, order). Neighbours follow
+// (order, destination id); ordinal starts at zero for each root. A root is not
+// pre-visited, so a cycle can reach it. Repeated arrivals produce one row.
+// The whole root demand and adjacency are batches, not per-node SQL callbacks.
+// IDs retain the edge relation's types, including numbers and symbols.
+.decl bfs_walk(r: node, hit: node, ordinal: number, edge: relation, roots: relation)
 // components(d, c, k, edge, own): document d's strongly connected component of the graph edge(d, e) (d depends on
 // e), named by its smallest document c, and the component's key k: the SHA-256 of its documents' digests own(d, h),
 // sorted, then the keys of the components it depends on, sorted. Equal keys mean equal digests over the whole import

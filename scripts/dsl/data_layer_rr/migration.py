@@ -23,6 +23,13 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/python_',
     'native/src/code_rule_dsl/logic/plan.rs',
+    # Generic ordered BFS, on Final's existing native-relation boundary.
+    'native/src/code_rule_dsl/logic/front.rs',
+    'native/src/code_rule_dsl/logic/native.rs',
+    'native/src/code_rule_dsl/logic/native/bfs_walk.rs',
+    'native/src/code_rule_dsl/logic/program_facts.rs',
+    'native/src/code_rule_dsl/logic/rr/lower.rs',
+    'native/src/code_rule_dsl/logic/rr/print.rs',
     'native/src/code_rule_dsl/logic/plan/corpus/inputs.rs',
     'native/src/code_rule_dsl/logic/rr/tests.rs',
     'native/src/code_rule_dsl/logic/sql/select.rs',

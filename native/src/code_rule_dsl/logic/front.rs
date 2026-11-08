@@ -384,6 +384,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
     /// second column, one memo shared).
     DfsFirst { edge: String, target: String, roots: Option<String> },
+    /// `bfs_walk(r, hit, ordinal, edge, roots)`: ordered reachable vertices, seeded
+    /// from each demanded root's edges; roots themselves may be reached by cycles.
+    BfsWalk { edge: String, roots: String },
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
@@ -396,6 +399,7 @@ impl Native {
     /// Rewrite producer inputs with the same relation mapping as the rest of its program.
     pub(in crate::code_rule_dsl) fn rename_reads(&mut self, rename: impl Fn(&str) -> String) {
         match self {
+            Native::BfsWalk { edge, roots } => { *edge = rename(edge); *roots = rename(roots); }
             Native::DfsFirst { edge, target, roots } => {
                 *edge = rename(edge);
                 *target = rename(target);
@@ -411,6 +415,7 @@ impl Native {
     /// The relations it reads.
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
         match self {
+            Native::BfsWalk { edge, roots } => vec![edge.as_str(), roots.as_str()],
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],

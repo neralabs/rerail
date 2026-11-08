@@ -70,6 +70,7 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("gate_dep", &["p:sym", "k:int", "i:int", "rel:sym"]),
         ("native_dfs", &["p:sym", "rel:sym", "edge:sym", "target:sym"]),
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
+        ("native_bfs", &["p:sym", "rel:sym", "edge:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
@@ -278,6 +279,7 @@ impl Writer<'_> {
         }
         for (rel, native) in &prog.natives {
             match native {
+                Native::BfsWalk { edge, roots } => self.row("native_bfs", vec![s(rel), s(edge), s(roots)]),
                 Native::DfsFirst { edge, target, roots } => {
                     self.row("native_dfs", vec![s(rel), s(edge), s(target)]);
                     if let Some(roots) = roots {
@@ -563,6 +565,9 @@ impl<'a> Reader<'a> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        for row in self.get("native_bfs") {
+            prog.natives.insert(text(&row[0])?, Native::BfsWalk { edge: text(&row[1])?, roots: text(&row[2])? });
         }
         for row in self.get("native_components") {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });

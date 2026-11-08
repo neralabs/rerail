@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 9] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -78,6 +78,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
     ("has", &[2]),
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
+    ("bfs_walk", &[3, 4]),
     ("components", &[3, 4]),
 ];
 
@@ -1762,6 +1763,14 @@ impl Lowerer {
                 let rel = self.precedes_stop(set);
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
+            ("bfs_walk", [r, hit, ordinal, edge, roots]) => {
+                let name = |t: &STerm| match t {
+                    STerm::Var(v) => Ok(v.clone()),
+                    _ => Err(Error::Syntax("bfs_walk: edge and roots are relations, by name".to_owned())),
+                };
+                let rel = self.bfs_walk(&name(edge)?, &name(roots)?);
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(ordinal)?], neg, gated: false }));
+            }
             ("dfs_first", [r, hit, first, edge, target]) | ("dfs_first_memo", [r, hit, first, edge, target, _]) => {
                 let name = |t: &STerm| match t {
                     STerm::Var(v) => Ok(v.clone()),
@@ -1787,6 +1796,20 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    fn bfs_walk(&mut self, edge: &str, roots: &str) -> String {
+        let rel = format!("rr_bfs_{edge}_{roots}");
+        if self.prog.natives.contains_key(&rel) { return rel; }
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("r"), v("hit"), v("ordinal")], neg: false, gated: false },
+            body: vec![atom(edge, vec![v("r"), v("hit"), v("ordinal")]), atom(roots, vec![v("r")])] });
+        let ty = |c: usize| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| "node".to_owned(), |(_, t)| t.clone());
+        let cols = vec![("r".to_owned(), ty(0)), ("hit".to_owned(), ty(1)), ("ordinal".to_owned(), "int".to_owned())];
+        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.natives.insert(rel.clone(), Native::BfsWalk { edge: edge.to_owned(), roots: roots.to_owned() });
+        rel
     }
 
     /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):
