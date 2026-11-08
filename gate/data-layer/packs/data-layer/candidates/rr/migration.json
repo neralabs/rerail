@@ -2705,8 +2705,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "2e81953715f254ed500c6af613b1cab6551fe1c7",
-    "status": "Root Final shape through 2e8195371 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
+    "upstreamCommit": "ead5f57c5bf54e90ccd1545b8a0f3c2bee007849",
+    "status": "Root Final shape through ead5f57c5 with reviewed generic syntax capabilities, batched BFS, and planner repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2734,7 +2734,7 @@
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "9e43c2c45a7e9cafe43d04ed4e089caf89d5be765440bfa4ae9790c8e266f610"
+        "sha256": "d0d78f89516e66cabfdef13f752a4077927756baf6963ea58b935be223ba145c"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -2742,11 +2742,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "810b59e394f974e23bc2b51d8dc9b878c0369a456ae6721901757899070c22b5"
+        "sha256": "19283066fef1e8cf7cacfc0eff76ab34cd760bd205ae918f895f09f06ca60310"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "28e86feff36f8ef39e06238104a07c82e3942e2583729ce1c3188437568e8b04"
+        "sha256": "6535260f64f13a94041dcdadd2d570fb104646d9a888759b871ac80a06ab616e"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2786,7 +2786,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "07a0f76f63781d904b4893d73e687fde8e380839621a7c9013e6723f1eb6cdea"
+        "sha256": "664f7bcd41d7b6baea2fbedb19367fd208eb9f0c731ca8b699ddc84e863c704e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
@@ -2838,6 +2838,6 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "16e57260525e4736ae096885aaff975c5cf6a65d"
+    "upstreamMerge": "61aca07d46e5089c509e15df615530097009b5eb"
   }
 }
