@@ -521,3 +521,67 @@ fn json_gated_regions_equal_the_interpreter() {
         }
     }
 }
+
+/// Tier 1 on Metal, generated MSL, over the corpus as one batch: GPU seconds (the fastest of
+/// `RERAIL_ITERS` runs, default 5) and launches at each lane width, each form; the outputs and
+/// positions equal Cranelift's.
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+fn json_metal_bench() {
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let mut paths = files_in("RERAIL_JSON_CORPUS");
+    let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    // `RERAIL_SPLIT=n`: each file cut into `n` files (at a space or comma, so each piece is
+    // tier-1 input like any other), to see what a file's length costs.
+    // `RERAIL_REPEAT=n`: the files n times over, as one batch of many files.
+    if let Some(n) = std::env::var("RERAIL_REPEAT").ok().and_then(|v| v.parse::<usize>().ok()) {
+        (files, paths) = ((0..n).flat_map(|_| files.clone()).collect(), (0..n).flat_map(|_| paths.clone()).collect());
+    }
+    if let Some(n) = std::env::var("RERAIL_SPLIT").ok().and_then(|v| v.parse::<usize>().ok()) {
+        let (mut fs, mut ps) = (Vec::new(), Vec::new());
+        for (f, p) in files.iter().zip(&paths) {
+            for piece in f.chunks(f.len().div_ceil(n).max(1)) {
+                fs.push(piece.to_vec());
+                ps.push(p.clone());
+            }
+        }
+        (files, paths) = (fs, ps);
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let total: usize = files.iter().map(Vec::len).sum();
+    let widths: Vec<LaneWidth> = match std::env::var("RERAIL_WIDTH").as_deref() {
+        Ok("16") => vec![LaneWidth::W16],
+        Ok("32") => vec![LaneWidth::W32],
+        Ok("64") => vec![LaneWidth::W64],
+        _ => LaneWidth::ALL.to_vec(),
+    };
+    println!("{} files, {} bytes", files.len(), total);
+    println!("form\twidth\tgpu_ms\tGB/s\tlaunches");
+    for name in ["14-json", "15-jsonc"] {
+        if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
+            continue;
+        }
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let want = c.parser.tier1.run_files(&refs);
+        for &width in &widths {
+            eprintln!("{name}, {}-byte lanes: {}", width.bytes(), metal_program_backend::block_program::kernel_report(native, width).expect("compiles"));
+        }
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        for &width in &widths {
+            let mut best = f64::MAX;
+            let mut launches = 0;
+            for _ in 0..iters {
+                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)).unwrap_or_else(|e| panic!("metal: {e:?}"));
+                for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
+                    assert!(got.outputs == want.outputs && got.positions == want.positions, "{name}, {}-byte lanes: {} differs", width.bytes(), base(&paths[k]));
+                }
+                best = best.min(run.seconds);
+                launches = run.launches;
+            }
+            println!("{name}\t{}\t{:.3}\t{:.2}\t{launches}", width.bytes(), best * 1e3, total as f64 / best / 1e9);
+        }
+    }
+}

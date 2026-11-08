@@ -71,3 +71,21 @@ inline bool count_sink(M v, uint gl, uint g, uint l, uint groups, uint len, uint
   }
   return true;
 }
+
+// A counted output once its count before the group is known (`prefix`, from generated MSL's
+// exchange of every count at once): the file's last group writes the total; with `write`, each
+// lane's bits `w` (`n` of them, `agg` in the group) are written as positions at the count before
+// them, one per set bit (at most W).
+template <typename M>
+inline void count_finish(M w, uint n, uint agg, uint prefix, uint gl, uint g, uint l, uint groups, uint delay,
+                         device uint* positions, uint capacity, bool write, device uint* total) {
+  const uint W = uint(sizeof(M)) * 8u;
+  if (l == 0u && g + 1u == groups) *total = prefix + agg;
+  if (write) {
+    const uint at = prefix + simd_prefix_exclusive_sum(n);
+    for (uint j = 0u; j < W && w != M(0); j++) {
+      if (at + j < capacity) positions[at + j] = gl * W + uint(ctz(w)) - delay;
+      w = M(w & M(w - M(1)));
+    }
+  }
+}

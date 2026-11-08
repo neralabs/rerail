@@ -320,12 +320,13 @@ fn check_lowering(name: &str, p: &Program) {
     }
 }
 
-/// A program function's control lines: each leaves the group unfinished, the same in every lane.
-const CONTROL: [&str; 3] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink("];
+/// A program function's control lines, each the same in every lane: those that leave the group
+/// unfinished, and the full group's body.
+const CONTROL: [&str; 5] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (simd_any(", "if (g > 0u && (g + 1u) * "];
 
 /// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
-/// and each `program_P`). The look-backs, which loop over predecessor groups, and the workers'
-/// kernel, which loops over groups, are left out.
+/// and each `program_P`). The look-backs and exchanges, which loop over predecessor groups, and
+/// the workers' kernel, which loops over groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for marker in ["static inline "] {
@@ -334,7 +335,7 @@ fn lane_code(msl: &str) -> Vec<(String, String)> {
             let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
             let code = &code[..end.min(code.len())];
             let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
-            if ["look_back", "halo_exchange"].contains(&name.as_str()) {
+            if ["look_back", "halo_exchange", "exchange_word"].contains(&name.as_str()) {
                 continue;
             }
             out.push((name, code.to_owned()));
@@ -889,7 +890,8 @@ fn lookback_fallback_equals_reference() {
     }
 }
 
-/// Generated MSL is one kernel, each instruction once: a few lines per instruction.
+/// Generated MSL is one kernel, each instruction twice at most (a full group's body and the
+/// general one): a few lines per instruction.
 #[test]
 #[cfg(target_os = "macos")]
 fn generated_msl_is_one_kernel() {
@@ -901,7 +903,7 @@ fn generated_msl_is_one_kernel() {
             let msl = generate_with(&native, width, strategy);
             assert_eq!(msl.matches("kernel void ").count(), 1, "{msl}");
             let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
-            assert!(lines < 12 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
+            assert!(lines < 24 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
         }
     }
 }
