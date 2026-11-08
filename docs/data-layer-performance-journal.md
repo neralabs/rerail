@@ -9008,3 +9008,55 @@ The frozen executable still matches its recorded root source trees. No rebuild w
 The in-progress 81st rule remains unfinished. This checkpoint does not claim full migration acceptance.
 
 Evidence: [Final shape source audit and native assertion replay](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-07a6-acceptance-guard.json.gz).
+
+## 2026-11-08: Port SQL regex classification on the current Final engine
+
+The 81st draft is `regex_sql_parsing`. Engine source still matches the existing root build receipt.
+Final shape remains at `07a6b4171`. No engine file changed for this port.
+
+All 125 original tests pass with all setup, call, and teardown phases present.
+The replay preserves all 128 API/property observations, including 14 positive file checks.
+The framework test also preserves the two private checker calls and the reporter result from its shared AST traversal.
+The collector sends one complete AST argument batch to the native rule, then replays the recorded callbacks from those results.
+It makes no native query per call node.
+
+All 343 supplemental API cases pass. They contain 44 file checks, including 27 positives, and 254 classification cases.
+All 64 reporter cases pass, including 41 positives. Seven dedicated witnesses cover every emitted category.
+The rule preserves bare `re` receiver matching, first positional arguments, f-string placeholders, truncation, quoting, and traversal order.
+It also preserves source discovery gates and reporter ordering.
+
+Python and Rust disagree about Unicode word classes and case-insensitive matching.
+The generator maps input characters to distinct representatives for Python word, decimal, whitespace, and other characters.
+It handles the four special ASCII case-fold equivalents before that mapping.
+The pinned indicator patterns are ASCII; generation refuses unsupported pattern alphabets or flags.
+The Boolean search translation replaces the fixed negative percent-prefix assertion with a consuming prefix alternative.
+The first lookaround approach failed against Final shape's explicit regex restriction. No engine workaround remains.
+
+The custom argument graph initially failed the modern value-cycle check.
+The test transport now supplies each AST occurrence's depth as mechanical metadata.
+Native source execution uses the existing syntax relations. It does not execute Python or rebuild an older engine.
+The source extractor's breadth-first API order and the framework collector's depth-first order remain distinct.
+
+Additional supplied-fact tests exposed 20 DTO mismatches in the first adapter.
+The adapter now preserves invalid-shape skips, category defaults, scalar conversions, exceptions, duplicates, and ordering.
+These operations transport supplied finding DTOs; they do not classify source code.
+All 34 transport/count cases pass, including a result that changes between property reads.
+All count properties share one native aggregate response for identical category/severity rows.
+A changed row sequence produces a new query.
+
+Nineteen independent controls fail as intended through successful native execution.
+Fifteen cover detector categories, predicates, extraction, metadata, and compiled-regex exports.
+Four change one count output at a time. Original and reporter controls retain their complete mismatched results.
+Both comment-strip and parameter-normalization positives are supplemental; the original classifier tests omit those positive categories.
+
+All 92 policy/table files pass the reader check. All 88 migration tooling tests pass.
+Regeneration preserves both this rule and the earlier f-string rule's bytes.
+The engine did not change, so this delivery reuses the recorded CLI build and records no new compile time.
+No whole-repository or whole-batch cold benchmark ran.
+
+The original nine CLI cases run the source host protocol with native detectors and counts.
+They mostly use clean trees. These assertions do not establish complete production CLI or ratchet acceptance.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+The inventory contains 81 drafts and 19 absent translations. Full migration acceptance remains false.
+
+Evidence: [SQL regex source/native contracts and validator](../gate/data-layer/fixtures/host/data-layer-port/rr-regex-sql-parsing-native-contracts.json.gz).

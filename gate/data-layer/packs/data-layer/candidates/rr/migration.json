@@ -1479,6 +1479,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/regex-sql-parsing.rr",
+      "sha256": "f5d065f7c879ac33aaee56fbc0b12881c2bfb992398f19658d41e6c4e933087c",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_regex_sql_parsing.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1780,8 +1787,9 @@
       "batch": 4,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-regex-sql-parsing.json",
       "legacySha256": "4f1d38624a792094896568b970af80d55fab32eb5ef431dec84b9ce1f84067c9",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/regex-sql-parsing.rr",
+      "ruleSha256": "f5d065f7c879ac33aaee56fbc0b12881c2bfb992398f19658d41e6c4e933087c"
     },
     {
       "check": "sql_grammar_escape_hatches",

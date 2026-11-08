@@ -111,6 +111,9 @@ def run(args):
         if 'lazy_result_usage' in modules:
             from lazy_results_port import install
             install(backend, modules['lazy_result_usage'])
+        if 'regex_sql_parsing' in modules:
+            from regex_sql_port import install
+            install(backend,modules['regex_sql_parsing'])
         if 'render_raw_strings' in modules:
             from render_raw_strings_port import install
             install(backend, modules['render_raw_strings'])
@@ -146,7 +149,11 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='render_raw_strings':
+                if case['check']=='regex_sql_parsing':
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    if case['entry']=='checker':call=lambda:module.RegexSqlParsingChecker().check_file(**values)
+                    else:call=lambda:getattr(module,case['entry'])(**values)
+                elif case['check']=='render_raw_strings':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='format_supplied':
                         def call():

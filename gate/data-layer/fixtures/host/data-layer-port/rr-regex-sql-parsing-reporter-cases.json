@@ -1,0 +1,645 @@
+{
+  "format": "rerail.regex-sql-cases/v1",
+  "cases": [
+    {
+      "id": "original-checker-41",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-42",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-43",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-44",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'[0-9]+', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-45",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'-----BEGIN PRIVATE KEY-----', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-46",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'no such table', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-47",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nPATTERN = object()\ndef foo(s):\n    return re.search(PATTERN, s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-48",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-49",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    a = re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    b = re.match(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    c = re.findall(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    d = re.fullmatch(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    return a, b, c, d\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-50",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "id": "original-checker-74",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nSQL_DDL = re.compile(r'\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-75",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nclass foo:\n    def search(self, pat, s): return None\ndef bar():\n    return foo().search(r'SELECT FROM x', 'abc')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-76",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\ndef search(pat, s): return None\ndef foo():\n    return search(r'SELECT FROM x', 'abc')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-77",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.split(r'no such table', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-78",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo():\n    try:\n        re.search()\n    except TypeError:\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-79",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-80",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\ndef foo(s):\n    return re.search(r'no such table', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-109",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\na = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\nb = re.search(r'\\bSELECT\\b.*\\bFROM\\b', 'x')\nc = re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', 'y')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-110",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-111",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-112",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nP = re.compile(r'[0-9]+')\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-113",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nPATTERN_STR = object()\nP = re.compile(PATTERN_STR)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-114",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\ndef foo():\n    try:\n        re.compile()\n    except TypeError:\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "original-checker-115",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b', re.IGNORECASE)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-0",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-1",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.sub('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-2",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.compile('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-3",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.split('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-4",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.match('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-5",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.findall('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-6",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re.fullmatch('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-7",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = other.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-8",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-9",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = (re.search)('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-10",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = re[0].search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "call-shape-11",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "result = pkg.re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-calls",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nx=re.search('SELECT first', re.compile('SELECT nested'))\n"
+        }
+      ]
+    },
+    {
+      "id": "fstring",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nx=re.compile(f'SELECT {name} FROM {table}')\n"
+        }
+      ]
+    },
+    {
+      "id": "adjacent",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nx=re.compile('SELECT ' 'value')\n"
+        }
+      ]
+    },
+    {
+      "id": "keyword",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nx=re.compile(pattern='SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-alias",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "r\uff45.search('SELECT value', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "skip-aliased",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re as regex\nregex.search('SELECT value', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "false-positive",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nre.compile('password SELECT')\n"
+        }
+      ]
+    },
+    {
+      "id": "long-preview",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/case.py",
+          "source": "import re\nre.compile('SELECT \u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d')\n"
+        }
+      ]
+    },
+    {
+      "id": "family-0",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('/\\\\*.*?\\\\*/', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-1",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('%s', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-2",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('ON DELETE CASCADE', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-3",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('BEFORE INSERT.*WHEN.*BEGIN', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-4",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('no such table', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-5",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.sub('SELECT value', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "family-6",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/family.py",
+          "source": "import re\nre.compile('SELECT value', text)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-0",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-1",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-2",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "_internal/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-3",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "l1234_layer/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-4",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "l\u0967\u0968\u0969\u096a_layer/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-5",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-6",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-7",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-8",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-9",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/.venv/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-10",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-11",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "impl/conform/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-12",
+      "check": "regex_sql_parsing",
+      "files": [
+        {
+          "path": "other/a.py",
+          "source": "import re\nre.compile('SELECT value')\n"
+        }
+      ]
+    }
+  ]
+}

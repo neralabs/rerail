@@ -6,27 +6,7 @@ def render_fstrings(source, target, header):
     text=header('render_fstrings',target)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',text,flags=re.M)
     return text+r'''
-'''+render_context()+r'''.decl rf_concat_piece(n: node)
-rf_concat_piece(n) :- child(p, n, _), kind(p, "concatenated_string").
-.decl rf_joined(n: node)
-rf_joined(n) :- !rf_graph(), fstring(n), !rf_concat_piece(n).
-rf_joined(n) :- !rf_graph(), kind(n, "format_specifier").
-rf_joined(n) :- option_item("astKinds", n, "JoinedStr").
-.decl rf_piece_owner(lit: node, i: number, owner: node)
-rf_piece_owner(lit, i, lit) :- !rf_graph(), str_part(lit, i, _, _, 0), rf_joined(lit).
-rf_piece_owner(lit, i, owner) :- !rf_graph(), str_part(lit, i, _, _, 1), str_part_offset(lit, i, off),
- node(d, lit, _, _, _), within(owner, lit), kind(owner, "format_specifier"), node(d, owner, _, start, end), start <= off, off < end,
- start = max begin : { within(s, lit), kind(s, "format_specifier"), node(d, s, _, begin, stop), begin <= off, off < stop }.
-.decl rf_interpolation(owner: node, expr: node)
-rf_interpolation(n, e) :- !rf_graph(), rf_joined(n), kind(n, "string"), child(n, e, _), kind(e, "interpolation").
-rf_interpolation(n, e) :- !rf_graph(), rf_joined(n), kind(n, "concatenated_string"), child(n, s, _), kind(s, "string"), child(s, e, _), kind(e, "interpolation").
-rf_interpolation(n, e) :- !rf_graph(), kind(n, "format_specifier"), child(n, e, _), kind(e, "format_expression").
-.decl rf_item(n: node, position: number, rank: number, value: symbol)
-rf_item(n, off, 1, value) :- rf_piece_owner(lit, i, n), str_part(lit, i, value, _, _), str_part_offset(lit, i, off).
-rf_item(n, end, 0, "{...}") :- rf_interpolation(n, e), node(_, e, _, _, end).
-rf_item(n, to_number(i), 1, value) :- rf_joined(n), rf_edge(n, "values", c), option_item("astKinds", c, "Constant"), option_item("astOrdinals", c, i), option_item("astConstantText", c, value).
-rf_item(n, to_number(i), 1, "{...}") :- rf_joined(n), rf_edge(n, "values", c), option_item("astKinds", c, "FormattedValue"), option_item("astOrdinals", c, i).
-.decl rf_preview(n: node, value: symbol)
+'''+render_context()+r''''''+fstring_parts()+r'''.decl rf_preview(n: node, value: symbol)
 rf_preview(n, cat("f\"", value, "\"")) :- rf_joined(n), raw = join piece by (at, rank) sep "" : { rf_item(n, at, rank, piece) }, @slice(raw, 50, 51) = "", value = raw.
 rf_preview(n, cat("f\"", @slice(raw, 0, 47), "...\"")) :- rf_joined(n), raw = join piece by (at, rank) sep "" : { rf_item(n, at, rank, piece) }, @slice(raw, 50, 51) != "".
 '''+render_positions()+r'''.decl rf_selected(d: number)
@@ -153,4 +133,28 @@ rf_path(0, path) :- rf_graph(), option("originalPath", path).
 rf_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
 .decl rf_collect_skip(d: number)
 rf_collect_skip(d) :- option("entryPoint", "collect_reports"), rf_path(d, path), contains("__pycache__", path).
+'''
+
+
+def fstring_parts():
+    return r'''.decl rf_concat_piece(n: node)
+rf_concat_piece(n) :- child(p, n, _), kind(p, "concatenated_string").
+.decl rf_joined(n: node)
+rf_joined(n) :- !rf_graph(), fstring(n), !rf_concat_piece(n).
+rf_joined(n) :- !rf_graph(), kind(n, "format_specifier").
+rf_joined(n) :- option_item("astKinds", n, "JoinedStr").
+.decl rf_piece_owner(lit: node, i: number, owner: node)
+rf_piece_owner(lit, i, lit) :- !rf_graph(), str_part(lit, i, _, _, 0), rf_joined(lit).
+rf_piece_owner(lit, i, owner) :- !rf_graph(), str_part(lit, i, _, _, 1), str_part_offset(lit, i, off),
+ node(d, lit, _, _, _), within(owner, lit), kind(owner, "format_specifier"), node(d, owner, _, start, end), start <= off, off < end,
+ start = max begin : { within(s, lit), kind(s, "format_specifier"), node(d, s, _, begin, stop), begin <= off, off < stop }.
+.decl rf_interpolation(owner: node, expr: node)
+rf_interpolation(n, e) :- !rf_graph(), rf_joined(n), kind(n, "string"), child(n, e, _), kind(e, "interpolation").
+rf_interpolation(n, e) :- !rf_graph(), rf_joined(n), kind(n, "concatenated_string"), child(n, s, _), kind(s, "string"), child(s, e, _), kind(e, "interpolation").
+rf_interpolation(n, e) :- !rf_graph(), kind(n, "format_specifier"), child(n, e, _), kind(e, "format_expression").
+.decl rf_item(n: node, position: number, rank: number, value: symbol)
+rf_item(n, off, 1, value) :- rf_piece_owner(lit, i, n), str_part(lit, i, value, _, _), str_part_offset(lit, i, off).
+rf_item(n, end, 0, "{...}") :- rf_interpolation(n, e), node(_, e, _, _, end).
+rf_item(n, to_number(i), 1, value) :- rf_joined(n), rf_edge(n, "values", c), option_item("astKinds", c, "Constant"), option_item("astOrdinals", c, i), option_item("astConstantText", c, value).
+rf_item(n, to_number(i), 1, "{...}") :- rf_joined(n), rf_edge(n, "values", c), option_item("astKinds", c, "FormattedValue"), option_item("astOrdinals", c, i).
 '''

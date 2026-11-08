@@ -34,6 +34,8 @@ def cases():
               dict(violations=[{}]), dict(violations=[dict(line=2)])]
     for i, fact in enumerate(facts):
         values.append(dict(id='fact-'+str(i), kind='fact', fact=fact))
+    values.append(dict(id='counts-mutation',kind='counts',rows=[['A','warning']],
+                       appendRows=[['A','error'],['B','warning']]))
     return values
 
 
@@ -42,8 +44,14 @@ def execute(module, case):
         result = module.CheckResult(checker_name='regex_sql_parsing', violations=[
             module.Violation(file='impl/input.py', line=i+1, message='message', category=c, severity=s)
             for i, (c, s) in enumerate(case['rows'])])
-        return dict(total=result.count, error=result.error_count, warning=result.warning_count,
-                    categories=result.count_by_category())
+        def counts():
+            return dict(total=result.count, error=result.error_count, warning=result.warning_count,
+                        categories=result.count_by_category())
+        initial=counts()
+        if 'appendRows' not in case:return initial
+        result.violations.extend(module.Violation(file='impl/input.py',line=99,message='added',category=c,severity=s)
+                                 for c,s in case['appendRows'])
+        return [initial,counts()]
     view = SimpleNamespace(files={Path('impl/input.py'): SimpleNamespace(facts={
         module.REGEX_SQL_PARSING_EXTRACTOR.extractor_id: case['fact']})})
     return module._report_regex_sql_parsing(view)

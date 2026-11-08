@@ -84,7 +84,17 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **80 target drafts and 20 absent translations**. None has full acceptance yet.
+The current inventory contains **81 target drafts and 19 absent translations**. None has full acceptance yet.
+The 81st draft, `regex_sql_parsing`, implements the pinned indicator lists, classification precedence, lexical calls, and pattern previews in `.rr`.
+All 125 unchanged original tests pass, including 14 positive file checks and all 128 recorded API/property observations.
+Its 343 supplemental API cases include 44 file checks, with 27 positives. All 64 reporter cases pass, including 41 positives.
+Nineteen controls cover the seven finding categories, predicates, extraction, metadata, constants, and count outputs.
+Another 34 cases cover supplied fact DTOs, count aggregation, exceptions, and count-cache invalidation after a result changes.
+The source CLI runs as the original test host protocol. Native relations supply its detector results and result counts.
+Fact DTO construction remains test transport. Production `.rr` execution invokes no Python.
+The rule adds no engine code. It uses the current Final shape text functions and syntax relations.
+The [native receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-regex-sql-parsing-native-contracts.json.gz) retains complete observations, negative controls, and engine provenance.
+Shared registry/scope assertions, production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 80th draft, `render_raw_strings`, covers literals, `Template` calls, and `SqlFragment.static` calls.
 All five unchanged original tests pass, including both positives and their ten API/property observations.
 Its 669 API cases include 285 detector positives and three expected exceptions.

@@ -1,0 +1,3654 @@
+{
+  "format": "rerail.regex-sql-cases/v1",
+  "cases": [
+    {
+      "id": "original-helper-3",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "-----BEGIN RSA PRIVATE KEY-----"
+      }
+    },
+    {
+      "id": "original-helper-4",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "-----END CERTIFICATE-----"
+      }
+    },
+    {
+      "id": "original-helper-5",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "api_key"
+      }
+    },
+    {
+      "id": "original-helper-6",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "password"
+      }
+    },
+    {
+      "id": "original-helper-7",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "api[_-]?key"
+      }
+    },
+    {
+      "id": "original-helper-8",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "SELECT foo FROM bar"
+      }
+    },
+    {
+      "id": "original-helper-9",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "DROP TABLE xyz"
+      }
+    },
+    {
+      "id": "original-helper-10",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "WHERE active = 1"
+      }
+    },
+    {
+      "id": "original-helper-11",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b.*\\bFROM\\b"
+      }
+    },
+    {
+      "id": "original-helper-12",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b"
+      }
+    },
+    {
+      "id": "original-helper-13",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "ON\\s+DELETE\\s+"
+      }
+    },
+    {
+      "id": "original-helper-14",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bCHECK\\s*\\("
+      }
+    },
+    {
+      "id": "original-helper-15",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "=\\s*NULL"
+      }
+    },
+    {
+      "id": "original-helper-16",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": " LIKE "
+      }
+    },
+    {
+      "id": "original-helper-17",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "hello world"
+      }
+    },
+    {
+      "id": "original-helper-18",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "[0-9]+"
+      }
+    },
+    {
+      "id": "original-helper-19",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "unrelated_thing"
+      }
+    },
+    {
+      "id": "original-helper-20",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "no such table"
+      }
+    },
+    {
+      "id": "original-helper-21",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "no such column"
+      }
+    },
+    {
+      "id": "original-helper-22",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "Unknown column"
+      }
+    },
+    {
+      "id": "original-helper-23",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "does not exist"
+      }
+    },
+    {
+      "id": "original-helper-24",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "table not found"
+      }
+    },
+    {
+      "id": "original-helper-25",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "SELECT foo"
+      }
+    },
+    {
+      "id": "original-helper-26",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "unrelated"
+      }
+    },
+    {
+      "id": "original-helper-27",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "-----BEGIN PRIVATE KEY-----",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-28",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "no such table",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-29",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "[0-9]+",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-30",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "ON DELETE CASCADE",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-31",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bCHECK\\s*\\(",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-32",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "BEFORE INSERT.*WHEN.*BEGIN",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-33",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": " LIKE ",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-34",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b.*\\bFROM\\b",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "original-helper-35",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b.*\\bFROM\\b",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-36",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b.*\\bFROM\\b",
+        "func_name": "compile"
+      }
+    },
+    {
+      "id": "original-helper-55",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": ""
+      }
+    },
+    {
+      "id": "original-helper-56",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "   "
+      }
+    },
+    {
+      "id": "original-helper-57",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": ""
+      }
+    },
+    {
+      "id": "original-helper-58",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "   "
+      }
+    },
+    {
+      "id": "original-helper-59",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "-----begin certificate-----"
+      }
+    },
+    {
+      "id": "original-helper-60",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "ON DELETE CASCADE"
+      }
+    },
+    {
+      "id": "original-helper-61",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "NO SUCH TABLE"
+      }
+    },
+    {
+      "id": "original-helper-62",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "No Such Column"
+      }
+    },
+    {
+      "id": "original-helper-63",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-64",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "DELETE FROM foo",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-65",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bINSERT\\b.*\\bINTO\\b",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-66",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-67",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "password",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-68",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "ON DELETE CASCADE",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "original-helper-69",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "Unknown column",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "original-helper-86",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "BEGIN"
+      }
+    },
+    {
+      "id": "original-helper-87",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "collection not found"
+      }
+    },
+    {
+      "id": "original-helper-88",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "internal|prod|staging"
+      }
+    },
+    {
+      "id": "original-helper-89",
+      "check": "regex_sql_parsing",
+      "entry": "_is_false_positive",
+      "files": [],
+      "arguments": {
+        "pattern_str": "token[\\\""
+      }
+    },
+    {
+      "id": "original-helper-90",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b WHERE"
+      }
+    },
+    {
+      "id": "original-helper-91",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": " LIKE "
+      }
+    },
+    {
+      "id": "original-helper-92",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bCHECK\\s*\\("
+      }
+    },
+    {
+      "id": "original-helper-93",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "nera_session"
+      }
+    },
+    {
+      "id": "original-helper-94",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "fts5"
+      }
+    },
+    {
+      "id": "original-helper-95",
+      "check": "regex_sql_parsing",
+      "entry": "_is_sql_syntax_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "nera_session"
+      }
+    },
+    {
+      "id": "original-helper-96",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "relation does not exist"
+      }
+    },
+    {
+      "id": "original-helper-97",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "Unknown table"
+      }
+    },
+    {
+      "id": "original-helper-98",
+      "check": "regex_sql_parsing",
+      "entry": "_is_error_msg_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bSELECT\\b"
+      }
+    },
+    {
+      "id": "original-helper-99",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bINSERT\\b.*\\bINTO\\b",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "original-helper-100",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "fts5",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-101",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bBEFORE\\b",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-102",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bAFTER\\b",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-helper-103",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bCHECK\\s*\\(",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "original-helper-104",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "json_valid",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "SELECT value FROM table",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22SELECT value FROM table\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301SELECT value FROM table\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2SELECT value FROM table\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cSELECT value FROM table\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0SELECT value FROM table\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130SELECT value FROM table\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131SELECT value FROM table\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fSELECT value FROM table\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aSELECT value FROM table\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-0-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cSELECT value FROM table\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-1-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "%s",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22%s\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301%s\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2%s\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c%s\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0%s\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130%s\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131%s\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f%s\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a%s\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-1-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c%s\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-2-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "%%s",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22%%s\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301%%s\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2%%s\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c%%s\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0%%s\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130%%s\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131%%s\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f%%s\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a%%s\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-2-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c%%s\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-3-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "%%%s",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22%%%s\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301%%%s\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2%%%s\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c%%%s\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0%%%s\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130%%%s\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131%%%s\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f%%%s\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a%%%s\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-3-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c%%%s\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-4-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\?",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22\\?\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301\\?\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2\\?\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c\\?\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0\\?\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130\\?\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131\\?\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f\\?\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a\\?\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-4-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c\\?\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-5-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "no such table",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22no such table\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301no such table\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2no such table\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cno such table\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0no such table\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130no such table\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131no such table\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fno such table\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212ano such table\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-5-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cno such table\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-6-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "ON DELETE CASCADE",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22ON DELETE CASCADE\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301ON DELETE CASCADE\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2ON DELETE CASCADE\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cON DELETE CASCADE\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0ON DELETE CASCADE\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130ON DELETE CASCADE\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131ON DELETE CASCADE\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fON DELETE CASCADE\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aON DELETE CASCADE\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-6-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cON DELETE CASCADE\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-7-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\\bCHECK\\s*\\(",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22\\bCHECK\\s*\\(\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301\\bCHECK\\s*\\(\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2\\bCHECK\\s*\\(\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c\\bCHECK\\s*\\(\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0\\bCHECK\\s*\\(\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130\\bCHECK\\s*\\(\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131\\bCHECK\\s*\\(\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f\\bCHECK\\s*\\(\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a\\bCHECK\\s*\\(\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-7-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c\\bCHECK\\s*\\(\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-8-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "BEFORE INSERT.*WHEN.*BEGIN",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22BEFORE INSERT.*WHEN.*BEGIN\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301BEFORE INSERT.*WHEN.*BEGIN\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2BEFORE INSERT.*WHEN.*BEGIN\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cBEFORE INSERT.*WHEN.*BEGIN\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0BEFORE INSERT.*WHEN.*BEGIN\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130BEFORE INSERT.*WHEN.*BEGIN\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131BEFORE INSERT.*WHEN.*BEGIN\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fBEFORE INSERT.*WHEN.*BEGIN\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aBEFORE INSERT.*WHEN.*BEGIN\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-8-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cBEFORE INSERT.*WHEN.*BEGIN\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-9-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": " LIKE ",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22 LIKE \u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301 LIKE \u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2 LIKE \u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c LIKE \u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0 LIKE \u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130 LIKE \u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131 LIKE \u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f LIKE \u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a LIKE \u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-9-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c LIKE \u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-10-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "/\\*.*?\\*/",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22/\\*.*?\\*/\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301/\\*.*?\\*/\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2/\\*.*?\\*/\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c/\\*.*?\\*/\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0/\\*.*?\\*/\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130/\\*.*?\\*/\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131/\\*.*?\\*/\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f/\\*.*?\\*/\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a/\\*.*?\\*/\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-10-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c/\\*.*?\\*/\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-11-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "--[^\\n]*",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22--[^\\n]*\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301--[^\\n]*\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2--[^\\n]*\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200c--[^\\n]*\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0--[^\\n]*\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130--[^\\n]*\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131--[^\\n]*\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017f--[^\\n]*\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212a--[^\\n]*\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-11-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001c--[^\\n]*\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-12-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "fts5",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22fts5\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301fts5\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2fts5\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cfts5\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0fts5\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130fts5\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131fts5\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017ffts5\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212afts5\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-12-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cfts5\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-13-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "json_valid",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22json_valid\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301json_valid\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2json_valid\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cjson_valid\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0json_valid\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130json_valid\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131json_valid\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fjson_valid\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212ajson_valid\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-13-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cjson_valid\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-14-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "mode=[^&]*",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22mode=[^&]*\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301mode=[^&]*\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2mode=[^&]*\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cmode=[^&]*\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0mode=[^&]*\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130mode=[^&]*\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131mode=[^&]*\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fmode=[^&]*\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212amode=[^&]*\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-14-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cmode=[^&]*\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-15-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "api_key",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22api_key\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301api_key\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2api_key\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200capi_key\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0api_key\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130api_key\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131api_key\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fapi_key\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aapi_key\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-15-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001capi_key\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-16-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "password",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22password\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301password\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2password\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cpassword\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0password\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130password\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131password\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fpassword\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212apassword\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-16-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cpassword\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-17-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "KEY",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22KEY\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301KEY\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2KEY\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cKEY\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0KEY\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130KEY\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131KEY\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fKEY\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aKEY\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-17-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cKEY\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-18-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "IN (?,?)",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22IN (?,?)\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301IN (?,?)\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2IN (?,?)\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cIN (?,?)\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0IN (?,?)\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130IN (?,?)\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131IN (?,?)\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fIN (?,?)\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aIN (?,?)\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-18-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cIN (?,?)\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-19-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "plain words",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22plain words\u6f22",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301plain words\u0301",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2plain words\u00b2",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cplain words\u200c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0plain words\u00a0",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130plain words\u0130",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131plain words\u0131",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fplain words\u017f",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aplain words\u212a",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-19-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cplain words\u001c",
+        "func_name": "sub"
+      }
+    },
+    {
+      "id": "classification-20-0",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "SELECT\nFROM",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-1",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u6f22SELECT\nFROM\u6f22",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-2",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0301SELECT\nFROM\u0301",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-3",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00b2SELECT\nFROM\u00b2",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-4",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u200cSELECT\nFROM\u200c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-5",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u00a0SELECT\nFROM\u00a0",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-6",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0130SELECT\nFROM\u0130",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-7",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u0131SELECT\nFROM\u0131",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-8",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u017fSELECT\nFROM\u017f",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-9",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u212aSELECT\nFROM\u212a",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "classification-20-10",
+      "check": "regex_sql_parsing",
+      "entry": "_classify_pattern",
+      "files": [],
+      "arguments": {
+        "pattern_str": "\u001cSELECT\nFROM\u001c",
+        "func_name": "search"
+      }
+    },
+    {
+      "id": "original-checker-41",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-42",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-43",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n"
+      }
+    },
+    {
+      "id": "original-checker-44",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'[0-9]+', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'[0-9]+', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-45",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'-----BEGIN PRIVATE KEY-----', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'-----BEGIN PRIVATE KEY-----', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-46",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'no such table', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'no such table', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-47",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nPATTERN = object()\ndef foo(s):\n    return re.search(PATTERN, s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nPATTERN = object()\ndef foo(s):\n    return re.search(PATTERN, s)\n"
+      }
+    },
+    {
+      "id": "original-checker-48",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-49",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    a = re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    b = re.match(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    c = re.findall(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    d = re.fullmatch(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    return a, b, c, d\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    a = re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    b = re.match(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    c = re.findall(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    d = re.fullmatch(r'\\bSELECT\\b.*\\bFROM\\b', s)\n    return a, b, c, d\n"
+      }
+    },
+    {
+      "id": "original-checker-50",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": ""
+      }
+    },
+    {
+      "id": "original-checker-74",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nSQL_DDL = re.compile(r'\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nSQL_DDL = re.compile(r'\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b')\n"
+      }
+    },
+    {
+      "id": "original-checker-75",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nclass foo:\n    def search(self, pat, s): return None\ndef bar():\n    return foo().search(r'SELECT FROM x', 'abc')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nclass foo:\n    def search(self, pat, s): return None\ndef bar():\n    return foo().search(r'SELECT FROM x', 'abc')\n"
+      }
+    },
+    {
+      "id": "original-checker-76",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\ndef search(pat, s): return None\ndef foo():\n    return search(r'SELECT FROM x', 'abc')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\ndef search(pat, s): return None\ndef foo():\n    return search(r'SELECT FROM x', 'abc')\n"
+      }
+    },
+    {
+      "id": "original-checker-77",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.split(r'no such table', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.split(r'no such table', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-78",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo():\n    try:\n        re.search()\n    except TypeError:\n        pass\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo():\n    try:\n        re.search()\n    except TypeError:\n        pass\n"
+      }
+    },
+    {
+      "id": "original-checker-79",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-80",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\ndef foo(s):\n    return re.search(r'no such table', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nPATTERN = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\ndef foo(s):\n    return re.search(r'no such table', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-109",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\na = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\nb = re.search(r'\\bSELECT\\b.*\\bFROM\\b', 'x')\nc = re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', 'y')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\na = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\nb = re.search(r'\\bSELECT\\b.*\\bFROM\\b', 'x')\nc = re.sub(r'\\bSELECT\\b.*\\bFROM\\b', 'x', 'y')\n"
+      }
+    },
+    {
+      "id": "original-checker-110",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo(s):\n    return re.search(r'\\bSELECT\\b.*\\bFROM\\b', s)\n"
+      }
+    },
+    {
+      "id": "original-checker-111",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b')\n"
+      }
+    },
+    {
+      "id": "original-checker-112",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nP = re.compile(r'[0-9]+')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nP = re.compile(r'[0-9]+')\n"
+      }
+    },
+    {
+      "id": "original-checker-113",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nPATTERN_STR = object()\nP = re.compile(PATTERN_STR)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nPATTERN_STR = object()\nP = re.compile(PATTERN_STR)\n"
+      }
+    },
+    {
+      "id": "original-checker-114",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\ndef foo():\n    try:\n        re.compile()\n    except TypeError:\n        pass\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\ndef foo():\n    try:\n        re.compile()\n    except TypeError:\n        pass\n"
+      }
+    },
+    {
+      "id": "original-checker-115",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b', re.IGNORECASE)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "\nimport re\nP = re.compile(r'\\bSELECT\\b.*\\bFROM\\b', re.IGNORECASE)\n"
+      }
+    },
+    {
+      "id": "call-shape-0",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-1",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.sub('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.sub('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-2",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.compile('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.compile('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-3",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.split('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.split('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-4",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.match('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.match('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-5",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.findall('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.findall('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-6",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re.fullmatch('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re.fullmatch('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-7",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = other.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = other.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-8",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-9",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = (re.search)('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = (re.search)('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-10",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = re[0].search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = re[0].search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "call-shape-11",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "result = pkg.re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "result = pkg.re.search('\\\\bSELECT\\\\b.*\\\\bFROM\\\\b', text)\n"
+      }
+    },
+    {
+      "id": "nested-calls",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nx=re.search('SELECT first', re.compile('SELECT nested'))\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nx=re.search('SELECT first', re.compile('SELECT nested'))\n"
+      }
+    },
+    {
+      "id": "fstring",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nx=re.compile(f'SELECT {name} FROM {table}')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nx=re.compile(f'SELECT {name} FROM {table}')\n"
+      }
+    },
+    {
+      "id": "adjacent",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nx=re.compile('SELECT ' 'value')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nx=re.compile('SELECT ' 'value')\n"
+      }
+    },
+    {
+      "id": "keyword",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nx=re.compile(pattern='SELECT value')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nx=re.compile(pattern='SELECT value')\n"
+      }
+    },
+    {
+      "id": "unicode-alias",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "r\uff45.search('SELECT value', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "r\uff45.search('SELECT value', text)\n"
+      }
+    },
+    {
+      "id": "skip-aliased",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re as regex\nregex.search('SELECT value', text)\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re as regex\nregex.search('SELECT value', text)\n"
+      }
+    },
+    {
+      "id": "false-positive",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nre.compile('password SELECT')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nre.compile('password SELECT')\n"
+      }
+    },
+    {
+      "id": "long-preview",
+      "check": "regex_sql_parsing",
+      "entry": "checker",
+      "files": [],
+      "arguments": {
+        "tree": {
+          "pythonAst": "import re\nre.compile('SELECT \u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d')\n",
+          "mode": "exec"
+        },
+        "path": {
+          "path": "impl/case.py"
+        },
+        "source": "import re\nre.compile('SELECT \u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d\u6f22\ud83d\udc0d')\n"
+      }
+    }
+  ]
+}
