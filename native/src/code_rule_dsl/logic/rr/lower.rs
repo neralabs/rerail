@@ -218,6 +218,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.findings()?;
     l.projections();
     l.span_patterns()?;
+    l.grammar_names()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
@@ -1357,6 +1358,32 @@ impl Lowerer {
         let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
+    }
+
+    /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
+    /// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
+    /// have would make no guest and say nothing.
+    fn grammar_names(&self) -> Result<(), Error> {
+        let at = |rel: &str| match rel {
+            "embed" | "embed_value" => Some(2),
+            "parsed" | "sub_tape" => Some(1),
+            _ => None,
+        };
+        for rule in &self.prog.rules {
+            let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
+            for a in atoms {
+                if let Some(i) = at(&a.rel)
+                    && let Some(Term::Str(g)) = a.args.get(i)
+                    && !crate::code_rule_dsl::language::is_grammar(g)
+                {
+                    return Err(Error::Syntax(format!(
+                        "{}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)",
+                        rule.head.rel
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in

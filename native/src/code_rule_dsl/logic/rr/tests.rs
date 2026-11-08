@@ -1886,3 +1886,22 @@ group(n) :- n = count : { order(_, _) }.
     assert_eq!(select, ["3"]);
     assert_eq!(group, ["3"]);
 }
+
+/// A grammar a rule names is one the language registry has (decision 0082): a dialect's label or a fragment.
+#[test]
+fn a_grammar_the_registry_does_not_have_is_refused() {
+    let lower = |text: &str| {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("grammar");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule = dir.join("g.rr");
+        std::fs::write(&rule, text).unwrap();
+        let got = crate::code_rule_dsl::logic::rr::parse_file(&rule).map(|_| ()).map_err(|e| e.to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        got
+    };
+    let rule = |g: &str| format!(".decl hit(s: node)\nhit(s) :- kind(s, \"string\"), parsed(s, \"{g}\", _).\n.output hit\n");
+    assert!(lower(&rule("annotation")).is_ok(), "a fragment");
+    assert!(lower(&rule("sql")).is_ok(), "a dialect's label");
+    let refused = lower(&rule("postgres")).unwrap_err();
+    assert!(refused.contains("no grammar \"postgres\""), "{refused}");
+}

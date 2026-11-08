@@ -431,6 +431,18 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
+/// A fragment grammar the registry declares (decision 0082): its dialect, and its start symbol (`expression`: the
+/// text inside a written `( … )`).
+pub(crate) fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
+    FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
+}
+
+/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
+/// a fragment (decision 0082). A dialect this build leaves out is still a name.
+pub(crate) fn is_grammar(name: &str) -> bool {
+    fragment(name).is_some() || DIALECTS.iter().any(|dialect| dialect.label == name)
+}
+
 pub(crate) fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
     DIALECTS
         .iter()
