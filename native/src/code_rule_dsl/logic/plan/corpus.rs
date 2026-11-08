@@ -344,6 +344,160 @@ struct Prepared {
     interned: Vec<(Vec<String>, Vec<u32>)>,
 }
 
+/// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
+/// other files, one line each: `relation  own  inherited  output|-  rule`. A rule's own class is the first that holds:
+/// `recursive` (its stratum reads itself), `total` (an aggregate with no group variable), `grouped` (an aggregate by
+/// a key that is not one document), `negation` (a negated atom on another or any document), `lookup` (atoms on two
+/// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
+/// A relation inherits the worst class of the relations its rules read.
+fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
+    use front::{Literal, Term};
+    use std::io::Write;
+    const ORDER: [&str; 9] = ["config", "same-unit", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
+    let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
+    let cross = &split.cross;
+    let Ok((sccs, _)) = front::strata(cross) else { return };
+    let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
+    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    // The columns of a relation that name a document or a node of one (a node id holds its document).
+    let carriers = |rel: &str| -> Vec<usize> {
+        let mut c: BTreeSet<usize> = split.same_doc.get(rel).or_else(|| split.locations.get(rel)).cloned().unwrap_or_default().into_iter().collect();
+        if let Some(cols) = cross.decls.get(rel) {
+            c.extend(cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i));
+        }
+        c.into_iter().collect()
+    };
+    // Whether a relation's carriers are always on one document: known for base and file-local relations (their
+    // same-document columns), and for derived ones the greatest fixpoint of their rules keeping them so.
+    let one_doc_known = |rel: &str| !derived.contains(rel) && split.same_doc.contains_key(rel);
+    // The classes of a rule's carrier variables, joined where an atom on one document holds both; `None` when some
+    // literal is on any document (a wildcard or constant in every carrier).
+    let classes = |rule: &front::Rule, unit: &BTreeSet<String>| -> Option<usize> {
+        let mut parent: HashMap<String, String> = HashMap::new();
+        fn find(p: &mut HashMap<String, String>, x: &str) -> String {
+            let up = p.get(x).cloned().unwrap_or_else(|| x.to_owned());
+            if up == x {
+                p.insert(x.to_owned(), up.clone());
+                return up;
+            }
+            let r = find(p, &up);
+            p.insert(x.to_owned(), r.clone());
+            r
+        }
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for l in &rule.body {
+            let Some(a) = l.atom() else { continue };
+            let vars: Vec<String> = carriers(&a.rel).into_iter().filter_map(|c| a.args.get(c)).filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect();
+            if vars.is_empty() {
+                if !carriers(&a.rel).is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            seen.extend(vars.iter().cloned());
+            if one_doc_known(&a.rel) || unit.contains(&a.rel) {
+                let r0 = find(&mut parent, &vars[0]);
+                for v in &vars[1..] {
+                    let r = find(&mut parent, v);
+                    parent.insert(r, r0.clone());
+                }
+            }
+        }
+        let roots: BTreeSet<String> = seen.iter().map(|v| find(&mut parent, v)).collect();
+        Some(roots.len())
+    };
+    let mut unit: BTreeSet<String> = derived.clone();
+    loop {
+        let before = unit.len();
+        let gone: Vec<String> = cross.rules.iter().filter(|r| unit.contains(&r.head.rel) && classes(r, &unit).is_none_or(|n| n > 1)).map(|r| r.head.rel.clone()).collect();
+        for g in gone {
+            unit.remove(&g);
+        }
+        if unit.len() == before {
+            break;
+        }
+    }
+    let own = |rule: &front::Rule| -> &'static str {
+        let scc = scc_of(&rule.head.rel);
+        let recursive = rule.body.iter().filter_map(|l| l.atom()).any(|a| scc.is_some_and(|s| s.contains(&a.rel)));
+        let n = classes(rule, &unit);
+        let one = n.is_some_and(|n| n <= 1);
+        let others = |k: usize| -> BTreeSet<String> {
+            let mut v = rule.head.vars();
+            for (j, l) in rule.body.iter().enumerate() {
+                if j != k {
+                    v.extend(l.vars());
+                }
+            }
+            v
+        };
+        let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else { "lookup" };
+        let mut bump = |c: &'static str, worst: &mut &'static str| {
+            if rank(c) > rank(*worst) {
+                *worst = c;
+            }
+        };
+        for (k, l) in rule.body.iter().enumerate() {
+            match l {
+                Literal::Agg { var, over, atom, .. } if !one => {
+                    let mut g = atom.vars();
+                    g.remove(var);
+                    if let Some(o) = over {
+                        g.remove(o);
+                    }
+                    bump(if g.is_empty() { "total" } else { "grouped" }, &mut worst);
+                }
+                Literal::Atom(a) if !carriers(&a.rel).is_empty() && a.vars().is_disjoint(&others(k)) => bump("exists", &mut worst),
+                _ => {}
+            }
+        }
+        if recursive {
+            if rank(worst) <= rank("same-unit") { "recursive-local" } else { "recursive" }
+        } else {
+            worst
+        }
+    };
+    // Each relation's own class, then inherited through the relations it reads, in stratum order.
+    let mut class: HashMap<String, (&'static str, &'static str)> = HashMap::new();
+    for scc in &sccs {
+        let mut own_worst = "config";
+        let mut inherited = "config";
+        let mut looped = false;
+        for rule in cross.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+            let o = own(rule);
+            looped |= o.starts_with("recursive");
+            let o = if o == "recursive-local" { "same-unit" } else { o };
+            if rank(o) > rank(own_worst) {
+                own_worst = o;
+            }
+            for a in rule.body.iter().filter_map(|l| l.atom()) {
+                if let Some((_, i)) = class.get(&a.rel)
+                    && rank(i) > rank(inherited)
+                {
+                    inherited = i;
+                }
+            }
+        }
+        // A recursive stratum is local when every rule of it stays on one document.
+        if looped {
+            own_worst = if rank(own_worst) <= rank("same-unit") { "recursive-local" } else { "recursive" };
+        }
+        let inherited = if rank(own_worst) > rank(inherited) { own_worst } else { inherited };
+        for rel in scc {
+            class.insert(rel.clone(), (own_worst, inherited));
+        }
+    }
+    let mut out = String::new();
+    for rule in &cross.rules {
+        let (o, i) = class.get(&rule.head.rel).copied().unwrap_or(("config", "config"));
+        let output = cross.outputs.contains(&rule.head.rel);
+        out.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", rule.head.rel, o, i, if output { "output" } else { "-" }, rule.to_string().replace('\n', " ")));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(out.as_bytes());
+    }
+}
+
 fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
     static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
     PREPARED.get_or_init(Default::default)
@@ -885,6 +1039,9 @@ pub(crate) fn run_with_options(
             // are the relations over them, before the program splits.
             let merged = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+            if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
+                dump_split(std::path::Path::new(&path), &split);
+            }
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
             let mut kept = prepared_cache().lock().expect("the prepared programs");
             if kept.len() >= PREPARED_KEPT {
