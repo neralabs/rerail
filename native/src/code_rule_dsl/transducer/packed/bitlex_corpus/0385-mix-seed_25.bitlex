@@ -1,0 +1,19 @@
+# corpus: mix: seed 25
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = fill(aligned(~digit, 2), lasts((ws ^ bs)))
+mask m1 = starts((after_odd_run(lf) ^ (lf | ws)))
+mask m2 = escaped(next(m1, 11))
+mask m3 = escaped(m0)
+mask m4 = span(next(~starts(m3), 3), 20)
+mask m5 = (ws | high)
+mask m6 = lasts(lasts(prev(lasts(digit), 26)))

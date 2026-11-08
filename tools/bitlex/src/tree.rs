@@ -9,6 +9,11 @@
 //!   way that matches, and does not back out of it. For a grammar that is LL(1) per level, as the
 //!   compiler requires, that is the grammar's one parse.
 //!
+//! - **Extras** (`extra K`) are left out of the parse, then each is placed as tree-sitter's
+//!   parser places it: in the lowest node holding the tokens on either side of it, after the
+//!   nodes that end before it and before those that start after it; at either end of the file,
+//!   in the root (which then starts at the first extra).
+//!
 //! A file with no parse goes to tree-sitter.
 
 use crate::eval::{Token, TreeDecl};
@@ -135,17 +140,78 @@ impl Parser<'_> {
 /// tree-sitter.
 pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, String> {
     let root = decl.rules.first().ok_or("the tree section has no rule")?.0.clone();
-    if tokens.is_empty() {
+    // The extras, each with the number of other tokens before it.
+    let mut extras: Vec<(usize, &Token)> = Vec::new();
+    let mut plain: Vec<Token> = Vec::new();
+    for t in tokens {
+        if decl.extra.contains(&t.kind) {
+            extras.push((plain.len(), t));
+        } else {
+            plain.push(t.clone());
+        }
+    }
+    if plain.is_empty() {
         return Err("no tokens: the root would be zero-width".into());
     }
-    let mut p = Parser { decl, tokens, out: Vec::new() };
-    match p.matches(&Gram::Sym(root), 0) {
-        Some(next) if next == tokens.len() => {
-            // The root runs from its first token to the end of the file, as tree-sitter's.
-            p.out[0].end = n;
-            Ok(p.out)
-        }
-        Some(next) => Err(format!("the token at byte {} is past the grammar's end", tokens[next].start)),
-        None => Err("no parse: the tokens do not match the grammar".into()),
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new() };
+    let mut out = match p.matches(&Gram::Sym(root), 0) {
+        Some(next) if next == plain.len() => p.out,
+        Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
+        None => return Err("no parse: the tokens do not match the grammar".into()),
+    };
+    // The root runs from its first token to the end of the file, as tree-sitter's.
+    out[0].end = n;
+    if extras.is_empty() {
+        return Ok(out);
     }
+    // Each node's parent, and each token's leaf (the leaves are the nodes of size 1, in order).
+    let mut parent = vec![usize::MAX; out.len()];
+    let mut open: Vec<usize> = Vec::new();
+    for i in 0..out.len() {
+        while let Some(&o) = open.last() {
+            if i < o + out[o].size {
+                break;
+            }
+            open.pop();
+        }
+        if let Some(&o) = open.last() {
+            parent[i] = o;
+        }
+        open.push(i);
+    }
+    let leaves: Vec<usize> = (0..out.len()).filter(|&i| out[i].size == 1).collect();
+    let ancestors = |mut i: usize| {
+        let mut up = vec![i];
+        while parent[i] != usize::MAX {
+            i = parent[i];
+            up.push(i);
+        }
+        up
+    };
+    // Where each goes, in the tree as parsed: (index to insert at, the node it is in).
+    let mut places: Vec<(usize, usize)> = Vec::new();
+    for &(k, _) in &extras {
+        places.push(if k == 0 {
+            (1, 0)
+        } else if k == plain.len() {
+            (out.len(), 0)
+        } else {
+            let (before, after) = (ancestors(leaves[k - 1]), ancestors(leaves[k]));
+            let lca = *before.iter().find(|a| after.contains(a)).expect("the root holds both");
+            // Before the child of the common node that holds the token after it.
+            let child = after[after.iter().position(|&a| a == lca).expect("an ancestor") - 1];
+            (child, lca)
+        });
+    }
+    // Inserted from the last, so that each place is still the tree's as parsed; extras at one
+    // place keep their order.
+    for (&(k, t), &(at, within)) in extras.iter().zip(&places).rev() {
+        let _ = k;
+        for a in ancestors(within) {
+            out[a].size += 1;
+        }
+        out.insert(at, Node { kind: t.kind.clone(), field: None, supertypes: vec![], extra: true, start: t.start, end: t.end, size: 1 });
+    }
+    out[0].start = out[0].start.min(extras[0].1.start);
+    Ok(out)
 }

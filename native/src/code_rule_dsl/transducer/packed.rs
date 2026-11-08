@@ -248,6 +248,7 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
+mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -275,6 +276,12 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+#[cfg(test)]
+mod bitlex_corpus_tests;
+#[cfg(test)]
+mod bitlex_ladder_tests;
+#[cfg(test)]
+mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;
@@ -323,6 +330,8 @@ const PUSH: u8 = 0x59;
 const RETURN: u8 = 0x5a;
 const ACCEPT: u8 = 0x5b;
 const SPAN: u8 = 0x5c;
+/// Refuses unless one of tier 1's totals is zero: the fallback.
+const EMPTY: u8 = 0x5d;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
@@ -1005,6 +1014,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// pools do not.
     WalkFrames,
     BackendFailure,
+    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
+    RefusedShape(String),
 }
 
 #[derive(Clone, Copy)]
