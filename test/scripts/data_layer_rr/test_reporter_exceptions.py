@@ -22,7 +22,7 @@ class ReporterExceptionTests(unittest.TestCase):
                 casesSha256=sha(cases.read_bytes()),results=[dict(id='missing-name',value=expected,status='passed')])) )
             engine=root/'engine';engine.write_text('test executable')
             native=dict(metadata=dict(policies=[dict(id='data-layer-module-level-caches')],settings=[['mode','block']]),
-                diagnostics=[dict(clause='MCUncaughtAllowlist',code='MC_UNCAUGHT_CONFIG',path='allowlist.json',line=1,
+                diagnostics=[dict(policy='data-layer-module-level-caches',clause='MCUncaughtAllowlist',code='MC_UNCAUGHT_CONFIG',path='allowlist.json',line=1,
                     message='name',parameters=dict(kind='KeyError',value='name'))],programInputs=[],phases=[])
             args=SimpleNamespace(command='native',cases=cases,oracle=oracle,engine=engine,rule_root=root,part=0,parts=1,out=root/'out.json')
             with patch.object(reporting,'execute_native',return_value=native):
