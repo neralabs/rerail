@@ -384,7 +384,6 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
 #[test]
 fn unlowered_constructs_are_named() {
     for (src, what) in [
-        (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
     ] {
         let e = parse(src).unwrap_err().to_string();
@@ -1838,6 +1837,71 @@ outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
     assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
 }
 
+/// `.scope` selects a repository's files (`core.rr`): a finding in a document outside `dirs`, or under a `tests`
+/// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
+#[test]
+fn scope_drops_findings_outside_the_policy_files() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope");
+    for p in ["impl/a.py", "impl/tests/test_a.py", "other/b.py"] {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(p), "f()\n").unwrap();
+    }
+    let program = r#"
+.policy "t:scope" revision 1
+.language python
+.scope dirs "other",   // a comment, then the line goes on
+    "impl"
+.scope exclude "other/**"
+.scope tests false
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.input node, line, doc
+.violation Call(at: node) "a call"
+Call(c) :- node(_, c, "call", _, _).
+"#;
+    let paths = |program: &str| {
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| l.split('\t').nth(3).unwrap().to_owned()).collect();
+        got.sort();
+        got
+    };
+    assert_eq!(paths(program), ["impl/a.py"]);
+    assert_eq!(paths(&format!("{program}.scope given\n")), ["impl/a.py", "impl/tests/test_a.py", "other/b.py"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An AST pattern literal (O103): ``n ~ `$O[:-$K]` `` holds at each match, and `$K` binds K to the node it captured;
+/// a slice with a start is another pattern's, and a negated pattern holds where none matches.
+#[test]
+fn pattern_literals_match_and_bind_their_metavariables() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("pattern");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "t = name[:-4]\nu = name[1:-7]\nv = other[:-13]\n").unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "t:pattern" revision 1
+.language python
+.violation Cut(at: node, k: symbol) "{k}"
+Cut(n, k) :- n ~ `$O[:-$K]`, text(K, k).
+.violation Plain(at: node) "no step"
+Plain(n) :- kind(n, "subscript"), !(n ~ `$O[:-$K]`).
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap();
+    assert_eq!(program.ast_patterns.len(), 1);
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&text, &dir.join("src"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| {
+        let f: Vec<&str> = l.split('\t').collect();
+        format!("{}:{}", f[1], f[4])
+    }).collect();
+    got.sort();
+    assert_eq!(got, ["Cut:1", "Cut:3", "Plain:2"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// O101: a program whose reads make demands (`parsed`, `@parse`, `@splice`, `file_line`) prints back as itself.
 /// The printed text declares the demands it was lowered with, so reading it makes none again.
 #[test]
@@ -1886,4 +1950,30 @@ group(n) :- n = count : { order(_, _) }.
     assert_eq!(order, ["1\t2", "1\t3", "2\t3"]);
     assert_eq!(select, ["3"]);
     assert_eq!(group, ["3"]);
+}
+
+/// The native steps a string rule takes: a concatenation (`q = cat("m", ".", x)`), a split read back
+/// (`split_dot`'s `$s = @cat($m, $x)`), a set of constant patterns (`contains(…, {…})` once they are symbols) and
+/// a set membership (`x = "a" ; x = "b"` as `@equals`). Their rows are the SQL backend's.
+#[test]
+fn string_steps_give_the_rows_sql_gives() {
+    let rule = r#"
+.decl ident(n: node, x: symbol)
+ident(n, x) :- kind(n, "identifier"), text(n, x).
+.decl dotted(n: node, q: symbol)
+dotted(n, q) :- ident(n, x), q = cat("m", ".", x).
+.decl last(n: node, x: symbol)
+last(n, x) :- dotted(n, q), split_dot(q, m, x), m != "".
+.decl hit(x: symbol)
+hit(x) :- ident(_, x), (contains("ol", x) ; contains("et", x)).
+.decl one(x: symbol)
+one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
+.output last, hit, one
+"#;
+    let [last, hit, one] = <[Vec<String>; 3]>::try_from(guests_run("stringsteps", &[("a.py", "alpha = beta + gamma\nwolf = 1\n")], rule, &["last", "hit", "one"])).unwrap();
+    let mut words: Vec<String> = last.iter().map(|l| l.split('\t').nth(1).unwrap().to_owned()).collect();
+    words.sort();
+    assert_eq!(words, ["alpha", "beta", "gamma", "wolf"]);
+    assert_eq!(hit, ["beta", "wolf"]);
+    assert_eq!(one, ["alpha", "beta"]);
 }
