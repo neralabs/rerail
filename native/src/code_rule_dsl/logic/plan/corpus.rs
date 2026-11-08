@@ -880,7 +880,10 @@ pub(crate) fn run_with_options(
             kept.insert(prepared_key, prepared.clone());
             drop(kept);
             if let Some(source) = durable {
-                prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))?;
+                // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
+                if !prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
+                    crate::code_rule_dsl::logic::profile::decision("program prepared", || "not stored: its document's tape does not give back its facts (decision 0074)".to_owned());
+                }
             }
             prepared
         }

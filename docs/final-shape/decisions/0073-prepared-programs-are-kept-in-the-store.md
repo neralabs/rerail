@@ -1,6 +1,6 @@
 # 0073: A prepared program is kept in the store
 
-Status: built (2026-11-07)
+Status: built (2026-11-07); its entry's form superseded by decision 0074 (facts and a tape, not JSON)
 
 ## Intro
 
@@ -93,10 +93,8 @@ not this record's and is not attributed here.
 
 ## What this does not do yet
 
-- **The entry is JSON, not facts.** The prepared program is stored as an encoding of its Rust value, not as rows a
-  rule could read, and not as a tape. A lowered program printed as `.rr` and stored as a rule file's tape would let
-  rules about rules (decision 0061) read what a rule compiles to. That needs every field of the program to print
-  and read back, and it is not done.
+- **The entry is JSON, not facts.** Decision 0074 replaces it: the entry is facts, kept as a `.rr` document with
+  its tape, which a rule can read.
 - **Matchers are compiled per process.** Specs are kept, not the compiled automata.
 - **A pack is still prepared one rule at a time.** The Python pack does not combine into one program (O111).
 
