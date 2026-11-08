@@ -1729,7 +1729,10 @@ pub(crate) fn run_with_options(
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
                     for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let measured = syntax::statistics(source.as_ref());
-                        stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+                        // The constants the rules test it by are counted too: a column measured without them reads as
+                        // holding none, so `kind__old(r, identifier)` was planned as one row and drove a delta rule.
+                        let counts = constant_counts(&part.program, &rel, source.as_ref());
+                        stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
                         modules.bind(&db, &rel, source)?;
                     }
                     let derived = cut.derived(&cross.program)?;
@@ -2005,6 +2008,34 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
 /// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
 /// round's outcome is the part's.
 /// A relation's rows after a run: held by the engine (`kept`), or in its table.
+/// How many of `source`'s rows hold each integer constant a rule of `prog` tests `rel`'s columns by, by column name
+/// (the planner's `const_freq`).
+fn constant_counts(prog: &front::Program, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
+    let mut wanted: BTreeMap<(usize, i64), i64> = BTreeMap::new();
+    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).filter(|a| a.rel == rel) {
+        for (c, t) in a.args.iter().enumerate() {
+            if let front::Term::Int(v) = t {
+                wanted.insert((c, *v), 0);
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let names = source.columns();
+    let by_column: BTreeSet<usize> = wanted.keys().map(|(c, _)| *c).filter(|c| *c < names.len()).collect();
+    for c in by_column {
+        let mut counts: HashMap<i64, i64> = HashMap::new();
+        for row in 0..source.len() {
+            *counts.entry(source.value(row, c)).or_default() += 1;
+        }
+        for ((_, v), n) in wanted.range_mut((c, i64::MIN)..=(c, i64::MAX)) {
+            *n = counts.get(v).copied().unwrap_or(0);
+        }
+    }
+    wanted.into_iter().filter(|((c, _), _)| *c < names.len()).map(|((c, v), n)| (names[c].clone(), v, n)).collect()
+}
+
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vec<i64>>> {
     use crate::code_rule_dsl::logic::native::component;
     let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
