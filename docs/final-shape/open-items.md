@@ -2297,3 +2297,9 @@ integer goes`. The rule is skipped in the s200 pack run.
 
 **Closure:** a group bound over a span reads as its text where the rule uses it as text, or the rule says so, and
 the pack runs the rule again.
+
+**Closed.** The engine is right: `core.rr` says a capture over a node or span is a span. The rule was wrong.
+Each capture in `bounded-composed-graph-paths.rr` now names a span (`(?<xs>…)`) and reads its text with
+`text(xs, x)`. On s50 the rule alone gives 26 findings at 77 MB, most of them BCGP001 (a required file is not in
+the 50-file subset). Back in the s200 pack: 66 rules, 61 findings, 52.7 s CPU (load average 36–90), 2,652 MB
+peak, with no lowering error.
