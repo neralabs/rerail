@@ -242,7 +242,10 @@ TPSignature(@place("", 0), value) :- option("entryPoint", "_compute_signature_me
 TPVerify(@place("", 0), @ed25519_ok(key, message, signature)) :- option("entryPoint", "_verify_signature"),
     option("publicKey", key), option("signature", signature), tp_signature_message(message).
 .violation TPInternal(at: span, method: symbol, visit: number) code "TP_INTERNAL" "{method}"
-TPInternal(@place("", 0), method, i) :- option("internalProbe", "true"), option("connectionName", name), tp_internal_call(_, name, method, i).
+TPInternal(@place("", 0), method, i) :- option("internalProbe", "true"), !option("internalSingle", "true"),
+    option("connectionName", name), tp_internal_call(_, name, method, i).
+TPInternal(@place("", 0), method, i) :- option("internalProbe", "true"), option("internalSingle", "true"),
+    option("connectionName", name), tp_internal_call(0, name, method, i).
 .violation TPConstant(at: span, kind: symbol, value: symbol) code "TP_CONSTANT" "{value}"
 TPConstant(@place("", 0), "core", value) :- option("entryPoint", "constants"), tp_core(value).
 TPConstant(@place("", 0), "init", value) :- option("entryPoint", "constants"), tp_init_pattern(value).
