@@ -365,6 +365,58 @@ method resolution order across files, overloads. That fixed point is P2. The pha
 reads it. In a session, delete-and-rederive maintains it as P1's delta arrives. Untyped library `.py` files are read
 only with `python.untyped=read`, and then only by P1.
 
+## Spikes before building
+
+Each spike answers one question that could change the plan. It is sized to fit the run cap, using slices and
+captured stores. Ordered by how much of the plan rests on the answer.
+
+1. **Delete-and-rederive on the points-to fixpoint.** §2 rests on this, and it is the largest risk.
+   - Method: take today's `calls.rr` fixpoint over the 84 files. Apply the deltas of real edits through
+     More-ergonomic-rule-syntax's `maintain.rs`, porting what it lacks. Use the last 20 commits that touch those
+     files, plus the `exceptions.py` comment.
+   - Measure: rows over-deleted and re-derived, CPU against a cold run, and the result against a full run.
+   - Success: an edit to one function costs under 5% of a cold run, with no case past the cold run. If not,
+     measure support counts per row, then maintenance per component of definitions.
+2. **The size of the base delta per definition.**
+   - Method: replay the data layer's git history (a few hundred commits). For each commit, count files changed,
+     definitions whose digest changed, and base rows changed under `(document, preorder)` ids against
+     `(definition, index)` ids.
+   - Success: the rows in a delta follow the definitions changed, not the files.
+   - It also counts the cases a symbol key must cover: redefinitions, conditional definitions, `TYPE_CHECKING`
+     branches, overloads, properties, and how often each churns.
+3. **Layout invariance on today's engine** (§0, step 0 below).
+   - Method: move definitions between modules in the 84 files, with a script that rewrites imports. Run with and
+     without typeshed.
+   - Measure: findings that differ, and the work (CPU, rows per stratum).
+   - It gives the baseline the new phases must beat, and a test that stays.
+4. **Search against eager, counted on what exists.** No new engine code.
+   - Count distinct `(f, targs)` keys against `gpar`/`gbind` rows, and distinct `(class, attribute)` lookups
+     against `found` rows and the `sub` closure. Do it on the 84 files, then on 500 data-layer files.
+   - The ratios estimate the memo's hit rate and the rows searches save. A ratio near 1 means search buys nothing
+     there.
+5. **P1 and P2 over the real library.**
+   - Method: a first `struct.rr` (imports, bindings, class headers, written signatures) over the data layer's
+     venv (site-packages) plus typeshed.
+   - Measure: documents loaded, waves for the import frontier to settle, rows, CPU, RSS, and how much of it is the
+     same for another workspace on the same interpreter.
+   - Success: the library's P1 and P2 run once per machine, then are reused.
+6. **One analysis that really crosses files, written for the new shape.** It keeps the design honest against more
+   than `calls.rr`.
+   - Method: `param_in(f, i)` (parameter types from callers) and "never called", over the data layer's 9,010
+     files: full, then incremental after one edit.
+   - Success: both cost what their delta reaches, under 1 GB. Neither needs a special mechanism.
+7. **Reading the stored fixpoint in place under 1 GB.**
+   - Measure: the size of P3's relations on 9,010 files, and the cost of maintaining a delta by index through the
+     vtabs, without loading relations whole.
+   - It sets the store layout: one table per relation and keyed indexes, as 0065 §2 sketched.
+8. **Freshness of library state.**
+   - Method: stat-check the files and directories P1 read in a real venv. Parse `RECORD` and `pyvenv.cfg`. Make
+     one hand edit to a site-packages file.
+   - Success: an unchanged venv is verified in milliseconds. The edit reaches P1 as a content delta.
+
+Left for after these: searches on Metal (the device memo table, work-queue fan-out), and how the planner chooses
+chunks that are not files.
+
 ## Order of work
 
 Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next.
