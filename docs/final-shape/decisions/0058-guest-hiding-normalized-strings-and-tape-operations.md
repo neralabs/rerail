@@ -227,6 +227,15 @@ Tests (`logic/rr/tests.rs`, and the normalizer's own):
 - `kind_sets_over_a_guest_are_its_grammars`: one kind set read over a SQL node and a Python node (O98);
 - `normalized::tests`.
 
+Amended (2026-11-07, O110): a variable read from a derived column is scoped when some rule fills that column from a
+guest, but it is only *definitely* a guest's node when every rule does. `calls.rr`'s `tv` holds host and guest
+nodes alike, and `tbv(s, x, k, v) :- live_asg(s, x, r), tv(r, k, v)` read only the annotation copy of `live_asg`:
+every host assignment's builtin value was lost (four receivers of `pkg/typed.py` Unknown). The analysis now tracks
+`definite` (a guest entry, a copy's seed, or a column only definite variables fill, to a fixpoint). Specializing an
+atom and qualifying its kinds need a definite variable. A rule whose variable may be a guest's is split once: it
+stays as it is for the host's nodes, and a clone with the variable seeded as the guest's reads the copies
+(`a_maybe_guest_variable_keeps_the_host_rows_and_clones_for_the_guest`).
+
 ## Open
 
 - O95 (the shared tape cache's race) is closed: a source and its tape are stored in one transaction.

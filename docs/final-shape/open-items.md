@@ -2123,6 +2123,11 @@ ignored with this reason.
 
 **Closure:** the four receivers exact again, or listed as departures with the reason, and the test not ignored.
 
+**Closed (2026-11-07):** 44 exact of 44, and the test runs again. The cause was the engine, not the merge: guest
+hiding (decision 0058 §2) specialized `tbv`'s `live_asg` to its annotation copy because `tv`'s first column may hold
+an annotation's node, and so dropped every host row of it. A variable now needs to be definitely a guest's node to be
+specialized; a rule whose variable only may be one is split into the host's rule and a guest clone (0058, amended).
+
 ## O111. Python pack rules that fail to run, alone or combined
 
 Found while measuring decision 0073 (2026-11-07). Run one at a time with `rerail-engine run-rr` over

@@ -428,7 +428,6 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
 const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
 #[test]
-#[ignore = "O110: since the Typing-support merge of 2026-11-07, four builtin receivers of pkg/typed.py are Unknown"]
 fn python_type_relations_agree_with_the_runtime() {
     let answers = score_python_types(&program("calls"));
     let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
