@@ -318,7 +318,7 @@ fn check_lowering(name: &str, p: &Program) {
 }
 
 /// A program function's control lines: each leaves the group unfinished, the same in every lane.
-const CONTROL: [&str; 3] = ["if (!look_back(", "if (!halo_exchange(", "if (!extract_write("];
+const CONTROL: [&str; 3] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink("];
 
 /// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
 /// and each `program_P`). The look-backs, which loop over predecessor groups, and the workers'
@@ -386,13 +386,13 @@ fn interpreters_have_no_byte_loops() {
     let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
     assert_eq!(loops.len(), 3, "{loops:?}");
     assert!(loops[0].starts_with("for (uint at = 0u; at < pr.steps; at++)"), "{loops:?}");
-    assert!(loops[1].starts_with("for (uint k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint e = 0u; e < pr.exts; e++)"), "{loops:?}");
+    assert!(loops[1].starts_with("for (uint k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint c = 0u; c < pr.exts; c++)"), "{loops:?}");
     for word in ["while", "simd_ballot"] {
         assert!(!run.contains(word), "the Metal interpreter has `{word}`");
     }
     for line in run.lines().filter(|l| l.contains("if (")) {
         let line = line.trim();
-        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!extract_write("].iter().any(|c| line.starts_with(c)), "the Metal interpreter branches: `{line}`");
+        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!count_sink("].iter().any(|c| line.starts_with(c)), "the Metal interpreter branches: `{line}`");
     }
     for helper in ["eq_file", "plane_file"] {
         let code = &metal[metal.find(&format!("M {helper}(")).expect("helper")..];

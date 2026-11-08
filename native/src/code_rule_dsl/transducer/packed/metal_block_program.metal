@@ -120,14 +120,19 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
     }
     slots[at * 32u + l] = v;
   }
-  for (uint k = 0u; k < pr.outs; k++) out[f.out_base + k * lanes + gl] = slots[outs[pr.out0 + k] * 32u + l];
+  // The sinks (`metal_block_sinks.metal`): each output at its delay (its value and delay in
+  // `outs`), then each counted output: its output, its extract (0xff: a total only), its delay.
+  for (uint k = 0u; k < pr.outs; k++) {
+    const uint x = outs[pr.out0 + k];
+    write_output(out, f.out_base + k * lanes, gl, f.len, x >> 24u, slots[(x & 0xffffffu) * 32u + l]);
+  }
   const uint capacity = max(f.len, 1u);
-  for (uint e = 0u; e < pr.exts; e++) {
-    // The extract's output, and its delay in the top byte.
-    const uint x = outs[pr.ext0 + e];
-    const M v = slots[outs[pr.out0 + (x & 0xffffffu)] * 32u + l];
-    if (!extract_write(v, gl, g, l, f.len, x >> 24u, ext_states + f.ext_base + e * f.groups, positions + f.pos_base + e * capacity,
-                       capacity, counts + f.ext_base + e * f.groups, spins * 64u))
+  for (uint c = 0u; c < pr.exts; c++) {
+    const uint x = outs[pr.ext0 + c];
+    const uint e = (x >> 16u) & 0xffu;
+    const M v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * 32u + l];
+    if (!count_sink(v, gl, g, l, f.groups, f.len, x >> 24u, ext_states + f.ext_base + c * f.groups, positions + f.pos_base + e * capacity,
+                    capacity, e != 0xffu, counts + f.tot_base + c, spins * 64u))
       return false;
   }
   return true;
