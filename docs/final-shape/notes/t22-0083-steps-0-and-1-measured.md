@@ -69,14 +69,26 @@ The 16 files touched (8 edited, 8 new) miss the memo, as they should. But the mo
 components, a third of the cross part, though no answer changes. Under 0083's symbol keys the moved definitions
 keep their keys, so this move would be a delta of spans and paths only.
 
-**Not yet measured.**
-- **Cold work of the moved layout.** It needs a prime of about 130 s CPU, which is 5 minutes at this load. It is
-  the next long run. It is to be compared with the prime's 128.8 s.
-- **The pair without typeshed.** 0083 asks for runs with typeshed and without it.
-- **Both memos off.** At first, a cold `calls_cx` run with both memos off grew past 10 GB. Demand had cut a
-  read whose remaining body joined only through documents. O135 has the details; it is now fixed. Both memos
-  off now costs 87.3 s of CPU on the main thread (51.4 s of it in the cross part) at 846 MB. That run is
-  step 0's no-memo baseline for the original layout.
+**Work, cold.** These runs had both memos off, after the O135 fix; the load was 30–77.
+
+| | typeshed | answers (differ) | CPU main thread | local | cross | user + sys | RSS |
+|---|---|---|---|---|---|---|---|
+| original | yes | 10,773 | 87.3 s | 25.2 s | 51.4 s | 130.0 s | 846 MB |
+| moved | yes | (0) | 82.2 s | 23.5 s | 47.6 s | 133.3 s | 845 MB |
+| original | no | 5,530 | 27.4 s | 9.1 s | 7.4 s | 41.2 s | 854 MB |
+| moved | no | (0) | 18.5 s | 9.3 s | 7.7 s | 32.2 s | 847 MB |
+
+- Cold, the work is the same in both layouts, within noise. The local and cross phases differ by at most 7%.
+- The gap without typeshed is in "stats", 10.3 s against 0.9 s. The first run of the pair parsed the corpus into a
+  fresh tape cache, and the second read it back. It is not layout.
+- So today's engine is layout-invariant in its answers and its cold work, on this sample. It is not invariant in
+  incremental work: a move re-derives every import component that reaches a moved file. 0083 §0's structural
+  guard holds today for full runs, and its symbol keys are what would make it hold for edits.
+
+**What the warm run's "stats" is.** On the warm run, the 4.3 s of "stats" is mostly the file-system rounds that
+load typeshed: 12 rounds of requests and 183 documents, 5.8 s of CPU in the import run's profile. Without typeshed,
+the same phase takes 0.9 s on a warm tape cache. Those rounds run again on every run, unmemoised. That is library
+state, so it belongs with 0083 §6 and O132 (freshness of library state).
 
 ## Reproducing
 
