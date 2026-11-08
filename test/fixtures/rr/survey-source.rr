@@ -3,7 +3,7 @@
 .mode log
 .scope include "**/*.py"
 .scope exclude
-#include "data-layer/survey-reference-targets.rr"
+#include "data-layer/survey-edges.rr"
 .violation Inventory(at: span, kind: symbol, path: symbol, module: symbol) code "SURVEY_INVENTORY" "inventory"
 Inventory(@place(path, 0), "module", path, module) :- sgs_module(_, path, module).
 .violation Symbol(at: span, kind: symbol, path: symbol, module: symbol, ordinal: number, sid: symbol, fq: symbol, name: symbol, qual: symbol, symbol_kind: symbol, line: number, owner: symbol, async_flag: number, abstract_flag: number) code "SURVEY_SYMBOL" "symbol"
@@ -60,3 +60,9 @@ accessor_row("graph_dunder", owner, i, sid) :- cm_dunder(owner, i, sid).
 GraphAccessorRow(@place("", 0), k, owner, i, sid) :- accessor_row(k, owner, i, sid).
 .violation GraphRef(at: span, kind: symbol, owner: symbol, ordinal: number, ref_kind: symbol, base: symbol, attr: symbol, has_target: number, target: symbol, target_kind: symbol) code "SURVEY_GRAPH_REF" "reference target"
 GraphRef(@place("", 0), "graph_ref", sid, i, k, base, attr, has, target, target_kind) :- sgr_ref(sid, i, k, base, attr, has, target, target_kind).
+.decl graph_edge_row(kind: symbol, owner: symbol, sid: symbol)
+graph_edge_row("graph_call", owner, sid) :- sge_call(owner, sid).
+graph_edge_row("graph_class_use", owner, sid) :- sge_class_use(owner, sid).
+graph_edge_row("graph_caller", owner, sid) :- sge_caller(owner, sid).
+.violation GraphEdge(at: span, kind: symbol, owner: symbol, sid: symbol) code "SURVEY_GRAPH_EDGE" "edge"
+GraphEdge(@place("", 0), k, owner, sid) :- graph_edge_row(k, owner, sid).

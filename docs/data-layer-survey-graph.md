@@ -3,7 +3,8 @@
 `internal_dead_code` and `imperative_private_functions` use the same upstream symbol graph.
 The native contract lives in `docs/rule-syntax/lib/data-layer/survey-graph.rr`.
 The consumer currently takes a supplied graph argument.
-The source producer has tested inventory, body references, dictionary assembly, base resolution, reexports, and bare-name call targets.
+The source producer has tested inventory, body references, dictionary assembly, base resolution, reexports, and reference targets.
+It also emits calls, class uses, inverse callers, and legacy synthetic edges for the tested target shapes.
 It does not yet construct a complete graph from repository source.
 This document does not certify either rule as complete.
 
@@ -33,10 +34,9 @@ The upstream implementations are [graph reachability](https://github.com/neralab
 
 Implement these steps over the current engine's AST, scope, and typing interfaces:
 
-1. Resolve self, super, module, and chained references using the tested class walks, instance annotations, and parameter annotations.
-2. Emit complete calls, class uses, callers, and legacy synthetic edges from the resolved references.
-3. Derive `__all__`, exported roots, and source-derived literal dynamic-import roots. Preserve the original discovery scope and ordering.
-4. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
+1. Settle the demonstrated randomized mixin tie. Native facts currently refuse to treat that tie as an ordinary unresolved reference.
+2. Derive `__all__`, exported roots, and source-derived literal dynamic-import roots. Preserve the original discovery scope and ordering.
+3. Connect the producer to the existing consumer. Replace the draft's missing-producer diagnostic only after source-file parity passes.
 
 Reuse the modern engine's implementations where their meanings match.
 A more precise call resolver can still differ from the source linter. Preserve demonstrated source behavior or record the unresolved difference.
@@ -108,6 +108,14 @@ The raw helper demands only its requested imported classes. Other helper entries
 The [ordered-member receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-ordered-members.json.gz) contains the complete source, raw-graph, mutation, and native regression evidence.
 
 ## Acceptance still required
+
+The member and edge corpus now contains ninety-two complete source comparisons.
+It includes inherited instance annotations resolved in the caller module, duplicate parameters, stale method names, and failed parameter lookup followed by a local import.
+Member and edge guards require the intended positive observations in the source recording.
+The generic edge relations separate class uses from calls and expose inverse callers.
+Legacy edges preserve sync precedence, asynchronous suffix removal, ordered inherited lookup, property targets, and missing-target behavior.
+Eighteen mutation controls produce complete-row mismatches through successful native execution.
+The [edge receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-edges.json.gz) contains both complete acceptance shards and controls.
 
 The current supplied-graph corpus covers call cycles, conventions, module references, class dispatch, protocols, annotations, confidence categories, and sorting.
 Add source-file comparisons for every producer field and each listed behavior.

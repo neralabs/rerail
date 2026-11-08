@@ -1632,3 +1632,29 @@ The acceptance corpus covers unambiguous mixin targets. It does not settle this 
 The [member-target receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-member-targets.json.gz) retains source, red, green, and consumed library bytes.
 Complete edges, roots, discovery, production integration, and lifecycle acceptance remain open.
 Rule 89 and the 100-rule migration remain incomplete.
+
+### 2026-11-08 — Resolved source edges and legacy wrappers
+
+Commit `2d85a87e9` records all calls, class uses, and inverse callers from the source graph builder.
+Ten additional fixtures cover namespace fallbacks, duplicate references, and synthetic legacy edges.
+Twenty-nine of ninety-two cases fail before native edge emission.
+The `survey-edges.rr` library then passes all ninety-two complete comparisons across two disjoint acceptance shards.
+The harness still requires the complete fixture recording before either shard runs.
+Two tooling tests cover shard completeness and missing member or edge observations.
+
+The source confirms that constructor hints resolve in the caller module, including hints inherited from another module.
+An unannotated duplicate parameter blocks a later annotated parameter.
+Failed parameter method lookup can fall through to a function-local import.
+A stale method can remain resolvable after a function replaces its class symbol.
+These are observed source behaviors, not modern type-inference substitutions.
+
+Legacy synthetic calls retain sync precedence, asynchronous suffix removal, ordered base lookup, and property targets.
+Free functions with legacy decorators do not receive synthetic edges. Missing lazy methods do not produce calls.
+Eighteen controls disable individual requirements; each causes a full-row mismatch through successful native execution.
+
+The current Final CLI also passes all four original rule-89 tests, all thirty-six supplied-graph cases, and all one hundred policy readers.
+All 109 tooling tests and 49 subtests pass. No original rule-89 assertion is excluded.
+These four original tests use supplied graph doubles; they do not prove production source-graph integration.
+The [edge receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-edges.json.gz) retains the complete evidence and consumed program bytes.
+The default source path still refuses execution with `IDC_SOURCE_GRAPH_REQUIRED`.
+Export roots, discovery, lifecycle behavior, and the ambiguous mixin ordering contract remain open.

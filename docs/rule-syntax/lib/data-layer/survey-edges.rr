@@ -1,0 +1,17 @@
+// Complete set-valued source edges. Class construction/references are class
+// uses, while other targets and synthetic legacy edges populate calls/callers.
+#include "data-layer/survey-reference-targets.rr"
+
+.decl sge_legacy(sid: symbol, mode: symbol)
+sge_legacy(sid, "sync") :- sgn_context(n, sid, _, owner), owner != "", sgs_decorator(n, _, d), (suffix("legacy_sync", d) ; suffix("legacy_module_sync", d) ; suffix("direct_legacy_module_sync", d)).
+sge_legacy(sid, "async") :- sgn_context(n, sid, _, owner), owner != "", sgs_decorator(n, _, d), (suffix("legacy_async", d) ; suffix("legacy_module_async", d) ; suffix("direct_legacy_module_async", d)).
+.decl sge_legacy_name(sid: symbol, name: symbol)
+sge_legacy_name(sid, cat(name, "_lazy")) :- sge_legacy(sid, "sync"), sgc_symbol(n, _, _, sid), sgs_definition(n, _, name, _, _, _).
+sge_legacy_name(sid, cat(@replace_all(name, "_async\\z", ""), "_lazy")) :- sge_legacy(sid, "async"), !sge_legacy(sid, "sync"), sgc_symbol(n, _, _, sid), sgs_definition(n, _, name, _, _, _).
+.decl sge_call(sid: symbol, target: symbol)
+sge_call(sid, target) :- sgr_target(sid, _, target), sgc_kind(target, k), k != "class".
+sge_call(sid, target) :- sge_legacy_name(sid, name), sgr_owner(sid, c), cm_lookup(c, name, target).
+.decl sge_class_use(sid: symbol, target: symbol)
+sge_class_use(sid, target) :- sgr_target(sid, _, target), sgc_kind(target, "class").
+.decl sge_caller(target: symbol, sid: symbol)
+sge_caller(target, sid) :- sge_call(sid, target).
