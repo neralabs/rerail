@@ -2991,8 +2991,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "6ae30c48a7d9c7cde74248ccecc0c4835ba54308",
-    "status": "Root Final through 6ae30c48a; generic typed set-order compatibility with no Python runtime",
+    "upstreamCommit": "24d05da80ea43c1043184b24abfab59f77e4992b",
+    "status": "Root Final through 24d05da80, including stored combined programs and prepared splits; reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3152,7 +3152,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "19363c47b97204a8223b648d92931b08357992c9"
+    "upstreamMerge": "85aa8251cd758a13cb55c5d8fde2273220b0d1d0"
   },
   "engineSourceSnapshots": [
     {
