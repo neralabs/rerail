@@ -97,6 +97,9 @@ pub(in crate::code_rule_dsl) struct Compiled {
     /// Tier 1's cost by source: each statement (its kind and name) or lowering step, with the
     /// block operations it added and how many of them are `back_fill`'s (each a backward pass).
     pub(super) costs: Vec<Cost>,
+    /// Each operation of `rows`' block program: the statement (as in `costs`) that made it,
+    /// empty for none. The profile names what is live where by it (`native_cpu_pressure`).
+    pub(super) origin: Vec<String>,
 }
 
 /// A statement's share of tier 1 (`Compiled::costs`).
@@ -561,8 +564,25 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         })
         .collect();
     let program = live(&low.program);
+    // Each kept operation's statement, at its place in the live program.
+    let mut origin = vec![String::new(); program.ops.len()];
+    let mut place = vec![usize::MAX; keep.len()];
+    let mut next = 0;
+    for (k, &kept) in keep.iter().enumerate() {
+        if kept {
+            place[k] = next;
+            next += 1;
+        }
+    }
+    for (what, from, to) in &low.costs {
+        for k in (*from..*to).filter(|&k| keep[k]) {
+            if origin[place[k]].is_empty() {
+                origin[place[k]] = what.clone();
+            }
+        }
+    }
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs })
+    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs, origin })
 }
 
 impl Lowering {

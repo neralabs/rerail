@@ -97,6 +97,9 @@ pub(super) struct PassShape {
     pub(super) extracts: usize,
     /// Its machine code, disassembled.
     pub(super) disassembly: String,
+    /// What is live where in its Cranelift IR, by the whole program's values
+    /// (`native_cpu_pressure`): for the profile.
+    pub(super) pressure: super::native_cpu_pressure::Pressure,
 }
 
 /// The running counts, as output indexes: each extract's, then each total's. A file's counts are
@@ -715,6 +718,8 @@ impl Emit<'_, '_> {
     }
 
     fn emit(&mut self, f: &mut FunctionBuilder<'_>, at: usize) {
+        // Each instruction made for value `at` is marked with it (`native_cpu_pressure`).
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(at as u32 + 1));
         let native = self.native;
         let state = self.state;
         let plan = &state.plan;
@@ -1007,6 +1012,7 @@ impl Emit<'_, '_> {
 
     /// Value `x`'s word to each of `slots` of the block's row.
     fn store(&mut self, f: &mut FunctionBuilder<'_>, x: usize, slots: &[u16]) {
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(x as u32 + 1));
         for &slot in slots {
             let v = plain(&mut *f, &self.syms, &mut self.values, x);
             f.ins().store(stores_flags(), v, self.row, 8 * i32::from(slot));
@@ -1015,6 +1021,7 @@ impl Emit<'_, '_> {
 
     /// Value `x`'s mask stores, as outputs `ks` of the last pass (`Sinks`).
     fn sink(&mut self, f: &mut FunctionBuilder<'_>, x: usize, ks: &[usize]) {
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(x as u32 + 1));
         let Some(sk) = self.sinks else { return };
         for &k in ks {
             let v = plain(&mut *f, &self.syms, &mut self.values, x);
@@ -1040,6 +1047,7 @@ impl Emit<'_, '_> {
     }
 
     fn finish(mut self, f: &mut FunctionBuilder<'_>) -> (Vec<Value>, Vec<Value>) {
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::default());
         let outputs = (0..self.native.outputs.len())
             .map(|k| match self.sunk[k] {
                 Some(v) => v,
@@ -1151,10 +1159,11 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let mut context: Context = module.make_context();
         context.func.signature = signature.clone();
         context.set_disasm(true);
-        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new() };
+        let mut hot = Vec::new();
+        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default() };
         match pass {
             Pass::Forward { body, stores } => {
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches) = forward(&mut context, body, stores, passes.slots)?;
+                (shape.ascii_branch, shape.gate_branches, shape.round_branches) = forward(&mut context, body, stores, passes.slots, &mut hot)?;
                 shape.extracts = body.extracts.len();
             }
             Pass::Back(fills) => {
@@ -1162,6 +1171,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 shape.back = true;
             }
         }
+        // The marks are the profile's only (`native_cpu_pressure`): read, then cleared, so the IR
+        // as text is the program's alone.
+        shape.pressure = super::native_cpu_pressure::measure(&context.func, &passes.origins[k], &hot);
+        context.func.srclocs.clear();
         shape.clif = context.func.display().to_string();
         super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
         shape.disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
@@ -1274,7 +1287,7 @@ fn backward(context: &mut Context, fills: &[(u16, u16, u16)], slots: u16) -> Res
 /// Before the last pass, `slot_of` gives each output's slot: the block's word is stored there as
 /// the body made it. Gives whether the full body branches on ASCII, the gated regions' branches
 /// and the fixed points' loops.
-fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: u16) -> Result<(bool, usize, usize), Error> {
+fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>) -> Result<(bool, usize, usize), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     // The outputs with a delay: each carries its word shifted down, for the store of the next.
@@ -1395,6 +1408,9 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
         // The loops' progress points: the files, the blocks, and each flattening's set bits.
         let mut heads = vec![(row, Step::File), (head, Step::Block), (body_block, Step::Block)];
         for (b, full) in [(body_block, true), (general, false)] {
+            // The hot loop's blocks, for the profile (`native_cpu_pressure`): the full body's
+            // head and every block made for it.
+            let made_from = f.func.dfg.num_blocks();
             f.switch_to_block(b);
             let p = f.block_params(b).to_vec();
             let (i, base, dst) = (p[0], p[1], p[2]);
@@ -1497,6 +1513,8 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 .collect();
             if full {
                 // The hot loop's back edge: to itself while the next block is full.
+                hot.push(body_block);
+                hot.extend((made_from..f.func.dfg.num_blocks()).map(|k| cranelift_codegen::ir::Block::from_u32(k as u32)));
                 let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
                 f.ins().brif(more, body_block, &again, head, &again);
             } else {

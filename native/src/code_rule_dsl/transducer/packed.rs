@@ -249,6 +249,7 @@ mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
 mod native_cpu_lanes;
+mod native_cpu_pressure;
 mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
