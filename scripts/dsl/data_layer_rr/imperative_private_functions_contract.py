@@ -37,7 +37,7 @@ class Contract:
         self.host_protocol_calls = []
         self.baseline = read_json(args.baseline) if args.command == 'native' else None
         self.backend = None
-        names = ['imperative_private_functions_port.py', 'ast_sources.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py']
+        names = ['imperative_private_functions_port.py', 'internal_dead_code_port.py', 'ast_sources.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py']
         paths = [Path(__file__), *[Path(__file__).with_name(n) for n in names], ROOT/'scripts/dsl/data_layer_audit/native_guard.py']
         self.harness = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths if p.is_file()}
         if self.baseline:
@@ -49,7 +49,8 @@ class Contract:
         root=self.item.funcargs.get('tmp_path') if self.item else None
         if isinstance(value,str) and root is not None:value=value.replace(str(root),'$ROOT')
         if type(value).__name__ == 'SymbolGraph':
-            return dict(type='SymbolGraph',state=self.value(vars(value)))
+            return dict(type='SymbolGraph',state=self.value(vars(value)),
+                        callerIteration=[[sid,list(callers)] for sid,callers in value.callers.items()])
         if type(value).__name__ == 'Counter':
             return dict(kind='counter',items=[[self.value(k),self.value(v)] for k,v in value.items()])
         if type(value).__name__ == 'FactEngine':
@@ -79,6 +80,9 @@ class Contract:
         module = importlib.import_module('scripts.lint_imperative_private_functions')
         self.module=module
         originals = codes({'imperative_private_functions': module})
+        if self.backend:
+            from internal_dead_code_port import graph_algorithm_codes
+            originals.update(graph_algorithm_codes(module))
         targets = [(module,n,None) for n in FUNCTIONS]
         targets += [(getattr(module,c),n,None) for c in CLASSES for n,f in vars(getattr(module,c)).items() if inspect.isfunction(f) and f.__code__.co_filename == str(self.args.source / "scripts/lint_imperative_private_functions.py")]
         targets += [(getattr(module, c), n, c) for c, names in PROPERTIES.items() for n in names]
