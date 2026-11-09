@@ -22,7 +22,12 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
     drop(all);
     Executor::with(lanes)
 });
-static ALL: LazyLock<Executor> = LazyLock::new(Executor::new);
+static ALL: LazyLock<Executor> = LazyLock::new(|| {
+    // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
+    #[cfg(target_os = "macos")]
+    crate::code_rule_dsl::transducer::packed::metal_sort::install_guard();
+    Executor::new()
+});
 
 /// The executor for this thread's run.
 pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {

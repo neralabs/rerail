@@ -28,8 +28,7 @@ use super::metal_backend::MappedBuffer;
 use super::metal_backend::launch::{CheckedComputeEncoder, LaunchScope, commit_checked, gpu_seconds};
 use super::rows_sort::{bits, span};
 use metal::{Buffer, BufferRef, CommandBufferRef, CommandQueue, ComputeCommandEncoderRef, ComputePipelineState, MTLSize};
-use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
 
 /// Rows a threadgroup takes in the sort and the scans: 256 threads, four rows each.
 const TILE: usize = 1024;
@@ -84,33 +83,31 @@ fn device() -> Result<&'static metal::Device, Error> {
     super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)
 }
 
-thread_local! {
-    /// This thread's queue: one for every submission it makes.
-    static QUEUE: OnceCell<CommandQueue> = const { OnceCell::new() };
-}
-
+/// The one queue of relational work (decision 0100 §2), shared with the executor's GPU lane.
 pub(super) fn queue() -> Result<CommandQueue, Error> {
-    let device = device()?;
-    Ok(QUEUE.with(|q| q.get_or_init(|| device.new_command_queue()).clone()))
+    device()?;
+    install_guard();
+    Ok(rerail_accel::gpu::shared::get().ok_or(Error::UnsupportedBackend)?.queue.clone())
+}
+
+/// Makes the engine's launch budget the check of every submission the executor makes (once per process).
+pub(in crate::code_rule_dsl) fn install_guard() {
+    rerail_accel::gpu::shared::set_guard(|| {
+        let _scope = LaunchScope::enter();
+        super::metal_backend::launch::check_submission().map_err(|e| format!("{e:?}"))
+    });
 }
 
 thread_local! {
-    /// This thread's pipelines, by their variant's name: compiled once, found without hashing their source.
-    static PIPELINES: RefCell<HashMap<String, ComputePipelineState>> = RefCell::new(HashMap::new());
     /// This thread's scratch buffers, by slot: a sort's or probe's intermediates, kept for the next (each call
     /// completes its command buffers before it returns, so no two calls share one in flight).
     static SCRATCH: RefCell<Vec<Option<MappedBuffer>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// The pipeline `name` of the variant `variant`, its source made by `source` the first time.
+/// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
+/// manager (decision 0100 §2), so every thread finds it compiled.
 fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, Error> {
-    let key = format!("{variant} {name}");
-    if let Some(p) = PIPELINES.with_borrow(|m| m.get(&key).cloned()) {
-        return Ok(p);
-    }
-    let p = super::metal_backend::pipeline_named(&source(), name)?;
-    PIPELINES.with_borrow_mut(|m| m.insert(key, p.clone()));
-    Ok(p)
+    rerail_accel::gpu::shared::pipeline(&format!("metal_sort {variant} {name}"), || super::metal_backend::pipeline_named(&source(), name))
 }
 
 /// How a call waits for its command buffer: Metal's `waitUntilCompleted`, or a completion handler the thread
@@ -194,40 +191,23 @@ fn scratch(slot: usize, bytes: usize) -> Result<Buffer, Error> {
     })
 }
 
-thread_local! {
-    /// This thread's free buffers by size (a power of two), and their bytes: a `Held` dropped returns here.
-    static POOL: RefCell<(HashMap<usize, Vec<MappedBuffer>>, usize)> = RefCell::new((HashMap::new(), 0));
-}
-
-/// The most bytes a thread's pool keeps free.
-const POOL_LIMIT: usize = 64 << 20;
-
-/// A device buffer of this thread's pool: a free one of its size class when there is one, returned when dropped.
-/// A buffer Metal has seen is resident already: a new one costs its creation and its mapping into the GPU's space
-/// at its first commit, a pooled one neither. (A buffer dropped while a command buffer still uses it may be handed
-/// out again at once: the next user's commands are on the same queue, after that command buffer.)
+/// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
+/// returned when dropped. A buffer Metal has seen is resident already: a new one costs its creation and its mapping
+/// into the GPU's space at its first commit, a pooled one neither. Its holder drops it only once every command
+/// buffer that reads it has completed (`Submitted::reads`, `Keyed`'s drop): the next lease's host writes are not
+/// ordered after a GPU read.
 pub(in crate::code_rule_dsl) struct Held {
-    mapped: Option<MappedBuffer>,
+    _lease: rerail_accel::gpu::shared::Pooled,
     pub(super) buffer: Buffer,
 }
 
 impl Held {
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub(super) fn new(bytes: usize) -> Result<Held, Error> {
-        let class = bytes.max(256).next_power_of_two();
-        let free = POOL.with_borrow_mut(|(free, held)| {
-            let b = free.get_mut(&class).and_then(Vec::pop);
-            if b.is_some() {
-                *held -= class;
-            }
-            b
-        });
-        let mapped = match free {
-            Some(b) => b,
-            None => MappedBuffer::zeroed::<u8>(device()?, class)?,
-        };
-        let buffer = mapped.buffer.clone();
-        Ok(Held { mapped: Some(mapped), buffer })
+        device()?;
+        let lease = rerail_accel::gpu::shared::lease(bytes).map_err(|_| Error::BackendFailure)?;
+        let buffer = lease.buffer().clone();
+        Ok(Held { _lease: lease, buffer })
     }
 
     /// A buffer holding `values`, written by the host.
@@ -240,19 +220,6 @@ impl Held {
             *o = v;
         }
         Ok(held)
-    }
-}
-
-impl Drop for Held {
-    fn drop(&mut self) {
-        let Some(mapped) = self.mapped.take() else { return };
-        let class = mapped.buffer.length() as usize;
-        POOL.with_borrow_mut(|(free, held)| {
-            if *held + class <= POOL_LIMIT {
-                *held += class;
-                free.entry(class).or_default().push(mapped);
-            }
-        });
     }
 }
 

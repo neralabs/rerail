@@ -10,8 +10,9 @@
 //!    the GPU, one streaming session per SME worker, batched predictions per model on the Neural Engine, one
 //!    parallel pass on the cores. That is what batching launches buys: a lane's fixed cost once per wave, not once
 //!    per launch.
-//! 3. **Concurrency.** The lanes' submissions run at the same time, each on its own thread; the batch ends when every
-//!    lane is done.
+//! 3. **Concurrency.** The lanes' submissions run at the same time, each on its lane's own worker thread (one per
+//!    lane, kept for the executor's life). [`Executor::begin`] returns as soon as every lane has its share, so the
+//!    caller works while the lanes do; [`Running::wait`] collects the outputs (decision 0100 §3).
 //!
 //! There is no fallback. A launch no present lane can run is an error that names it, and so is a lane's failure.
 
@@ -81,7 +82,39 @@ pub struct Report {
 /// The lanes this process has, their prices, and the submission of batches.
 pub struct Executor {
     backends: Vec<Arc<dyn Backend>>,
+    /// Each backend's worker: the thread its submissions run on, in the order they were sent.
+    workers: Vec<std::sync::mpsc::Sender<Task>>,
     pub prices: Prices,
+}
+
+/// A lane's share of a batch, and where its outputs go: the outputs and the submission's wall seconds.
+type Task = (Vec<Kernel>, std::sync::mpsc::SyncSender<(Result<Vec<Output>, String>, f64)>);
+
+/// The worker of `backend`: runs each task it is sent, in order, until the executor drops.
+fn worker(backend: Arc<dyn Backend>) -> std::sync::mpsc::Sender<Task> {
+    let (send, take) = std::sync::mpsc::channel::<Task>();
+    std::thread::Builder::new()
+        .name(format!("rerail-accel {}", backend.lane().name()))
+        .spawn(move || {
+            for (ks, reply) in take {
+                let t = Instant::now();
+                let refs: Vec<&Kernel> = ks.iter().collect();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit(&refs))).unwrap_or_else(|_| Err("its submission panicked".into()));
+                let _ = reply.send((r, t.elapsed().as_secs_f64()));
+            }
+        })
+        .expect("a lane's worker thread");
+    send
+}
+
+/// A batch the lanes are running ([`Executor::begin`]).
+pub struct Running {
+    placed: Vec<(Lane, f64, f64)>,
+    per_lane: [Vec<usize>; 4],
+    replies: Vec<(Lane, std::sync::mpsc::Receiver<(Result<Vec<Output>, String>, f64)>)>,
+    report: Report,
+    joules: [f64; 4],
+    cpu0: f64,
 }
 
 impl Executor {
@@ -102,12 +135,13 @@ impl Executor {
             backends.extend(crate::ane::backend());
         }
         let _ = present;
-        Executor { backends, prices: Prices::default() }
+        Executor::with(backends)
     }
 
     /// Only the given lanes' backends (tests; a binding that allows only some lanes).
     pub fn with(backends: Vec<Arc<dyn Backend>>) -> Self {
-        Executor { backends, prices: Prices::default() }
+        let workers = backends.iter().map(|b| worker(Arc::clone(b))).collect();
+        Executor { backends, workers, prices: Prices::default() }
     }
 
     pub fn lanes(&self) -> Vec<Lane> {
@@ -141,8 +175,13 @@ impl Executor {
         Ok(placed)
     }
 
-    /// Runs a batch: placed, one submission per lane, the lanes together.
+    /// Runs a batch: placed, one submission per lane, the lanes together; returns when every lane is done.
     pub fn run(&self, batch: Batch) -> Result<(Vec<Done>, Report), String> {
+        self.begin(batch)?.wait()
+    }
+
+    /// Places a batch and gives each lane its share, without waiting: the lanes run while the caller works.
+    pub fn begin(&self, batch: Batch) -> Result<Running, String> {
         let cpu0 = process_cpu();
         let placed = self.place(&batch)?;
         let mut report = Report::default();
@@ -157,34 +196,60 @@ impl Executor {
                 }
             }
         }
-        let results: Vec<(Lane, Result<Vec<Output>, String>, f64)> = std::thread::scope(|s| {
-            let handles: Vec<_> = Lane::ALL
-                .iter()
-                .filter(|l| !per_lane[l.index()].is_empty())
-                .map(|&lane| {
-                    let ks: Vec<&Kernel> = per_lane[lane.index()].iter().map(|&i| &batch.0[i].kernel).collect();
-                    let backend = self.backend(lane).expect("placed on a present lane");
-                    s.spawn(move || {
-                        let t = Instant::now();
-                        let r = backend.submit(&ks);
-                        (lane, r, t.elapsed().as_secs_f64())
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().expect("a lane's thread panicked")).collect()
-        });
-        let mut outs: Vec<Option<Output>> = vec![None; batch.0.len()];
-        for (lane, r, wall) in results {
-            let r = r.map_err(|e| format!("{} lane: {e}", lane.name()))?;
+        // The engine's launch budget, checked on the submitting thread (decision 0100 §2).
+        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        if !per_lane[Lane::Gpu.index()].is_empty() {
+            crate::gpu::shared::guard().map_err(|e| format!("gpu lane: {e}"))?;
+        }
+        let mut kernels: Vec<Option<Kernel>> = batch.0.into_iter().map(|l| Some(l.kernel)).collect();
+        let mut replies = Vec::new();
+        for lane in Lane::ALL {
+            let ids = &per_lane[lane.index()];
+            if ids.is_empty() {
+                continue;
+            }
+            let at = self.backends.iter().position(|b| b.lane() == lane).expect("placed on a present lane");
+            let ks: Vec<Kernel> = ids.iter().map(|&i| kernels[i].take().expect("a launch placed once")).collect();
+            let (reply, take) = std::sync::mpsc::sync_channel(1);
+            self.workers[at].send((ks, reply)).map_err(|_| format!("{} lane: its worker ended", lane.name()))?;
+            replies.push((lane, take));
+        }
+        let mut joules = [0.0; 4];
+        for lane in Lane::ALL {
+            joules[lane.index()] = self.prices.joules(lane, 1.0);
+        }
+        Ok(Running { placed, per_lane, replies, report, joules, cpu0 })
+    }
+}
+
+impl Running {
+    /// Waits for every lane's share: each launch's output, in the batch's order, and the batch's report.
+    pub fn wait(self) -> Result<(Vec<Done>, Report), String> {
+        let Running { placed, per_lane, replies, mut report, joules, cpu0 } = self;
+        let mut outs: Vec<Option<Output>> = vec![None; placed.len()];
+        let mut failed: Option<String> = None;
+        for (lane, take) in replies {
+            let (r, wall) = take.recv().map_err(|_| format!("{} lane: its worker ended", lane.name()))?;
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => {
+                    failed.get_or_insert(format!("{} lane: {e}", lane.name()));
+                    continue;
+                }
+            };
             let ids = &per_lane[lane.index()];
             if r.len() != ids.len() {
-                return Err(format!("{} lane: {} outputs for {} launches", lane.name(), r.len(), ids.len()));
+                failed.get_or_insert(format!("{} lane: {} outputs for {} launches", lane.name(), r.len(), ids.len()));
+                continue;
             }
             report.wall[lane.index()] = wall;
-            report.joules[lane.index()] = self.prices.joules(lane, wall);
+            report.joules[lane.index()] = joules[lane.index()] * wall;
             for (&i, o) in ids.iter().zip(r) {
                 outs[i] = Some(o);
             }
+        }
+        if let Some(e) = failed {
+            return Err(e);
         }
         report.cpu = process_cpu() - cpu0;
         let done = outs

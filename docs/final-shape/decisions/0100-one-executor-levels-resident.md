@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; step 1 is done.
+below; steps 1–3 are done.
 
 ## Intro
 
@@ -162,8 +162,19 @@ reads the shared symbol table, and new symbols take its write lock, so the gain 
    2,237 extra findings. Fixed, with a test.
 2. **The one Metal manager:** the pool, queue, pipelines and commit hook move into `rerail_accel::gpu`.
    `metal_sort` and `metal_rows` use it, and the executor's GPU lane takes buffers from the pool instead of making
-   new ones per batch.
-3. **Asynchronous submission:** `begin` and `wait`, with the GPU's completion handler.
+   new ones per batch. *Done* (`rerail_accel::gpu::shared`):
+   - one queue for the lane and the engine's sorts and probes;
+   - pipelines kept by key, for every thread;
+   - one pool of shared buffers, size classes from 16 KiB, at most 32 MiB idle. The lane's buffers are zeroed on
+     reuse, because its kernels count into them;
+   - the engine's launch budget as the guard, checked on the thread that begins a batch;
+   - the pool and pipelines released with the residency slabs.
+
+   The lab's 232 joins (sort and probe) and 110 tiles are all exact on it, and the pack's findings are identical.
+3. **Asynchronous submission:** `begin` and `wait`. *Done*: each lane has one worker thread for the executor's life,
+   so a batch is handed over without spawning threads. `begin` returns once every lane has its share, and `run` is
+   `begin` then `wait`. A test begins two batches, collects them in reverse order, and checks both against the
+   reference.
 4. **The space, and the join forms as kernels:** sort, probe and tile in the executor, with their CPU references
    (`rows_sort`) and their measured prices.
 5. **Levels in the engine:** a level's launches as one batch. Then first joins from the device, with the host
