@@ -327,9 +327,11 @@ Joined(@place("a.py", 1), value) :- value = join name by rank sep "," : { event(
     let dump = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst");
     let sql = zstd::decode_all(std::fs::File::open(dump).unwrap()).unwrap();
     db.execute_batch(std::str::from_utf8(&sql).unwrap()).unwrap();
-    db.execute_batch("CREATE TABLE item(owner INTEGER, name TEXT, label TEXT, rank INTEGER);
+    db.execute_batch("CREATE TABLE item(c0 INTEGER, c1 TEXT, c2 TEXT, c3 INTEGER);
         INSERT INTO item VALUES (1,'x9','keep',9),(1,'x4','keep',4),(1,'skip','skip',100);
-        INSERT INTO stat_meta VALUES ('rows.item',3);").unwrap();
+        INSERT INTO stat_meta VALUES ('rows.item',3);
+        INSERT INTO stat_col VALUES ('item','c0',3,1,9,9),('item','c1',3,3,3,3),
+            ('item','c2',3,2,5,5),('item','c3',3,3,3,3);").unwrap();
     drop(db);
     let program = parse(r#"
 .decl item(owner: number, name: symbol, label: symbol, rank: number)
