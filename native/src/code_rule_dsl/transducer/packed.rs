@@ -45,6 +45,9 @@ pub(super) use metal_backend::launch::LaunchScope as MetalTestScope;
 mod metal_batch_abi;
 #[cfg(target_os = "macos")]
 mod metal_parallel;
+// Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_rows;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]

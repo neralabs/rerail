@@ -38,7 +38,7 @@
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
 mod scalars;
 mod liveness;
-mod rowcode;
+pub(in crate::code_rule_dsl) mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -899,6 +899,122 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
         }
         line
     }).collect::<Vec<_>>().join("\n"))
+}
+
+/// A fused filter over an input relation that a device can run alone (`scans`): its row program, its inputs, its
+/// atom's gathered rows, its parameters, and the rows the CPU passes with the CPU it took.
+pub(in crate::code_rule_dsl) struct ScanCase {
+    pub(in crate::code_rule_dsl) rule: String,
+    pub(in crate::code_rule_dsl) program: crate::code_rule_dsl::transducer::packed::block::BlockProgram,
+    pub(in crate::code_rule_dsl) inputs: Vec<rowcode::Word>,
+    pub(in crate::code_rule_dsl) gathered: Vec<(usize, Vec<i64>)>,
+    pub(in crate::code_rule_dsl) params: Vec<i64>,
+    pub(in crate::code_rule_dsl) passed: Vec<u32>,
+    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+}
+
+/// Each fused filter of an open component's rules whose atom reads an input relation with constant keys and whose
+/// parameters are constants: the whole of what it filters is known before the run, so a device scan of it can be
+/// checked against the CPU's (the relational lab).
+pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let mut out = Vec::new();
+    let rules = comp.probes.iter().enumerate().flat_map(|(p, probe)| {
+        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) => None };
+        body.into_iter().chain(probe.whole.as_ref().map(|j| (format!("probe{p}.whole"), j)))
+    });
+    for (label, j) in rules {
+        for (i, f) in j.fused.iter().enumerate() {
+            let Some(f) = f.as_deref() else { continue };
+            let Step::Atom { src: src @ Src::In(..), keys, tests, .. } = &j.steps[i] else { continue };
+            if keys.iter().any(|(_, k)| matches!(k, Key::Slot(_))) || f.params.iter().any(|p| matches!(p.key, Key::Slot(_))) { continue; }
+            let key: Vec<i64> = keys.iter().map(|&(_, k)| match k { Key::Const(c) => c, Key::Slot(_) => unreachable!("constants") }).collect();
+            let Src::In(rel, _) = src else { unreachable!("an input") };
+            // Every row, its keys checked (the index finds the same ones).
+            let keep: Vec<u32> = (0..rel.len() as u32).filter(|&id| !is_dead(&rel.dead, id)).filter(|&id| {
+                let row = rel.at(id as usize).read();
+                keys.iter().zip(&key).all(|(&(c, _), &v)| row.at(c) == v) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+            }).collect();
+            let gathered: Vec<(usize, Vec<i64>)> = f.gather.iter().map(|&(_, c)| (c, keep.iter().map(|&id| rel.at(id as usize).read().at(c)).collect())).collect();
+            let params: Vec<i64> = f.params.iter().map(|p| { let Key::Const(v) = p.key else { unreachable!("constants") }; if p.doc { v >> 32 } else { v } }).collect();
+            // The CPU: the chunks as the run takes them.
+            let c0 = thread_cpu();
+            let mut s = rowcode::Scratch { columns: vec![Vec::new(); f.columns.len()], params: params.clone(), ..Default::default() };
+            let mut passed = Vec::new();
+            for start in (0..keep.len()).step_by(rowcode::CHUNK) {
+                let end = (start + rowcode::CHUNK).min(keep.len());
+                for (g, (_, col)) in f.gather.iter().zip(&gathered) {
+                    s.columns[g.0].clear();
+                    s.columns[g.0].extend_from_slice(&col[start..end]);
+                }
+                s.rows = end - start;
+                let words = f.run(&mut s, |_, _| {});
+                for (w, &word) in words.iter().enumerate() {
+                    let mut m = word;
+                    while m != 0 { passed.push((start + 64 * w + m.trailing_zeros() as usize) as u32); m &= m - 1; }
+                }
+            }
+            let cpu_seconds = thread_cpu() - c0;
+            out.push(ScanCase { rule: format!("{label} step {i}"), program: f.program.clone(), inputs: f.columns.clone(), gathered, params, passed, cpu_seconds });
+        }
+    }
+    Ok(out)
+}
+
+/// Two atoms of a rule over input relations, the second's keys all bound by the first (`tiles`): the first's rows (its
+/// constant keys checked) by the columns the second's keys read, the second's rows by its key columns, and the pairs
+/// a CPU hash join gives (left row, right row id) with the CPU it took.
+pub(in crate::code_rule_dsl) struct TileCase {
+    pub(in crate::code_rule_dsl) rule: String,
+    pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
+    pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
+    pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+    pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
+    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+}
+
+/// Each rule's first two steps when both are atoms over input relations and the second's keys are slots the first
+/// binds: a join whose whole input is known before the run (the relational lab's `tile`).
+pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let mut out = Vec::new();
+    let rules = comp.probes.iter().enumerate().flat_map(|(p, probe)| {
+        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) => None };
+        body.into_iter().chain(probe.whole.as_ref().map(|j| (format!("probe{p}.whole"), j)))
+    });
+    for (label, j) in rules {
+        let (Some(Step::Atom { src: Src::In(a, _), neg: false, keys: ak, binds, tests: at }), Some(Step::Atom { src: Src::In(b, _), neg: false, keys: bk, tests: bt, .. })) = (j.steps.first(), j.steps.get(1)) else { continue };
+        if bk.is_empty() || ak.iter().any(|(_, k)| matches!(k, Key::Slot(_))) { continue; }
+        let Some(lcols) = bk.iter().map(|&(_, k)| match k { Key::Slot(s) => binds.iter().find(|b| b.1 == s).map(|b| b.0), Key::Const(_) => None }).collect::<Option<Vec<usize>>>() else { continue };
+        let rcols: Vec<usize> = bk.iter().map(|&(c, _)| c).collect();
+        let akey: Vec<(usize, i64)> = ak.iter().map(|&(c, k)| (c, match k { Key::Const(v) => v, Key::Slot(_) => unreachable!("constants") })).collect();
+        let lrows: Vec<u32> = (0..a.len() as u32).filter(|&id| !is_dead(&a.dead, id)).filter(|&id| {
+            let row = a.at(id as usize).read();
+            akey.iter().all(|&(c, v)| row.at(c) == v) && at.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+        }).collect();
+        let right_ids: Vec<u32> = (0..b.len() as u32).filter(|&id| !is_dead(&b.dead, id)).filter(|&id| {
+            let row = b.at(id as usize).read();
+            bt.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+        }).collect();
+        let left: Vec<Vec<i64>> = lcols.iter().map(|&c| lrows.iter().map(|&id| a.at(id as usize).read().at(c)).collect()).collect();
+        let right: Vec<Vec<i64>> = rcols.iter().map(|&c| right_ids.iter().map(|&id| b.at(id as usize).read().at(c)).collect()).collect();
+        // The CPU: a hash join, built on the right and probed by each left row.
+        let c0 = thread_cpu();
+        let mut table: HashMap<Vec<i64>, Vec<u32>> = HashMap::default();
+        for r in 0..right_ids.len() { table.entry(right.iter().map(|c| c[r]).collect()).or_default().push(r as u32); }
+        let mut pairs = Vec::new();
+        let mut key = Vec::new();
+        for l in 0..lrows.len() {
+            key.clear();
+            key.extend(left.iter().map(|c| c[l]));
+            if let Some(rs) = table.get(&key) { pairs.extend(rs.iter().map(|&r| (l as u32, r))); }
+        }
+        let cpu_seconds = thread_cpu() - c0;
+        out.push(TileCase { rule: label, left, right, right_ids, pairs, cpu_seconds });
+    }
+    Ok(out)
 }
 
 /// `set_fixpoint_steps(name)`: per probe line (spec order), its join steps' "in:out" counts since the last call,
