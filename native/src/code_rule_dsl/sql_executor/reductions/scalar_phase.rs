@@ -42,7 +42,7 @@ pub(super) fn apply(
     let _context = w.profile_scope(|| json!({"logicalAnalysis":state.explain()}));
     let mut groups = 0;
     let mut extra = BTreeMap::new();
-    for rule in &state.rules {
+    for rule in state.rules.iter() {
         let mut queries = vec![];
         for reducer in &rule.reducers {
             if let Some((keys, touched)) = reducer.apply(w, changes)? {

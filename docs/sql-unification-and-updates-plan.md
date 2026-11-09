@@ -1789,3 +1789,72 @@ The structure comparison retains 10 passing metrics and 15 existing failures, wi
 
 Native sharing currently covers supported integer scalar bags. Dependent expressions and unsupported ordering retain their established evaluation paths.
 Multiple producers and lattice supports still need general reconciliation. Sharing across independent wave gates still requires matching versions and maintenance cursors.
+
+### Sparse recursive edit CPU (2026-11-08)
+
+This follow-up compares the changes with `18db644e2`. The objective is lower CPU for sparse recursive edits without weaker correctness or execution limits.
+
+#### Causes and changes
+
+Transactional edits cloned prepared rule descriptors in every retained wave. Those copies included query trees, reducer descriptions, and logical decisions.
+The successful transaction then destroyed the previous copies. A process sample showed both costs during repeated edits.
+Prepared rule descriptors and wave queries now use shared ownership. Planning changes use copy-on-write, while mutable execution state keeps independent snapshots.
+
+Sparse publication also built temporary incoming indexes before it inserted those same rows into retained indexes.
+An identical incoming row still caused deletion and insertion along persistent index paths.
+Publication now validates incoming rows without those temporary indexes. It keeps identical rows and their roots.
+A replacement retains its row ID and updates each unchanged index key once. Changed secondary values retain their distinct counts.
+New rows receive IDs in incoming order. Complete and empty replacements retain their existing bulk construction paths.
+Every output still finishes preparation before the phase publishes any output.
+
+Logical explain describes the sparse publication strategy. SQL profiling adds `retained_nonempty_roots` beside the existing initial-root reuse count.
+Both measured complete recursive sessions report 20 nonempty outputs with retained row roots during successful edits.
+The first storage-only timing batch showed no reliable overall gain. The final change also removes repeated descriptor copies.
+
+#### Measurements
+
+The optimized baseline and final binaries use Rust 1.95.0, identical features, and the same profiling build configuration.
+Timing trials disable profiling. Each trial uses a fresh process and store. Five pairs alternate the baseline and final execution order.
+Each process executes 600 edits across disconnected shortest-path regions, including edge deletion, root deletion, and combined restoration.
+Publication guards reject writes to unrelated regions. Every pair compares its query results.
+
+| Measurement | 1,000 regions: baseline / final | 10,000 regions: baseline / final |
+| --- | ---: | ---: |
+| First six edits, median CPU | 17.92 / 17.10 ms | 20.82 / 20.45 ms |
+| Remaining 594 edits, median CPU | 716.51 / 610.55 ms | 811.87 / 753.65 ms |
+| All 600 edits, median CPU | 735.64 / 627.94 ms | 836.23 / 776.11 ms |
+| Initial execution, median CPU | 141.31 / 136.84 ms | 1.461 / 1.453 s |
+| Peak RSS, median | 65.89 / 65.70 MiB | 483.55 / 483.47 MiB |
+
+Warmed edit CPU improves by 15% and 7%. Every pair improves at both sizes.
+The first six edits improve only slightly, with overlapping trial results. These changes do not establish a first-edit speedup.
+First edits still pay statement preparation costs. Further work can target preparation and generated query size.
+Other worktrees ran jobs on the shared macOS arm64 host. These timings do not establish isolated hardware limits.
+
+A separate set-closure control uses disconnected chains, bridge changes, and isolated insertions and deletions.
+Three alternating pairs at each size show overlapping timing results and no consistent improvement.
+Its remaining 594-edit medians are 99.89 / 103.60 ms and 106.81 / 107.91 ms.
+The measured improvement applies to retained lattice recursion. The control does not establish a set-closure speedup.
+
+#### Reproduction and correctness
+
+Generate the repeated edit request:
+
+```sh
+python3 benchmark/sql-executor.py --recursive-edit-request 10000 --cycles 100 /tmp/recursive-edits.json
+```
+
+Run each optimized benchmark binary with a fresh store and `RERAIL_SQL_BENCH_UNPROFILED=1`.
+The benchmark reports CPU per edit. Sum the first six edits separately from the remaining edits.
+The existing `--session-request` command generates complete relation observations with execution failures and recovery.
+
+Complete recursive sessions pass at both sizes against the independent cold executor.
+Each session compares all nine checkpoints, every relation, output deltas, widening counters, and queries.
+Both execution-limit and wave-limit failures preserve state, and the later successful edit recovers.
+Complete SQL counts remain 100. All capture connections close, and SQL receipts retain known engine origins.
+
+New storage tests compare 128 sparse patches with complete rebuilds, including row IDs and all index entries.
+They cover nullable values, restricted indexes, identical rows, deletions, replacements, and new rows.
+An additional test requires identical patches to retain every root and rejects invalid or duplicate incoming rows.
+The SQL executor suite passes 138 tests, with one ignored test. All 38 profiling and reporting tests pass.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.

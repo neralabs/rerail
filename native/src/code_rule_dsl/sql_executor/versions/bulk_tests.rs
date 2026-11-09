@@ -384,3 +384,131 @@ fn empty_patch_publishes_canonical_roots_with_sparse_row_ids_and_indexes() {
     );
     assert_eq!(store.version("empty_patch").len(), 0);
 }
+
+#[test]
+fn sparse_patches_match_complete_rebuilds_and_preserve_all_index_rows() {
+    let schema = Arc::new(Schema {
+        columns: (0..4).map(|c| format!("c{c}")).collect(),
+        keys: 2,
+        nullable: vec![false, false, false, true],
+        positive: BTreeMap::from([(2, false)]),
+    });
+    for indexes in [vec![1, 2, 3], vec![3]] {
+        let mut current = Version::empty(schema.clone())
+            .loaded(
+                (0..1024)
+                    .map(|i| {
+                        vec![
+                            Some(i / 8),
+                            Some(i % 8),
+                            Some(i % 5 + 1),
+                            (i % 7 != 0).then_some(i % 3),
+                        ]
+                    })
+                    .collect(),
+                false,
+                false,
+            )
+            .unwrap();
+        current.restrict_indexes(&indexes);
+        for edit in 0..64_i64 {
+            let before = current.clone();
+            let selected = (0..12)
+                .map(|i| {
+                    let k = (edit * 19 + i * 83) % 1152;
+                    vec![Some(k / 8), Some(k % 8)]
+                })
+                .collect::<Vec<_>>();
+            // Mix deletions, new rows, identical rows, nullable values, and
+            // updates that keep some secondary index keys unchanged.
+            let rows = selected
+                .iter()
+                .enumerate()
+                .rev()
+                .filter_map(|(i, pk)| {
+                    if (i + edit as usize) % 4 == 0 {
+                        return None;
+                    }
+                    if i % 3 == 0 {
+                        if let Some(old) = Node::get(&before.primary, pk) {
+                            return Some(old.values.to_vec());
+                        }
+                    }
+                    Some(vec![
+                        pk[0],
+                        pk[1],
+                        Some((edit + i as i64) % 9),
+                        (i % 5 != 0).then_some(edit % 3),
+                    ])
+                })
+                .collect::<Vec<_>>();
+            let mut complete = before.rows();
+            complete.retain(|r| !selected.iter().any(|k| r[..2] == k[..]));
+            complete.extend(rows.clone());
+            let expected = before.loaded(complete, false, true).unwrap();
+            current = before.patched_rows(selected, rows, false).unwrap();
+            assert!(current.same(&expected), "edit {edit}");
+            assert_eq!(current.next, expected.next);
+            assert_eq!(current.distinct, expected.distinct);
+            let entries = |root: &Link<Row>| {
+                let mut rows = vec![];
+                Node::prefix(root, &[], &mut rows);
+                rows.into_iter()
+                    .map(|r| (r.id, r.values.to_vec()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(entries(&current.full), entries(&expected.full));
+            assert_eq!(entries(&current.primary), entries(&expected.primary));
+            assert_eq!(entries(&current.ids), entries(&expected.ids));
+            for c in 1..4 {
+                assert_eq!(entries(&current.indexes[c]), entries(&expected.indexes[c]));
+            }
+        }
+    }
+}
+
+#[test]
+fn identical_sparse_patches_keep_every_root_and_validate_even_unused_rows() {
+    let schema = Arc::new(Schema {
+        columns: vec!["c0".into(), "c1".into()],
+        keys: 1,
+        nullable: vec![false, false],
+        positive: BTreeMap::from([(1, true)]),
+    });
+    let before = Version::empty(schema)
+        .loaded(
+            (0..2000).map(|i| vec![Some(i), Some(i + 1)]).collect(),
+            false,
+            false,
+        )
+        .unwrap();
+    let keys = vec![
+        vec![Some(17)],
+        vec![Some(500)],
+        vec![Some(17)],
+        vec![Some(3000)],
+    ];
+    let values = vec![vec![Some(500), Some(501)], vec![Some(17), Some(18)]];
+    let after = before.patched_rows(keys, values.clone(), false).unwrap();
+    let identical =
+        |a: &Link<Row>, b: &Link<Row>| Arc::ptr_eq(a.as_ref().unwrap(), b.as_ref().unwrap());
+    assert!(identical(&before.full, &after.full));
+    assert!(identical(&before.primary, &after.primary));
+    assert!(identical(&before.ids, &after.ids));
+    assert!(identical(&before.indexes[1], &after.indexes[1]));
+    assert_eq!(before.next, after.next);
+    for invalid in [
+        vec![vec![Some(17), None]],
+        vec![vec![Some(17), Some(0)]],
+        vec![vec![Some(17), Some(18)], vec![Some(17), Some(18)]],
+        vec![vec![Some(17), Some(19)], vec![Some(500), Some(-1)]],
+        vec![vec![Some(18), Some(19)]],
+    ] {
+        assert!(
+            before
+                .patched_rows(vec![vec![Some(17)], vec![Some(500)]], invalid, false)
+                .is_err()
+        );
+    }
+    assert_eq!(before.rows(), after.rows());
+}

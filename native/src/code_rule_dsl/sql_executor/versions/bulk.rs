@@ -95,13 +95,7 @@ impl Version {
             if values.len() != self.schema.columns.len() {
                 return Err(error("bulk row arity"));
             }
-            let valid = values.iter().enumerate().all(|(c, v)| {
-                (v.is_some() || self.schema.nullable[c])
-                    && self.schema.positive.get(&c).is_none_or(|&strict| {
-                        v.is_some_and(|v| if strict { v > 0 } else { v >= 0 })
-                    })
-            });
-            if !valid {
+            if !self.schema.valid_row(&values) {
                 if ignore {
                     continue;
                 }

@@ -209,6 +209,7 @@ impl Phase {
         // cannot leave an earlier output partially published, even without a savepoint.
         let mut reusable = BTreeMap::<(usize, usize), Vec<versions::Version>>::new();
         let mut shared_roots = 0;
+        let mut retained_roots = 0;
         let prepared = self
             .outputs
             .into_iter()
@@ -268,6 +269,9 @@ impl Phase {
                         Keys::Replace => o.old.loaded(rows, false, true)?,
                     }
                 };
+                if o.old.len() > 0 && o.old.shares_rows(&next) {
+                    retained_roots += 1;
+                }
                 if o.old.len() == 0 && next.len() >= 512 {
                     reusable
                         .entry((o.width, next.len()))
@@ -288,7 +292,7 @@ impl Phase {
         };
         super::super::logic::profile::decision("SQL phase root reuse", || {
             format!(
-                "{shared_roots} equal ordered initial outputs shared validated roots within this phase"
+                "{shared_roots} equal ordered initial outputs shared validated roots; {retained_roots} nonempty outputs retained their row roots within this phase"
             )
         });
         if let Some(profiler) = w.profiler {
@@ -297,7 +301,10 @@ impl Phase {
                     "SQL phase shared initial roots",
                     ("sql-extension", 0),
                     0,
-                    vec![("shared_roots".into(), shared_roots as i64)],
+                    vec![
+                        ("shared_roots".into(), shared_roots as i64),
+                        ("retained_nonempty_roots".into(), retained_roots as i64),
+                    ],
                 )
                 .finish(shared_roots);
         }

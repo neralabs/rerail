@@ -84,7 +84,7 @@ pub(super) fn append_with(
     let mut unique_heads = None;
     let unique = state.lattice.is_none() && state.support_uniqueness().proven;
     let width = state.width;
-    for rule in &state.rules {
+    for rule in state.rules.iter() {
         let mut removed = vec![];
         let mut added = vec![];
         for atom in &rule.atoms {

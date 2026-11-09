@@ -72,22 +72,95 @@ impl Version {
             }
             return self.loaded(rows, false, true).map(|v| (v, false));
         }
-        // `loaded` checks arity, nullability, counts, and duplicate primary keys.
-        // It also reuses the original row ID when a key receives a different value.
-        let incoming = self.loaded(rows, false, true)?;
         let mut next = self.clone();
+        // Validate and assign IDs without building a second set of temporary
+        // indexes. All mutations remain local until the entire phase succeeds.
+        let mut incoming = BTreeMap::new();
+        for values in rows {
+            if !self.schema.valid_row(&values) {
+                return Err(error("invalid bulk integer row"));
+            }
+            let pk = values[..self.schema.keys].to_vec();
+            let entry = incoming.entry(pk);
+            if matches!(entry, std::collections::btree_map::Entry::Occupied(_)) {
+                return Err(error("duplicate bulk key"));
+            }
+            let old = Node::get(&self.primary, entry.key());
+            let row = if let Some(old) = old.filter(|old| old.values.as_slice() == values) {
+                old.clone()
+            } else {
+                let id = if let Some(old) = old {
+                    old.id
+                } else {
+                    let id = next.next;
+                    next.next = next
+                        .next
+                        .checked_add(1)
+                        .ok_or_else(|| error("versioned row ids exhausted"))?;
+                    id
+                };
+                Row {
+                    id,
+                    values: tree::key(values),
+                }
+            };
+            entry.or_insert(row);
+        }
         for key in selected {
-            if let Some(old) = Node::get(&next.primary, &key).cloned() {
-                next.remove(&old);
+            let old = Node::get(&self.primary, &key);
+            match (old, incoming.remove(&key)) {
+                (Some(old), Some(row)) if old.values == row.values => {}
+                (Some(old), Some(row)) => next.replace_row(old, row),
+                (Some(old), None) => next.remove(old),
+                (None, Some(row)) => next.insert(row),
+                (None, None) => {}
             }
         }
-        let mut rows = vec![];
-        Node::prefix(&incoming.full, &[], &mut rows);
-        for row in rows {
-            next.insert(row);
-        }
-        next.next = incoming.next;
         Ok((next, false))
+    }
+
+    /// Replace a value at the same primary key and row ID. Index entries whose
+    /// keys stay equal need one value update rather than deletion and insertion.
+    fn replace_row(&mut self, old: &Row, row: Row) {
+        debug_assert_eq!(old.id, row.id);
+        debug_assert_eq!(
+            &old.values[..self.schema.keys],
+            &row.values[..self.schema.keys]
+        );
+        self.full = Node::set(&self.full, old.values.clone(), None);
+        self.full = Node::set(&self.full, row.values.clone(), Some(row.clone()));
+        self.primary = if self.schema.keys == self.schema.columns.len() {
+            self.full.clone()
+        } else {
+            Node::set_index(
+                &self.primary,
+                key(row.values.iter().take(self.schema.keys).copied()),
+                Some(row.clone()),
+            )
+        };
+        self.ids = Node::set_index(&self.ids, key([Some(row.id)]), Some(row.clone()));
+        // The leading value is part of the unchanged primary key, so its
+        // distinct count is unchanged even while the complete-row key changes.
+        for (c, &value) in row.values.iter().enumerate().skip(1) {
+            if !self.secondary[c] {
+                continue;
+            }
+            if old.values[c] != value {
+                self.indexes[c] =
+                    Node::set_index(&self.indexes[c], key([old.values[c], Some(row.id)]), None);
+                if !Node::has_prefix(&self.indexes[c], &[old.values[c]]) {
+                    self.distinct[c] -= 1;
+                }
+                if !Node::has_prefix(&self.indexes[c], &[value]) {
+                    self.distinct[c] += 1;
+                }
+            }
+            self.indexes[c] = Node::set_index(
+                &self.indexes[c],
+                key([value, Some(row.id)]),
+                Some(row.clone()),
+            );
+        }
     }
 }
 impl Store {

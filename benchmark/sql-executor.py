@@ -423,7 +423,18 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--session-request"]:
+    if sys.argv[1:2] == ["--recursive-edit-request"]:
+        parser = argparse.ArgumentParser(description="Generate repeated sparse recursive edits for CPU measurements.")
+        parser.add_argument("--recursive-edit-request", type=int, required=True, metavar="REGIONS")
+        parser.add_argument("--cycles", type=int, default=10)
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        if args.recursive_edit_request < 18 or args.cycles < 1:
+            parser.error("use at least 18 regions and one cycle")
+        request = recursive_lattice(args.recursive_edit_request)
+        request["changes"] *= args.cycles
+        args.output.write_text(json.dumps(request))
+    elif sys.argv[1:2] == ["--session-request"]:
         parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
         parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")
         parser.add_argument("output", type=Path)
