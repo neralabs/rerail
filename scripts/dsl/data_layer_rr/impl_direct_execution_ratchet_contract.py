@@ -137,6 +137,8 @@ def main():
     paths=['scripts/lint_impl_direct_execution.py','scripts/lint_lib/ratchet.py','scripts/lint_lib/signing.py']
     for name in paths:compare((a.source/name).read_bytes(),subprocess.check_output(['git','-C',str(a.source),'show',PIN+':'+name]))
     report=dict(format='rerail.impl-direct-ratchet-contract/v1',mode=a.command,sourcePin=PIN,fullMigrationAcceptance=False,passed=False,cases=[],sourceFiles={n:sha((a.source/n).read_bytes()) for n in paths},harness=Path(__file__).read_text())
+    dependencies=[Path(__file__),*[Path(__file__).with_name(n) for n in ['impl_direct_execution_port.py','policy_routes.py','replay.py','migration.py']]]
+    report['harnessFiles']={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in dependencies}
     if a.command=='native':
         if any(n.endswith('lint_impl_direct_execution') for n in sys.modules):raise ValueError('Native ratchet tests cannot import the source detector')
         expected=read_json(a.baseline);assert expected['passed'];compare(CASES,[r['input'] for r in expected['cases']]);report['engineSha256']=sha(a.engine.read_bytes())
@@ -151,6 +153,7 @@ def main():
             run=subprocess.run([sys.executable,str(Path(__file__).absolute()),'source-one','--source',str(a.source),'--case',str(root/'case.json'),'--out',str(root/'result.json')],env=environment(case),capture_output=True,text=True,timeout=30)
             if run.returncode:raise RuntimeError(run.stderr)
             report['cases'].append(dict(input=case,expected=read_json(root/'result.json')));write_json(a.out,report)
+    for name,h in report['harnessFiles'].items():compare(h,sha((ROOT/name).read_bytes()))
     report['passed']=all(r.get('passed',True) for r in report['cases']);write_json(a.out,report);print(dict(cases=len(report['cases']),passed=report['passed']));raise SystemExit(0 if report['passed'] else 1)
 
 if __name__=='__main__':main()

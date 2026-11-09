@@ -59,6 +59,7 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/strings/signature-errors.json',
     'native/src/code_rule_dsl/logic/strings/tests.rs',
     'native/src/code_rule_dsl/logic/strings/python_integer.rs',
+    'native/src/code_rule_dsl/logic/strings/python_json.rs',
     # Route demanded directory metadata through Final's phase-0 observer.
     'native/src/content_store/observe.rs',
     'native/src/code_rule_dsl/value/python.rs',

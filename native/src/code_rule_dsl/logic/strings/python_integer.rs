@@ -1,4 +1,4 @@
-//! Python 3.13's decimal integer syntax, without constructing an unbounded integer.
+//! Python 3.13's decimal integer syntax, including a bounded-allocation text projection.
 //! Unicode Nd and whitespace follow Python's Unicode 15.1 database. The caller
 //! supplies the digit limit so the result does not depend on hidden global state.
 
@@ -21,6 +21,28 @@ fn digit(c: char) -> Option<u32> {
     let position = DECIMAL_ZEROES.partition_point(|&zero| zero <= code);
     let zero = *DECIMAL_ZEROES.get(position.checked_sub(1)?)?;
     (code - zero < 10).then_some(code - zero)
+}
+
+/// Canonical decimal text, with Python's default 4300-digit conversion limit.
+pub(super) fn canonical(text: &str) -> Result<String, String> {
+    let invalid = || format!("invalid literal for int() with base 10: {}", crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr(text));
+    let trimmed = text.trim_matches(whitespace);
+    let (negative, digits) = if let Some(rest) = trimmed.strip_prefix('-') { (true, rest) }
+        else { (false, trimmed.strip_prefix('+').unwrap_or(trimmed)) };
+    let mut normalized = String::new();
+    let mut previous_digit = false;
+    for c in digits.chars() {
+        if c == '_' && previous_digit { previous_digit = false; continue; }
+        let Some(d) = digit(c) else { return Err(invalid()); };
+        normalized.push(char::from(b'0' + d as u8));
+        previous_digit = true;
+    }
+    if !previous_digit { return Err(invalid()); }
+    if normalized.len() > 4300 {
+        return Err(format!("Exceeds the limit (4300 digits) for integer string conversion: value has {} digits; use sys.set_int_max_str_digits() to increase the limit", normalized.len()));
+    }
+    let magnitude = normalized.trim_start_matches('0');
+    Ok(if magnitude.is_empty() { "0".into() } else { format!("{}{magnitude}", if negative { "-" } else { "" }) })
 }
 
 pub(super) fn clamped(text: &str, lower: i64, upper: i64, max_digits: i64) -> Option<i64> {

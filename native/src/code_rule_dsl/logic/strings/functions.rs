@@ -68,6 +68,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("python_repr", &[Text], Text),
+    ("python_json_error", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
@@ -265,6 +266,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "json_str" => Some(json_str(t(0))),
         "python_repr" => Some(crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr(t(0))),
+        "python_json_error" => Some(super::python_json::diagnostic(t(0))),
         "lower" => Some(t(0).to_lowercase()),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),
         "nfkc" => {

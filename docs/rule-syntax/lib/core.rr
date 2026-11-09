@@ -443,6 +443,9 @@
 .functor json_str(s: symbol): symbol
 // Python 3.13 repr of scalar Unicode text: quote choice and printable/control character escapes.
 .functor python_repr(s: symbol): symbol
+// Python 3.13 JSON syntax diagnostic, with character positions. Empty for valid syntax.
+// This does not decode files or construct JSON facts; input readers share that work.
+.functor python_json_error(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
 // Python 3.13 decimal int syntax (Unicode 15.1), clamped to inclusive i64 bounds.
 // Accepts surrounding Python integer whitespace, signs, and digit-separated underscores.

@@ -82,7 +82,7 @@ def install(suite, module):
         errors=[r['parameters'] for r in result if r['code']=='IR_ERROR']
         if errors:
             if len(errors)!=1:raise ValueError('One native ratchet error is required')
-            error=errors[0];kind={'AttributeError':AttributeError,'NotImplementedError':NotImplementedError}[error['error_type']]
+            error=errors[0];kind={'AttributeError':AttributeError,'NotImplementedError':NotImplementedError,'ValueError':ValueError,'TypeError':TypeError,'OverflowError':OverflowError}[error['error_type']]
             raise kind(error['detail'])
         values=[r['parameters']['value'] for r in result if r['code']=='IR_RESULT']
         if len(values)!=1:raise ValueError('One native ratchet result is required')
@@ -95,7 +95,8 @@ def install(suite, module):
             currentKeys=list(current_counts),currentValues=[str(v) for v in current_counts.values()],missingBaseline=str(int(not path.exists())))
         files=[]
         if path.exists():
-            try:files=[dict(path='baseline.json',source=path.read_text())]
+            try:
+                text=path.read_text();files=[dict(path='baseline.json',source=text)];options['baselineText']=text
             except Exception as error:options['readError']=str(error)
         return ratchet_result(rows('_ratchet_check',files,options))
 

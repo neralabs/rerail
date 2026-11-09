@@ -82,6 +82,31 @@ fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult
     row.iter().zip(columns).map(|(v, (_, ty))| scalar(v, ty, text)).collect()
 }
 
+/// Integer conversion is data: one failed member must not discard its siblings.
+fn python_int(value: &Json) -> Vec<Json> {
+    use num_traits::FromPrimitive;
+    let converted: std::result::Result<String, (&str, String)> = match value {
+        Json::Bool(b) => Ok(i32::from(*b).to_string()),
+        Json::Number(n) => {
+            let text = n.to_string();
+            if !text.contains(['.', 'e', 'E']) {
+                crate::code_rule_dsl::logic::strings::python_integer_text(&text).map_err(|e| ("ValueError", e))
+            } else {
+                let f = text.parse::<f64>().unwrap_or(f64::NAN);
+                if f.is_nan() { Err(("ValueError", "cannot convert float NaN to integer".into())) }
+                else { num_bigint::BigInt::from_f64(f.trunc()).map(|v| v.to_string()).ok_or(("OverflowError", "cannot convert float infinity to integer".into())) }
+            }
+        }
+        Json::String(s) => crate::code_rule_dsl::logic::strings::python_integer_text(s).map_err(|e| ("ValueError",e)),
+        other => {
+            let name = match other { Json::Null => "NoneType", Json::Array(_) => "list", _ => "dict" };
+            Err(("TypeError",format!("int() argument must be a string, a bytes-like object or a real number, not '{name}'")))
+        }
+    };
+    let (value, kind, detail) = match converted { Ok(v) => (v, "", String::new()), Err((k,e)) => (String::new(),k,e) };
+    [value,kind.to_owned(),detail].into_iter().map(Json::String).collect()
+}
+
 fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
@@ -95,6 +120,8 @@ fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefi
                 Json::String(_) => "string", Json::Array(_) => "array", Json::Object(_) => "object",
             };
             vec![vec![Json::String(kind.to_owned())]]
+        } else if projection == "python-int" {
+            vec![python_int(value)]
         } else if projection == "json" {
             vec![vec![Json::String(value.to_string())]]
         } else if records {
@@ -585,7 +612,7 @@ fn populate_with(
             _ => return Err(Error::Plan(format!("{rel}: records must be true or false"))),
         };
         let projection = params.get("projection").map_or("rows", String::as_str);
-        if !["rows", "type", "json"].contains(&projection) || records && projection != "rows"
+        if !["rows", "type", "json", "python-int"].contains(&projection) || records && projection != "rows"
             || projection != "rows" && !matches!(io, "json" | "yaml" | "jsonl")
         {
             return Err(Error::Plan(format!("{rel}: invalid input projection {projection}")));
@@ -753,6 +780,29 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn python_integer_projection_preserves_coercions_errors_and_shared_decode() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl converted(key: symbol, value: symbol, error_type: symbol, detail: symbol)
+.input converted(IO=json, filename="baseline.json", path="/counts/*", projection="python-int")
+.decl kinds(key: symbol, kind: symbol)
+.input kinds(IO=json, filename="baseline.json", path="/counts/*", projection="type")
+"#).unwrap();
+        let source = r#"{"counts":{"float":1.9,"string":" +٢_٠ ","boolean":true,"large":900719925474099300000,"binary_float":9007199254740993.0,"bad":"2x","null":null,"huge":1e999}}"#;
+        let mut reads = 0;
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
+        assert_eq!(reads, 1);
+        let expected = [
+            ["float","1","",""], ["string","20","",""], ["boolean","1","",""],
+            ["large","900719925474099300000","",""], ["binary_float","9007199254740992","",""],
+            ["bad","","ValueError","invalid literal for int() with base 10: '2x'"],
+            ["null","","TypeError","int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"],
+            ["huge","","OverflowError","cannot convert float infinity to integer"],
+        ].into_iter().map(|row| row.into_iter().map(|s| Value::Str(s.into())).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(program.facts["converted"],expected);
+        assert_eq!(program.facts["kinds"].len(),8);
+    }
+
     #[test]
     fn json_type_and_transport_projections_share_one_read_and_keep_large_numbers() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
