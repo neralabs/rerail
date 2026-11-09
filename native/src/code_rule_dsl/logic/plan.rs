@@ -3556,6 +3556,9 @@ impl Run<'_, '_> {
         let placed = placement::place(&shape);
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
+        let lab = super::native::component::lab::wanted(&name, shape.work)
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3721,6 +3724,9 @@ impl Run<'_, '_> {
         {
             let _close = super::profile::span(|| "engine close".into());
             self.fx().close(&name)?;
+        }
+        if let Some(capture) = lab {
+            super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)

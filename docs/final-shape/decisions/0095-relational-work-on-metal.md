@@ -302,6 +302,15 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
      did.
    - Kernels and plans iterate over captured strata in seconds, and their outputs are compared row for row.
    - Measure the data-layer repository's profile the same way.
+   - **Built** (`native::setfix::lab`). `RERAIL_RELATIONAL_LAB=<dir>` captures each stratum of at least
+     `RERAIL_RELATIONAL_LAB_MIN` planned units (or those named in `RERAIL_RELATIONAL_LAB_ONLY`). A capture holds its
+     spec, rewritten over plain tables, its sources and seeds as integers, and its rows after the run. The run's atom
+     texts are kept once per directory, by id.
+   - The `relational_lab` test (`RERAIL_RELATIONAL_LAB_REPLAY=<dir>`) runs each capture on a new store whose atoms
+     have the run's ids, and compares its rows with the run's.
+   - Python pack, at 3·10^5 units: 144 strata (459 MB) captured in a run that took 4 s more CPU. All 144 give the
+     run's rows in 24 s of CPU. They take 5.0 s, 1.8 s of it solving; the rest is loading their sources from
+     tables, which the run reads in place.
 1. **Row programs.** The side program, with rir, validate, digest, interpreter and Cranelift. The CPU native engine
    runs filters and computed terms through it. Gate: identical findings.
 2. **Residency and `scan`/`count`/`scatter`.** The chunk's relations as stratified columns on the device (a
