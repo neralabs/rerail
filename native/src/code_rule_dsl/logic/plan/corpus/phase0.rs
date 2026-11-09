@@ -124,8 +124,9 @@ pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Gr
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
+static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
+
 pub(in crate::code_rule_dsl) fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
-    static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
     let kept = KEPT.get_or_init(Default::default);
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
@@ -156,6 +157,35 @@ pub(in crate::code_rule_dsl) fn graphs(seeds: &[Seed]) -> std::result::Result<Ve
         }
     }
     Ok(found.into_iter().map(|g| g.expect("each seed's graph")).collect())
+}
+
+/// Keeps the graph of a text made from a program file (`tools::program_texts`), taken from the file's graph rather
+/// than from another run of `bootstrap.rr`: each name the text includes is a library module the file's graph holds,
+/// found as `bootstrap.rr` finds a text's names (the library alone). The graph is the one that run would give, so
+/// its digest is too. False when a name is not such a module (the text then gets its own run when asked).
+pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
+    let Seed::Text { t_shape, includes } = seed else {
+        return false;
+    };
+    let Ok(lib) = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()) else {
+        return false;
+    };
+    let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
+    let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rr".to_owned())));
+    for (at, name) in names {
+        // `bootstrap.rr`'s candidate: `cat(lib, "/", name)`, as written, not made canonical.
+        let path = PathBuf::from(format!("{}/{name}", lib.display()));
+        if !file.digests.contains_key(&path) {
+            return false;
+        }
+        asks.push((at, name, path));
+    }
+    asks.sort();
+    let mut whole = file.clone();
+    whole.includes.insert(text_key(0), asks);
+    let graph = whole.of(seed, 0);
+    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    true
 }
 
 /// A text seed's key in phase 0's facts, by its place among the run's seeds.
@@ -319,6 +349,15 @@ mod tests {
             let builtin = order(text);
             super::IN_PHASE_0.with(|c| c.set(false));
             assert_eq!(graph, builtin, "{text}");
+        }
+        // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).
+        let programs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+        for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
+            let text = crate::code_rule_dsl::tools::program_text(&file).unwrap();
+            let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+            let kept = super::graph(&seed).unwrap().digest();
+            let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
+            assert_eq!(kept, derived, "{}", file.display());
         }
         // A name with no file is refused as before.
         let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rr\"\n").err().expect("refused").to_string();

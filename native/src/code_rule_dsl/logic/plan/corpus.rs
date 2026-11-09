@@ -1250,8 +1250,15 @@ pub(crate) fn run_with_options(
     });
     // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
-    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
-    if !seeds.is_empty() {
+    // The engine's own `components.rr` (read by the cross-file memo) is resolved in the same run, so no phase-0 run
+    // starts inside this one.
+    let mut seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    if !phase0::active() {
+        if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
+            seeds.push(phase0::Seed::File(components));
+        }
+    }
+    if !seeds.is_empty() && !phase0::active() {
         phase0::graphs(&seeds)?;
     }
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
@@ -1320,7 +1327,15 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    let _profile = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+    // Phase 0's own run holds it only when no run does (phase 0 alone, as its benchmark runs it): nested in a run's
+    // preparing, it is the outer run's, and neither resets nor writes it.
+    let _profile = if !crate::code_rule_dsl::logic::profile::on() {
+        None
+    } else if phase0::active() {
+        crate::code_rule_dsl::logic::profile::one_run_if_free()
+    } else {
+        Some(crate::code_rule_dsl::logic::profile::one_run())
+    };
     let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
@@ -3609,7 +3624,7 @@ fn run_observed(
         });
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
-    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
             docs.len(),
