@@ -1195,3 +1195,69 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 });
+
+describe("CodeRuleBridge and another session's writes", () => {
+  /** Two sessions open on `root` in this process, sharing its observations as the runtime does, with their baselines taken. */
+  async function twoSessions(root: string) {
+    const observations: SourceObservationCache = new Map();
+    const open = async (sessionId: string) => {
+      const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const bridge = createBridge(root, auditor(auditGeneratedEdits), { observations });
+      await bridge.openWorkspace(sessionId);
+      await bridge.checkpoint("turn");
+      return { bridge, auditGeneratedEdits };
+    };
+    return [await open("session-a"), await open("session-b")] as const;
+  }
+  const mine = { path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" };
+
+  it("checks a shell write for the session that ran it, and not for one whose read-only command or turn end came after", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await expect(shell(b.bridge, () => undefined)).resolves.toEqual([]);
+    await b.bridge.checkpoint("turn");
+    expect(a.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[mine]]);
+    expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("does not take a write made while another session's command runs for its own", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await a.bridge.begin("shell-a", "shell", { command: "./long.sh" });
+    await appendFile(join(root, "src", "a.py"), "mine\n");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await shell(b.bridge, () => undefined);
+    await a.bridge.finish("shell-a");
+    expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
+    expect(a.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[mine]]);
+  });
+
+  it("measures a later shell edit of the file from the text the other session left once a walk has seen it", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await shell(b.bridge, () => undefined);
+    await shell(b.bridge, () => appendFile(join(root, "src", "a.py"), "theirs\n"));
+    expect(b.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\nmine\n", generatedText: "old\nmine\ntheirs\n" }],
+    ]);
+  });
+
+  it("tells the auditor, with no generated lines and in log mode, of a file it had changed that the other session then changed", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await shell(b.bridge, () => appendFile(join(root, "src", "a.py"), "theirs\n"));
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await b.bridge.checkpoint("turn");
+    expect(b.auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
+      mode: "log",
+      edits: [{ path: "src/a.py", language: "python", previousText: "old\ntheirs\nmine\n", generatedText: "old\ntheirs\nmine\n" }],
+    });
+    expect(b.auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+});

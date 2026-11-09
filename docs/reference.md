@@ -679,7 +679,7 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command, and neither is one another session wrote.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
@@ -700,6 +700,13 @@ If nothing matches, the edit reports its whole file, as `touched-files` does, un
 - a new linked worktree's files.
 
 A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote. Rerail goes by bytes: any write that leaves a file exactly as a branch has it counts as a restore, and a restore from a tag, a stash or another commit (`git show HEAD~3:path > path`) is an edit.
+
+</details>
+
+<details>
+<summary>What counts as another session's write</summary>
+
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp. Each session notes when each of its tool calls ran, for every other session in the same process to see: the daemon, for every coding agent but a Pi running Rerail in process. A change stamped while one of another session's calls ran, and none of this session's, is the other session's: it steers only that session, and once this one's walk has seen it, its next shell edit of the file is measured from what the other left. A change stamped while no session's call ran (a background job, your editor) is still taken as the walking session's. When two sessions' calls ran at once, both take the change.
 
 </details>
 
