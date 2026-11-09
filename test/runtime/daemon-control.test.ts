@@ -4,7 +4,7 @@ import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +39,7 @@ import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js
 import {
   type DaemonState,
   autostartDaemon,
+  browserOpener,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   dashboardAccessLink,
@@ -362,7 +363,7 @@ describe("Rerail daemon control", () => {
 
 describe("openDashboard", () => {
   const url = "http://127.0.0.1:4737/#rules";
-  const desktopOpener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
+  const desktopOpener = browserOpener(url).command;
   let outsideOrca: NodeJS.ProcessEnv;
   let underOrca: NodeJS.ProcessEnv;
   /** An installed Orca CLI, preceded by an absent candidate that must be skipped. */
@@ -397,6 +398,13 @@ describe("openDashboard", () => {
   afterEach(async () => {
     opener.intercept = undefined;
     await rm(scratch, { recursive: true, force: true });
+  });
+
+  it("opens the Windows browser through System32's rundll32 from the home folder, never a rundll32 the repository holds", () => {
+    const opener = browserOpener(url, "win32", { SystemRoot: String.raw`D:\Windows` });
+    expect(opener).toEqual({ command: String.raw`D:\Windows\System32\rundll32.exe`, args: ["url.dll,FileProtocolHandler", url], cwd: homedir() });
+    expect(browserOpener(url, "darwin")).toEqual({ command: "open", args: [url] });
+    expect(browserOpener(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
   });
 
   it("uses the desktop browser outside Orca", async () => {

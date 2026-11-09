@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, win32 } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { removeScratch } from "../engine/file-replace.js";
 
@@ -58,23 +58,33 @@ function pathKey(env: NodeJS.ProcessEnv): string {
   return Object.keys(env).find(name => name.toUpperCase() === "PATH") ?? "PATH";
 }
 
+/** The extensions CreateProcess starts without a shell; a `.cmd`, `.bat` or `.js` needs one. */
+const BINARY_EXTENSION = /^\.(?:exe|com)$/iu;
+
 /**
  * The absolute path PATH would resolve `command` to, or undefined when nothing on PATH is runnable by that
  * name. An absolute command is returned as is. A compiled-Bun host only knows Node as the bare name `node`;
  * the probe, the rebuild and the daemon spawn must still agree on one binary, so the name is resolved once.
+ * `binaryOnly` takes on Windows only a `.exe` or `.com`, which a spawn without a shell can start: Node refuses a `.cmd`
+ * or `.bat` there (EINVAL), and a version manager's `node.cmd` shim can come first on PATH.
  */
 export function resolveExecutable(
   command: string,
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  options: { binaryOnly?: boolean } = {},
 ): string | undefined {
   if (isAbsolute(command)) return command;
   const windows = platform === "win32";
   const separator = windows ? ";" : delimiter;
-  const directories = (env[pathKey(env)] ?? "").split(separator).filter(directory => directory.length > 0);
-  const extensions = windows
+  const binaryOnly = windows && options.binaryOnly === true;
+  // A relative entry would name the current folder, which a spawn there would search first anyway.
+  const directories = (env[pathKey(env)] ?? "").split(separator)
+    .filter(directory => directory.length > 0 && (!binaryOnly || win32.isAbsolute(directory)));
+  const pathExtensions = windows
     ? (env.PATHEXT ?? env.Pathext ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(extension => extension.length > 0)
     : [""];
+  const extensions = binaryOnly ? pathExtensions.filter(extension => BINARY_EXTENSION.test(extension)) : pathExtensions;
   for (const directory of directories) {
     for (const extension of extensions) {
       const candidate = join(directory, `${command}${extension}`);
@@ -163,7 +173,9 @@ async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<C
   // Options first: a caller's `--` ends them.
   const npmArgs = [...FETCH_RETRY_OPTIONS, ...args];
   if (process.platform === "win32") {
-    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...npmArgs], command);
+    // npm runs install scripts (prebuild-install, node-gyp) through shims that start `node` from PATH, so that node
+    // must be the one the rebuild targets, as on POSIX.
+    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...npmArgs], node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
   }
   return await runCommand("npm", npmArgs, node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
 }

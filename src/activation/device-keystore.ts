@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "../engine/child-process.js";
+import { windowsPowerShell } from "../engine/system-programs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
 export interface DeviceSecretStore {
@@ -120,6 +121,7 @@ switch ($request.operation) {
 `;
 
 async function executeWindowsCredential(
+  run: ProcessRunner,
   operation: "read" | "write" | "remove",
   profileName: string,
   value?: string,
@@ -130,8 +132,9 @@ async function executeWindowsCredential(
     target,
     ...(value === undefined ? {} : { value: Buffer.from(value, "utf8").toString("base64") }),
   });
-  const result = await execute(
-    "powershell.exe",
+  // By absolute path: Windows looks for a bare name in the current folder first, and the request can carry the secret.
+  const result = await run(
+    windowsPowerShell(),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_CREDENTIAL_SCRIPT],
     input,
   );
@@ -199,7 +202,7 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
 
   async read(profileName: string): Promise<string | undefined> {
     assertProfileName(profileName);
-    if (this.platform === "win32") return await executeWindowsCredential("read", profileName);
+    if (this.platform === "win32") return await executeWindowsCredential(this.run, "read", profileName);
     if (this.platform === "darwin") {
       const result = await this.run("security", [
         "find-generic-password",
@@ -226,7 +229,7 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
   async write(profileName: string, value: string): Promise<void> {
     assertProfileName(profileName);
     if (this.platform === "win32") {
-      await executeWindowsCredential("write", profileName, value);
+      await executeWindowsCredential(this.run, "write", profileName, value);
       return;
     }
     if (this.platform === "darwin") {
@@ -249,7 +252,7 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
   async remove(profileName: string): Promise<void> {
     assertProfileName(profileName);
     if (this.platform === "win32") {
-      await executeWindowsCredential("remove", profileName);
+      await executeWindowsCredential(this.run, "remove", profileName);
       return;
     }
     if (this.platform === "darwin") {

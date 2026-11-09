@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { z } from "zod/v4";
 import { spawn } from "../../engine/child-process.js";
 import { internalTesting } from "../../engine/internal-testing.js";
+import { resolveExecutable } from "../../runtime/npm.js";
 
 /** The tool a `subagent` steer names on Pi; Rerail registers it with the first such steer. */
 export const PI_FIX_TOOL = "rerail_fix";
@@ -64,13 +65,16 @@ const FIX_PROMPT = [
 
 /**
  * The child `pi` command line for `task`: Pi's own entry point when there is one, the `pi` on PATH otherwise. The child
- * loads no extensions (neither Rerail again nor the user's, headless) and has only Pi's file tools.
+ * loads no extensions (neither Rerail again nor the user's, headless) and has only Pi's file tools. On Windows the `pi`
+ * on PATH must be a `pi.exe` or `pi.com`, found through PATH alone: a bare name is looked for in the repository first,
+ * and npm's `pi.cmd` shim cannot start without cmd.exe, which would parse the multi-line prompt again.
  */
 export function piFixInvocation(
   task: string,
   parent: PiFixParent,
   execPath: string = process.execPath,
   script: string | undefined = process.argv[1],
+  system: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv } = { platform: process.platform, env: process.env },
 ): { command: string; args: string[] } {
   const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", PI_FIX_CHILD_TOOLS.join(",")];
   if (parent.provider !== undefined) args.push("--provider", parent.provider);
@@ -82,7 +86,10 @@ export function piFixInvocation(
   }
   // A compiled `pi` binary is its own entry point; a bare runtime without one falls back to PATH.
   if (!/^(node|bun)(\.exe)?$/u.test(basename(execPath).toLowerCase())) return { command: execPath, args };
-  return { command: "pi", args };
+  if (system.platform !== "win32") return { command: "pi", args };
+  const pi = resolveExecutable("pi", system.env, "win32", { binaryOnly: true });
+  if (pi === undefined) throw new Error("Rerail runs Pi's fix as pi.exe from PATH, and none is there; start Pi from its own entry point");
+  return { command: pi, args };
 }
 
 const count = z.number().catch(0);

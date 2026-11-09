@@ -53,9 +53,13 @@ export interface GitPathProbe {
 
 function installLocations(platform: NodeJS.Platform, home: string): string[] {
   if (platform === "win32") {
+    // Windows installed on another drive keeps Program Files there; the account's home is on that drive too.
+    const drive = win32.parse(home).root || "C:\\";
     return [
       String.raw`C:\Program Files\Git\cmd\git.exe`,
       String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+      win32.join(drive, "Program Files", "Git", "cmd", "git.exe"),
+      win32.join(drive, "Program Files (x86)", "Git", "cmd", "git.exe"),
       win32.join(home, "AppData", "Local", "Programs", "Git", "cmd", "git.exe"),
       win32.join(home, "scoop", "apps", "git", "current", "cmd", "git.exe"),
     ];

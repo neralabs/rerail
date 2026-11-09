@@ -14,8 +14,9 @@
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { delimiter, join, resolve, win32 } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "../engine/child-process.js";
+import { windowsPowerShell } from "../engine/system-programs.js";
 import { shellQuote } from "../harness/setup-screens.js";
 import { writeTextFile } from "./harness-registration.js";
 
@@ -289,9 +290,8 @@ $key.SetValue('Path', $next, $kind)
 
 function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" | "remove", env: NodeJS.ProcessEnv, home: string): LauncherPathChange {
   // By absolute path, from the home folder: Windows looks in the current folder (the repository) before PATH.
-  const powershell = win32.join(env.SystemRoot || String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawnSync(
-    powershell,
+    windowsPowerShell(env),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")],
     { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
   );

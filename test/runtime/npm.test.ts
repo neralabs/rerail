@@ -1,7 +1,13 @@
+import * as childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", { spy: true });
+
 import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../../src/runtime/npm.js";
 
 const temporaryDirectories: string[] = [];
@@ -43,6 +49,39 @@ describe("resolveExecutable", () => {
     const bin = await binDirectory("node.exe");
     expect(resolveExecutable("node", { Path: bin, PATHEXT: ".com;.exe" }, "win32")).toBe(join(bin, "node.exe"));
     expect(resolveExecutable("node", { Path: bin, PATHEXT: ".CMD" }, "win32")).toBeUndefined();
+  });
+
+  it("takes only a .exe or .com on Windows when a binary is asked for, past a node.cmd shim earlier on PATH", async () => {
+    const shims = await binDirectory("node.cmd");
+    const binaries = await binDirectory("node.exe");
+    const env = { PATH: `${shims};${binaries}`, PATHEXT: ".com;.exe;.bat;.cmd" };
+    expect(resolveExecutable("node", env, "win32")).toBe(join(shims, "node.cmd"));
+    expect(resolveExecutable("node", env, "win32", { binaryOnly: true })).toBe(join(binaries, "node.exe"));
+    // A relative entry names the current folder, which a bare name already searches first.
+    expect(resolveExecutable("node", { PATH: `.;${shims}`, PATHEXT: ".exe;.cmd" }, "win32", { binaryOnly: true })).toBeUndefined();
+  });
+});
+
+describe("runNpm on Windows", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", platform);
+    vi.mocked(childProcess.spawn).mockClear();
+  });
+
+  it("puts the requested node first on PATH, so the install scripts npm runs build for it", async () => {
+    const bin = await binDirectory("node.exe");
+    const node = join(bin, "node.exe");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    await runNpm(["rebuild", "better-sqlite3"], { node, env: { PATH: "/usr/bin" } });
+    const [command, , options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(node);
+    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${bin}${delimiter}/usr/bin`);
   });
 });
 

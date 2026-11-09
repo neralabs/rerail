@@ -2,12 +2,14 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { renameWithRetry } from "../engine/file-replace.js";
+import { windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
@@ -238,10 +240,16 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
 
 /**
  * Rerail CLI children require Node; a compiled Bun host's execPath may launch the host itself. There the name
- * is resolved through PATH once, so the SQLite probe, its rebuild and the daemon all run under one binary.
+ * is resolved through PATH once, so the SQLite probe, its rebuild and the daemon all run under one binary. On Windows
+ * only a `node.exe` counts: a version manager's `node.cmd` shim cannot be spawned without a shell, and a bare `node`
+ * would be looked for in the current folder first.
  */
-export function nodeExecutable(): string {
-  return process.versions.bun === undefined ? process.execPath : resolveExecutable("node") ?? "node";
+export function nodeExecutable(platform: NodeJS.Platform = process.platform): string {
+  if (process.versions.bun === undefined) return process.execPath;
+  if (platform !== "win32") return resolveExecutable("node") ?? "node";
+  const node = resolveExecutable("node", process.env, platform, { binaryOnly: true });
+  if (node === undefined) throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
+  return node;
 }
 
 export const DAEMON_STATE_FILE = "daemon.json";
@@ -793,19 +801,22 @@ export async function stopDaemon(home: string): Promise<StopDaemonResult> {
 }
 
 /**
- * Platform openers; anything not listed is assumed to be a freedesktop environment. Windows goes
- * through `rundll32` rather than `cmd /c start`: `start` parses its command line through cmd, so
- * the `&` in a session URL's query string would split it into separate commands.
+ * The program that hands `url` to the desktop's default browser, its arguments, and the folder it runs in; anything
+ * but macOS and Windows is assumed to be a freedesktop environment. Windows goes through `rundll32` rather than
+ * `cmd /c start`: `start` parses its command line through cmd, so the `&` in a session URL's query string would split
+ * it into separate commands. It runs by its System32 path from the home folder, because Windows looks for a bare name
+ * in the current folder first, and Rerail opens pages from inside repositories.
  */
-const BROWSER_OPENERS: Readonly<Record<string, (url: string) => [string, string[]]>> = {
-  darwin: url => ["open", [url]],
-  win32: url => ["rundll32", ["url.dll,FileProtocolHandler", url]],
-};
+export function browserOpener(url: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): { command: string; args: string[]; cwd?: string } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32") return { command: windowsSystemProgram("rundll32.exe", env), args: ["url.dll,FileProtocolHandler", url], cwd: homedir() };
+  return { command: "xdg-open", args: [url] };
+}
 
 /** Hands the URL to the desktop's default browser. Returns once the opener has been spawned. */
 export function openInBrowser(url: string): void {
-  const [command, args] = (BROWSER_OPENERS[process.platform] ?? (target => ["xdg-open", [target]]))(url);
-  const child = spawnShown(command, args, { detached: true, stdio: "ignore" });
+  const { command, args, cwd } = browserOpener(url);
+  const child = spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
   child.once("error", () => {
     process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });

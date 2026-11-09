@@ -47,6 +47,21 @@ describe("device secret store selection", () => {
   });
 });
 
+describe("Windows Credential Manager", () => {
+  it("runs Windows PowerShell by its System32 path, never a powershell.exe the current folder holds", async () => {
+    const commands: string[] = [];
+    const store = new SystemDeviceSecretStore("win32", async (command) => {
+      commands.push(command);
+      return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+    });
+    expect(await store.read("profile-a")).toBeUndefined();
+    await store.write("profile-a", "secret");
+    await store.remove("profile-a");
+    expect(commands).toHaveLength(3);
+    for (const command of commands) expect(command).toMatch(/^[A-Za-z]:\\.*\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
+  });
+});
+
 describe("macOS Keychain writes", () => {
   interface Call { command: string; args: readonly string[]; input: string | undefined }
 

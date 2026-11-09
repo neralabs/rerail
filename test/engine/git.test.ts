@@ -259,6 +259,14 @@ describe("gitCandidates", () => {
     }
   });
 
+  it("on Windows also looks in Program Files on the drive of the account's home", () => {
+    const search = { platform: "win32" as const, home: String.raw`D:\Users\a`, path: undefined, cwd: undefined };
+    expect(gitCandidates(search, disk([]))).toEqual(expect.arrayContaining([
+      String.raw`D:\Program Files\Git\cmd\git.exe`,
+      String.raw`D:\Program Files (x86)\Git\cmd\git.exe`,
+    ]));
+  });
+
   it("keeps every absolute entry outside node_modules when the folder it runs in is in no repository", () => {
     const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
     expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");

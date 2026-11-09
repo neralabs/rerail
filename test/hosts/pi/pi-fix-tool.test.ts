@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PI_FIX_CHILD_TOOLS, PiFixReader, STDERR_TAIL_CHARS, piFixInvocation, runPiFix, type PiFixRun } from "../../../src/hosts/pi/pi-fix-tool.js";
 
@@ -7,6 +10,9 @@ function readStreamed(stdout: string, exitCode: number, model?: string): PiFixRu
   for (let start = 0; start < stdout.length; start += 7) reader.write(stdout.slice(start, start + 7));
   return reader.finish(exitCode, model);
 }
+
+/** The system a POSIX `pi` fallback is resolved on. */
+const POSIX = { platform: "linux" as const, env: {} };
 
 /** A child `node -e` script in place of `pi`. */
 const node = (script: string): { command: string; args: string[] } => ({ command: process.execPath, args: ["-e", script] });
@@ -32,15 +38,30 @@ describe("rerail_fix", () => {
   });
 
   it("leaves the model to the child's defaults when the parent has none, and falls back to `pi` on PATH", () => {
-    expect(piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js")).toEqual({
+    expect(piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js", POSIX)).toEqual({
       command: "pi",
       args: ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", "read,edit,write,grep,find,ls", expect.stringContaining("Fix it.")],
     });
     expect(piFixInvocation("Fix it.", {}, "/opt/pi/bin/pi", undefined).command).toBe("/opt/pi/bin/pi");
   });
 
+  it("on Windows runs only a pi.exe found through PATH, never the bare name the repository could answer", async () => {
+    const shims = await mkdtemp(join(tmpdir(), "rerail-pi-shims-"));
+    const binaries = await mkdtemp(join(tmpdir(), "rerail-pi-bin-"));
+    try {
+      await writeFile(join(shims, "pi.cmd"), "");
+      await writeFile(join(binaries, "pi.exe"), "");
+      const windows = (path: string) => ({ platform: "win32" as const, env: { PATH: path, PATHEXT: ".com;.exe;.bat;.cmd" } });
+      expect(piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js", windows(`${shims};${binaries}`)).command).toBe(join(binaries, "pi.exe"));
+      expect(() => piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js", windows(`.;${shims}`))).toThrow(/pi\.exe/u);
+    } finally {
+      await rm(shims, { recursive: true, force: true });
+      await rm(binaries, { recursive: true, force: true });
+    }
+  });
+
   it("gives the child Pi's file tools only, never bash", () => {
-    const args = piFixInvocation("Fix it.", {}, "/usr/local/bin/node", undefined).args;
+    const args = piFixInvocation("Fix it.", {}, "/usr/local/bin/node", undefined, POSIX).args;
     const tools = args[args.indexOf("--tools") + 1]!.split(",");
     expect(tools).toEqual([...PI_FIX_CHILD_TOOLS]);
     expect(tools).not.toContain("bash");
