@@ -24,6 +24,26 @@ CASES = [
     ('attribute-store', 'RuntimeBuilderKind.MISC_RUNTIME = 1\n'),
     ('definition-before-attribute', 'MISC_RUNTIME = RuntimeBuilderKind.MISC_RUNTIME\n'),
 ]
+CALLBACK_CASES = [
+    ('positional-separator', '''class BadStep(ServerPlanStep):
+    def compile(self, ctx):
+        def post_op(raw, /, carrier):
+            return carrier.txn.execute()
+        return CompiledStep(post_op=post_op)
+'''),
+    ('keyword-only-carrier', '''class GoodStep(ServerPlanStep):
+    def compile(self, ctx):
+        def post_op(raw, *, carrier: Hydrator):
+            return carrier.txn.execute()
+        return CompiledStep(post_op=post_op)
+'''),
+    ('keyword-only-authority', '''class BadStep(ServerPlanStep):
+    def compile(self, ctx):
+        def on_commit(*, txn: ReadTransaction):
+            return use(txn)
+        return CompiledStep(on_commit=on_commit)
+'''),
+]
 
 
 def main():
@@ -37,15 +57,17 @@ def main():
     compare(subprocess.check_output(['git','-C',str(args.source),'show',PIN+':'+name]), (args.source/name).read_bytes())
     result = dict(format='rerail.serverplan-steps-source-contract/v1', sourcePin=PIN,
                   fullMigrationAcceptance=False, cases=[], passed=False)
+    cases = [(identity,source,'check_misc_runtime_is_deleted') for identity,source in CASES]
+    cases += [(identity,source,'check_compile_callbacks_no_runtime_authority') for identity,source in CALLBACK_CASES]
     baseline = read_json(args.baseline) if args.command == 'native' else None
     if baseline:
         if not baseline['passed'] or baseline['sourcePin'] != PIN:raise ValueError('A passing source recording is required')
-        compare(CASES,[(c['id'],c['source']) for c in baseline['cases']])
+        compare(cases,[(c['id'],c['source'],c['entry']) for c in baseline['cases']])
     else:
         sys.path.insert(0,str(args.source.absolute()))
-        from scripts.lint_serverplan_steps import check_misc_runtime_is_deleted
+        from scripts import lint_serverplan_steps as linter
     rule = ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr'
-    for index,(identity,source) in enumerate(CASES):
+    for index,(identity,source,entry) in enumerate(cases):
         if baseline:
             expected = baseline['cases'][index]['expected']
             native = execute_native(args.engine.absolute(),rule,[dict(path='input.py',source=source)],
@@ -53,14 +75,15 @@ def main():
             ordered = sorted(native['diagnostics'],key=lambda r:tuple(r['parameters'][k] for k in
                              ['class_order','method_order','callback_order','node_order','suborder']))
             actual = [dict(code=r['parameters']['violation_code'],file=r['path'],line=r['line'],message=r['parameters']['detail'])
-                      for r in ordered if r['parameters']['entry']=='check_misc_runtime_is_deleted']
-            compare(expected,actual)
-            result['cases'].append(dict(id=identity,source=source,expected=expected,actual=actual,
+                      for r in ordered if r['parameters']['entry']==entry]
+            result['cases'].append(dict(id=identity,source=source,entry=entry,expected=expected,actual=actual,
                                          diagnostics=native['diagnostics'],programInputs=native['programInputs']))
+            write_json(args.out,result)
+            compare(expected,actual)
         else:
-            values = check_misc_runtime_is_deleted(Path('test.py'),ast.parse(source))
+            values = getattr(linter,entry)(Path('test.py'),ast.parse(source))
             expected = [dict(code=v.code,file=str(v.file),line=v.line,message=v.message) for v in values]
-            result['cases'].append(dict(id=identity,source=source,expected=expected))
+            result['cases'].append(dict(id=identity,source=source,entry=entry,expected=expected))
     result.update(passed=True,sourceFiles={name:sha((args.source/name).read_bytes())},
                   harnessFiles={str(Path(__file__).relative_to(ROOT)):sha(Path(__file__).read_bytes())})
     if baseline:result['engineSha256']=sha(args.engine.read_bytes())
