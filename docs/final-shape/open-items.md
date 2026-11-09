@@ -3273,7 +3273,9 @@ chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matc
 `data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
 `l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
 
-**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Expected over the whole
+**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
+(O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
+phase's cold cost. Expected over the whole
 workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
 the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
 
@@ -3314,9 +3316,39 @@ the wrapper's, in bytes, not the engine's.)
   scopes. Over the whole workspace (2026-11-09, the four enum files checked, struct and values over all 9,010
   documents) it did not finish in 1,500 s: 1,803 s user + 33 s sys, load 11–33 at the start and about 20 at the
   end. The values phase's store was still being written when it stopped, so the four counts were not read.
-  Not yet profiled. A likely cause, unchecked: `python/lengths` and `nearest` run over every node of every
-  document, not only module and class bodies. Next: profile `values` alone on the 133-file sample, then narrow
-  it (lengths only for module- and class-level values, or documents some checked document imports).
+- Profiled (2026-11-09) on samples of the workspace's directories (149, 601 and 2,063 files; 10.4 MB at 601,
+  33.6 MB at 2,063, against 137.9 MB in all), each phase alone (`struct` reused from the run before through the
+  phase record), CPU user + sys at load 8–23. Two rules grew with the square of the workspace, both fixed:
+  - `v_name` of an assigned name joined from `struct__binds` (every assignment in the workspace: 15,820 rows at
+    601 files) to the chunk's wanted names, 1.57 M pairs for 239 matches; the planner priced `v_nq` at 0.35 rows.
+    Now the name and its module come first (`v_idn`), and the binds are probed on both. `v_dom`, the whole
+    workspace's symbols remade in every chunk, is gone: an attribute's symbol is checked against struct's three
+    exports directly.
+  - In `python/lengths`: `len_num` (0..100000) counted up by a recursion of 100,001 steps in every chunk, now one
+    join of digits; `len_plain`'s count made a view of every child edge (295 k rows for 116 lists), now only the
+    asked lists'; parentheses went through `python/ast`'s `unparen`, made for every node, now one `child` step as
+    asked. 149 files: 7.7 s to 5.2 s. Fixture and outputs unchanged (325 rows at 149 files, 1,573 at 601).
+- After the fixes both phases are linear: from 601 to 2,063 files `struct` took 27.8 s to 122 s and `values`
+  19.8 s to 66 s, every span growing alike (parsing too). Over the whole workspace that is about 500 s and 270 s.
+  Half of `values` (34.6 of 66 s) is parsing and projecting its documents again, as every phase does; then
+  `len_num` (0.24 s a chunk, now the domain's join), `posarg` (every call's arguments) and `v_asg`. Peak RSS 578 MB.
+  The tape is memoized across phases and runs (the tape cache): with it on, three phases over 596 files read
+  1,788 documents and parsed 591 (1.75 s). What each phase repeats is the tape's restore (0.7 ms a document), its
+  facts (2 ms) and the batch's projection, the largest; the projection's string table (SipHash) and three
+  per-node `wants` lookups took a fifth to a quarter of it, fixed (`bc4c60651`). Every measurement above and the
+  1,500 s run had the tape cache off (`RERAIL_TAPE_CACHE=off`).
+  `values` keeps reading every document: a phase's exports are keyed by its own inputs, so any reader reuses them;
+  reading only what one reader's documents import would key them by the reader.
+- Whole workspace, tape cache on, cold (2026-11-09 15:03, load 93–138): `struct` ended and was recorded at 13
+  minutes (218,783 granules; tapes for 8,986 files); `values` had not ended at 1,800 s (1,327 s CPU). A warm rerun
+  reuses both.
+- The values phase as `test-budget` would read it, on a root of 212 files (2026-11-09, load 31–35): the four enum
+  files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
+  (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
+  (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
+  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
+  counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
