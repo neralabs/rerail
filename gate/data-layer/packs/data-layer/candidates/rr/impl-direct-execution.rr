@@ -5,6 +5,7 @@
 .scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_impl_direct_execution.py
 #include "python/ast.rr"
+#include "project.rr"
 #include "data-layer/impl-direct-settings.rr"
 
 .violation IdeSetting(at: span, setting: symbol, ordinal: number, value: symbol) code "IDE_SETTING" "{setting}"
@@ -43,6 +44,7 @@ ide_target(p,c) :- ide_file(p), loaded(c,cat("impl-direct:",p),"python").
 .decl ide_document_candidate(canonical: symbol, d: number)
 ide_document_candidate(c,d) :- ide_target(_,c), doc(d,c,_), doc_role(d,"primary").
 ide_document_candidate(c,d) :- ide_target(p,c), doc(d,p,_), doc_role(d,"primary").
+ide_document_candidate(c,d) :- ide_target(p,c), workspace_root(root), doc(d,relative,_), doc_role(d,"primary"), p = cat(root,"/",relative).
 .decl ide_physical_doc(canonical: symbol, d: number)
 ide_physical_doc(c,d) :- ide_document_candidate(c,d), d = min other : { ide_document_candidate(c,other) }.
 .decl ide_doc(d: number, path: symbol)

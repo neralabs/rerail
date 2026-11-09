@@ -55,7 +55,8 @@ CASES=[case('empty',''),case('clean','pass\n'),
     case('logical-mask-uses-token-codepoints','"prefix\u2028obj._fetchone()"\néééééé = "x"\n'),
     case('logical-comment-still-skipped','"a\u2028b"\n# obj._fetchone()\n'),
     case('duplicate-directory-demand','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl','impl']),
-    case('overlapping-directory-demands','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl','impl/sub'])]
+    case('overlapping-directory-demands','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl','impl/sub']),
+    case('single-directory-in-primary-workspace','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl'])]
 
 
 def source_case(module,case):
