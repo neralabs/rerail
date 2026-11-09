@@ -305,6 +305,7 @@ reference on the corpus.
 | rr-11 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr`; what the engine refuses by the token after a directive's word or a functor's name goes to it | A8 |
 | rr-12 | a parenthesized term at a literal's start, `(o - n) * 10 > o`: read as a group, then read again as a term when an operator or a `~` follows its `)` (`reread`, `provisional`) | A20 |
 | rr-13 | floats: `1.5`, `-2.5`; a `.` after a fraction is no float's (`1.2.3` is `1.2`, `.`, `3`), found by a carry in tier 1; the fraction a token merged into its number | A2, A7 |
+| rr-14 | `\u` escapes: `\u212a`, `\u{1F600}`; the forms that are code points by their bytes (no surrogate, at most `10FFFF`), tested by masks over a window; any other `\u` goes to the engine; in JSON, a `\u` with no four hex digits is refused | A2 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;

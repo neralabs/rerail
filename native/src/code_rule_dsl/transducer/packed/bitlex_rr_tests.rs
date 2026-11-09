@@ -218,6 +218,12 @@ const CASES: &[(&str, &str)] = &[
     ("r(x) :- x = 1..5.", "never"),
     ("r(x) :- a = 1.2.3.4.", "never"),
     ("r(x) :- w = 1.5e3.", "never"),
+    // `\u` in a string: the forms that are code points by their bytes.
+    ("r(x) :- x = \"\\u212a\", y = \"\\u{1F600}\", z = \"\\u{41}\", w = \"a\\u017fb\\u0130\", v = \"\\u{10FFFF}\", u = \"\\u{FFFFF}\", t = \"\\\\u1234\".", "14"),
+    (".policy {\"a\": \"\\u00e9\", \"b\": \"x\"}", "14"),
+    ("r(x) :- x = \"\\uD800\".", "never"),
+    ("r(x) :- x = \"\\u{D800}\", y = \"\\u{110000}\".", "never"),
+    (".policy {\"a\": \"\\u{41}\"}", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
 ];
