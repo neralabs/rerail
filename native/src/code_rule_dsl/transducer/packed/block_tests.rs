@@ -1608,4 +1608,27 @@ fn rounds_equal_the_interpreter() {
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+    // On Metal, the forward carry: each lane a block, the group's rounds over all its lanes at
+    // once, in segments of three blocks that speculate their start; and a long file of many
+    // segments.
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let long: Vec<u8> = (0..20_000)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % 5) as usize]
+            })
+            .collect();
+        let mut refs = refs;
+        refs.push(&long);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("Metal runs the rounds");
+        for (k, (got, want)) in got.run.files.iter().zip(block.run_files(&refs)).enumerate() {
+            assert_eq!(got.outputs, want.outputs, "Metal: {:?}", String::from_utf8_lossy(refs[k]));
+        }
+    }
 }

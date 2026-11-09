@@ -438,12 +438,23 @@ fn fingerprint(native: &BlockNative) -> u64 {
 impl Levels {
     fn of(native: &BlockNative) -> Self {
         let exact_set = exact_scans(native);
+        // A fixed point's values, and every value that reads one: a level's pass makes none of
+        // them, so a scan among them is speculated, as the `prev`s are.
+        let mut rounds = vec![false; native.insts.len()];
+        for g in &native.groups {
+            for &m in &g.members {
+                rounds[m] = true;
+            }
+        }
+        for at in 0..native.insts.len() {
+            rounds[at] |= native.insts[at].operands().iter().any(|&o| rounds[o]);
+        }
         let mut lv = vec![0usize; native.insts.len()];
         let mut levels = Levels { scans: Vec::new(), level: Vec::new(), depth: 0 };
         for (at, inst) in native.insts.iter().enumerate() {
             let below = inst.operands().iter().map(|&x| lv[x]).max().unwrap_or(0);
             if matches!(inst, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
-                let exact = exact_set.contains(&at);
+                let exact = exact_set.contains(&at) && !rounds[at];
                 lv[at] = below + usize::from(exact);
                 levels.scans.push(at);
                 levels.level.push(if exact { below + 1 } else { 0 });

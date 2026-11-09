@@ -1150,7 +1150,11 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
 fn full_form(native: &BlockNative) -> BlockNative {
     let plan = super::native_cpu_lanes::Plan::of(native);
     let mut form = native.clone();
+    let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
+        if members[at] {
+            continue;
+        }
         let folded = match (*inst, plan.full[at]) {
             (BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..), _) => None,
             (BlockInst::Within(_), _) => Some(u64::MAX),
@@ -1164,13 +1168,25 @@ fn full_form(native: &BlockNative) -> BlockNative {
     form
 }
 
+/// Whether each instruction is a fixed point's member: its value is the loop's, never folded.
+fn group_members(native: &BlockNative) -> Vec<bool> {
+    let mut members = vec![false; native.insts.len()];
+    for g in &native.groups {
+        for &m in &g.members {
+            members[m] = true;
+        }
+    }
+    members
+}
+
 /// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
 /// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
 fn ascii_form(native: &BlockNative) -> BlockNative {
     let plan = super::native_cpu_lanes::Plan::of(native);
     let mut form = full_form(native);
+    let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
-        if inst.carried() || !plan.lanes[at] {
+        if inst.carried() || !plan.lanes[at] || members[at] {
             continue;
         }
         if let Some(one) = plan.ascii[at] {
@@ -1239,11 +1255,12 @@ fn emit(
     if insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
         out.push_str(&planes(width));
     }
-    for &at in chosen {
+    // Each instruction's statements, into `out`.
+    let mut one = |at: usize, out: &mut String| {
         let inst = &native.insts[at];
         if inst.carried() {
-            carried(at, inst, &mut out);
-            continue;
+            carried(at, inst, out);
+            return;
         }
         let rhs = match *inst {
             BlockInst::Class { table, bits: sel } => {
@@ -1302,13 +1319,119 @@ fn emit(
                 format!("{m}({pattern:#018x}ul >> ulong(({offset}) & 63u))")
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
-            BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+            BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
             BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
+    };
+    // The order: `chosen`'s, each fixed point (`rounds until settled`) one step where its members
+    // can all run (`schedule`).
+    for step in schedule(native, chosen) {
+        match step {
+            Step::One(at) => one(at, &mut out),
+            Step::Group(g) => group_loop(native, g, m, &mut |at, out| one(at, out), &mut out),
+        }
     }
     let _ = bits;
     out
+}
+
+/// A step of `emit`: an instruction, or a fixed point's group (`BlockNative::groups`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    One(usize),
+    Group(usize),
+}
+
+/// `chosen` in an order its values can be made in: each instruction once its operands are, the
+/// first ready first; a group once every operand of its members outside it is, its members
+/// together. As Cranelift places a group (`native_cpu_block`).
+fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
+    let mut group_of = vec![None; native.insts.len()];
+    for (g, group) in native.groups.iter().enumerate() {
+        for &m in &group.members {
+            group_of[m] = Some(g);
+        }
+    }
+    if chosen.iter().all(|&at| group_of[at].is_none()) {
+        return chosen.iter().map(|&at| Step::One(at)).collect();
+    }
+    let wanted: std::collections::BTreeSet<usize> = chosen.iter().copied().collect();
+    // A value not chosen is made already (an earlier level's), or not at all.
+    let mut done: Vec<bool> = (0..native.insts.len()).map(|at| !wanted.contains(&at)).collect();
+    let mut ran = vec![false; native.groups.len()];
+    let mut out = Vec::with_capacity(chosen.len());
+    loop {
+        let mut progress = false;
+        for &at in chosen {
+            if !done[at] && group_of[at].is_none() && native.insts[at].operands().iter().all(|&o| done[o]) {
+                out.push(Step::One(at));
+                done[at] = true;
+                progress = true;
+            }
+        }
+        for (g, group) in native.groups.iter().enumerate() {
+            if !ran[g] && group.members.iter().all(|&m| wanted.contains(&m)) && group.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || group_of[o] == Some(g))) {
+                out.push(Step::Group(g));
+                for &m in &group.members {
+                    done[m] = true;
+                }
+                ran[g] = true;
+                progress = true;
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    assert!(chosen.iter().all(|&at| done[at]), "every chosen value is made: a group's members are chosen together");
+    out
+}
+
+/// Group `g`'s loop (`rounds until settled`): its members made again from its carries until no
+/// carry changes in any thread of the SIMD group, at most `MAX_ROUNDS` rounds a block of the
+/// group. Every member is a variable before the loop, so the words after it read the last
+/// round's; the carried members' outs too (`o`, `co`), read by the block's tail. A thread that
+/// has settled makes the same values again: a fixed point.
+fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
+    let group = &native.groups[g];
+    for &x in &group.members {
+        out.push_str(&format!("  {m} v{x} = {m}(0);\n"));
+        if matches!(native.insts[x], BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
+            out.push_str(&format!("  uint o{x} = 0u, co{x} = 0u;\n"));
+        }
+    }
+    for (k, &(c, _)) in group.carries.iter().enumerate() {
+        let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
+        out.push_str(&format!("  {m} gc{g}_{k} = v{init};\n"));
+    }
+    let bound = super::block::MAX_ROUNDS * GROUP;
+    out.push_str(&format!("  for (uint r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
+    for (k, &(c, _)) in group.carries.iter().enumerate() {
+        out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
+    }
+    for &x in &group.members {
+        if matches!(native.insts[x], BlockInst::Carry(_)) {
+            continue;
+        }
+        let mut text = String::new();
+        one(x, &mut text);
+        // The member's own declarations become assignments to the variables above.
+        let text = text
+            .replace(&format!("const {m} v{x} = "), &format!("v{x} = "))
+            .replace(&format!("const ulong v{x} = "), &format!("v{x} = "))
+            .replace(&format!("uint o{x} = 0u;"), &format!("o{x} = 0u;"))
+            .replace(&format!("const uint co{x} = "), &format!("co{x} = "));
+        for line in text.lines() {
+            out.push_str(&format!("  {line}\n"));
+        }
+    }
+    let changed: Vec<String> = group.carries.iter().enumerate().map(|(k, &(_, x))| format!("v{x} != gc{g}_{k}")).collect();
+    out.push_str(&format!("    const bool more{g} = {};\n", changed.join(" || ")));
+    for (k, &(_, x)) in group.carries.iter().enumerate() {
+        out.push_str(&format!("    gc{g}_{k} = v{x};\n"));
+    }
+    out.push_str(&format!("    if (!simd_any(more{g})) break;\n  }}\n"));
 }
 
 /// Generated MSL run: every output's words over `bytes`, as 64-bit words of the stream.
