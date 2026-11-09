@@ -1019,8 +1019,10 @@ pub(in crate::code_rule_dsl) const GIVEN: [&str; 8] = ["in_scope", "out_scope", 
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
-    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty.
-    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
+    // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
+    let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
+    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
     // relations itself (T's shape) has none.
     let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
