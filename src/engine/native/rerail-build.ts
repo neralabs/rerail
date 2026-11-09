@@ -67,7 +67,7 @@ export function isMainRerailBuild(): boolean {
 
 /**
  * The directory holding the machine-wide content store that only the main build opens: `~/.cache/rerail`, and on
- * Windows `AppData\Localerail` in the profile. A roaming profile copies everything under the profile folder but
+ * Windows `AppData\Local\rerail` in the profile. A roaming profile copies everything under the profile folder but
  * `AppData\Local` at each sign-in and sign-out, so a store at `~/.cache` there slowed every sign-in, and of two
  * machines signed in at once, the last to sign out overwrote the other's SQLite files.
  */

@@ -1,0 +1,1 @@
+On Windows, rules run in sessions VS Code opens with a `c:\` path, plugin hooks work under a profile folder with a space, Codex and Cursor get commands PowerShell runs, files Git rewrote with CRLF line breaks count as Git's, `rerail daemon stop` lets the daemon finish its work, and private folders outside your profile stay yours.
