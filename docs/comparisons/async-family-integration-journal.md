@@ -395,3 +395,18 @@ Parsing and batch construction moved by a similar factor, so this was not accept
 Three alternating pairs give median CPU 9.358 → 8.510 seconds and wall time 8.283 → 7.332 seconds.
 Median local execution CPU is 0.674 → 0.567 seconds. Both timing series are preserved.
 The 100-execution budget remains failed. The report identifies batch projection as the dominant CPU cost and records the remaining SQL setup work.
+
+## SQL composition boundary audit
+
+The user requested a structural audit before further local optimization.
+Inspected source `eee4b8cd1`, its saved full-corpus profile, the checked CTE composer, and the merged executor's phase builder.
+The findings and concrete next implementation are in `sql-composition-boundary-audit.md`.
+
+The 3,849-execution profile contains no wave scheduler SQL.
+Its production path computes most rules natively, then repeats SQL setup and publication across 72 chunks.
+The general fallback separately executes per-rule inserts and per-relation wave folds.
+Both boundaries need correction; changing only the fallback does not fix the measured async job.
+
+The existing retained-candidate gate reports the 100-execution budget but does not enforce it.
+The proposed acceptance gate must enforce that budget and require two relational evaluation queries for the complete four-rule job.
+This audit changes documentation only. It uses saved measurements and claims no new runtime result.
